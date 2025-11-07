@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -29,12 +30,18 @@ public static class FunctionToolExtensions
             parameters: parameters);
     }
 
+    /// <summary>
+    /// Creates the parameters schema for a <see cref="InvokeClientTaskAction"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
     internal static BinaryData GetParameters(this InvokeClientTaskAction tool)
     {
         Throw.IfNull(tool);
 
-        // TODO: Implement proper parameter schema generation based on tool configuration.
+        var parameters = tool.ClientActionInputSchema?.GetSchema().ToString() ?? DefaultSchema;
 
-        return new BinaryData("{}");
+        return new BinaryData(parameters);
     }
+
+    private const string DefaultSchema = "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}";
 }

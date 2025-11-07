@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
@@ -29,21 +30,16 @@ public static class FunctionToolExtensions
                 .OfType<AIFunction>()
                 .FirstOrDefault(f => tool.Matches(f));
 
-            // TODO: Consider validating that the function signature matches the schema
-
             if (function is not null)
             {
                 return function;
             }
         }
 
-        // TODO: Replace with actual schema from tool
-        var jsonSchema = new System.Text.Json.JsonElement(); // TODO: Validate that this is a valid JSON schema
-
         return AIFunctionFactory.CreateDeclaration(
             name: tool.Name,
             description: tool.Description,
-            jsonSchema: jsonSchema);
+            jsonSchema: tool.ClientActionInputSchema?.GetSchema() ?? s_defaultSchema);
     }
 
     /// <summary>
@@ -56,11 +52,8 @@ public static class FunctionToolExtensions
         Throw.IfNull(tool);
         Throw.IfNull(aiFunc);
 
-        if (tool.Name != aiFunc.Name)
-        {
-            return false;
-        }
-
-        return true;
+        return tool.Name == aiFunc.Name;
     }
+
+    private static readonly JsonElement s_defaultSchema = JsonDocument.Parse("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}").RootElement;
 }

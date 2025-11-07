@@ -28,6 +28,11 @@ public static class McpServerToolExtensions
         var serverUrl = connection.Endpoint?.LiteralValue;
         Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
 
-        return new HostedMcpServerTool(tool.ServerName.LiteralValue, serverUrl);
+        return new HostedMcpServerTool(tool.ServerName.LiteralValue, serverUrl)
+        {
+            ServerDescription = tool.ServerDescription?.LiteralValue,
+            AllowedTools = tool.AllowedTools?.LiteralValue,
+            ApprovalMode = tool.ApprovalMode?.ToHostedMcpServerToolApprovalMode(),
+        };
     }
 }
