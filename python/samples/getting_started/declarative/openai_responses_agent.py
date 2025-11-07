@@ -2,7 +2,7 @@
 import asyncio
 from pathlib import Path
 
-from agent_framework_declarative import AgentFactory
+from agent_framework.declarative import AgentFactory
 
 
 async def main():

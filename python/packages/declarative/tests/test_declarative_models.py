@@ -2,6 +2,10 @@
 
 """Tests for MAML model classes."""
 
+import sys
+
+import pytest
+
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -39,6 +43,8 @@ from agent_framework_declarative._models import (
     WebSearchTool,
     _try_powerfx_eval,
 )
+
+pytestmark = pytest.mark.skipif(sys.version_info >= (3, 14), reason="Skipping on Python 3.14+")
 
 
 class TestBinding:

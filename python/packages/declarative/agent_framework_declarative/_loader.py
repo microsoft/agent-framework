@@ -122,7 +122,7 @@ class ProviderLookupError(DeclarativeLoaderError):
     pass
 
 
-def load_maml(yaml_str: str) -> Any:
+def load_maml(yaml_str: str) -> Any | None:
     """Load a MAML object from a YAML string.
 
     This function can parse any MAML object type and return the appropriate
@@ -137,11 +137,11 @@ def load_maml(yaml_str: str) -> Any:
     """
     as_dict = yaml.safe_load(yaml_str)
 
-    # If no kind field, assume it's an AgentManifest
-    if "kind" not in as_dict:
-        return AgentManifest.from_dict(as_dict)
+    kind = as_dict.get("kind", None)
 
-    kind = as_dict["kind"]
+    # If no kind field, assume it's an AgentManifest
+    if kind is None:
+        return AgentManifest.from_dict(as_dict)
 
     # Match on the kind field to determine which class to instantiate
     match kind:
