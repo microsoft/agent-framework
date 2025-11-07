@@ -226,3 +226,7 @@ local.settings.json
 
 # Database files
 *.db
+
+# Package development docs (internal use only)
+**/GAP_ANALYSIS.md
+**/PR*_CHECKLIST.md
