@@ -48,9 +48,9 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
     private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
-    // Use fixed database ID for preserve mode inspection  
+    // Use unique database ID per test class instance to avoid conflicts  
 #pragma warning disable CA1802 // Use literals where appropriate
-    private static readonly string TestDatabaseId = "AgentFrameworkTests-ChatStore";
+    private static readonly string TestDatabaseId = $"AgentFrameworkTests-ChatStore-{Guid.NewGuid():N}";
 #pragma warning restore CA1802
 
     private string _connectionString = string.Empty;

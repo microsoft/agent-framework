@@ -26,15 +26,16 @@ namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
 /// Database: AgentFrameworkTests
 /// Container: Checkpoints
 /// </summary>
+[Collection("CosmosDB")]
 public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 {
     // Cosmos DB Emulator connection settings
     private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "Checkpoints";
-    // Use fixed database ID for preserve mode inspection
+    // Use unique database ID per test class instance to avoid conflicts
 #pragma warning disable CA1802 // Use literals where appropriate
-    private static readonly string TestDatabaseId = "AgentFrameworkTests-CheckpointStore";
+    private static readonly string TestDatabaseId = $"AgentFrameworkTests-CheckpointStore-{Guid.NewGuid():N}";
 #pragma warning restore CA1802
 
     private string _connectionString = string.Empty;

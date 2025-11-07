@@ -306,8 +306,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "StoreState type is controlled and used for serialization")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "StoreState type is controlled and used for serialization")]
     public CosmosChatMessageStore(JsonElement serializedStoreState, CosmosClient cosmosClient, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
@@ -344,8 +342,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <inheritdoc />
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "ChatMessage deserialization is controlled")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "ChatMessage deserialization is controlled")]
     public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
@@ -389,8 +385,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <inheritdoc />
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "ChatMessage serialization is controlled")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "ChatMessage serialization is controlled")]
     public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         if (messages is null)
@@ -496,8 +490,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <summary>
     /// Creates a message document with enhanced metadata.
     /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "ChatMessage serialization is controlled")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "ChatMessage serialization is controlled")]
     private CosmosMessageDocument CreateMessageDocument(ChatMessage message, long timestamp)
     {
         return new CosmosMessageDocument
@@ -518,8 +510,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <inheritdoc />
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "StoreState serialization is controlled")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "StoreState serialization is controlled")]
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
