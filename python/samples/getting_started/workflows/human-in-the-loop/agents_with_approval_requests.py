@@ -22,7 +22,7 @@ from agent_framework.openai import OpenAIChatClient
 """
 Sample: Agents in a workflow with AI functions requiring approval
 
-This sample creates a workflow that automatically reply to incoming emails.
+This sample creates a workflow that automatically replies to incoming emails.
 If historical email data is needed, it uses an AI function to read the data,
 which requires human approval before execution.
 
