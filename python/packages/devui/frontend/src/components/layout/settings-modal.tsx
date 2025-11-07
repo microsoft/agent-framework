@@ -27,7 +27,7 @@ export function SettingsModal({ open, onOpenChange, onBackendUrlChange }: Settin
   const [activeTab, setActiveTab] = useState<Tab>("settings");
 
   // Get current backend URL from localStorage or default
-  const defaultUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+  const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
   const [backendUrl, setBackendUrl] = useState(() => {
     return localStorage.getItem("devui_backend_url") || defaultUrl;
   });
