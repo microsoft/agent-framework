@@ -104,7 +104,6 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
     }
 
-    /// <inheritdoc/>
     private async Task<AgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
     {
         string agentKey = $"{agentName}:{agentVersion}";
