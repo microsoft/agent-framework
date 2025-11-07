@@ -253,12 +253,12 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class from previously serialized state.
     /// </summary>
-    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
+    /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    public CosmosChatMessageStore(JsonElement serializedStoreState, CosmosClient cosmosClient, JsonSerializerOptions? jsonSerializerOptions = null)
+    public CosmosChatMessageStore(CosmosClient cosmosClient, JsonElement serializedStoreState, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
         this._ownsClient = false;
