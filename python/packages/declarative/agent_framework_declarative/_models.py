@@ -541,10 +541,10 @@ class FunctionTool(Tool):
             description=description,
             bindings=bindings,
         )
-        if isinstance(parameters, (list, dict)):
+        if isinstance(parameters, list):
             # If parameters is a list, wrap it in a PropertySchema
             parameters = PropertySchema(properties=parameters)
-        elif not isinstance(parameters, PropertySchema) and parameters is not None:
+        elif isinstance(parameters, dict) or (not isinstance(parameters, PropertySchema) and parameters is not None):
             parameters = PropertySchema.from_dict(parameters)
         self.parameters = parameters
         self.strict = strict

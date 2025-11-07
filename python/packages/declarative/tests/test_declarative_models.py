@@ -73,7 +73,7 @@ class TestProperty:
             required=True,
             default="default_value",
             example="example_value",
-            enumValues=["val1", "val2"],
+            enum=["val1", "val2"],
         )
         assert prop.name == "test_prop"
         assert prop.kind == "string"
@@ -81,7 +81,7 @@ class TestProperty:
         assert prop.required is True
         assert prop.default == "default_value"
         assert prop.example == "example_value"
-        assert prop.enumValues == ["val1", "val2"]
+        assert prop.enum == ["val1", "val2"]
 
     def test_property_from_dict(self):
         data = {
@@ -431,7 +431,8 @@ class TestFunctionTool:
             "name": "my_function",
             "description": "A test function",
             "kind": "function",
-            "parameters": {"strict": False, "properties": []},
+            "parameters": {"properties": []},
+            "strict": False,
         }
         tool = FunctionTool.from_dict(data)
         assert tool.name == "my_function"
