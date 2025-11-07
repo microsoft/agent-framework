@@ -26,7 +26,6 @@ public sealed class FoundryDeclarativeAgentTests(ITestOutputHelper output) : Bas
             => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
         // Arrange
-        var tokenCredential = new AzureCliCredential();
         var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential());
         var agentYaml = File.ReadAllText("../../../../../../agent-samples/foundry/PersistentAgent.yaml");
         agentYaml = agentYaml.Replace("=Env.AZURE_FOUNDRY_PROJECT_ENDPOINT", this.FoundryProjectConfiguration.Endpoint);
