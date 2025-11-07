@@ -13,11 +13,6 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <PropertyGroup>
-    <!-- Disable packing until we are ready to release this as a nuget -->
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
-
-  <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Hosting AG-UI ASP.NET Core</Title>
     <Description>Provides Microsoft Agent Framework support for hosting AG-UI agents in an ASP.NET Core context.</Description>

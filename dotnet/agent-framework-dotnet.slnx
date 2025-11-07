@@ -66,6 +66,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_TextSearchRag/Agent_Step18_TextSearchRag.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step19_Mem0Provider/Agent_Step19_Mem0Provider.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step20_BackgroundResponsesWithToolsAndPersistence/Agent_Step20_BackgroundResponsesWithToolsAndPersistence.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step21_ChatHistoryMemoryProvider/Agent_Step21_ChatHistoryMemoryProvider.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
@@ -313,7 +314,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.Tests/Microsoft.Agents.AI.Hosting.A2A.Tests.csproj" Id="2a1c544d-237d-4436-8732-ba0c447ac06b" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />

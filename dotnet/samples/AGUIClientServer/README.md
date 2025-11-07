@@ -134,15 +134,21 @@ This automatically handles:
 
 ### Client Side
 
-The `AGUIClient` uses the `AGUIAgent` class to connect to the remote server:
+The `AGUIClient` uses the `AGUIChatClient` to connect to the remote server:
 
 ```csharp
-AGUIAgent agent = new(
-    id: "agui-client",
+using HttpClient httpClient = new();
+var chatClient = new AGUIChatClient(
+    httpClient,
+    endpoint: serverUrl,
+    modelId: "agui-client",
+    jsonSerializerOptions: null);
+
+AIAgent agent = chatClient.CreateAIAgent(
+    instructions: null,
+    name: "agui-client",
     description: "AG-UI Client Agent",
-    messages: [],
-    httpClient: httpClient,
-    endpoint: serverUrl);
+    tools: []);
 
 bool isFirstUpdate = true;
 AgentRunResponseUpdate? currentUpdate = null;
