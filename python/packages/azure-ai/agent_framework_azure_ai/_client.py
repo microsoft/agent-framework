@@ -90,24 +90,24 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         Examples:
             .. code-block:: python
 
-                from agent_framework.azure import AzureAIAgentClient
+                from agent_framework.azure import AzureAIClient
                 from azure.identity.aio import DefaultAzureCredential
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
                 # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
-                client = AzureAIAgentClient(async_credential=credential)
+                client = AzureAIClient(async_credential=credential)
 
                 # Or passing parameters directly
-                client = AzureAIAgentClient(
+                client = AzureAIClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
                     model_deployment_name="gpt-4",
                     async_credential=credential,
                 )
 
                 # Or loading from a .env file
-                client = AzureAIAgentClient(async_credential=credential, env_file_path="path/to/.env")
+                client = AzureAIClient(async_credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
