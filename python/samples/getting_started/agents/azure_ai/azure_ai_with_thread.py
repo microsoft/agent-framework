@@ -13,7 +13,7 @@ from pydantic import Field
 Azure AI Agent with Thread Management Example
 
 This sample demonstrates thread management with Azure AI Agent, showing
-persistent conversation context and simplified response handling.
+persistent conversation capabilities using service-managed threads as well as storing messages in-memory.
 """
 
 

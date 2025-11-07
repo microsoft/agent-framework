@@ -9,10 +9,11 @@ from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
-Azure AI Agent Basic Example
+Azure AI Agent Latest Version Example
 
-This sample demonstrates how to reuse the latest version of an existing agent instead of creating a new agent version on each instantiation.
-The first call creates a new agent, while subsequent calls with `use_latest_version=True` reuse the latest agent version.
+This sample demonstrates how to reuse the latest version of an existing agent
+instead of creating a new agent version on each instantiation. The first call creates a new agent,
+while subsequent calls with `use_latest_version=True` reuse the latest agent version.
 """
 
 

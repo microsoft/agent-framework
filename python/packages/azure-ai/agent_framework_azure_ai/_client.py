@@ -226,8 +226,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             if combined_instructions:
                 args["instructions"] = "".join(combined_instructions)
 
-            # TODO (dmytrostruk): Add response format
-
             created_agent = await self.project_client.agents.create_version(
                 agent_name=agent_name, definition=PromptAgentDefinition(**args)
             )
