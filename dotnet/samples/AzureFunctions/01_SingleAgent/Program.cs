@@ -16,7 +16,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
     ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT is not set.");
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
-string? azureOpenAiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
 AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
     ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
     : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());

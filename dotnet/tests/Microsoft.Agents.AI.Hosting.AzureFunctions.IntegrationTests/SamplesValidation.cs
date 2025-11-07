@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
@@ -354,6 +356,60 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 message: "Orchestration is completed",
                 timeout: TimeSpan.FromSeconds(60));
         });
+    }
+
+    [Fact]
+    public async Task AgentAsMcpToolAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
+        await this.RunSampleTestAsync(samplePath, async (logs) =>
+        {
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport!);
+
+            // Ensure the expected tools are present.
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+
+            Assert.Single(tools, t => t.Name == "StockAdvisor");
+            Assert.Single(tools, t => t.Name == "PlantAdvisor");
+
+            // Invoke the tools to verify they work as expected.
+            string stockPriceResponse = await this.InvokeMcpToolAsync(mcpClient, "StockAdvisor", "MSFT ATH");
+            string plantSuggestionResponse = await this.InvokeMcpToolAsync(mcpClient, "PlantAdvisor", "Low light plant");
+            Assert.NotEmpty(stockPriceResponse);
+            Assert.NotEmpty(plantSuggestionResponse);
+
+            // Wait for up to 30 seconds to see if the agent responses are available in the logs
+            await this.WaitForConditionAsync(
+                condition: () =>
+                {
+                    lock (logs)
+                    {
+                        bool expectedLogsPresent = logs.Count(log => log.Message.Contains("Response:")) >= 2;
+                        return Task.FromResult(expectedLogsPresent);
+                    }
+                },
+                message: "Agent response is available",
+                timeout: TimeSpan.FromSeconds(30));
+        });
+    }
+
+    private async Task<string> InvokeMcpToolAsync(McpClient mcpClient, string toolName, string query)
+    {
+        this._outputHelper.WriteLine($"Invoking MCP tool '{toolName}'...");
+
+        CallToolResult result = await mcpClient.CallToolAsync(
+            toolName,
+            arguments: new Dictionary<string, object?> { { "query", query } });
+
+        string toolCallResult = ((TextContentBlock)result.Content[0]).Text;
+        this._outputHelper.WriteLine($"MCP tool '{toolName}' response: {toolCallResult}");
+
+        return toolCallResult;
     }
 
     private async Task TestSpamDetectionAsync(string emailId, string emailContent, bool expectedSpam)
