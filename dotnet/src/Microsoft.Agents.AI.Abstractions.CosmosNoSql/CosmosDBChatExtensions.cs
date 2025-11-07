@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 
 namespace Microsoft.Agents.AI;
@@ -69,7 +70,7 @@ public static class CosmosDBChatExtensions
         if (string.IsNullOrWhiteSpace(containerId))
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
 
-        options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(accountEndpoint, databaseId, containerId, useManagedIdentity: true);
+        options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
         return options;
     }
 

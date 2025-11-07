@@ -6,6 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Azure.Core;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Shared.Diagnostics;
@@ -45,21 +46,16 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosCheckpointStore{T}"/> class using DefaultAzureCredential.
+    /// Initializes a new instance of the <see cref="CosmosCheckpointStore{T}"/> class using a TokenCredential for authentication.
     /// </summary>
     /// <param name="accountEndpoint">The Cosmos DB account endpoint URI.</param>
+    /// <param name="tokenCredential">The TokenCredential to use for authentication (e.g., DefaultAzureCredential, ManagedIdentityCredential).</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
-    /// <param name="useManagedIdentity">This parameter is used to distinguish this constructor from the connection string constructor. Always pass true.</param>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
-    public CosmosCheckpointStore(string accountEndpoint, string databaseId, string containerId, bool useManagedIdentity)
+    public CosmosCheckpointStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
     {
-        if (!useManagedIdentity)
-        {
-            throw new ArgumentException("This constructor requires useManagedIdentity to be true. Use the connection string constructor for key-based authentication.", nameof(useManagedIdentity));
-        }
-
         var cosmosClientOptions = new CosmosClientOptions
         {
             SerializerOptions = new CosmosSerializationOptions
@@ -68,7 +64,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
             }
         };
 
-        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), new DefaultAzureCredential(), cosmosClientOptions);
+        this._cosmosClient = new CosmosClient(Throw.IfNullOrWhitespace(accountEndpoint), Throw.IfNull(tokenCredential), cosmosClientOptions);
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
         this._ownsClient = true;
     }
@@ -253,8 +249,8 @@ public sealed class CosmosCheckpointStore : CosmosCheckpointStore<JsonElement>
     }
 
     /// <inheritdoc />
-    public CosmosCheckpointStore(string accountEndpoint, string databaseId, string containerId, bool useManagedIdentity)
-        : base(accountEndpoint, databaseId, containerId, useManagedIdentity)
+    public CosmosCheckpointStore(string accountEndpoint, TokenCredential tokenCredential, string databaseId, string containerId)
+        : base(accountEndpoint, tokenCredential, databaseId, containerId)
     {
     }
 

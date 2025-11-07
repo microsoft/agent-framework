@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
+using Azure.Core;
+using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
@@ -436,7 +438,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(EmulatorEndpoint, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789", useManagedIdentity: true);
+        TokenCredential credential = new DefaultAzureCredential();
+        using var store = new CosmosChatMessageStore(EmulatorEndpoint, credential, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
 
         // Assert
         Assert.NotNull(store);

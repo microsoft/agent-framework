@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
@@ -60,7 +61,7 @@ public static class CosmosDBWorkflowExtensions
         if (string.IsNullOrWhiteSpace(containerId))
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
 
-        return new CosmosCheckpointStore(accountEndpoint, databaseId, containerId, useManagedIdentity: true);
+        return new CosmosCheckpointStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
     }
 
     /// <summary>
@@ -138,7 +139,7 @@ public static class CosmosDBWorkflowExtensions
         if (string.IsNullOrWhiteSpace(containerId))
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
 
-        return new CosmosCheckpointStore<T>(accountEndpoint, databaseId, containerId, useManagedIdentity: true);
+        return new CosmosCheckpointStore<T>(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
     }
 
     /// <summary>
