@@ -37,8 +37,7 @@ from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("LOCAL_MCP_URL", "") == "",
+    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true" or os.getenv("LOCAL_MCP_URL", "") == "",
     reason=(
         "No LOCAL_MCP_URL provided; skipping integration tests."
         if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
@@ -60,9 +59,7 @@ def test_normalize_mcp_name():
 
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
-    mcp_message = types.PromptMessage(
-        role="user", content=types.TextContent(type="text", text="Hello, world!")
-    )
+    mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
     ai_content = _mcp_prompt_message_to_chat_message(mcp_message)
 
     assert isinstance(ai_content, ChatMessage)
@@ -78,9 +75,7 @@ def test_mcp_call_tool_result_to_ai_contents():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(
-                type="image", data="data:image/png;base64,xyz", mimeType="image/png"
-            ),
+            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
         ]
     )
     ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
@@ -105,9 +100,7 @@ def test_mcp_content_types_to_ai_content_text():
 
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
-    mcp_content = types.ImageContent(
-        type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg"
-    )
+    mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
     ai_content = _mcp_type_to_ai_content(mcp_content)
 
     assert isinstance(ai_content, DataContent)
@@ -118,9 +111,7 @@ def test_mcp_content_types_to_ai_content_image():
 
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
-    mcp_content = types.AudioContent(
-        type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav"
-    )
+    mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
     ai_content = _mcp_type_to_ai_content(mcp_content)
 
     assert isinstance(ai_content, DataContent)
@@ -225,9 +216,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
 
 def test_ai_content_to_mcp_content_types_uri():
     """Test conversion of AI URI content to MCP content."""
-    ai_content = UriContent(
-        uri="https://example.com/resource", media_type="application/json"
-    )
+    ai_content = UriContent(uri="https://example.com/resource", media_type="application/json")
     mcp_content = _ai_content_to_mcp_types(ai_content)
 
     assert isinstance(mcp_content, types.ResourceLink)
@@ -344,12 +333,8 @@ def test_get_input_model_from_mcp_prompt():
         name="test_prompt",
         description="A test prompt",
         arguments=[
-            types.PromptArgument(
-                name="arg1", description="First argument", required=True
-            ),
-            types.PromptArgument(
-                name="arg2", description="Second argument", required=False
-            ),
+            types.PromptArgument(name="arg1", description="First argument", required=True),
+            types.PromptArgument(name="arg2", description="Second argument", required=False),
         ],
     )
     model = _get_input_model_from_mcp_prompt(prompt)
@@ -439,11 +424,7 @@ async def test_local_mcp_server_load_prompts():
                         types.Prompt(
                             name="test_prompt",
                             description="Test prompt",
-                            arguments=[
-                                types.PromptArgument(
-                                    name="arg", description="Test arg", required=True
-                                )
-                            ],
+                            arguments=[types.PromptArgument(name="arg", description="Test arg", required=True)],
                         )
                     ]
                 )
@@ -482,11 +463,7 @@ async def test_local_mcp_server_function_execution():
             )
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(
-                    content=[
-                        types.TextContent(
-                            type="text", text="Tool executed successfully"
-                        )
-                    ]
+                    content=[types.TextContent(type="text", text="Tool executed successfully")]
                 )
             )
 
@@ -521,9 +498,7 @@ async def test_local_mcp_server_function_execution_with_nested_object():
                                 "properties": {
                                     "params": {
                                         "type": "object",
-                                        "properties": {
-                                            "customer_id": {"type": "integer"}
-                                        },
+                                        "properties": {"customer_id": {"type": "integer"}},
                                         "required": ["customer_id"],
                                     }
                                 },
@@ -535,11 +510,7 @@ async def test_local_mcp_server_function_execution_with_nested_object():
             )
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(
-                    content=[
-                        types.TextContent(
-                            type="text", text='{"name": "John Doe", "id": 251}'
-                        )
-                    ]
+                    content=[types.TextContent(type="text", text='{"name": "John Doe", "id": 251}')]
                 )
             )
 
@@ -586,9 +557,7 @@ async def test_local_mcp_server_function_execution_error():
             )
             # Mock a tool call that raises an MCP error
             self.session.call_tool = AsyncMock(
-                side_effect=McpError(
-                    types.ErrorData(code=-1, message="Tool execution failed")
-                )
+                side_effect=McpError(types.ErrorData(code=-1, message="Tool execution failed"))
             )
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -615,11 +584,7 @@ async def test_local_mcp_server_prompt_execution():
                         types.Prompt(
                             name="test_prompt",
                             description="Test prompt",
-                            arguments=[
-                                types.PromptArgument(
-                                    name="arg", description="Test arg", required=True
-                                )
-                            ],
+                            arguments=[types.PromptArgument(name="arg", description="Test arg", required=True)],
                         )
                     ]
                 )
@@ -1018,9 +983,7 @@ async def test_connect_initialization_failure_http_no_command():
     mock_session.initialize = AsyncMock(side_effect=ConnectionError("Server not ready"))
 
     with patch("agent_framework._mcp.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(
-            return_value=mock_session
-        )
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with pytest.raises(ToolException) as exc_info:
@@ -1067,9 +1030,7 @@ async def test_connect_cleanup_on_initialization_failure():
     mock_session.initialize = AsyncMock(side_effect=RuntimeError("Init failed"))
 
     with patch("agent_framework._mcp.ClientSession") as mock_session_class:
-        mock_session_class.return_value.__aenter__ = AsyncMock(
-            return_value=mock_session
-        )
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with pytest.raises(ToolException):
@@ -1090,9 +1051,7 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
         another_param=42,
     )
 
-    with patch("agent_framework._mcp.stdio_client"), patch(
-        "agent_framework._mcp.StdioServerParameters"
-    ) as mock_params:
+    with patch("agent_framework._mcp.stdio_client"), patch("agent_framework._mcp.StdioServerParameters") as mock_params:
         tool.get_mcp_client()
 
         # Verify all parameters including custom kwargs were passed
@@ -1199,9 +1158,7 @@ async def test_mcp_tool_deduplication():
         if tool_name in existing_names:
             continue  # Skip duplicates
 
-        new_func = AIFunction(
-            func=lambda x: f"Process: {x}", name=tool_name, description=description
-        )
+        new_func = AIFunction(func=lambda x: f"Process: {x}", name=tool_name, description=description)
         tool._functions.append(new_func)
         existing_names.add(tool_name)
         added_count += 1
