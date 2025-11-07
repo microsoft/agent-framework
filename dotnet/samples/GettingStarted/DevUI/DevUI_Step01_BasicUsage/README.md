@@ -63,7 +63,7 @@ To add DevUI to your ASP.NET Core application:
        .AddAsAIAgent();
    ```
 
-3. Add DevUI services and map the endpoint:
+3. Add OpenAI services and map the endpoints for OpenAI and DevUI:
    ```csharp
    // Register services for OpenAI responses and conversations (also required for DevUI)
    builder.Services.AddOpenAIResponses();
