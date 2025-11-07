@@ -4,20 +4,24 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+#if NET9_0_OR_GREATER
 using Azure.AI.Agents.Persistent;
+#endif
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 internal static class AgentProviderExtensions
 {
-    private static readonly HashSet<Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
+#if NET9_0_OR_GREATER
+    private static readonly HashSet<global::Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
         [
-            Azure.AI.Agents.Persistent.RunStatus.Failed,
-            Azure.AI.Agents.Persistent.RunStatus.Cancelled,
-            Azure.AI.Agents.Persistent.RunStatus.Cancelling,
-            Azure.AI.Agents.Persistent.RunStatus.Expired,
+            global::Azure.AI.Agents.Persistent.RunStatus.Failed,
+            global::Azure.AI.Agents.Persistent.RunStatus.Cancelled,
+            global::Azure.AI.Agents.Persistent.RunStatus.Cancelling,
+            global::Azure.AI.Agents.Persistent.RunStatus.Expired,
         ];
+#endif
 
     public static async ValueTask<AgentRunResponse> InvokeAgentAsync(
         this WorkflowAgentProvider agentProvider,
@@ -60,12 +64,14 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
+#if NET9_0_OR_GREATER
             if (update.RawRepresentation is ChatResponseUpdate chatUpdate &&
                 chatUpdate.RawRepresentation is RunUpdate runUpdate &&
                 s_failureStatus.Contains(runUpdate.Value.Status))
             {
                 throw new DeclarativeActionException($"Unexpected failure invoking agent, run {runUpdate.Value.Status}: {agent.Name ?? agent.Id} [{runUpdate.Value.Id}/{conversationId}]");
             }
+#endif
 
             if (autoSend)
             {
