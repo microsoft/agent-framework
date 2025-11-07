@@ -16,6 +16,7 @@
     "conversation_count": 1,
     "min_action_count": 2,
     "min_response_count": 0,
+    "min_message_count":  1,
     "actions": {
       "start": [
         "get_input"

@@ -27,8 +27,6 @@ trigger:
       agent:
         name: TestAgent
       input:
-        messages: |-
-          Rate the originality of this well known joke that is being re-told on a scale of 1 to 10.
-          Take note on where improvements or changes were made.
+        messages: =UserMessage("Rate the originality of this well known joke that is being re-told on a scale of 1 to 10. Take note on where improvements or changes were made.")
       output:
         messages: Local.RatingResponse

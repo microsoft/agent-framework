@@ -3,25 +3,26 @@
   "setup": {
     "input": {
       "type": "String",
-      "value": "n/a"
+      "value": "1234"
     },
     "responses": [
       {
         "type": "String",
-        "value": "This is external input"
+        "value": "1234"
       }
     ]
   },
   "validation": {
     "conversation_count": 1,
-    "min_action_count": 2,
+    "min_action_count": 4,
+    "max_action_count": -1,
     "min_response_count": 0,
     "actions": {
       "start": [
-        "get_input"
+        "set_project"
       ],
       "final": [
-        "show_input"
+        "sendActivity_confirmed"
       ]
     }
   }

@@ -70,7 +70,7 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
             ++responseCount;
 
             ChatMessage resultMessage = new(ChatRole.Tool, functionResults);
-            WorkflowEvents runEvents = await harness.ResumeAsync(new ExternalInputResponse(resultMessage)).ConfigureAwait(false);
+            WorkflowEvents runEvents = await harness.ResumeAsync(inputEvent.Request.CreateResponse(new ExternalInputResponse(resultMessage))).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
         }
 
