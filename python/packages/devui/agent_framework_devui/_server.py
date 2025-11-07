@@ -359,14 +359,14 @@ class DevServer:
             try:
                 raw_body = await raw_request.body()
                 logger.info(f"Raw request body: {raw_body.decode()}")
-                logger.info(f"Parsed request: model={request.model}, extra_body={request.extra_body}")
+                logger.info(f"Parsed request: metadata={request.metadata}")
 
-                # Get entity_id using the new method
+                # Get entity_id from metadata
                 entity_id = request.get_entity_id()
                 logger.info(f"Extracted entity_id: {entity_id}")
 
                 if not entity_id:
-                    error = OpenAIError.create(f"Missing entity_id. Request extra_body: {request.extra_body}")
+                    error = OpenAIError.create("Missing entity_id in metadata. Provide metadata.entity_id in request.")
                     return JSONResponse(status_code=400, content=error.to_dict())
 
                 # Get executor and validate entity exists

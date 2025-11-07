@@ -73,7 +73,7 @@ export interface AgentFrameworkExtraBody {
 
 // Agent Framework Request - OpenAI ResponseCreateParams with extensions
 export interface AgentFrameworkRequest {
-  model: string;
+  model?: string;
   input: string | ResponseInputParam | Record<string, unknown>; // Union type matching OpenAI + dict for workflows
   stream?: boolean;
 

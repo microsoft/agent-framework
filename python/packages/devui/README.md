@@ -91,15 +91,15 @@ devui ./agents --tracing framework
 
 ## OpenAI-Compatible API
 
-For convenience, DevUI provides an OpenAI Responses backend API. This means you can run the backend and also use the OpenAI client sdk to connect to it. Use **agent/workflow name as the model**, and set streaming to `True` as needed.
+For convenience, DevUI provides an OpenAI Responses backend API. This means you can run the backend and also use the OpenAI client sdk to connect to it. Use **agent/workflow name as the entity_id in metadata**, and set streaming to `True` as needed.
 
 ```bash
-# Simple - use your entity name as the model
+# Simple - use your entity name as the entity_id in metadata
 curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
   -d @- << 'EOF'
 {
-  "model": "weather_agent",
+  "metadata": {"entity_id": "weather_agent"},
   "input": "Hello world"
 }
 ```
@@ -115,7 +115,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="weather_agent",  # Your agent/workflow name
+    metadata={"entity_id": "weather_agent"},  # Your agent/workflow name
     input="What's the weather in Seattle?"
 )
 
@@ -136,13 +136,13 @@ conversation = client.conversations.create(
 
 # Use it across multiple turns
 response1 = client.responses.create(
-    model="weather_agent",
+    metadata={"entity_id": "weather_agent"},
     input="What's the weather in Seattle?",
     conversation=conversation.id
 )
 
 response2 = client.responses.create(
-    model="weather_agent",
+    metadata={"entity_id": "weather_agent"},
     input="How about tomorrow?",
     conversation=conversation.id  # Continues the conversation!
 )

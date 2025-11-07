@@ -13,8 +13,9 @@ using Microsoft.Extensions.Logging;
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 /// <summary>
-/// Response executor that routes requests to hosted AIAgent services based on the model or agent.name parameter.
+/// Response executor that routes requests to hosted AIAgent services based on agent.name or metadata["entity_id"].
 /// This executor resolves agents from keyed services registered via AddAIAgent().
+/// The model field is reserved for actual model names and is never used for entity/agent identification.
 /// </summary>
 internal sealed class HostedAgentResponseExecutor : IResponseExecutor
 {
@@ -76,17 +77,26 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
 
     /// <summary>
     /// Resolves an agent from the service provider based on the request.
+    /// Checks agent.name first, then metadata["entity_id"].
     /// </summary>
     /// <param name="request">The create response request.</param>
     /// <returns>The resolved AIAgent instance.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the agent cannot be resolved.</exception>
     private AIAgent ResolveAgent(CreateResponse request)
     {
-        // Extract agent name from agent.name or model parameter
-        var agentName = request.Agent?.Name ?? request.Model;
+        // Extract agent name from agent.name first (highest priority)
+        string? agentName = request.Agent?.Name;
+
+        // Fall back to metadata["entity_id"] if agent.name is not present
+        if (string.IsNullOrEmpty(agentName) && request.Metadata?.TryGetValue("entity_id", out string? entityId) == true)
+        {
+            agentName = entityId;
+        }
+
+        // Never use model field for entity ID - it's for the actual model name
         if (string.IsNullOrEmpty(agentName))
         {
-            throw new InvalidOperationException("No 'agent.name' or 'model' specified in the request.");
+            throw new InvalidOperationException("No 'agent.name' or 'metadata.entity_id' specified in the request.");
         }
 
         // Resolve the keyed agent service

@@ -371,7 +371,7 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             MaxOutputTokens = request.MaxOutputTokens,
             MaxToolCalls = request.MaxToolCalls,
             Metadata = metadata,
-            Model = request.Model ?? "default",
+            Model = request.Model,
             Output = [],
             ParallelToolCalls = request.ParallelToolCalls ?? true,
             PreviousResponseId = request.PreviousResponseId,

@@ -100,17 +100,43 @@ async def test_executor_sync_execution(executor):
     assert len(agents) > 0, "No agent entities found for testing"
     agent_id = agents[0].id
 
-    # Use simplified routing: model = entity_id
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # Model IS the entity_id
+        metadata={"entity_id": agent_id},
         input="test data",
         stream=False,
     )
 
     response = await executor.execute_sync(request)
 
-    # With simplified routing, response.model reflects the actual agent_id
-    assert response.model == agent_id
+    # Response model should be 'devui' when not specified
+    assert response.model == "devui"
+    assert response.object == "response"
+    assert len(response.output) > 0
+    assert response.usage.total_tokens > 0
+
+
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="requires OpenAI API key")
+async def test_executor_sync_execution_with_model(executor):
+    """Test synchronous execution with model field specified."""
+    entities = await executor.discover_entities()
+    # Find an agent entity to test with
+    agents = [e for e in entities if e.type == "agent"]
+    assert len(agents) > 0, "No agent entities found for testing"
+    agent_id = agents[0].id
+
+    # Use metadata.entity_id for routing AND specify a model
+    request = AgentFrameworkRequest(
+        metadata={"entity_id": agent_id},
+        model="custom-model-name",
+        input="test data",
+        stream=False,
+    )
+
+    response = await executor.execute_sync(request)
+
+    # Response model should reflect the specified model
+    assert response.model == "custom-model-name"
     assert response.object == "response"
     assert len(response.output) > 0
     assert response.usage.total_tokens > 0
@@ -126,9 +152,9 @@ async def test_executor_streaming_execution(executor):
     assert len(agents) > 0, "No agent entities found for testing"
     agent_id = agents[0].id
 
-    # Use simplified routing: model = entity_id
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # Model IS the entity_id
+        metadata={"entity_id": agent_id},
         input="streaming test",
         stream=True,
     )
@@ -155,14 +181,14 @@ async def test_executor_invalid_entity_id(executor):
 
 
 async def test_executor_missing_entity_id(executor):
-    """Test get_entity_id returns model field (simplified routing)."""
+    """Test get_entity_id returns metadata.entity_id."""
     request = AgentFrameworkRequest(
-        model="my_agent",
+        metadata={"entity_id": "my_agent"},
         input="test",
         stream=False,
     )
 
-    # With simplified routing, model field IS the entity_id
+    # entity_id is extracted from metadata
     entity_id = request.get_entity_id()
     assert entity_id == "my_agent"
 
@@ -245,9 +271,9 @@ async def test_executor_handles_non_streaming_agent():
     entity_info = await discovery.create_entity_info_from_object(agent, source="test")
     discovery.register_entity(entity_info.id, entity_info, agent)
 
-    # Execute non-streaming agent (use simplified routing)
+    # Execute non-streaming agent (use metadata.entity_id for routing)
     request = AgentFrameworkRequest(
-        model=entity_info.id,  # Model IS the entity_id
+        metadata={"entity_id": entity_info.id},
         input="hello",
         stream=True,  # DevUI always streams
     )
@@ -289,9 +315,9 @@ class StreamingAgent:
             entities = await executor.discover_entities()
 
             if entities:
-                # Test sync execution (use simplified routing)
+                # Test sync execution (use metadata.entity_id for routing)
                 request = AgentFrameworkRequest(
-                    model=entities[0].id,  # Model IS the entity_id
+                    metadata={"entity_id": entities[0].id},
                     input="test input",
                     stream=False,
                 )

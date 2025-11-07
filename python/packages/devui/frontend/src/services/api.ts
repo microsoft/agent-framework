@@ -543,7 +543,7 @@ class ApiClient {
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     const openAIRequest: AgentFrameworkRequest = {
-      model: agentId, // Model IS the entity_id (simplified routing!)
+      metadata: { entity_id: agentId }, // Entity ID in metadata for routing
       input: request.input, // Direct OpenAI ResponseInputParam
       stream: true,
       conversation: request.conversation_id, // OpenAI standard conversation param
@@ -567,9 +567,9 @@ class ApiClient {
     workflowId: string,
     request: RunWorkflowRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
-    // Convert to OpenAI format - use model field for entity_id (same as agents)
+    // Convert to OpenAI format - use metadata.entity_id for routing
     const openAIRequest: AgentFrameworkRequest = {
-      model: workflowId, // Use workflow ID in model field (matches agent pattern)
+      metadata: { entity_id: workflowId }, // Entity ID in metadata for routing
       input: request.input_data || "", // Send dict directly, no stringification needed
       stream: true,
       conversation: request.conversation_id, // Include conversation if present

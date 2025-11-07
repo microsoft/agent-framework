@@ -45,7 +45,7 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
         // Act - Create response (non-streaming, non-background)
         var createResponseRequest = new
         {
-            model = AgentName,
+            metadata = new { entity_id = AgentName },
             conversation = conversationId,
             input = UserMessage,
             stream = false
@@ -122,7 +122,7 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
         // Act - Create response (streaming, non-background)
         var createResponseRequest = new
         {
-            model = AgentName,
+            metadata = new { entity_id = AgentName },
             conversation = conversationId,
             input = UserMessage,
             stream = true
@@ -196,7 +196,7 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
         // Act - Create response (non-streaming, background)
         var createResponseRequest = new
         {
-            model = AgentName,
+            metadata = new { entity_id = AgentName },
             conversation = conversationId,
             input = UserMessage,
             stream = false,

@@ -165,7 +165,7 @@ internal static class AgentRunResponseUpdateExtensions
                 MaxOutputTokens = request.MaxOutputTokens,
                 MaxToolCalls = request.MaxToolCalls,
                 Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
-                Model = request.Agent?.Name ?? request.Model,
+                Model = request.Model,
                 Output = outputs?.ToList() ?? [],
                 ParallelToolCalls = request.ParallelToolCalls ?? true,
                 PreviousResponseId = request.PreviousResponseId,

@@ -82,7 +82,7 @@ internal sealed class ResponsesHttpHandler
                 }
             });
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("No 'agent.name' or 'model' specified"))
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No 'agent.name'"))
         {
             // Return OpenAI-style error for missing required parameters
             return Results.BadRequest(new ErrorResponse

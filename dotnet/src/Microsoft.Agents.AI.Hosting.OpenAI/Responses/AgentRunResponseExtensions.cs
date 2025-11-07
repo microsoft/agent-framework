@@ -56,7 +56,7 @@ internal static class AgentRunResponseExtensions
             MaxOutputTokens = request.MaxOutputTokens,
             MaxToolCalls = request.MaxToolCalls,
             Metadata = request.Metadata is IReadOnlyDictionary<string, string> metadata ? new Dictionary<string, string>(metadata) : [],
-            Model = request.Agent?.Name ?? request.Model,
+            Model = request.Model,
             Output = output,
             ParallelToolCalls = request.ParallelToolCalls ?? true,
             PreviousResponseId = request.PreviousResponseId,

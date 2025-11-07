@@ -144,7 +144,7 @@ class AgentFrameworkRequest(BaseModel):
     """
 
     # All OpenAI fields from ResponseCreateParams
-    model: str  # Used as entity_id in DevUI!
+    model: str | None = None
     input: str | list[Any] | dict[str, Any]  # ResponseInputParam + dict for workflow structured input
     stream: bool | None = False
 
@@ -163,13 +163,14 @@ class AgentFrameworkRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    def get_entity_id(self) -> str:
-        """Get entity_id from model field.
+    def get_entity_id(self) -> str | None:
+        """Get entity_id from metadata.entity_id.
 
-        In DevUI, model IS the entity_id (agent/workflow name).
-        Simple and clean!
+        In DevUI, entity_id is specified in metadata for routing.
         """
-        return self.model
+        if self.metadata:
+            return self.metadata.get("entity_id")
+        return None
 
     def get_conversation_id(self) -> str | None:
         """Extract conversation_id from conversation parameter.

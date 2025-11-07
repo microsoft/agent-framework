@@ -67,15 +67,15 @@ async def test_server_execution_sync(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
-    # Use model as entity_id (new simplified routing)
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # model IS the entity_id now!
+        metadata={"entity_id": agent_id},
         input="San Francisco",
         stream=False,
     )
 
     response = await executor.execute_sync(request)
-    assert response.model == agent_id  # Should echo back the model (entity_id)
+    assert response.model == "devui"  # Response model defaults to 'devui' when not specified
     assert len(response.output) > 0
 
 
@@ -87,9 +87,9 @@ async def test_server_execution_streaming(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
-    # Use model as entity_id (new simplified routing)
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # model IS the entity_id now!
+        metadata={"entity_id": agent_id},
         input="New York",
         stream=True,
     )
@@ -265,7 +265,7 @@ class WeatherAgent:
 
             if entities:
                 request = AgentFrameworkRequest(
-                    model=entities[0].id,  # model IS the entity_id now!
+                    metadata={"entity_id": entities[0].id},
                     input="test location",
                     stream=False,
                 )

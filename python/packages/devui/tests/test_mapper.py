@@ -55,9 +55,9 @@ def mapper() -> MessageMapper:
 
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
-    # Use simplified routing: model = entity_id
+    # Use metadata.entity_id for routing
     return AgentFrameworkRequest(
-        model="test_agent",  # Model IS the entity_id
+        metadata={"entity_id": "test_agent"},
         input="Test input",
         stream=True,
     )
@@ -292,7 +292,7 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
     assert len(events) == 2  # Should emit response.created and response.in_progress
     assert events[0].type == "response.created"
     assert events[1].type == "response.in_progress"
-    assert events[0].response.model == "test_agent"  # Should use model from request
+    assert events[0].response.model == "devui"  # Should use 'devui' when model not specified in request
     assert events[0].response.status == "in_progress"
 
     # Test AgentCompletedEvent
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     async def run_all_tests() -> None:
         mapper = MessageMapper()
         test_request = AgentFrameworkRequest(
-            model="test",
+            metadata={"entity_id": "test"},
             input="Test",
             stream=True,
         )

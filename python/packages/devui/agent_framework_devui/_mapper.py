@@ -273,7 +273,7 @@ class MessageMapper:
                 id=f"resp_{uuid.uuid4().hex[:12]}",
                 object="response",
                 created_at=datetime.now().timestamp(),
-                model=request.model,
+                model=request.model or "devui",
                 output=[response_output_message],
                 usage=usage,
                 parallel_tool_calls=False,
@@ -495,8 +495,9 @@ class MessageMapper:
         from .models._openai_custom import AgentCompletedEvent, AgentFailedEvent, AgentStartedEvent
 
         try:
-            # Get model name from context (the agent name)
-            model_name = context.get("request", {}).model if context.get("request") else "agent"
+            # Get model name from request or use 'devui' as default
+            request_obj = context.get("request")
+            model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
             if isinstance(event, AgentStartedEvent):
                 execution_id = f"agent_{uuid4().hex[:12]}"
@@ -603,16 +604,16 @@ class MessageMapper:
                 # Return proper OpenAI event objects
                 events: list[Any] = []
 
-                # Determine the model name - use request model or default to "workflow"
-                # The request model will be the agent name for agents, workflow name for workflows
-                model_name = context.get("request", {}).model if context.get("request") else "workflow"
+                # Get model name from request or use 'devui' as default
+                request_obj = context.get("request")
+                model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
                 # Create a full Response object with all required fields
                 response_obj = Response(
                     id=f"resp_{workflow_id}",
                     object="response",
                     created_at=float(time.time()),
-                    model=model_name,  # Use the actual model/agent name
+                    model=model_name,
                     output=[],  # Empty output list initially
                     status="in_progress",
                     # Required fields with safe defaults
@@ -643,8 +644,9 @@ class MessageMapper:
                 # Import Response type for proper construction
                 from openai.types.responses import Response
 
-                # Get model name from context
-                model_name = context.get("request", {}).model if context.get("request") else "workflow"
+                # Get model name from request or use 'devui' as default
+                request_obj = context.get("request")
+                model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
                 # Create a full Response object for completed state
                 response_obj = Response(
@@ -672,8 +674,9 @@ class MessageMapper:
                 # Import Response and ResponseError types
                 from openai.types.responses import Response, ResponseError
 
-                # Get model name from context
-                model_name = context.get("request", {}).model if context.get("request") else "workflow"
+                # Get model name from request or use 'devui' as default
+                request_obj = context.get("request")
+                model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
                 # Create error object
                 error_message = str(error_info) if error_info else "Unknown error"
@@ -1208,7 +1211,7 @@ class MessageMapper:
             id=f"resp_{uuid.uuid4().hex[:12]}",
             object="response",
             created_at=datetime.now().timestamp(),
-            model=request.model,
+            model=request.model or "devui",
             output=[response_output_message],
             usage=usage,
             parallel_tool_calls=False,
