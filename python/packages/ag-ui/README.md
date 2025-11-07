@@ -36,7 +36,7 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 ## Documentation
 
 - **[Getting Started Tutorial](getting_started/)** - Step-by-step guide to building your first AG-UI server and client
-- **[Examples](examples/)** - Complete examples for AG-UI features
+- **[Examples](agent_framework_ag_ui_examples/)** - Complete examples for AG-UI features
 
 ## Features
 
@@ -64,7 +64,7 @@ The package uses a clean, orchestrator-based architecture:
 ## Next Steps
 
 1. **New to AG-UI?** Start with the [Getting Started Tutorial](getting_started/)
-2. **Want to see examples?** Check out the [Examples](examples/) for AG-UI features
+2. **Want to see examples?** Check out the [Examples](agent_framework_ag_ui_examples/) for AG-UI features
 
 ## License
 

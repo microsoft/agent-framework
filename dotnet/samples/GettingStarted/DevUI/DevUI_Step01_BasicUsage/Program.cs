@@ -4,8 +4,10 @@
 
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
 namespace DevUI_Step01_BasicUsage;
@@ -56,10 +58,11 @@ internal static class Program
         // Register sample workflows
         var assistantBuilder = builder.AddAIAgent("workflow-assistant", "You are a helpful assistant in a workflow.");
         var reviewerBuilder = builder.AddAIAgent("workflow-reviewer", "You are a reviewer. Review and critique the previous response.");
-        builder.AddSequentialWorkflow(
-            "review-workflow",
-            [assistantBuilder, reviewerBuilder])
-            .AddAsAIAgent();
+        builder.AddWorkflow("review-workflow", (sp, key) =>
+        {
+            var agents = new List<IHostedAgentBuilder>() { assistantBuilder, reviewerBuilder }.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+            return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+        }).AddAsAIAgent();
 
         if (builder.Environment.IsDevelopment())
         {

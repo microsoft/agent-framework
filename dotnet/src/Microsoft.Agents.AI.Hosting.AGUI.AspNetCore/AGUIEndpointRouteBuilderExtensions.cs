@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
@@ -10,6 +12,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
@@ -37,19 +40,39 @@ public static class AGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            var messages = input.Messages.AsChatMessages();
+            var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
+            var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+
+            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             var agent = aiAgent;
+
+            ChatClientAgentRunOptions? runOptions = null;
+            List<AITool>? clientTools = input.Tools?.AsAITools().ToList();
+            if (clientTools?.Count > 0)
+            {
+                runOptions = new ChatClientAgentRunOptions
+                {
+                    ChatOptions = new ChatOptions
+                    {
+                        Tools = clientTools
+                    }
+                };
+            }
 
             var events = agent.RunStreamingAsync(
                 messages,
+                options: runOptions,
                 cancellationToken: cancellationToken)
+                .AsChatResponseUpdatesAsync()
+                .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,
+                    jsonSerializerOptions,
                     cancellationToken);
 
-            var logger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
-            return new AGUIServerSentEventsResult(events, logger);
+            var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
+            return new AGUIServerSentEventsResult(events, sseLogger);
         });
     }
 }
