@@ -141,17 +141,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             if (responseMessage.Contents.OfType<FunctionCallContent>().Any(functionCall => !functionResultIds.Contains(functionCall.CallId)))
             {
                 yield return responseMessage;
-                continue;
             }
         }
-
-        //foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
-        //{
-        //    if (!functionResultIds.Contains(functionCall.CallId))
-        //    {
-        //        functionCalls.Add(functionCall);
-        //    }
-        //}
     }
 
     private string? GetConversationId()
