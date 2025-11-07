@@ -40,9 +40,11 @@ from agent_framework_google import GoogleAISettings
 
 settings = GoogleAISettings()
 
-# Or pass parameters directly
+# Or pass parameters directly (pass SecretStr for type safety)
+from pydantic import SecretStr
+
 settings = GoogleAISettings(
-    api_key="your_api_key",
+    api_key=SecretStr("your_api_key"),
     chat_model_id="gemini-1.5-pro"
 )
 ```
@@ -52,20 +54,20 @@ settings = GoogleAISettings(
 Once the chat client is released, usage will look like this:
 
 ```python
-from agent_framework.google import GoogleAIChatClient
-
-# Configure via environment variables
-# GOOGLE_AI_API_KEY=your_api_key
-# GOOGLE_AI_CHAT_MODEL_ID=gemini-1.5-pro
-
-client = GoogleAIChatClient()
-agent = client.create_agent(
-    name="Assistant",
-    instructions="You are a helpful assistant"
-)
-
-response = await agent.run("Hello!")
-print(response.text)
+# from agent_framework.google import GoogleAIChatClient
+#
+# # Configure via environment variables
+# # GOOGLE_AI_API_KEY=your_api_key
+# # GOOGLE_AI_CHAT_MODEL_ID=gemini-1.5-pro
+#
+# client = GoogleAIChatClient()
+# agent = client.create_agent(
+#     name="Assistant",
+#     instructions="You are a helpful assistant"
+# )
+#
+# response = await agent.run("Hello!")
+# print(response.text)
 ```
 
 ## Configuration

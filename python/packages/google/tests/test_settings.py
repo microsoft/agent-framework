@@ -3,7 +3,6 @@ import pytest
 
 from agent_framework_google._chat_client import GoogleAISettings
 
-
 # region GoogleAISettings Tests
 
 

@@ -32,10 +32,7 @@ class GoogleAISettings(AFBaseSettings):
             settings = GoogleAISettings()
 
             # Or passing parameters directly
-            settings = GoogleAISettings(
-                api_key="your_api_key",
-                chat_model_id="gemini-1.5-pro"
-            )
+            settings = GoogleAISettings(api_key="your_api_key", chat_model_id="gemini-1.5-pro")
 
             # Or loading from a .env file
             settings = GoogleAISettings(env_file_path="path/to/.env")
