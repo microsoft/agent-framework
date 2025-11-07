@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-google"
-description = "Google AI and Vertex AI integration for Microsoft Agent Framework."
+description = "Google AI (Gemini API) integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,12 +19,12 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core",
-    "google-generativeai>=0.8,<1",
-    "google-cloud-aiplatform>=1.60,<2",
+    "google-genai>=0.2,<1",
 ]
 
 [tool.uv]

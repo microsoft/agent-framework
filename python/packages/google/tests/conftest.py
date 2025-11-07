@@ -39,29 +39,3 @@ def google_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
         monkeypatch.setenv(key, value)  # type: ignore
 
     return env_vars
-
-
-@fixture
-def vertex_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  # type: ignore
-    """Fixture to set environment variables for VertexAISettings."""
-    if exclude_list is None:
-        exclude_list = []
-
-    if override_env_param_dict is None:
-        override_env_param_dict = {}
-
-    env_vars = {
-        "VERTEX_AI_PROJECT_ID": "test-project-id",
-        "VERTEX_AI_LOCATION": "us-central1",
-        "VERTEX_AI_CHAT_MODEL_ID": "gemini-1.5-pro",
-    }
-
-    env_vars.update(override_env_param_dict)  # type: ignore
-
-    for key, value in env_vars.items():
-        if key in exclude_list:
-            monkeypatch.delenv(key, raising=False)  # type: ignore
-            continue
-        monkeypatch.setenv(key, value)  # type: ignore
-
-    return env_vars
