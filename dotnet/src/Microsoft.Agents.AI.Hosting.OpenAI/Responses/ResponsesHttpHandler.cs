@@ -72,7 +72,11 @@ internal sealed class ResponsesHttpHandler
 
             return response.Status switch
             {
-                ResponseStatus.Failed => Results.InternalServerError(response.Error),
+                ResponseStatus.Failed when response.Error is { } error => Results.Problem(
+                    detail: error.Message,
+                    statusCode: StatusCodes.Status500InternalServerError,
+                    title: error.Code ?? "Internal Server Error"),
+                ResponseStatus.Failed => Results.Problem(),
                 ResponseStatus.Queued => Results.Accepted(value: response),
                 _ => Results.Ok(response)
             };
