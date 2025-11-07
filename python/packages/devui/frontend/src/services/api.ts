@@ -61,7 +61,7 @@ interface ConversationApiResponse {
 const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
     ? import.meta.env.VITE_API_BASE_URL
-    : "http://localhost:8080";
+    : ""; // Default to relative URLs (same host as frontend)
 
 // Retry configuration for streaming
 const RETRY_INTERVAL_MS = 1000; // Retry every second
@@ -71,12 +71,6 @@ const MAX_RETRY_ATTEMPTS = 600; // Max 600 retries (10 minutes total)
 function getBackendUrl(): string {
   const stored = localStorage.getItem("devui_backend_url");
   if (stored) return stored;
-  
-  // If VITE_API_BASE_URL is explicitly set to empty string, use relative path
-  // This allows the frontend to call the same host it's served from
-  if (import.meta.env.VITE_API_BASE_URL === "") {
-    return "";
-  }
   
   return DEFAULT_API_BASE_URL;
 }
