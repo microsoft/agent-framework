@@ -187,31 +187,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             if isinstance(tool, ToolProtocol):
                 match tool:
                     case HostedMCPTool():
-                        mcp: Mcp = {
-                            "type": "mcp",
-                            "server_label": tool.name.replace(" ", "_"),
-                            "server_url": str(tool.url),
-                            "server_description": tool.description,
-                            "headers": tool.headers,
-                        }
-                        if tool.allowed_tools:
-                            mcp["allowed_tools"] = list(tool.allowed_tools)
-                        if tool.approval_mode:
-                            match tool.approval_mode:
-                                case str():
-                                    mcp["require_approval"] = (
-                                        "always" if tool.approval_mode == "always_require" else "never"
-                                    )
-                                case _:
-                                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                                        mcp["require_approval"] = {
-                                            "always": {"tool_names": list(always_require_approvals)}
-                                        }
-                                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                                        mcp["require_approval"] = {
-                                            "never": {"tool_names": list(never_require_approvals)}
-                                        }
-                        response_tools.append(mcp)
+                        response_tools.append(self.get_mcp_tool(tool))
                     case HostedCodeInterpreterTool():
                         tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
                         if tool.inputs:
@@ -312,6 +288,27 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 else:
                     response_tools.append(tool_dict)
         return response_tools
+
+    def get_mcp_tool(self, tool: HostedMCPTool) -> MutableMapping[str, Any]:
+        """Get MCP tool from HostedMCPTool."""
+        mcp: Mcp = {
+            "type": "mcp",
+            "server_label": tool.name.replace(" ", "_"),
+            "server_url": str(tool.url),
+            "server_description": tool.description,
+            "headers": tool.headers,
+        }
+        if tool.allowed_tools:
+            mcp["allowed_tools"] = list(tool.allowed_tools)
+        if tool.approval_mode:
+            match tool.approval_mode:
+                case str():
+                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
+                case _:
+                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
+                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
     async def prepare_options(
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
