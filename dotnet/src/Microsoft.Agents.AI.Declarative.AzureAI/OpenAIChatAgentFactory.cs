@@ -52,7 +52,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
 
         var model = promptAgent.Model as CurrentModels;
         var apiType = model?.ApiType;
-        if (apiType?.IsUnknown() == false && apiType.Value != ModelApiType.Chat)
+        if (apiType?.IsUnknown() == true || apiType?.Value != ModelApiType.Chat)
         {
             return null;
         }

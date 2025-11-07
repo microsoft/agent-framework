@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI;
 public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIAssistantAgentFactory"/> class.
     /// </summary>
     public OpenAIAssistantAgentFactory(IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
@@ -28,7 +28,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIAssistantAgentFactory"/> class.
     /// </summary>
     public OpenAIAssistantAgentFactory(AssistantClient assistantClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
@@ -39,7 +39,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIAssistantAgentFactory"/> class.
     /// </summary>
     public OpenAIAssistantAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, loggerFactory)
     {
@@ -53,7 +53,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
 
         var model = promptAgent.Model as CurrentModels;
         var apiType = model?.ApiType;
-        if (apiType?.IsUnknown() == true && apiType.UnknownValue?.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase) == true)
+        if (apiType?.IsUnknown() == false || apiType?.UnknownValue?.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase) == false)
         {
             return null;
         }

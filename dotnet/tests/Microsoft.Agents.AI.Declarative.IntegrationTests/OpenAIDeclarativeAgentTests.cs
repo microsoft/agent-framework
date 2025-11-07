@@ -102,7 +102,6 @@ public sealed class OpenAIDeclarativeAgentTests(ITestOutputHelper output) : Base
             => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
         // Arrange
-        var tokenCredential = new AzureCliCredential();
         var agentFactory = new AggregatorAgentFactory(
         [
             new OpenAIChatAgentFactory(),

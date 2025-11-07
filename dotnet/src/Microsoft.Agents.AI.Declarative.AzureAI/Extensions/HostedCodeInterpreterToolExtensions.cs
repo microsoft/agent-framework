@@ -12,7 +12,7 @@ namespace Microsoft.Extensions.AI;
 internal static class HostedCodeInterpreterToolExtensions
 {
     /// <summary>
-    /// Creates a <see cref="HostedCodeInterpreterTool"/> from a <see cref="HostedCodeInterpreterTool"/>.
+    /// Creates a <see cref="CodeInterpreterToolDefinition"/> from a <see cref="HostedCodeInterpreterTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="CodeInterpreterTool"/></param>
     internal static CodeInterpreterToolDefinition CreateHostedCodeInterpreterToolDefinition(this HostedCodeInterpreterTool tool)

@@ -59,7 +59,7 @@ internal static class PromptAgentExtensions
             toolResources.FileSearch = fileSearch;
         }
 
-        return new ToolResources();
+        return toolResources;
     }
 
     #region private

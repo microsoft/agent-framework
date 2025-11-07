@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIResponseAgentFactory"/> class.
     /// </summary>
     public OpenAIResponseAgentFactory(IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
@@ -27,7 +27,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIResponseAgentFactory"/> class.
     /// </summary>
     public OpenAIResponseAgentFactory(OpenAIResponseClient responseClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
@@ -52,7 +52,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
 
         var model = promptAgent.Model as CurrentModels;
         var apiType = model?.ApiType;
-        if (apiType?.IsUnknown() == false && apiType.Value != ModelApiType.Responses)
+        if (apiType?.IsUnknown() == true || apiType?.Value != ModelApiType.Responses)
         {
             return null;
         }
