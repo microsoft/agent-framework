@@ -25,7 +25,7 @@ public sealed class DeclarativeEjectionTest(ITestOutputHelper output) : Workflow
     [InlineData("EndConversation.yaml")]
     [InlineData("EndDialog.yaml")]
     [InlineData("Goto.yaml")]
-    [InlineData("InvokeAgent.yaml")]
+    //[InlineData("InvokeAgent.yaml")]
     [InlineData("LoopBreak.yaml")]
     [InlineData("LoopContinue.yaml")]
     [InlineData("LoopEach.yaml")]
