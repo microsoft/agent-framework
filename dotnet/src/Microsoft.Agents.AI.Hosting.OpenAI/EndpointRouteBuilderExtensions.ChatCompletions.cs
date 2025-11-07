@@ -19,21 +19,6 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Maps OpenAI ChatCompletions API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
-    /// <param name="agentBuilder">The builder for specific <see cref="AIAgent"/> to map OpenAI ChatCompletions to.</param>
-    /// <param name="path">Custom route path for the chat completions endpoint.</param>
-    public static IEndpointConventionBuilder MapOpenAIChatCompletions(
-        this IEndpointRouteBuilder endpoints,
-        IHostedAgentBuilder agentBuilder,
-        [StringSyntax("Route")] string? path = null)
-    {
-        ArgumentNullException.ThrowIfNull(agentBuilder);
-        return endpoints.MapOpenAIChatCompletions(agentBuilder.Name, path);
-    }
-
-    /// <summary>
-    /// Maps OpenAI ChatCompletions API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
-    /// </summary>
-    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
         => MapOpenAIChatCompletions(endpoints, agentBuilder, path: null);
