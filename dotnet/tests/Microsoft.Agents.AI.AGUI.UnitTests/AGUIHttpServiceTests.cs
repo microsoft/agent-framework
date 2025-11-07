@@ -37,7 +37,7 @@ public sealed class AGUIHttpServiceTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act
@@ -66,7 +66,7 @@ public sealed class AGUIHttpServiceTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act & Assert
@@ -96,7 +96,7 @@ public sealed class AGUIHttpServiceTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act
@@ -126,7 +126,7 @@ public sealed class AGUIHttpServiceTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act
@@ -162,7 +162,7 @@ public sealed class AGUIHttpServiceTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
 
         // Act & Assert

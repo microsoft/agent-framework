@@ -80,8 +80,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }],
-            Context = new Dictionary<string, string> { ["key1"] = "value1" }
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
+            Context = [new AGUIContextItem { Description = "key1", Value = "value1" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -109,7 +109,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -136,7 +136,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -168,8 +168,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             RunId = "run1",
             Messages =
             [
-                new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "First" },
-                new AGUIMessage { Id = "m2", Role = AGUIRoles.Assistant, Content = "Second" }
+                new AGUIUserMessage { Id = "m1", Content = "First" },
+                new AGUIAssistantMessage { Id = "m2", Content = "Second" }
             ]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
@@ -217,17 +217,19 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                 return;
             }
 
-            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages();
-            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context;
+            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
+            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context.Select(c => new KeyValuePair<string, string>(c.Description, c.Value));
             JsonElement forwardedProps = input.ForwardedProperties;
             AIAgent agent = factory(messages, [], contextValues, forwardedProps);
 
             IAsyncEnumerable<BaseEvent> events = agent.RunStreamingAsync(
                 messages,
                 cancellationToken: cancellationToken)
+                .AsChatResponseUpdatesAsync()
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,
+                    AGUIJsonSerializerContext.Default.Options,
                     cancellationToken);
 
             ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;
