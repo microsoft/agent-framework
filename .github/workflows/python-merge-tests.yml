@@ -87,6 +87,9 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Set up Azure Functions Integration Test Emulators
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
       - name: Test with pytest
         timeout-minutes: 10
         run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
