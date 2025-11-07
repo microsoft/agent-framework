@@ -20,6 +20,7 @@ def test_workflow_checkpoint_default_values():
     assert checkpoint.timestamp != ""
     assert checkpoint.messages == {}
     assert checkpoint.shared_state == {}
+    assert checkpoint.pending_request_info_events == {}
     assert checkpoint.iteration_count == 0
     assert checkpoint.metadata == {}
     assert checkpoint.version == "1.0"
@@ -32,6 +33,7 @@ def test_workflow_checkpoint_custom_values():
         workflow_id="test-workflow-456",
         timestamp=custom_timestamp,
         messages={"executor1": [{"data": "test"}]},
+        pending_request_info_events={"req123": {"data": "test"}},
         shared_state={"key": "value"},
         iteration_count=5,
         metadata={"test": True},
@@ -43,6 +45,7 @@ def test_workflow_checkpoint_custom_values():
     assert checkpoint.timestamp == custom_timestamp
     assert checkpoint.messages == {"executor1": [{"data": "test"}]}
     assert checkpoint.shared_state == {"key": "value"}
+    assert checkpoint.pending_request_info_events == {"req123": {"data": "test"}}
     assert checkpoint.iteration_count == 5
     assert checkpoint.metadata == {"test": True}
     assert checkpoint.version == "2.0"
@@ -50,7 +53,11 @@ def test_workflow_checkpoint_custom_values():
 
 async def test_memory_checkpoint_storage_save_and_load():
     storage = InMemoryCheckpointStorage()
-    checkpoint = WorkflowCheckpoint(workflow_id="test-workflow", messages={"executor1": [{"data": "hello"}]})
+    checkpoint = WorkflowCheckpoint(
+        workflow_id="test-workflow",
+        messages={"executor1": [{"data": "hello"}]},
+        pending_request_info_events={"req123": {"data": "test"}},
+    )
 
     # Save checkpoint
     saved_id = await storage.save_checkpoint(checkpoint)
@@ -62,6 +69,7 @@ async def test_memory_checkpoint_storage_save_and_load():
     assert loaded_checkpoint.checkpoint_id == checkpoint.checkpoint_id
     assert loaded_checkpoint.workflow_id == checkpoint.workflow_id
     assert loaded_checkpoint.messages == checkpoint.messages
+    assert loaded_checkpoint.pending_request_info_events == checkpoint.pending_request_info_events
 
 
 async def test_memory_checkpoint_storage_load_nonexistent():
@@ -152,6 +160,7 @@ async def test_file_checkpoint_storage_save_and_load():
             workflow_id="test-workflow",
             messages={"executor1": [{"data": "hello", "source_id": "test", "target_id": None}]},
             shared_state={"key": "value"},
+            pending_request_info_events={"req123": {"data": "test"}},
         )
 
         # Save checkpoint
@@ -169,6 +178,7 @@ async def test_file_checkpoint_storage_save_and_load():
         assert loaded_checkpoint.workflow_id == checkpoint.workflow_id
         assert loaded_checkpoint.messages == checkpoint.messages
         assert loaded_checkpoint.shared_state == checkpoint.shared_state
+        assert loaded_checkpoint.pending_request_info_events == checkpoint.pending_request_info_events
 
 
 async def test_file_checkpoint_storage_load_nonexistent():
@@ -284,6 +294,7 @@ async def test_file_checkpoint_storage_json_serialization():
             workflow_id="complex-workflow",
             messages={"executor1": [{"data": {"nested": {"value": 42}}, "source_id": "test", "target_id": None}]},
             shared_state={"list": [1, 2, 3], "dict": {"a": "b", "c": {"d": "e"}}, "bool": True, "null": None},
+            pending_request_info_events={"req123": {"data": "test"}},
         )
 
         # Save and load
@@ -303,6 +314,7 @@ async def test_file_checkpoint_storage_json_serialization():
         assert data["shared_state"]["list"] == [1, 2, 3]
         assert data["shared_state"]["bool"] is True
         assert data["shared_state"]["null"] is None
+        assert data["pending_request_info_events"]["req123"]["data"] == "test"
 
 
 def test_checkpoint_storage_protocol_compliance():

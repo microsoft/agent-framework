@@ -50,12 +50,12 @@ public sealed class GroupChatWorkflowBuilder
     public Workflow Build()
     {
         AIAgent[] agents = this._participants.ToArray();
-        Dictionary<AIAgent, ExecutorIsh> agentMap = agents.ToDictionary(a => a, a => (ExecutorIsh)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
+        Dictionary<AIAgent, ExecutorBinding> agentMap = agents.ToDictionary(a => a, a => (ExecutorBinding)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
 
         Func<string, string, ValueTask<Executor>> groupChatHostFactory =
             (string id, string runId) => new(new GroupChatHost(id, agents, agentMap, this._managerFactory));
 
-        ExecutorIsh host = groupChatHostFactory.ConfigureFactory(nameof(GroupChatHost));
+        ExecutorBinding host = groupChatHostFactory.BindExecutor(nameof(GroupChatHost));
         WorkflowBuilder builder = new(host);
 
         foreach (var participant in agentMap.Values)
