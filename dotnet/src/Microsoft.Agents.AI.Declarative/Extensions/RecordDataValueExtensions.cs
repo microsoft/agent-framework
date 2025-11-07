@@ -13,21 +13,6 @@ namespace Microsoft.Bot.ObjectModel;
 /// </summary>
 public static class RecordDataValueExtensions
 {
-    /*
-    /// <summary>
-    /// Retrieves a 'string' property from a <see cref="RecordDataValue"/>
-    /// </summary>
-    /// <param name="recordData">Instance of <see cref="RecordDataValue"/></param>
-    /// <param name="propertyPath">Path of the property to retrieve</param>
-    public static string? GetString(this RecordDataValue recordData, string propertyPath)
-    {
-        Throw.IfNull(recordData);
-
-        var stringValue = recordData.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create(propertyPath));
-        return stringValue?.Value;
-    }
-    */
-
     /// <summary>
     /// Retrieves a 'number' property from a <see cref="RecordDataValue"/>
     /// </summary>
@@ -53,32 +38,6 @@ public static class RecordDataValueExtensions
         var booleanValue = recordData.GetPropertyOrNull<BooleanDataValue>(InitializablePropertyPath.Create(propertyPath));
         return booleanValue?.Value;
     }
-
-    /*
-    /// <summary>
-    /// Retrieves a <see cref="RecordDataValue"/> property from a <see cref="RecordDataValue"/>
-    /// </summary>
-    /// <param name="recordData">Instance of <see cref="RecordDataValue"/></param>
-    /// <param name="propertyPath">Path of the property to retrieve</param>
-    public static RecordDataValue? GetRecordDataValue(this RecordDataValue recordData, string propertyPath)
-    {
-        Throw.IfNull(recordData);
-
-        return recordData.GetPropertyOrNull<RecordDataValue>(InitializablePropertyPath.Create(propertyPath));
-    }
-
-    /// <summary>
-    /// Retrieves a <see cref="TableDataValue"/> property from a <see cref="RecordDataValue"/>
-    /// </summary>
-    /// <param name="recordData">Instance of <see cref="RecordDataValue"/></param>
-    /// <param name="propertyPath">Path of the property to retrieve</param>
-    public static TableDataValue? GetTableDataValue(this RecordDataValue recordData, string propertyPath)
-    {
-        Throw.IfNull(recordData);
-
-        return recordData.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create(propertyPath));
-    }
-    */
 
     /// <summary>
     /// Converts a <see cref="RecordDataValue"/> to a <see cref="IReadOnlyDictionary{TKey, TValue}"/>.

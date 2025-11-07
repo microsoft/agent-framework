@@ -38,7 +38,7 @@ internal static class FileSearchToolExtensions
     internal static IList<VectorStoreConfigurations>? GetVectorStoreConfigurations(this FileSearchTool tool)
     {
         var dataSources = tool.ExtensionData?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.configurations"));
-        return dataSources is not null ? dataSources.Values.Select(value => value.CreateVectorStoreConfiguration()).ToList() : null;
+        return dataSources?.Values.Select(value => value.CreateVectorStoreConfiguration()).ToList();
     }
 
     internal static VectorStoreConfigurations CreateVectorStoreConfiguration(this RecordDataValue value)

@@ -29,7 +29,7 @@ internal static class PromptAgentExtensions
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
                 WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
                 McpServerTool => ((McpServerTool)tool).CreateMcpToolDefinition(),
-                // TODO: Add other tool types when implemented
+                // TODO: Add other tool types as custom tools
                 // AzureAISearch
                 // AzureFunction
                 // OpenApi
@@ -58,11 +58,6 @@ internal static class PromptAgentExtensions
         {
             toolResources.FileSearch = fileSearch;
         }
-        //var azureAISearch = promptAgent.GetAzureAISearchResource();
-        //if (azureAISearch is not null)
-        //{
-        //    toolResources.AzureAISearch = azureAISearch;
-        //}
 
         return new ToolResources();
     }
@@ -107,35 +102,6 @@ internal static class PromptAgentExtensions
 
         return null;
     }
-
-    /*
-    private static AzureAISearchToolResource? GetAzureAISearchResource(this PromptAgent promptAgent)
-    {
-        Throw.IfNull(promptAgent);
-
-        var azureAISearch = promptAgent.GetFirstAgentTool<SearchTool>();
-        if (azureAISearch is not null)
-        {
-            string? indexConnectionId = azureAISearch.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.index_connection_id"))?.Value;
-            string? indexName = azureAISearch.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("options.index_name"))?.Value;
-            if (string.IsNullOrEmpty(indexConnectionId) && string.IsNullOrEmpty(indexName))
-            {
-                return null;
-            }
-            if (string.IsNullOrEmpty(indexConnectionId) || string.IsNullOrEmpty(indexName))
-            {
-                throw new InvalidOperationException("Azure AI Search tool definition must have both 'index_connection_id' and 'index_name' options set.");
-            }
-            int topK = azureAISearch.GetTopK() ?? 5;
-            string filter = azureAISearch.GetFilter() ?? string.Empty;
-            AzureAISearchQueryType? queryType = azureAISearch.GetAzureAISearchQueryType();
-
-            return new AzureAISearchToolResource(indexConnectionId, indexName, topK, filter, queryType);
-        }
-
-        return null;
-    }
-    */
 
     private static TaskAction? GetFirstAgentTool<T>(this GptComponentMetadata promptAgent)
     {
