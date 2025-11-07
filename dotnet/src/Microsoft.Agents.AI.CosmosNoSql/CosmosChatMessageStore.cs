@@ -478,7 +478,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             ConversationId = this._conversationId,
             Timestamp = timestamp,
             MessageId = message.MessageId,
-            Role = message.Role.Value ?? "unknown",
+            Role = message.Role.Value,
             Message = JsonSerializer.Serialize(message, s_defaultJsonOptions),
             Type = "ChatMessage", // Type discriminator
             Ttl = this.MessageTtlSeconds, // Configurable TTL
@@ -639,7 +639,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         public string? MessageId { get; set; }
 
         [Newtonsoft.Json.JsonProperty("role")]
-        public string Role { get; set; } = string.Empty;
+        public string? Role { get; set; }
 
         [Newtonsoft.Json.JsonProperty("message")]
         public string Message { get; set; } = string.Empty;
