@@ -5,18 +5,12 @@
 
 using System.Diagnostics;
 using System.Reflection;
-using System.Text.Json;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
-#if CHECKPOINT_JSON
-using Microsoft.Agents.AI.Workflows.Checkpointing;
-#endif
 using Microsoft.Agents.AI.Workflows.Declarative;
-using Microsoft.Agents.AI.Workflows.Declarative.Events;
-using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using OpenAI.Responses;
+using Shared.Workflows;
 
 namespace Demo.DeclarativeWorkflow;
 
@@ -65,49 +59,11 @@ internal sealed class Program
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
 
-#if CHECKPOINT_JSON
-        // Use a file-system based JSON checkpoint store to persist checkpoints to disk.
-        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-hhmmss-ff}"));
-        CheckpointManager checkpointManager = CheckpointManager.CreateJson(new FileSystemJsonCheckpointStore(checkpointFolder));
-#else
-        // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
-        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
-#endif
-
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager);
-
-        bool isComplete = false;
-        object? response = null;
-        do
-        {
-            ExternalRequest? externalRequest = await this.MonitorAndDisposeWorkflowRunAsync(run, response);
-            if (externalRequest is not null)
-            {
-                Notify("\nWORKFLOW: Yield");
-
-                if (this.LastCheckpoint is null)
-                {
-                    throw new InvalidOperationException("Checkpoint information missing after external request.");
-                }
-
-                // Process the external request.
-                response = await this.HandleExternalRequestAsync(externalRequest);
-
-                // Let's resume on an entirely new workflow instance to demonstrate checkpoint portability.
-                workflow = this.CreateWorkflow();
-
-                // Restore the latest checkpoint.
-                Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
-                Notify("\nWORKFLOW: Restore");
-
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId);
-            }
-            else
-            {
-                isComplete = true;
-            }
-        }
-        while (!isComplete);
+        // Execute the workflow:  The WorkflowRunner demonstrates how to execute
+        // a workflow, handle the workflow events, and providing external input.
+        // This also includes the ability to checkpoint workflow state and how to
+        // resume execution.
+        await this.Runner.ExecuteAsync(this.CreateWorkflow, input);
 
         Notify("\nWORKFLOW: Done!\n");
     }
@@ -116,17 +72,13 @@ internal sealed class Program
     /// Create the workflow from the declarative YAML.  Includes definition of the
     /// <see cref="DeclarativeWorkflowOptions" /> and the associated <see cref="WorkflowAgentProvider"/>.
     /// </summary>
-    /// <remarks>
-    /// The value assigned to <see cref="IncludeFunctions" /> controls on whether the function
-    /// tools (<see cref="AIFunction"/>) initialized in the constructor are included for auto-invocation.
-    /// </remarks>
     private Workflow CreateWorkflow()
     {
         // Create the agent provider that will service agent requests within the workflow.
         AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new AzureCliCredential())
         {
             // Functions included here will be auto-executed by the framework.
-            Functions = IncludeFunctions ? this.FunctionMap.Values : null,
+            Functions = this.Functions
         };
 
         // Define the workflow options.
@@ -142,24 +94,12 @@ internal sealed class Program
         return DeclarativeWorkflowBuilder.Build<string>(this.WorkflowFile, options);
     }
 
-    /// <summary>
-    /// Configuration key used to identify the Foundry project endpoint.
-    /// </summary>
-    private const string ConfigKeyFoundryEndpoint = "FOUNDRY_PROJECT_ENDPOINT";
-
-    /// <summary>
-    /// Controls on whether the function tools (<see cref="AIFunction"/>) initialized
-    /// in the constructor are included for auto-invocation.
-    /// NOTE: By default, no functions exist as part of this sample.
-    /// </summary>
-    private const bool IncludeFunctions = true;
-
     private string WorkflowFile { get; }
     private string? WorkflowInput { get; }
     private string FoundryEndpoint { get; }
     private IConfiguration Configuration { get; }
-    private CheckpointInfo? LastCheckpoint { get; set; }
-    private Dictionary<string, AIFunction> FunctionMap { get; }
+    private WorkflowRunner Runner { get; }
+    private IList<AIFunction> Functions { get; }
 
     private Program(string workflowFile, string? workflowInput)
     {
@@ -168,240 +108,26 @@ internal sealed class Program
 
         this.Configuration = InitializeConfig();
 
-        this.FoundryEndpoint = this.Configuration[ConfigKeyFoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {ConfigKeyFoundryEndpoint}");
+        this.FoundryEndpoint = this.Configuration[Application.Settings.FoundryEndpoint] ?? throw new InvalidOperationException($"Undefined configuration setting: {Application.Settings.FoundryEndpoint}");
 
-        List<AIFunction> functions =
+        this.Functions =
             [
                 // Manually define any custom functions that may be required by agents within the workflow.
                 // By default, this sample does not include any functions.
                 //AIFunctionFactory.Create(),
             ];
-        this.FunctionMap = functions.ToDictionary(f => f.Name);
-    }
 
-    private async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, object? response = null)
-    {
-        await using IAsyncDisposable disposeRun = run;
-
-        bool hasStreamed = false;
-        string? messageId = null;
-
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync())
-        {
-            switch (workflowEvent)
+        this.Runner =
+            new(this.Functions)
             {
-                case ExecutorInvokedEvent executorInvoked:
-                    Debug.WriteLine($"EXECUTOR ENTER #{executorInvoked.ExecutorId}");
-                    break;
-
-                case ExecutorCompletedEvent executorCompleted:
-                    Debug.WriteLine($"EXECUTOR EXIT #{executorCompleted.ExecutorId}");
-                    break;
-
-                case DeclarativeActionInvokedEvent actionInvoked:
-                    Debug.WriteLine($"ACTION ENTER #{actionInvoked.ActionId} [{actionInvoked.ActionType}]");
-                    break;
-
-                case DeclarativeActionCompletedEvent actionComplete:
-                    Debug.WriteLine($"ACTION EXIT #{actionComplete.ActionId} [{actionComplete.ActionType}]");
-                    break;
-
-                case ExecutorFailedEvent executorFailure:
-                    Debug.WriteLine($"STEP ERROR #{executorFailure.ExecutorId}: {executorFailure.Data?.Message ?? "Unknown"}");
-                    break;
-
-                case WorkflowErrorEvent workflowError:
-                    throw workflowError.Data as Exception ?? new InvalidOperationException("Unexpected failure...");
-
-                case SuperStepCompletedEvent checkpointCompleted:
-                    this.LastCheckpoint = checkpointCompleted.CompletionInfo?.Checkpoint;
-                    Debug.WriteLine($"CHECKPOINT x{checkpointCompleted.StepNumber} [{this.LastCheckpoint?.CheckpointId ?? "(none)"}]");
-                    break;
-
-                case RequestInfoEvent requestInfo:
-                    Debug.WriteLine($"REQUEST #{requestInfo.Request.RequestId}");
-                    if (response is not null)
-                    {
-                        ExternalResponse requestResponse = requestInfo.Request.CreateResponse(response);
-                        await run.Run.SendResponseAsync(requestResponse);
-                        response = null;
-                    }
-                    else
-                    {
-                        await run.Run.DisposeAsync();
-                        return requestInfo.Request;
-                    }
-                    break;
-
-                case ConversationUpdateEvent invokeEvent:
-                    Debug.WriteLine($"CONVERSATION: {invokeEvent.Data}");
-                    break;
-
-                case MessageActivityEvent activityEvent:
-                    Console.ForegroundColor = ConsoleColor.Cyan;
-                    Console.WriteLine("\nACTIVITY:");
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine(activityEvent.Message.Trim());
-                    break;
-
-                case AgentRunUpdateEvent streamEvent:
-                    if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
-                    {
-                        hasStreamed = false;
-                        messageId = streamEvent.Update.MessageId;
-
-                        if (messageId is not null)
-                        {
-                            string? agentName = streamEvent.Update.AuthorName ?? streamEvent.Update.AgentId ?? nameof(ChatRole.Assistant);
-                            Console.ForegroundColor = ConsoleColor.Cyan;
-                            Console.Write($"\n{agentName.ToUpperInvariant()}:");
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($" [{messageId}]");
-                        }
-                    }
-
-                    ChatResponseUpdate? chatUpdate = streamEvent.Update.RawRepresentation as ChatResponseUpdate;
-                    switch (chatUpdate?.RawRepresentation)
-                    {
-                        case ImageGenerationCallResponseItem messageUpdate:
-                            await DownloadFileContentAsync(Path.GetFileName("response.png"), messageUpdate.ImageResultBytes);
-                            break;
-
-                        case FunctionCallResponseItem actionUpdate:
-                            Console.ForegroundColor = ConsoleColor.White;
-                            Console.Write($"Calling tool: {actionUpdate.FunctionName}");
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($" [{actionUpdate.CallId}]");
-                            break;
-
-                        case McpToolCallItem actionUpdate:
-                            Console.ForegroundColor = ConsoleColor.White;
-                            Console.Write($"Calling tool: {actionUpdate.ToolName}");
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($" [{actionUpdate.Id}]");
-                            break;
-                    }
-                    try
-                    {
-                        Console.ResetColor();
-                        Console.Write(streamEvent.Update.Text);
-                        hasStreamed |= !string.IsNullOrEmpty(streamEvent.Update.Text);
-                    }
-                    finally
-                    {
-                        Console.ResetColor();
-                    }
-                    break;
-
-                case AgentRunResponseEvent messageEvent:
-                    try
-                    {
-                        if (hasStreamed)
-                        {
-                            Console.WriteLine();
-                        }
-
-                        if (messageEvent.Response.Usage is not null)
-                        {
-                            Console.ForegroundColor = ConsoleColor.DarkGray;
-                            Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
-                        }
-                    }
-                    finally
-                    {
-                        Console.ResetColor();
-                    }
-                    break;
-            }
-        }
-
-        return default;
-    }
-
-    /// <summary>
-    /// Handle request for external input.
-    /// </summary>
-    private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
-    {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
-
-        List<ChatMessage> responseMessages = [];
-
-        foreach (ChatMessage message in inputRequest.AgentResponse.Messages)
-        {
-            ChatMessage? responseMessage = await this.ProcessInputMessageAsync(message);
-            if (responseMessage is not null)
-            {
-                responseMessages.Add(responseMessage);
-            }
-        }
-
-        if (responseMessages.Count == 0)
-        {
-            // Must be request for user input.
-            responseMessages.Add(HandleUserInputRequest(inputRequest));
-        }
-
-        return new ExternalInputResponse(responseMessages);
-    }
-
-    private async ValueTask<ChatMessage?> ProcessInputMessageAsync(ChatMessage message)
-    {
-        List<AIContent> responseContents = [];
-
-        foreach (AIContent requestItem in message.Contents)
-        {
-            AIContent? responseItem =
-                requestItem switch
-                {
-                    FunctionCallContent functionCall => await InvokesToolAsync(functionCall),
-                    FunctionApprovalRequestContent functionApprovalRequest => functionApprovalRequest.CreateResponse(approved: true),
-                    McpServerToolApprovalRequestContent mcpApprovalRequest => mcpApprovalRequest.CreateResponse(approved: true),
-                    _ => null,
-                };
-
-            if (responseItem is not null)
-            {
-                responseContents.Add(responseItem);
-            }
-        }
-
-        if (responseContents.Count == 0)
-        {
-            return null;
-        }
-
-        return new ChatMessage(ChatRole.User, responseContents);
-
-        async Task<FunctionResultContent> InvokesToolAsync(FunctionCallContent functionCall)
-        {
-            AIFunction functionTool = this.FunctionMap[functionCall.Name];
-            AIFunctionArguments? functionArguments = functionCall.Arguments is null ? null : new(functionCall.Arguments.NormalizePortableValues());
-            object? result = await functionTool.InvokeAsync(functionArguments);
-            return new FunctionResultContent(functionCall.CallId, JsonSerializer.Serialize(result));
-        }
-    }
-
-    private static ChatMessage HandleUserInputRequest(ExternalInputRequest request)
-    {
-        string prompt =
-            string.IsNullOrWhiteSpace(request.AgentResponse.Text) || request.AgentResponse.ResponseId is not null ?
-                "INPUT:" :
-                request.AgentResponse.Text;
-
-        string? userInput;
-        do
-        {
-            Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write($"\n{prompt} ");
-            Console.ForegroundColor = ConsoleColor.White;
-            userInput = Console.ReadLine();
-        }
-        while (string.IsNullOrWhiteSpace(userInput));
-
-        return new ChatMessage(ChatRole.User, userInput);
+#if CHECKPOINT_JSON
+                // Use an json file checkpoint store that will persist checkpoints to the local file system.
+                UseJsonCheckpoints = true
+#else
+                // Use an in-memory checkpoint store that will not persist checkpoints beyond the lifetime of the process.
+                UseJsonCheckpoints = false
+#endif
+            };
     }
 
     private static string? ParseWorkflowFile(string[] args)
@@ -507,20 +233,5 @@ internal sealed class Program
         {
             Console.ResetColor();
         }
-    }
-
-    private static async ValueTask DownloadFileContentAsync(string filename, BinaryData content)
-    {
-        string filePath = Path.Combine(Path.GetTempPath(), Path.GetFileName(filename));
-        filePath = Path.ChangeExtension(filePath, ".png");
-
-        await File.WriteAllBytesAsync(filePath, content.ToArray());
-
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/C start {filePath}"
-            });
     }
 }

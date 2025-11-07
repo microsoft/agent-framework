@@ -12,7 +12,8 @@
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectSharedWorkflowsSample>true</InjectSharedWorkflowsSample>
+    <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
+    <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
 
   <ItemGroup>
