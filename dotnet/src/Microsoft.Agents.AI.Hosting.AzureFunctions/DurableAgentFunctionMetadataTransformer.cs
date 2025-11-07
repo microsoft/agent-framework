@@ -14,6 +14,8 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
 {
     private readonly ILogger<DurableAgentFunctionMetadataTransformer> _logger;
     private readonly IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> _agents;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IFunctionsAgentOptionsProvider _functionsAgentOptionsProvider;
 
 #pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
     private static readonly string s_builtInFunctionsScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
@@ -21,29 +23,45 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
 
     public DurableAgentFunctionMetadataTransformer(
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents,
-        ILogger<DurableAgentFunctionMetadataTransformer> logger)
+        ILogger<DurableAgentFunctionMetadataTransformer> logger,
+        IServiceProvider serviceProvider,
+        IFunctionsAgentOptionsProvider functionsAgentOptionsProvider)
     {
         this._agents = agents ?? throw new ArgumentNullException(nameof(agents));
         this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this._serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        this._functionsAgentOptionsProvider = functionsAgentOptionsProvider ?? throw new ArgumentNullException(nameof(functionsAgentOptionsProvider));
     }
 
     public string Name => nameof(DurableAgentFunctionMetadataTransformer);
 
     public void Transform(IList<IFunctionMetadata> original)
     {
-        this._logger.LogInformation("Transforming function metadata to add durable agent functions. Initial function count: {FunctionCount}", original.Count);
+        this._logger.LogTransformingFunctionMetadata(original.Count);
 
-        foreach (string agentName in this._agents.Keys)
+        foreach (KeyValuePair<string, Func<IServiceProvider, AIAgent>> kvp in this._agents)
         {
-            this._logger.LogInformation("Registering functions for agent: {AgentName}", agentName);
+            string agentName = kvp.Key;
 
-            // Each agent type gets its own entity trigger function.
-            // We do this 1:1 mapping for improved telemetry.
+            this._logger.LogRegisteringTriggerForAgent(agentName, "entity");
+
             original.Add(CreateAgentTrigger(agentName));
 
-            // Each agent type gets its own HTTP trigger function.
-            // TODO: Put this behind a configuration option.
-            original.Add(CreateHttpTrigger(agentName, $"agents/{agentName}/run", nameof(BuiltInFunctions.RunAgentHttpAsync)));
+            if (this._functionsAgentOptionsProvider.TryGet(agentName, out FunctionsAgentOptions? agentTriggerOptions))
+            {
+                if (agentTriggerOptions.HttpTrigger.IsEnabled)
+                {
+                    this._logger.LogRegisteringTriggerForAgent(agentName, "http");
+                    original.Add(CreateHttpTrigger(agentName, $"agents/{agentName}/run"));
+                }
+
+                if (agentTriggerOptions.McpToolTrigger.IsEnabled)
+                {
+                    AIAgent agent = kvp.Value(this._serviceProvider);
+                    this._logger.LogRegisteringTriggerForAgent(agentName, "mcpTool");
+                    original.Add(CreateMcpToolTrigger(agentName, agent.Description));
+                }
+            }
         }
     }
 
@@ -63,19 +81,37 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
         };
     }
 
-    private static DefaultFunctionMetadata CreateHttpTrigger(string name, string route, string dotnetMethodName)
+    private static DefaultFunctionMetadata CreateHttpTrigger(string name, string route)
     {
         return new DefaultFunctionMetadata()
         {
-            Name = $"{name}_http",
+            Name = $"{BuiltInFunctions.HttpPrefix}{name}",
             Language = "dotnet-isolated",
             RawBindings =
             [
-                $$"""{"name":"req","type":"httpTrigger","direction":"In","authLevel":"function","methods": ["post"],"route":"{{route}}"}""",
-                """{"name":"$return","type":"http","direction":"Out"}""",
-                """{"name":"client","type":"durableClient","direction":"In"}"""
+                $"{{\"name\":\"req\",\"type\":\"httpTrigger\",\"direction\":\"In\",\"authLevel\":\"function\",\"methods\": [\"post\"],\"route\":\"{route}\"}}",
+                "{\"name\":\"$return\",\"type\":\"http\",\"direction\":\"Out\"}",
+                "{\"name\":\"client\",\"type\":\"durableClient\",\"direction\":\"In\"}"
             ],
             EntryPoint = BuiltInFunctions.RunAgentHttpFunctionEntryPoint,
+            ScriptFile = s_builtInFunctionsScriptFile,
+        };
+    }
+
+    private static DefaultFunctionMetadata CreateMcpToolTrigger(string agentName, string? description)
+    {
+        return new DefaultFunctionMetadata
+        {
+            Name = $"{BuiltInFunctions.McpToolPrefix}{agentName}",
+            Language = "dotnet-isolated",
+            RawBindings =
+            [
+                $$"""{"name":"context","type":"mcpToolTrigger","direction":"In","toolName":"{{agentName}}","description":"{{description}}","toolProperties":"[{\"propertyName\":\"query\",\"propertyType\":\"string\",\"description\":\"The query to send to the agent.\",\"isRequired\":true,\"isArray\":false},{\"propertyName\":\"threadId\",\"propertyType\":\"string\",\"description\":\"Optional thread identifier.\",\"isRequired\":false,\"isArray\":false}]"}""",
+                """{"name":"query","type":"mcpToolProperty","direction":"In","propertyName":"query","description":"The query to send to the agent","isRequired":true,"dataType":"String","propertyType":"string"}""",
+                """{"name":"threadId","type":"mcpToolProperty","direction":"In","propertyName":"threadId","description":"The thread identifier.","isRequired":false,"dataType":"String","propertyType":"string"}""",
+                """{"name":"client","type":"durableClient","direction":"In"}"""
+            ],
+            EntryPoint = BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint,
             ScriptFile = s_builtInFunctionsScriptFile,
         };
     }

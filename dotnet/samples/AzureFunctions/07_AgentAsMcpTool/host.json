@@ -2,8 +2,7 @@
   "version": "2.0",
   "logging": {
     "logLevel": {
-      "Microsoft.Agents.AI.DurableTask": "Information",
-      "Microsoft.Agents.AI.Hosting.AzureFunctions": "Information",
+      "Microsoft.Azure.Functions.DurableAgents": "Information",
       "DurableTask": "Information",
       "Microsoft.DurableTask": "Information"
     }

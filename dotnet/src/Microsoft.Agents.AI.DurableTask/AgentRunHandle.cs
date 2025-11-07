@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.DurableTask;
 
@@ -11,10 +13,16 @@ namespace Microsoft.Agents.AI.DurableTask;
 internal sealed class AgentRunHandle
 {
     private readonly DurableTaskClient _client;
+    private readonly ILogger _logger;
 
-    internal AgentRunHandle(DurableTaskClient client, AgentSessionId sessionId, string correlationId)
+    internal AgentRunHandle(
+        DurableTaskClient client,
+        ILogger logger,
+        AgentSessionId sessionId,
+        string correlationId)
     {
         this._client = client;
+        this._logger = logger;
         this.SessionId = sessionId;
         this.CorrelationId = correlationId;
     }
@@ -41,6 +49,8 @@ internal sealed class AgentRunHandle
         TimeSpan pollInterval = TimeSpan.FromMilliseconds(50); // Start with 50ms
         TimeSpan maxPollInterval = TimeSpan.FromSeconds(3); // Maximum 3 seconds
 
+        this._logger.LogStartPollingForResponse(this.SessionId, this.CorrelationId);
+
         while (true)
         {
             // Poll the entity state for responses
@@ -49,10 +59,18 @@ internal sealed class AgentRunHandle
                 cancellation: cancellationToken);
             DurableAgentState? state = entityResponse?.State;
 
-            // Look for an agent response with matching CorrelationId
-            if (state is not null && state.TryGetAgentResponse(this.CorrelationId, out AgentRunResponse? response))
+            if (state?.Data.ConversationHistory is not null)
             {
-                return response;
+                // Look for an agent response with matching CorrelationId
+                DurableAgentStateResponse? response = state.Data.ConversationHistory
+                    .OfType<DurableAgentStateResponse>()
+                    .FirstOrDefault(r => r.CorrelationId == this.CorrelationId);
+
+                if (response is not null)
+                {
+                    this._logger.LogDonePollingForResponse(this.SessionId, this.CorrelationId);
+                    return response.ToRunResponse();
+                }
             }
 
             // Wait before polling again with exponential backoff
