@@ -42,14 +42,18 @@
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
-  <!--
-    Force Azure Functions host to load the MCP extension automatically, even when
-    the consuming application doesn't explicitly reference McpToolTrigger attributes
-  -->
   <ItemGroup>
+    <!--
+        This attribute tells the Functions build process to restore the specified WebJobs extension package,
+        making the MCP extension available to the Functions host.
+    -->
     <AssemblyAttribute Include="Microsoft.Azure.Functions.Worker.Extensions.Abstractions.ExtensionInformationAttribute">
       <_Parameter1>Microsoft.Azure.Functions.Extensions.Mcp</_Parameter1>
       <_Parameter2>1.0.0</_Parameter2>
+      <!--
+        Force Azure Functions host to load the MCP extension automatically, even when
+        the consuming application doesn't explicitly reference McpToolTrigger attributes
+      -->
       <_Parameter3>true</_Parameter3>
       <_Parameter3_IsLiteral>true</_Parameter3_IsLiteral>
     </AssemblyAttribute>
