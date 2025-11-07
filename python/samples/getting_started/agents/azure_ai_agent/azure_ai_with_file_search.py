@@ -33,12 +33,10 @@ async def main() -> None:
         pdf_file_path = Path(__file__).parent.parent / "resources" / "employees.pdf"
         print(f"Uploading file from: {pdf_file_path}")
 
-        file = await client.project_client.agents.files.upload_and_poll(
-            file_path=str(pdf_file_path), purpose="assistants"
-        )
+        file = await client.agents_client.files.upload_and_poll(file_path=str(pdf_file_path), purpose="assistants")
         print(f"Uploaded file, file ID: {file.id}")
 
-        vector_store = await client.project_client.agents.vector_stores.create_and_poll(
+        vector_store = await client.agents_client.vector_stores.create_and_poll(
             file_ids=[file.id], name="my_vectorstore"
         )
         print(f"Created vector store, vector store ID: {vector_store.id}")
@@ -66,9 +64,9 @@ async def main() -> None:
             # 5. Cleanup: Delete the vector store and file
             try:
                 if vector_store:
-                    await client.project_client.agents.vector_stores.delete(vector_store.id)
+                    await client.agents_client.vector_stores.delete(vector_store.id)
                 if file:
-                    await client.project_client.agents.files.delete(file.id)
+                    await client.agents_client.files.delete(file.id)
             except Exception:
                 # Ignore cleanup errors to avoid masking issues
                 pass
@@ -79,9 +77,9 @@ async def main() -> None:
         client = AzureAIAgentClient(async_credential=AzureCliCredential())
         try:
             if vector_store:
-                await client.project_client.agents.vector_stores.delete(vector_store.id)
+                await client.agents_client.vector_stores.delete(vector_store.id)
             if file:
-                await client.project_client.agents.files.delete(file.id)
+                await client.agents_client.files.delete(file.id)
         except Exception:
             # Ignore cleanup errors to avoid masking issues
             pass

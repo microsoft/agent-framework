@@ -246,7 +246,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0a20251103001", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0a20251105001", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" },
 ]
 
 [[package]]

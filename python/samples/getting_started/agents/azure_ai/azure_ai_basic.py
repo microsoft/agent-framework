@@ -11,7 +11,7 @@ from pydantic import Field
 """
 Azure AI Agent Basic Example
 
-This sample demonstrates basic usage of AzureAIAgentClient.
+This sample demonstrates basic usage of AzureAIClient.
 Shows both streaming and non-streaming responses with function tools.
 """
 

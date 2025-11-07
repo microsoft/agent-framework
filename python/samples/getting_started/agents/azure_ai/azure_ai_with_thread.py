@@ -4,7 +4,6 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
@@ -13,7 +12,7 @@ from pydantic import Field
 Azure AI Agent with Thread Management Example
 
 This sample demonstrates thread management with Azure AI Agent, showing
-persistent conversation context and simplified response handling.
+persistent conversation capabilities using service-managed threads as well as storing messages in-memory.
 """
 
 
@@ -131,7 +130,7 @@ async def example_with_existing_thread_id() -> None:
                 ) as agent,
             ):
                 # Create a thread with the existing ID
-                thread = AgentThread(service_thread_id=existing_thread_id)
+                thread = agent.get_new_thread(service_thread_id=existing_thread_id)
 
                 query2 = "What was the last city I asked about?"
                 print(f"User: {query2}")
