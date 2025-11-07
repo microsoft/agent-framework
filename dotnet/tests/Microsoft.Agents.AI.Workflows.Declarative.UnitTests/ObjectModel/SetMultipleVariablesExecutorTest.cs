@@ -29,7 +29,7 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
     [Fact]
     public async Task SetMultipleVariablesWithExpressionsAsync()
     {
-        // Pre-Arrange
+        // Arrange
         this.State.Set("SourceNumber", FormulaValue.New(10));
         this.State.Set("SourceText", FormulaValue.New("Hello"));
         this.State.Bind();
@@ -97,11 +97,11 @@ public sealed class SetMultipleVariablesExecutorTest(ITestOutputHelper output) :
         // Arrange
         SetMultipleVariables model = this.CreateModel(nameof(SetMultipleVariablesEmptyAssignmentsAsync), []);
 
-        // Act & Assert
+        // Arrange, Act, Assert
         Assert.Throws<DeclarativeModelException>(() =>
         {
             // Empty variables assignment should fail RequiredProperties validation.
-            SetMultipleVariablesExecutor action = new(model, this.State);
+            _ = new SetMultipleVariablesExecutor(model, this.State);
         });
     }
 
