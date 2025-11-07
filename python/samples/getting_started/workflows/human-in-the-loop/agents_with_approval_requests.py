@@ -3,7 +3,7 @@
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Annotated, Never
+from typing import Annotated
 
 from agent_framework import (
     AgentExecutorResponse,
@@ -18,6 +18,7 @@ from agent_framework import (
     handler,
 )
 from agent_framework.openai import OpenAIChatClient
+from typing_extensions import Never
 
 """
 Sample: Agents in a workflow with AI functions requiring approval
