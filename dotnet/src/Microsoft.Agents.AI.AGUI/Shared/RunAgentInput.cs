@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -36,13 +35,4 @@ internal sealed class RunAgentInput
     [JsonPropertyName("forwardedProperties")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement ForwardedProperties { get; set; }
-}
-
-internal sealed class AGUIContextItem
-{
-    [JsonPropertyName("description")]
-    public string Description { get; set; } = string.Empty;
-
-    [JsonPropertyName("value")]
-    public string Value { get; set; } = string.Empty;
 }
