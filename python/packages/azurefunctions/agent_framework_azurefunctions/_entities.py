@@ -10,6 +10,7 @@ allows for long-running agent conversations.
 import asyncio
 import inspect
 import json
+import uuid
 from collections.abc import AsyncIterable
 from typing import Any, cast
 
@@ -18,7 +19,13 @@ from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpd
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._models import AgentResponse, ChatRole, RunRequest
-from ._state import AgentState
+from .durable_agent_state import (
+    DurableAgentState,
+    DurableAgentStateMessage,
+    DurableAgentStateRequest,
+    DurableAgentStateResponse,
+    DurableAgentStateUsage,
+)
 
 logger = get_logger("agent_framework.azurefunctions.entities")
 
@@ -38,11 +45,11 @@ class AgentEntity:
 
     Attributes:
         agent: The AgentProtocol instance
-        state: The AgentState managing conversation history
+        state: The DurableAgentState managing conversation history
     """
 
     agent: AgentProtocol
-    state: AgentState
+    state: DurableAgentState
 
     def __init__(
         self,
@@ -56,8 +63,9 @@ class AgentEntity:
             callback: Optional callback invoked during streaming updates and final responses
         """
         self.agent = agent
-        self.state = AgentState()
+        self.state = DurableAgentState()
         self.callback = callback
+        self._pending_requests: dict[str, DurableAgentStateRequest] = {}
 
         logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
 
@@ -89,7 +97,7 @@ class AgentEntity:
 
         message = run_request.message
         conversation_id = run_request.conversation_id
-        correlation_id = run_request.correlation_id
+        correlation_id = run_request.correlation_id  or str(uuid.uuid4())
         if not conversation_id:
             raise ValueError("RunRequest must include a conversation_id")
         if not correlation_id:
@@ -98,23 +106,30 @@ class AgentEntity:
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
+        # Store request in durable state
+        state_request = DurableAgentStateRequest.from_run_request(run_request)
+        self.state.data.conversation_history.append(state_request)
+        self._pending_requests[correlation_id] = state_request
+
         logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
         logger.debug(f"[AgentEntity.run_agent] Conversation ID: {conversation_id}")
         logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlation_id}")
         logger.debug(f"[AgentEntity.run_agent] Role: {role.value if isinstance(role, ChatRole) else role}")
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
-
-        # Store message in history with role
-        role_str = role.value if isinstance(role, ChatRole) else role
-        self.state.add_user_message(message, role=role_str, correlation_id=correlation_id)
+        logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
 
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 
         try:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
 
-            run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
+            chat_messages = [
+                m.to_chat_message()
+                for entry in self.state.data.conversation_history
+                for m in entry.messages
+            ]
+            run_kwargs: dict[str, Any] = {"messages": chat_messages}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
             if response_format:
@@ -131,6 +146,11 @@ class AgentEntity:
                 "[AgentEntity.run_agent] Agent invocation completed - response type: %s",
                 type(agent_run_response).__name__,
             )
+
+            # Convert response into DurableAgentStateResponse
+            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
+            self.state.data.conversation_history.append(state_response)
+            self._pending_requests.pop(correlation_id, None)
 
             response_text = None
             structured_response = None
@@ -162,7 +182,7 @@ class AgentEntity:
                 message=str(message),
                 conversation_id=str(conversation_id),
                 status="success",
-                message_count=self.state.message_count,
+                message_count=len(self.state.data.conversation_history),
                 structured_response=structured_response,
             )
             result = agent_response.to_dict()
@@ -187,7 +207,7 @@ class AgentEntity:
                 message=str(message),
                 conversation_id=str(conversation_id),
                 status="error",
-                message_count=self.state.message_count,
+                message_count=len(self.state.data.conversation_history),
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
