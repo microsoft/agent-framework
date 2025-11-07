@@ -17,7 +17,11 @@ from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_observability
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import PromptAgentDefinition
+from azure.ai.projects.models import (
+    PromptAgentDefinition,
+    PromptAgentDefinitionText,
+    ResponseTextFormatConfigurationJsonSchema,
+)
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from openai.types.responses.parsed_response import (
@@ -86,24 +90,24 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         Examples:
             .. code-block:: python
 
-                from agent_framework.azure import AzureAIAgentClient
+                from agent_framework.azure import AzureAIClient
                 from azure.identity.aio import DefaultAzureCredential
 
                 # Using environment variables
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
                 # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
-                client = AzureAIAgentClient(async_credential=credential)
+                client = AzureAIClient(async_credential=credential)
 
                 # Or passing parameters directly
-                client = AzureAIAgentClient(
+                client = AzureAIClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
                     model_deployment_name="gpt-4",
                     async_credential=credential,
                 )
 
                 # Or loading from a .env file
-                client = AzureAIAgentClient(async_credential=credential, env_file_path="path/to/.env")
+                client = AzureAIClient(async_credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -211,11 +215,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                     "can also be passed to the get_response methods."
                 )
 
-            args: dict[str, Any] = {
-                "model": run_options["model"],
-            }
+            args: dict[str, Any] = {"model": run_options["model"]}
+
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
+
+            if "response_format" in run_options:
+                response_format = run_options["response_format"]
+                args["text"] = PromptAgentDefinitionText(
+                    format=ResponseTextFormatConfigurationJsonSchema(
+                        name=response_format.__name__,
+                        schema=response_format.model_json_schema(),
+                    )
+                )
 
             # Combine instructions from messages and options
             combined_instructions = [
@@ -225,8 +237,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             ]
             if combined_instructions:
                 args["instructions"] = "".join(combined_instructions)
-
-            # TODO (dmytrostruk): Add response format
 
             created_agent = await self.project_client.agents.create_version(
                 agent_name=agent_name, definition=PromptAgentDefinition(**args)
@@ -288,13 +298,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         run_options["extra_body"] = {"agent": agent_reference}
 
-        # Remove properties that are not supported
-        # Model and tools captured in the agent setup
-        if "model" in run_options:
-            run_options.pop("model", None)
+        # Remove properties that are not supported on request level
+        # but were configured on agent level
+        exclude = ["model", "tools", "response_format"]
 
-        if "tools" in run_options:
-            run_options.pop("tools", None)
+        for property in exclude:
+            run_options.pop(property, None)
 
         return run_options
 

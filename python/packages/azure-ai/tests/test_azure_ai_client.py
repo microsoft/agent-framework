@@ -11,7 +11,10 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
-from pydantic import ValidationError
+from azure.ai.projects.models import (
+    ResponseTextFormatConfigurationJsonSchema,
+)
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
 
@@ -529,6 +532,86 @@ async def test_azure_ai_client_use_latest_version_with_existing_agent_version(
     mock_project_client.agents.create_version.assert_not_called()
 
     assert agent_ref == {"name": "test-agent", "version": "3.0", "type": "agent_reference"}
+
+
+class ResponseFormatModel(BaseModel):
+    """Test Pydantic model for response format testing."""
+
+    name: str
+    value: int
+    description: str
+    model_config = ConfigDict(extra="forbid")
+
+
+async def test_azure_ai_client_agent_creation_with_response_format(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with response_format configuration."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    # Mock agent creation response
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model", "response_format": ResponseFormatModel}
+
+    await client._get_agent_reference_or_create(run_options, None)  # type: ignore
+
+    # Verify agent was created with response format configuration
+    call_args = mock_project_client.agents.create_version.call_args
+    created_definition = call_args[1]["definition"]
+
+    # Check that text format configuration was set
+    assert hasattr(created_definition, "text")
+    assert created_definition.text is not None
+
+    # Check that the format is a ResponseTextFormatConfigurationJsonSchema
+    assert hasattr(created_definition.text, "format")
+    format_config = created_definition.text.format
+    assert isinstance(format_config, ResponseTextFormatConfigurationJsonSchema)
+
+    # Check the schema name matches the model class name
+    assert format_config.name == "ResponseFormatModel"
+
+    # Check that schema was generated correctly
+    assert format_config.schema is not None
+    schema = format_config.schema
+    assert "properties" in schema
+    assert "name" in schema["properties"]
+    assert "value" in schema["properties"]
+    assert "description" in schema["properties"]
+
+
+async def test_azure_ai_client_prepare_options_excludes_response_format(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test that prepare_options excludes response_format from final run options."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
+
+    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    chat_options = ChatOptions()
+
+    with (
+        patch.object(
+            client.__class__.__bases__[0],
+            "prepare_options",
+            return_value={"model": "test-model", "response_format": ResponseFormatModel},
+        ),
+        patch.object(
+            client,
+            "_get_agent_reference_or_create",
+            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
+        ),
+    ):
+        run_options = await client.prepare_options(messages, chat_options)
+
+        # response_format should be excluded from final run options
+        assert "response_format" not in run_options
+        # But extra_body should contain agent reference
+        assert "extra_body" in run_options
+        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
 
 
 @pytest.fixture

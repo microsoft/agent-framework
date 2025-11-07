@@ -6,7 +6,6 @@ import os
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
 from azure.ai.agents.aio import AgentsClient
-from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -23,10 +22,9 @@ async def main() -> None:
     # Create the client
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
     ):
-        azure_ai_agent = await project_client.agents.create_agent(
+        azure_ai_agent = await agents_client.create_agent(
             model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             # Create remote agent with default instructions
             # These instructions will persist on created agent for every run.
@@ -52,7 +50,7 @@ async def main() -> None:
                 print(f"Agent: {result}\n")
         finally:
             # Clean up the agent manually
-            await project_client.agents.delete_agent(azure_ai_agent.id)
+            await agents_client.delete_agent(azure_ai_agent.id)
 
 
 if __name__ == "__main__":
