@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -20,6 +21,8 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore CreateCheckpointStore(
         string connectionString,
         string databaseId,
@@ -43,6 +46,8 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore CreateCheckpointStoreUsingManagedIdentity(
         string accountEndpoint,
         string databaseId,
@@ -67,6 +72,8 @@ public static class CosmosDBWorkflowExtensions
     /// <returns>A new instance of <see cref="CosmosCheckpointStore"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore CreateCheckpointStore(
         CosmosClient cosmosClient,
         string databaseId,
@@ -91,6 +98,8 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore{T}"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore<T> CreateCheckpointStore<T>(
         string connectionString,
         string databaseId,
@@ -115,6 +124,8 @@ public static class CosmosDBWorkflowExtensions
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <returns>A new instance of <see cref="CosmosCheckpointStore{T}"/>.</returns>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore<T> CreateCheckpointStoreUsingManagedIdentity<T>(
         string accountEndpoint,
         string databaseId,
@@ -140,6 +151,8 @@ public static class CosmosDBWorkflowExtensions
     /// <returns>A new instance of <see cref="CosmosCheckpointStore{T}"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static CosmosCheckpointStore<T> CreateCheckpointStore<T>(
         CosmosClient cosmosClient,
         string databaseId,

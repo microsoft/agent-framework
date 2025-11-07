@@ -11,7 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI;
 using Xunit;
 
-namespace Microsoft.Agents.AI.Abstractions.UnitTests;
+namespace Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests;
 
 /// <summary>
 /// Contains tests for <see cref="CosmosChatMessageStore"/>.
@@ -34,9 +34,9 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// | COSMOS_PRESERVE_CONTAINERS | true / false | Controls whether to preserve test data after completion |
 ///
 /// Usage Examples:
-/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.UnitTests/
-/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.UnitTests/ --filter "Category=CosmosDB"
-/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.Abstractions.UnitTests/
+/// - Run all tests in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/
+/// - Run specific test category in preserve mode: $env:COSMOS_PRESERVE_CONTAINERS="true"; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/ --filter "Category=CosmosDB"
+/// - Reset to cleanup mode: $env:COSMOS_PRESERVE_CONTAINERS=""; dotnet test tests/Microsoft.Agents.AI.Abstractions.CosmosNoSql.UnitTests/
 /// </summary>
 [Collection("CosmosDB")]
 public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
@@ -46,9 +46,10 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
     private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
-
-    // Use unique database ID per test run to avoid conflicts between parallel test executions
-    private readonly string _testDatabaseId = $"AgentFrameworkTests-ChatStore-{Guid.NewGuid():N}";
+    // Use fixed database ID for preserve mode inspection  
+#pragma warning disable CA1802 // Use literals where appropriate
+    private static readonly string TestDatabaseId = "AgentFrameworkTests-ChatStore";
+#pragma warning restore CA1802
 
     private string _connectionString = string.Empty;
     private bool _emulatorAvailable;
@@ -69,7 +70,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             this._setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
 
             // Test connection by attempting to create database
-            var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(this._testDatabaseId);
+            var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(TestDatabaseId);
 
             // Create container for simple partitioning tests
             await databaseResponse.Database.CreateContainerIfNotExistsAsync(
@@ -109,7 +110,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
                 else
                 {
                     // Clean mode: Delete the test database and all data
-                    var database = this._setupClient.GetDatabase(this._testDatabaseId);
+                    var database = this._setupClient.GetDatabase(TestDatabaseId);
                     await database.DeleteAsync();
                 }
             }
@@ -149,12 +150,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, "test-conversation");
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, "test-conversation");
 
         // Assert
         Assert.NotNull(store);
         Assert.Equal("test-conversation", store.ConversationId);
-        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(TestDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -166,12 +167,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId);
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId);
 
         // Assert
         Assert.NotNull(store);
         Assert.NotNull(store.ConversationId);
-        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(TestDatabaseId, store.DatabaseId);
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
@@ -181,7 +182,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange & Act & Assert
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore((string)null!, this._testDatabaseId, TestContainerId, "test-conversation"));
+            new CosmosChatMessageStore((string)null!, TestDatabaseId, TestContainerId, "test-conversation"));
     }
 
     [Fact]
@@ -192,7 +193,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, ""));
+            new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, ""));
     }
 
     #endregion
@@ -206,7 +207,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange
         this.SkipIfEmulatorNotAvailable();
         var conversationId = Guid.NewGuid().ToString();
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
         var message = new ChatMessage(ChatRole.User, "Hello, world!");
 
         // Act
@@ -225,7 +226,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             // Let's check if we can find ANY items in the container for this conversation
             var directQuery = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId")
                 .WithParameter("@conversationId", conversationId);
-            var countIterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(TestContainerId)
+            var countIterator = this._setupClient!.GetDatabase(TestDatabaseId).GetContainer(TestContainerId)
                 .GetItemQueryIterator<int>(directQuery, requestOptions: new QueryRequestOptions
                 {
                     PartitionKey = new PartitionKey(conversationId)
@@ -237,7 +238,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             // Debug: Let's see what the raw query returns
             var rawQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId")
                 .WithParameter("@conversationId", conversationId);
-            var rawIterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(TestContainerId)
+            var rawIterator = this._setupClient!.GetDatabase(TestDatabaseId).GetContainer(TestContainerId)
                 .GetItemQueryIterator<dynamic>(rawQuery, requestOptions: new QueryRequestOptions
                 {
                     PartitionKey = new PartitionKey(conversationId)
@@ -266,7 +267,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange
         SkipIfEmulatorNotAvailable();
         var conversationId = Guid.NewGuid().ToString();
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "First message"),
@@ -296,7 +297,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act
         var messages = await store.GetMessagesAsync();
@@ -314,8 +315,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         var conversation1 = Guid.NewGuid().ToString();
         var conversation2 = Guid.NewGuid().ToString();
 
-        using var store1 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversation1);
-        using var store2 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversation2);
+        using var store1 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversation1);
+        using var store2 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversation2);
 
         await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 1")]);
         await store2.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message for conversation 2")]);
@@ -344,7 +345,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange
         SkipIfEmulatorNotAvailable();
         var conversationId = $"test-conversation-{Guid.NewGuid():N}"; // Use unique conversation ID
-        using var originalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
+        using var originalStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
 
         var messages = new[]
         {
@@ -364,7 +365,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(5, retrievedList.Count);
 
         // Act 3: Create new store instance for same conversation (test persistence)
-        using var newStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, conversationId);
+        using var newStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, conversationId);
         var persistedMessages = await newStore.GetMessagesAsync();
         var persistedList = persistedMessages.ToList();
 
@@ -387,7 +388,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act & Assert
         store.Dispose(); // Should not throw
@@ -399,7 +400,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
     {
         // Arrange
         SkipIfEmulatorNotAvailable();
-        var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, Guid.NewGuid().ToString());
+        var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, Guid.NewGuid().ToString());
 
         // Act & Assert
         store.Dispose(); // First call
@@ -418,12 +419,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
 
         // Assert
         Assert.NotNull(store);
         Assert.Equal("session-789", store.ConversationId);
-        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(TestDatabaseId, store.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
@@ -435,12 +436,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         // Act
-        using var store = new CosmosChatMessageStore(EmulatorEndpoint, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789", useManagedIdentity: true);
+        using var store = new CosmosChatMessageStore(EmulatorEndpoint, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789", useManagedIdentity: true);
 
         // Assert
         Assert.NotNull(store);
         Assert.Equal("session-789", store.ConversationId);
-        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(TestDatabaseId, store.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
@@ -452,12 +453,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
-        using var store = new CosmosChatMessageStore(cosmosClient, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var store = new CosmosChatMessageStore(cosmosClient, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
 
         // Assert
         Assert.NotNull(store);
         Assert.Equal("session-789", store.ConversationId);
-        Assert.Equal(this._testDatabaseId, store.DatabaseId);
+        Assert.Equal(TestDatabaseId, store.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
@@ -469,7 +470,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, null!, "user-456", "session-789"));
+            new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, null!, "user-456", "session-789"));
     }
 
     [Fact]
@@ -480,7 +481,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "", "session-789"));
+            new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "", "session-789"));
     }
 
     [Fact]
@@ -491,7 +492,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         this.SkipIfEmulatorNotAvailable();
 
         Assert.Throws<ArgumentException>(() =>
-            new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "   "));
+            new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "   "));
     }
 
     [Fact]
@@ -504,7 +505,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string UserId = "user-456";
         const string SessionId = "session-789";
         // Test hierarchical partitioning constructor with connection string
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         var message = new ChatMessage(ChatRole.User, "Hello from hierarchical partitioning!");
 
         // Act
@@ -522,11 +523,11 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(ChatRole.User, messageList[0].Role);
 
         // Verify that the document is stored with hierarchical partitioning metadata
-        var directQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
+        var directQuery = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type")
             .WithParameter("@conversationId", SessionId)
             .WithParameter("@type", "ChatMessage");
 
-        var iterator = this._setupClient!.GetDatabase(this._testDatabaseId).GetContainer(HierarchicalTestContainerId)
+        var iterator = this._setupClient!.GetDatabase(TestDatabaseId).GetContainer(HierarchicalTestContainerId)
             .GetItemQueryIterator<dynamic>(directQuery, requestOptions: new QueryRequestOptions
             {
                 PartitionKey = new PartitionKeyBuilder().Add(TenantId).Add(UserId).Add(SessionId).Build()
@@ -553,7 +554,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string UserId = "user-batch";
         const string SessionId = "session-batch";
         // Test hierarchical partitioning constructor with connection string
-        using var store = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         var messages = new[]
         {
             new ChatMessage(ChatRole.User, "First hierarchical message"),
@@ -589,8 +590,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string SessionId = "session-isolation";
 
         // Different userIds create different hierarchical partitions, providing proper isolation
-        using var store1 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId1, SessionId);
-        using var store2 = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
+        using var store1 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, TenantId, UserId1, SessionId);
+        using var store2 = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, TenantId, UserId2, SessionId);
 
         // Add messages to both stores
         await store1.AddMessagesAsync([new ChatMessage(ChatRole.User, "Message from user 1")]);
@@ -623,7 +624,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string UserId = "user-serialize";
         const string SessionId = "session-serialize";
 
-        using var originalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
+        using var originalStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, TenantId, UserId, SessionId);
         await originalStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Test serialization message")]);
 
         // Act - Serialize the store state
@@ -647,7 +648,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Single(messageList);
         Assert.Equal("Test serialization message", messageList[0].Text);
         Assert.Equal(SessionId, deserializedStore.ConversationId);
-        Assert.Equal(this._testDatabaseId, deserializedStore.DatabaseId);
+        Assert.Equal(TestDatabaseId, deserializedStore.DatabaseId);
         Assert.Equal(HierarchicalTestContainerId, deserializedStore.ContainerId);
     }
 
@@ -660,8 +661,8 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         const string SessionId = "coexist-session";
 
         // Create simple store using simple partitioning container and hierarchical store using hierarchical container
-        using var simpleStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, TestContainerId, SessionId);
-        using var hierarchicalStore = new CosmosChatMessageStore(this._connectionString, this._testDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
+        using var simpleStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, SessionId);
+        using var hierarchicalStore = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-coexist", "user-coexist", SessionId);
 
         // Add messages to both
         await simpleStore.AddMessagesAsync([new ChatMessage(ChatRole.User, "Simple partitioning message")]);

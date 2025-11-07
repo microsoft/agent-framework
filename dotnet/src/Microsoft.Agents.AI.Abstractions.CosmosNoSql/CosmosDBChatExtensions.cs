@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Azure.Cosmos;
 
 namespace Microsoft.Agents.AI;
@@ -20,6 +21,8 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static ChatClientAgentOptions WithCosmosDBMessageStore(
         this ChatClientAgentOptions options,
         string connectionString,
@@ -49,6 +52,8 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static ChatClientAgentOptions WithCosmosDBMessageStoreUsingManagedIdentity(
         this ChatClientAgentOptions options,
         string accountEndpoint,
@@ -78,6 +83,8 @@ public static class CosmosDBChatExtensions
     /// <returns>The configured <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="ArgumentNullException">Thrown when any required parameter is null.</exception>
     /// <exception cref="ArgumentException">Thrown when any string parameter is null or whitespace.</exception>
+    [RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
+    [RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
     public static ChatClientAgentOptions WithCosmosDBMessageStore(
         this ChatClientAgentOptions options,
         CosmosClient cosmosClient,

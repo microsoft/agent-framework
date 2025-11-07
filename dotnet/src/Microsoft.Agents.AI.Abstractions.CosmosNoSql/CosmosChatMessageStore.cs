@@ -17,6 +17,8 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides a Cosmos DB implementation of the <see cref="ChatMessageStore"/> abstract class.
 /// </summary>
+[RequiresUnreferencedCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with trimming.")]
+[RequiresDynamicCode("The CosmosChatMessageStore uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 {
     private readonly CosmosClient _cosmosClient;
@@ -38,8 +40,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// </summary>
     private static readonly JsonSerializerOptions s_defaultJsonOptions = CreateDefaultJsonOptions();
 
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "JSON serialization is controlled")]
-    [UnconditionalSuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling", Justification = "JSON serialization is controlled")]
     private static JsonSerializerOptions CreateDefaultJsonOptions()
     {
         var options = new JsonSerializerOptions();
@@ -504,7 +504,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning restore CA1513
 
         // Use type discriminator for efficient queries
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.Type = @type ORDER BY c.Timestamp ASC")
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type ORDER BY c.timestamp ASC")
             .WithParameter("@conversationId", this._conversationId)
             .WithParameter("@type", "ChatMessage");
 
@@ -814,22 +814,22 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         [Newtonsoft.Json.JsonProperty("conversationId")]
         public string ConversationId { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty(nameof(Timestamp))]
+        [Newtonsoft.Json.JsonProperty("timestamp")]
         public long Timestamp { get; set; }
 
-        [Newtonsoft.Json.JsonProperty(nameof(MessageId))]
+        [Newtonsoft.Json.JsonProperty("messageId")]
         public string MessageId { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty(nameof(Role))]
+        [Newtonsoft.Json.JsonProperty("role")]
         public string Role { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty(nameof(Message))]
+        [Newtonsoft.Json.JsonProperty("message")]
         public string Message { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty(nameof(Type))]
+        [Newtonsoft.Json.JsonProperty("type")]
         public string Type { get; set; } = string.Empty;
 
-        [Newtonsoft.Json.JsonProperty(nameof(Ttl))]
+        [Newtonsoft.Json.JsonProperty("ttl")]
         public int? Ttl { get; set; }
 
         /// <summary>

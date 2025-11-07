@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -16,6 +17,8 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// Provides a Cosmos DB implementation of the <see cref="JsonCheckpointStore"/> abstract class.
 /// </summary>
 /// <typeparam name="T">The type of objects to store as checkpoint values.</typeparam>
+[RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+[RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
 public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
 {
     private readonly CosmosClient _cosmosClient;
@@ -255,6 +258,8 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
 /// <summary>
 /// Provides a non-generic Cosmos DB implementation of the <see cref="JsonCheckpointStore"/> abstract class.
 /// </summary>
+[RequiresUnreferencedCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with trimming.")]
+[RequiresDynamicCode("The CosmosCheckpointStore uses JSON serialization which is incompatible with NativeAOT.")]
 public sealed class CosmosCheckpointStore : CosmosCheckpointStore<JsonElement>
 {
     /// <inheritdoc />

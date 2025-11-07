@@ -10,12 +10,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Abstractions.CosmosNoSql\Microsoft.Agents.AI.Abstractions.CosmosNoSql.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.Text.Json" />
     <PackageReference Include="System.Linq.Async" />
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" />
   </ItemGroup>
 
 </Project>
