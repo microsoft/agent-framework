@@ -1,9 +1,31 @@
 # Copyright (c) Microsoft. All rights reserved.
-
+import os
 from collections.abc import MutableMapping
-from typing import Any
+from typing import Any, TypeVar
 
+from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
+from powerfx import Engine
+
+engine = Engine()
+
+logger = get_logger("agent_framework.declarative")
+
+
+def _try_powerfx_eval(value: str | None) -> str | None:
+    """Check if a value refers to a environment variable and parse it if so."""
+    if not value or not value.startswith("="):
+        return value
+    try:
+        env = dict(os.environ)
+    except Exception as exc:
+        logger.info("Failed to get environment variables for PowerFx evaluation: %s", exc)
+        env = {}
+    try:
+        return engine.eval(value[1:], symbols={"Env": env})
+    except Exception as exc:
+        logger.info("PowerFx evaluation failed for value '%s': %s", value, exc)
+        return None
 
 
 class Binding(SerializationMixin):
@@ -11,11 +33,11 @@ class Binding(SerializationMixin):
 
     def __init__(
         self,
-        name: str = "",
-        input: str = "",
+        name: str | None = None,
+        input: str | None = None,
     ) -> None:
-        self.name = name
-        self.input = input
+        self.name = _try_powerfx_eval(name)
+        self.input = _try_powerfx_eval(input)
 
 
 class Property(SerializationMixin):
@@ -23,21 +45,21 @@ class Property(SerializationMixin):
 
     def __init__(
         self,
-        name: str = "",
-        kind: str = "",
+        name: str | None = None,
+        kind: str | None = None,
         description: str | None = None,
         required: bool | None = None,
         default: Any | None = None,
         example: Any | None = None,
-        enumValues: list[Any] | None = None,
+        enum: list[Any] | None = None,
     ) -> None:
-        self.name = name
-        self.kind = kind
-        self.description = description
+        self.name = _try_powerfx_eval(name)
+        self.kind = _try_powerfx_eval(kind)
+        self.description = _try_powerfx_eval(description)
         self.required = required
         self.default = default
         self.example = example
-        self.enumValues = enumValues or []
+        self.enum = enum or []
 
     @classmethod
     def from_dict(
@@ -48,6 +70,11 @@ class Property(SerializationMixin):
         if cls is not Property:
             # We're being called on a subclass, use the normal from_dict
             return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+
+        # Filter out 'type' field which is not a Property parameter
+        if "type" in value:
+            value = dict(value) if "enum" not in value else value  # Only copy if not already copied
+            value.pop("type", None)
 
         kind = value.get("kind", "")
         if kind == "array":
@@ -67,13 +94,13 @@ class ArrayProperty(Property):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "array",
         description: str | None = None,
         required: bool | None = None,
         default: Any | None = None,
         example: Any | None = None,
-        enumValues: list[Any] | None = None,
+        enum: list[Any] | None = None,
         items: Property | None = None,
     ) -> None:
         super().__init__(
@@ -83,7 +110,7 @@ class ArrayProperty(Property):
             required=required,
             default=default,
             example=example,
-            enumValues=enumValues,
+            enum=enum,
         )
         if not isinstance(items, Property) and items is not None:
             items = Property.from_dict(items)
@@ -95,14 +122,14 @@ class ObjectProperty(Property):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "object",
         description: str | None = None,
         required: bool | None = None,
         default: Any | None = None,
         example: Any | None = None,
-        enumValues: list[Any] | None = None,
-        properties: list[Property] | None = None,
+        enum: list[Any] | None = None,
+        properties: list[Property] | dict[str, Property] | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -111,13 +138,19 @@ class ObjectProperty(Property):
             required=required,
             default=default,
             example=example,
-            enumValues=enumValues,
+            enum=enum,
         )
-        converted_properties = []
-        for prop in properties or []:
-            if not isinstance(prop, Property):
-                prop = Property.from_dict(prop)
-            converted_properties.append(prop)
+        converted_properties: list[Property] = []
+        if isinstance(properties, list):
+            for prop in properties:
+                if not isinstance(prop, Property):
+                    prop = Property.from_dict(prop)
+                converted_properties.append(prop)
+        elif isinstance(properties, dict):
+            for k, v in properties.items():
+                temp_prop = {"name": k, **v}
+                prop = Property.from_dict(temp_prop)
+                converted_properties.append(prop)
         self.properties = converted_properties
 
 
@@ -128,15 +161,21 @@ class PropertySchema(SerializationMixin):
         self,
         examples: list[dict[str, Any]] | None = None,
         strict: bool = False,
-        properties: list[Property] | None = None,
+        properties: list[Property] | dict[str, Property] | None = None,
     ) -> None:
         self.examples = examples or []
         self.strict = strict
-        converted_properties = []
-        for prop in properties or []:
-            if not isinstance(prop, Property):
-                prop = Property.from_dict(prop)
-            converted_properties.append(prop)
+        converted_properties: list[Property] = []
+        if isinstance(properties, list):
+            for prop in properties:
+                if not isinstance(prop, Property):
+                    prop = Property.from_dict(prop)
+                converted_properties.append(prop)
+        elif isinstance(properties, dict):
+            for k, v in properties.items():
+                temp_prop = {"name": k, **v}
+                prop = Property.from_dict(temp_prop)
+                converted_properties.append(prop)
         self.properties = converted_properties
 
     @classmethod
@@ -144,8 +183,9 @@ class PropertySchema(SerializationMixin):
         cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
     ) -> "PropertySchema":
         """Create a PropertySchema instance from a dictionary, filtering out 'kind' field."""
-        # Filter out 'kind' and 'type' fields
-        kwargs = {k: v for k, v in value.items() if k not in ("type", "kind")}
+        # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
+        # but aren't PropertySchema params
+        kwargs = {k: v for k, v in value.items() if k not in ("type", "kind", "name", "description")}
         return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)  # type: ignore[misc]
 
 
@@ -154,13 +194,13 @@ class Connection(SerializationMixin):
 
     def __init__(
         self,
-        kind: str = "",
-        authenticationMode: str = "",
-        usageDescription: str = "",
+        kind: str | None = None,
+        authenticationMode: str | None = None,
+        usageDescription: str | None = None,
     ) -> None:
-        self.kind = kind
-        self.authenticationMode = authenticationMode
-        self.usageDescription = usageDescription
+        self.kind = _try_powerfx_eval(kind)
+        self.authenticationMode = _try_powerfx_eval(authenticationMode)
+        self.usageDescription = _try_powerfx_eval(usageDescription)
 
     @classmethod
     def from_dict(
@@ -198,18 +238,18 @@ class ReferenceConnection(Connection):
     def __init__(
         self,
         kind: str = "reference",
-        authenticationMode: str = "",
-        usageDescription: str = "",
-        name: str = "",
-        target: str = "",
+        authenticationMode: str | None = None,
+        usageDescription: str | None = None,
+        name: str | None = None,
+        target: str | None = None,
     ) -> None:
         super().__init__(
             kind=kind,
             authenticationMode=authenticationMode,
             usageDescription=usageDescription,
         )
-        self.name = name
-        self.target = target
+        self.name = _try_powerfx_eval(name)
+        self.target = _try_powerfx_eval(target)
 
 
 class RemoteConnection(Connection):
@@ -218,18 +258,18 @@ class RemoteConnection(Connection):
     def __init__(
         self,
         kind: str = "remote",
-        authenticationMode: str = "",
-        usageDescription: str = "",
-        name: str = "",
-        endpoint: str = "",
+        authenticationMode: str | None = None,
+        usageDescription: str | None = None,
+        name: str | None = None,
+        endpoint: str | None = None,
     ) -> None:
         super().__init__(
             kind=kind,
             authenticationMode=authenticationMode,
             usageDescription=usageDescription,
         )
-        self.name = name
-        self.endpoint = endpoint
+        self.name = _try_powerfx_eval(name)
+        self.endpoint = _try_powerfx_eval(endpoint)
 
 
 class ApiKeyConnection(Connection):
@@ -238,18 +278,20 @@ class ApiKeyConnection(Connection):
     def __init__(
         self,
         kind: str = "key",
-        authenticationMode: str = "",
-        usageDescription: str = "",
-        endpoint: str = "",
-        apiKey: str = "",
+        authenticationMode: str | None = None,
+        usageDescription: str | None = None,
+        endpoint: str | None = None,
+        apiKey: str | None = None,
+        key: str | None = None,
     ) -> None:
         super().__init__(
             kind=kind,
             authenticationMode=authenticationMode,
             usageDescription=usageDescription,
         )
-        self.endpoint = endpoint
-        self.apiKey = apiKey
+        self.endpoint = _try_powerfx_eval(endpoint)
+        # Support both 'apiKey' and 'key' fields, with 'key' taking precedence if both are provided
+        self.apiKey = _try_powerfx_eval(key if key else apiKey)
 
 
 class AnonymousConnection(Connection):
@@ -258,16 +300,16 @@ class AnonymousConnection(Connection):
     def __init__(
         self,
         kind: str = "anonymous",
-        authenticationMode: str = "",
-        usageDescription: str = "",
-        endpoint: str = "",
+        authenticationMode: str | None = None,
+        usageDescription: str | None = None,
+        endpoint: str | None = None,
     ) -> None:
         super().__init__(
             kind=kind,
             authenticationMode=authenticationMode,
             usageDescription=usageDescription,
         )
-        self.endpoint = endpoint
+        self.endpoint = _try_powerfx_eval(endpoint)
 
 
 class ModelOptions(SerializationMixin):
@@ -285,6 +327,7 @@ class ModelOptions(SerializationMixin):
         stopSequences: list[str] | None = None,
         allowMultipleToolCalls: bool | None = None,
         additionalProperties: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> None:
         self.frequencyPenalty = frequencyPenalty
         self.maxOutputTokens = maxOutputTokens
@@ -295,7 +338,9 @@ class ModelOptions(SerializationMixin):
         self.topP = topP
         self.stopSequences = stopSequences or []
         self.allowMultipleToolCalls = allowMultipleToolCalls
+        # Merge any additional properties from kwargs into additionalProperties
         self.additionalProperties = additionalProperties or {}
+        self.additionalProperties.update(kwargs)
 
 
 class Model(SerializationMixin):
@@ -303,15 +348,15 @@ class Model(SerializationMixin):
 
     def __init__(
         self,
-        id: str = "",
-        provider: str = "",
-        apiType: str = "",
+        id: str | None = None,
+        provider: str | None = None,
+        apiType: str | None = None,
         connection: Connection | None = None,
         options: ModelOptions | None = None,
     ) -> None:
-        self.id = id
-        self.provider = provider
-        self.apiType = apiType
+        self.id = _try_powerfx_eval(id)
+        self.provider = _try_powerfx_eval(provider)
+        self.apiType = _try_powerfx_eval(apiType)
         if not isinstance(connection, Connection) and connection is not None:
             connection = Connection.from_dict(connection)
         self.connection = connection
@@ -325,11 +370,11 @@ class Format(SerializationMixin):
 
     def __init__(
         self,
-        kind: str = "",
+        kind: str | None = None,
         strict: bool = False,
         options: dict[str, Any] | None = None,
     ) -> None:
-        self.kind = kind
+        self.kind = _try_powerfx_eval(kind)
         self.strict = strict
         self.options = options or {}
 
@@ -339,10 +384,10 @@ class Parser(SerializationMixin):
 
     def __init__(
         self,
-        kind: str = "",
+        kind: str | None = None,
         options: dict[str, Any] | None = None,
     ) -> None:
-        self.kind = kind
+        self.kind = _try_powerfx_eval(kind)
         self.options = options or {}
 
 
@@ -367,18 +412,18 @@ class AgentDefinition(SerializationMixin):
 
     def __init__(
         self,
-        kind: str = "",
-        name: str = "",
-        displayName: str = "",
-        description: str = "",
+        kind: str | None = None,
+        name: str | None = None,
+        displayName: str | None = None,
+        description: str | None = None,
         metadata: dict[str, Any] | None = None,
         inputSchema: PropertySchema | None = None,
         outputSchema: PropertySchema | None = None,
     ) -> None:
-        self.kind = kind
-        self.name = name
-        self.displayName = displayName
-        self.description = description
+        self.kind = _try_powerfx_eval(kind)
+        self.name = _try_powerfx_eval(name)
+        self.displayName = _try_powerfx_eval(displayName)
+        self.description = _try_powerfx_eval(description)
         self.metadata = metadata
         if not isinstance(inputSchema, PropertySchema) and inputSchema is not None:
             inputSchema = PropertySchema.from_dict(inputSchema)
@@ -406,25 +451,76 @@ class AgentDefinition(SerializationMixin):
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
 
 
+TTool = TypeVar("TTool", bound="Tool")
+
+
 class Tool(SerializationMixin):
     """Base class for tools."""
 
     def __init__(
         self,
-        name: str = "",
-        kind: str = "",
-        description: str = "",
-        bindings: list[Binding] | None = None,
+        name: str | None = None,
+        kind: str | None = None,
+        description: str | None = None,
+        bindings: list[Binding] | dict[str, Any] | None = None,
     ) -> None:
-        self.name = name
-        self.kind = kind
-        self.description = description
-        converted_bindings = []
-        for binding in bindings or []:
-            if not isinstance(binding, Binding):
-                binding = Binding.from_dict(binding)
-            converted_bindings.append(binding)
+        self.name = _try_powerfx_eval(name)
+        self.kind = _try_powerfx_eval(kind)
+        self.description = _try_powerfx_eval(description)
+        converted_bindings: list[Binding] = []
+        if isinstance(bindings, list):
+            for binding in bindings:
+                if not isinstance(binding, Binding):
+                    binding = Binding.from_dict(binding)
+                converted_bindings.append(binding)
+        elif isinstance(bindings, dict):
+            for k, v in bindings.items():
+                temp_binding = {"name": k, "input": v} if isinstance(v, str) else {"name": k, **v}
+                binding = Binding.from_dict(temp_binding)
+                converted_bindings.append(binding)
         self.bindings = converted_bindings
+
+    @classmethod
+    def from_dict(
+        cls: type[TTool], value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
+    ) -> "TTool":
+        """Create a Tool instance from a dictionary, dispatching to the appropriate subclass."""
+        # Only dispatch if we're being called on the base Tool class
+        if cls is not Tool:
+            # We're being called on a subclass, use the normal from_dict
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
+
+        kind = value.get("kind", "")
+        if kind == "function":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                FunctionTool, value, dependencies=dependencies
+            )
+        if kind == "custom":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                CustomTool, value, dependencies=dependencies
+            )
+        if kind == "web_search":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                WebSearchTool, value, dependencies=dependencies
+            )
+        if kind == "file_search":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                FileSearchTool, value, dependencies=dependencies
+            )
+        if kind == "mcp":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                McpTool, value, dependencies=dependencies
+            )
+        if kind == "openapi":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                OpenApiTool, value, dependencies=dependencies
+            )
+        if kind == "code_interpreter":
+            return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
+                CodeInterpreterTool, value, dependencies=dependencies
+            )
+        # Default to base Tool class
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
 
 
 class FunctionTool(Tool):
@@ -432,11 +528,11 @@ class FunctionTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "function",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
-        parameters: PropertySchema | None = None,
+        parameters: PropertySchema | list[Property] | None = None,
         strict: bool = False,
     ) -> None:
         super().__init__(
@@ -445,7 +541,10 @@ class FunctionTool(Tool):
             description=description,
             bindings=bindings,
         )
-        if not isinstance(parameters, PropertySchema) and parameters is not None:
+        if isinstance(parameters, (list, dict)):
+            # If parameters is a list, wrap it in a PropertySchema
+            parameters = PropertySchema(properties=parameters)
+        elif not isinstance(parameters, PropertySchema) and parameters is not None:
             parameters = PropertySchema.from_dict(parameters)
         self.parameters = parameters
         self.strict = strict
@@ -456,9 +555,9 @@ class CustomTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "custom",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         connection: Connection | None = None,
         options: dict[str, Any] | None = None,
@@ -480,9 +579,9 @@ class WebSearchTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "web_search",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         connection: Connection | None = None,
         options: dict[str, Any] | None = None,
@@ -504,9 +603,9 @@ class FileSearchTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "file_search",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         connection: Connection | None = None,
         vectorStoreIds: list[str] | None = None,
@@ -526,7 +625,7 @@ class FileSearchTool(Tool):
         self.connection = connection
         self.vectorStoreIds = vectorStoreIds or []
         self.maximumResultCount = maximumResultCount
-        self.ranker = ranker
+        self.ranker = _try_powerfx_eval(ranker)
         self.scoreThreshold = scoreThreshold
         self.filters = filters or {}
 
@@ -536,9 +635,9 @@ class McpServerApprovalMode(SerializationMixin):
 
     def __init__(
         self,
-        kind: str = "",
+        kind: str | None = None,
     ) -> None:
-        self.kind = kind
+        self.kind = _try_powerfx_eval(kind)
 
 
 class McpServerToolAlwaysRequireApprovalMode(McpServerApprovalMode):
@@ -571,8 +670,8 @@ class McpServerToolSpecifyApprovalMode(McpServerApprovalMode):
         neverRequireApprovalTools: list[str] | None = None,
     ) -> None:
         super().__init__(kind=kind)
-        self.alwaysRequireApprovalTools = alwaysRequireApprovalTools or []
-        self.neverRequireApprovalTools = neverRequireApprovalTools or []
+        self.alwaysRequireApprovalTools = alwaysRequireApprovalTools
+        self.neverRequireApprovalTools = neverRequireApprovalTools
 
 
 class McpTool(Tool):
@@ -580,15 +679,16 @@ class McpTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "mcp",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         connection: Connection | None = None,
-        serverName: str = "",
-        serverDescription: str = "",
+        serverName: str | None = None,
+        serverDescription: str | None = None,
         approvalMode: McpServerApprovalMode | None = None,
         allowedTools: list[str] | None = None,
+        url: str | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -599,12 +699,17 @@ class McpTool(Tool):
         if not isinstance(connection, Connection) and connection is not None:
             connection = Connection.from_dict(connection)
         self.connection = connection
-        self.serverName = serverName
-        self.serverDescription = serverDescription
+        self.serverName = _try_powerfx_eval(serverName)
+        self.serverDescription = _try_powerfx_eval(serverDescription)
         if not isinstance(approvalMode, McpServerApprovalMode) and approvalMode is not None:
-            approvalMode = McpServerApprovalMode.from_dict(approvalMode)
+            # Handle simplified string format: "always" -> {"kind": "always"}
+            if isinstance(approvalMode, str):
+                approvalMode = McpServerApprovalMode.from_dict({"kind": approvalMode})
+            else:
+                approvalMode = McpServerApprovalMode.from_dict(approvalMode)
         self.approvalMode = approvalMode
         self.allowedTools = allowedTools or []
+        self.url = _try_powerfx_eval(url)
 
 
 class OpenApiTool(Tool):
@@ -612,12 +717,12 @@ class OpenApiTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "openapi",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         connection: Connection | None = None,
-        specification: str = "",
+        specification: str | None = None,
     ) -> None:
         super().__init__(
             name=name,
@@ -628,7 +733,7 @@ class OpenApiTool(Tool):
         if not isinstance(connection, Connection) and connection is not None:
             connection = Connection.from_dict(connection)
         self.connection = connection
-        self.specification = specification
+        self.specification = _try_powerfx_eval(specification)
 
 
 class CodeInterpreterTool(Tool):
@@ -636,9 +741,9 @@ class CodeInterpreterTool(Tool):
 
     def __init__(
         self,
-        name: str = "",
+        name: str | None = None,
         kind: str = "code_interpreter",
-        description: str = "",
+        description: str | None = None,
         bindings: list[Binding] | None = None,
         fileIds: list[str] | None = None,
     ) -> None:
@@ -657,17 +762,17 @@ class PromptAgent(AgentDefinition):
     def __init__(
         self,
         kind: str = "Prompt",
-        name: str = "",
-        displayName: str = "",
-        description: str = "",
+        name: str | None = None,
+        displayName: str | None = None,
+        description: str | None = None,
         metadata: dict[str, Any] | None = None,
         inputSchema: PropertySchema | None = None,
         outputSchema: PropertySchema | None = None,
-        model: Model | None = None,
+        model: Model | dict[str, Any] | None = None,
         tools: list[Tool] | None = None,
-        template: Template | None = None,
-        instructions: str = "",
-        additionalInstructions: str = "",
+        template: Template | dict[str, Any] | None = None,
+        instructions: str | None = None,
+        additionalInstructions: str | None = None,
     ) -> None:
         super().__init__(
             kind=kind,
@@ -681,7 +786,7 @@ class PromptAgent(AgentDefinition):
         if not isinstance(model, Model) and model is not None:
             model = Model.from_dict(model)
         self.model = model
-        converted_tools = []
+        converted_tools: list[Tool] = []
         for tool in tools or []:
             if not isinstance(tool, Tool):
                 tool = Tool.from_dict(tool)
@@ -690,8 +795,8 @@ class PromptAgent(AgentDefinition):
         if not isinstance(template, Template) and template is not None:
             template = Template.from_dict(template)
         self.template = template
-        self.instructions = instructions
-        self.additionalInstructions = additionalInstructions
+        self.instructions = _try_powerfx_eval(instructions)
+        self.additionalInstructions = _try_powerfx_eval(additionalInstructions)
 
 
 class Resource(SerializationMixin):
@@ -699,11 +804,11 @@ class Resource(SerializationMixin):
 
     def __init__(
         self,
-        name: str = "",
-        kind: str = "",
+        name: str | None = None,
+        kind: str | None = None,
     ) -> None:
-        self.name = name
-        self.kind = kind
+        self.name = _try_powerfx_eval(name)
+        self.kind = _try_powerfx_eval(kind)
 
     @classmethod
     def from_dict(
@@ -733,11 +838,11 @@ class ModelResource(Resource):
     def __init__(
         self,
         kind: str = "model",
-        name: str = "",
-        id: str = "",
+        name: str | None = None,
+        id: str | None = None,
     ) -> None:
         super().__init__(kind=kind, name=name)
-        self.id = id
+        self.id = _try_powerfx_eval(id)
 
 
 class ToolResource(Resource):
@@ -746,12 +851,12 @@ class ToolResource(Resource):
     def __init__(
         self,
         kind: str = "tool",
-        name: str = "",
-        id: str = "",
+        name: str | None = None,
+        id: str | None = None,
         options: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(kind=kind, name=name)
-        self.id = id
+        self.id = _try_powerfx_eval(id)
         self.options = options or {}
 
 
@@ -760,11 +865,11 @@ class ProtocolVersionRecord(SerializationMixin):
 
     def __init__(
         self,
-        protocol: str = "",
-        version: str = "",
+        protocol: str | None = None,
+        version: str | None = None,
     ) -> None:
-        self.protocol = protocol
-        self.version = version
+        self.protocol = _try_powerfx_eval(protocol)
+        self.version = _try_powerfx_eval(version)
 
 
 class EnvironmentVariable(SerializationMixin):
@@ -772,11 +877,11 @@ class EnvironmentVariable(SerializationMixin):
 
     def __init__(
         self,
-        name: str = "",
-        value: str = "",
+        name: str | None = None,
+        value: str | None = None,
     ) -> None:
-        self.name = name
-        self.value = value
+        self.name = _try_powerfx_eval(name)
+        self.value = _try_powerfx_eval(value)
 
 
 class AgentManifest(SerializationMixin):
@@ -784,17 +889,17 @@ class AgentManifest(SerializationMixin):
 
     def __init__(
         self,
-        name: str = "",
-        displayName: str = "",
-        description: str = "",
+        name: str | None = None,
+        displayName: str | None = None,
+        description: str | None = None,
         metadata: dict[str, Any] | None = None,
         template: AgentDefinition | None = None,
         parameters: PropertySchema | None = None,
-        resources: list[Resource] | None = None,
+        resources: list[Resource] | dict[str, Any] | None = None,
     ) -> None:
-        self.name = name
-        self.displayName = displayName
-        self.description = description
+        self.name = _try_powerfx_eval(name)
+        self.displayName = _try_powerfx_eval(displayName)
+        self.description = _try_powerfx_eval(description)
         self.metadata = metadata or {}
         if not isinstance(template, AgentDefinition) and template is not None:
             template = AgentDefinition.from_dict(template)
@@ -802,9 +907,15 @@ class AgentManifest(SerializationMixin):
         if not isinstance(parameters, PropertySchema) and parameters is not None:
             parameters = PropertySchema.from_dict(parameters)
         self.parameters = parameters or PropertySchema()
-        converted_resources = []
-        for resource in resources or []:
-            if not isinstance(resource, Resource):
-                resource = Resource.from_dict(resource)
-            converted_resources.append(resource)
+        converted_resources: list[Resource] = []
+        if isinstance(resources, list):
+            for resource in resources:
+                if not isinstance(resource, Resource):
+                    resource = Resource.from_dict(resource)
+                converted_resources.append(resource)
+        elif isinstance(resources, dict):
+            for k, v in resources.items():
+                temp_resource = {"name": k, **v}
+                resource = Resource.from_dict(temp_resource)
+                converted_resources.append(resource)
         self.resources = converted_resources

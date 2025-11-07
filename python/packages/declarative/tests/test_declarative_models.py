@@ -37,6 +37,7 @@ from agent_framework_declarative._models import (
     Template,
     ToolResource,
     WebSearchTool,
+    _try_powerfx_eval,
 )
 
 
@@ -151,6 +152,31 @@ class TestObjectProperty:
         assert len(obj_prop.properties) == 2
         assert all(isinstance(p, Property) for p in obj_prop.properties)
 
+    def test_object_property_with_dict_properties(self):
+        """Test ObjectProperty with dict format for properties (MAML YAML dict syntax)."""
+        data = {
+            "name": "person",
+            "kind": "object",
+            "properties": {
+                "name": {"kind": "string", "required": True},
+                "email": {"kind": "string"},
+                "age": {"kind": "integer"},
+            },
+        }
+        obj_prop = ObjectProperty.from_dict(data)
+        assert obj_prop.name == "person"
+        assert obj_prop.kind == "object"
+        assert len(obj_prop.properties) == 3
+
+        # Check that all properties were converted correctly
+        prop_names = {p.name for p in obj_prop.properties}
+        assert prop_names == {"name", "email", "age"}
+
+        # Check specific property
+        name_prop = next(p for p in obj_prop.properties if p.name == "name")
+        assert name_prop.kind == "string"
+        assert name_prop.required is True
+
 
 class TestPropertySchema:
     """Tests for PropertySchema class."""
@@ -173,6 +199,29 @@ class TestPropertySchema:
         assert isinstance(schema.properties[0], Property)
         assert schema.properties[0].name == "prop1"
         assert schema.properties[0].kind == "string"
+
+    def test_property_schema_with_dict_properties(self):
+        """Test PropertySchema with dict format for properties (MAML YAML dict syntax)."""
+        data = {
+            "strict": True,
+            "properties": {
+                "firstName": {"kind": "string", "description": "First name"},
+                "lastName": {"kind": "string", "description": "Last name"},
+                "age": {"kind": "integer", "required": True},
+            },
+        }
+        schema = PropertySchema.from_dict(data)
+        assert schema.strict is True
+        assert len(schema.properties) == 3
+
+        # Check that all properties were converted correctly
+        prop_names = {p.name for p in schema.properties}
+        assert prop_names == {"firstName", "lastName", "age"}
+
+        # Check specific property details
+        age_prop = next(p for p in schema.properties if p.name == "age")
+        assert age_prop.kind == "integer"
+        assert age_prop.required is True
 
 
 class TestConnection:
@@ -389,6 +438,30 @@ class TestFunctionTool:
         assert tool.kind == "function"
         assert isinstance(tool.parameters, PropertySchema)
 
+    def test_function_tool_with_dict_bindings(self):
+        """Test FunctionTool with dict format for bindings (MAML YAML dict syntax)."""
+        data = {
+            "name": "calculate",
+            "kind": "function",
+            "description": "Calculate something",
+            "bindings": {
+                "x": "input.x",
+                "y": "input.y",
+                "operation": "input.op",
+            },
+        }
+        tool = FunctionTool.from_dict(data)
+        assert tool.name == "calculate"
+        assert len(tool.bindings) == 3
+
+        # Check that all bindings were converted correctly
+        binding_names = {b.name for b in tool.bindings}
+        assert binding_names == {"x", "y", "operation"}
+
+        # Check specific binding
+        x_binding = next(b for b in tool.bindings if b.name == "x")
+        assert x_binding.input == "input.x"
+
 
 class TestCustomTool:
     """Tests for CustomTool class."""
@@ -538,6 +611,44 @@ class TestMcpTool:
         assert tool.name == "mcp_tool"
         assert tool.kind == "mcp"
         assert isinstance(tool.approvalMode, McpServerApprovalMode)
+
+    def test_mcp_tool_with_simplified_approval_mode(self):
+        """Test McpTool with simplified string format for approvalMode."""
+        # Test simplified string format: approvalMode: "always"
+        data = {
+            "name": "mcp_tool",
+            "description": "An MCP tool",
+            "kind": "mcp",
+            "serverName": "test-server",
+            "approvalMode": "always",
+        }
+        tool = McpTool.from_dict(data)
+        assert tool.name == "mcp_tool"
+        assert tool.kind == "mcp"
+        assert isinstance(tool.approvalMode, McpServerApprovalMode)
+        assert tool.approvalMode.kind == "always"
+
+    def test_mcp_tool_approval_mode_equivalence(self):
+        """Test that simplified and full format produce equivalent results."""
+        # Simplified format
+        data_simplified = {
+            "name": "mcp_tool",
+            "kind": "mcp",
+            "approvalMode": "never",
+        }
+        tool_simplified = McpTool.from_dict(data_simplified)
+
+        # Full format
+        data_full = {
+            "name": "mcp_tool",
+            "kind": "mcp",
+            "approvalMode": {"kind": "never"},
+        }
+        tool_full = McpTool.from_dict(data_full)
+
+        # Both should produce the same result
+        assert tool_simplified.approvalMode.kind == tool_full.approvalMode.kind
+        assert tool_simplified.approvalMode.kind == "never"
 
 
 class TestOpenApiTool:
@@ -722,6 +833,140 @@ class TestEnvironmentVariable:
         assert env_var.value == "secret123"
 
 
+class TestTryPowerfxEval:
+    """Tests for _try_powerfx_eval function."""
+
+    def test_no_evaluation_without_equals_prefix(self):
+        """Test that strings without '=' prefix are returned as-is."""
+        assert _try_powerfx_eval("hello") == "hello"
+        assert _try_powerfx_eval("test value") == "test value"
+        assert _try_powerfx_eval("123") == "123"
+
+    def test_none_value_returns_none(self):
+        """Test that None values are returned as None."""
+        assert _try_powerfx_eval(None) is None
+
+    def test_empty_string_returns_empty(self):
+        """Test that empty strings are returned as empty."""
+        assert _try_powerfx_eval("") == ""
+
+    def test_simple_powerfx_expressions(self):
+        """Test simple PowerFx expressions."""
+        from decimal import Decimal
+
+        # Simple math - returns Decimal
+        assert _try_powerfx_eval("=1 + 2") == Decimal("3")
+        assert _try_powerfx_eval("=10 * 5") == Decimal("50")
+
+        # String literals
+        assert _try_powerfx_eval('="hello"') == "hello"
+        assert _try_powerfx_eval('="test value"') == "test value"
+
+    def test_env_variable_access(self, monkeypatch):
+        """Test accessing environment variables using =Env.<name> pattern."""
+        # Set up test environment variables
+        monkeypatch.setenv("TEST_VAR", "test_value")
+        monkeypatch.setenv("API_KEY", "secret123")
+        monkeypatch.setenv("PORT", "8080")
+
+        # Test basic env access
+        assert _try_powerfx_eval("=Env.TEST_VAR") == "test_value"
+        assert _try_powerfx_eval("=Env.API_KEY") == "secret123"
+        assert _try_powerfx_eval("=Env.PORT") == "8080"
+
+    def test_env_variable_with_string_concatenation(self, monkeypatch):
+        """Test env variables with string concatenation operator."""
+        monkeypatch.setenv("BASE_URL", "https://api.example.com")
+        monkeypatch.setenv("API_VERSION", "v1")
+
+        # Test concatenation with &
+        result = _try_powerfx_eval('=Env.BASE_URL & "/" & Env.API_VERSION')
+        assert result == "https://api.example.com/v1"
+
+        # Test concatenation with literals
+        result = _try_powerfx_eval('="API Key: " & Env.API_VERSION')
+        assert result == "API Key: v1"
+
+    def test_string_comparison_operators(self, monkeypatch):
+        """Test PowerFx string comparison operators."""
+        monkeypatch.setenv("ENV_MODE", "production")
+
+        # Equal to - returns bool
+        assert _try_powerfx_eval('=Env.ENV_MODE = "production"') is True
+        assert _try_powerfx_eval('=Env.ENV_MODE = "development"') is False
+
+        # Not equal to - returns bool
+        assert _try_powerfx_eval('=Env.ENV_MODE <> "development"') is True
+        assert _try_powerfx_eval('=Env.ENV_MODE <> "production"') is False
+
+    def test_string_in_operator(self):
+        """Test PowerFx 'in' operator for substring testing (case-insensitive)."""
+        # Substring test - case insensitive - returns bool
+        assert _try_powerfx_eval('="the" in "The keyboard and the monitor"') is True
+        assert _try_powerfx_eval('="THE" in "The keyboard and the monitor"') is True
+        assert _try_powerfx_eval('="xyz" in "The keyboard and the monitor"') is False
+
+    def test_string_exactin_operator(self):
+        """Test PowerFx 'exactin' operator for substring testing (case-sensitive)."""
+        # Substring test - case sensitive - returns bool
+        assert _try_powerfx_eval('="Windows" exactin "To display windows in the Windows operating system"') is True
+        assert _try_powerfx_eval('="windows" exactin "To display windows in the Windows operating system"') is True
+        assert _try_powerfx_eval('="WINDOWS" exactin "To display windows in the Windows operating system"') is False
+
+    def test_logical_operators_with_strings(self):
+        """Test PowerFx logical operators (And, Or, Not) with string comparisons."""
+        # And operator - returns bool
+        assert _try_powerfx_eval('="a" = "a" And "b" = "b"') is True
+        assert _try_powerfx_eval('="a" = "a" And "b" = "c"') is False
+
+        # && operator (alternative syntax) - returns bool
+        assert _try_powerfx_eval('="a" = "a" && "b" = "b"') is True
+
+        # Or operator - returns bool
+        assert _try_powerfx_eval('="a" = "b" Or "c" = "c"') is True
+        assert _try_powerfx_eval('="a" = "b" Or "c" = "d"') is False
+
+        # || operator (alternative syntax) - returns bool
+        assert _try_powerfx_eval('="a" = "b" || "c" = "c"') is True
+
+        # Not operator - returns bool
+        assert _try_powerfx_eval('=Not("a" = "b")') is True
+        assert _try_powerfx_eval('=Not("a" = "a")') is False
+
+        # ! operator (alternative syntax) - returns bool
+        assert _try_powerfx_eval('=!("a" = "b")') is True
+
+    def test_invalid_expressions_return_none(self):
+        """Test that invalid PowerFx expressions return None."""
+        # Syntax errors should return None
+        assert _try_powerfx_eval("=invalid syntax !!!") is None
+        assert _try_powerfx_eval("=Env.NONEXISTENT_VAR") is None
+        assert _try_powerfx_eval("=1 / 0") is None  # Division by zero
+
+    def test_parentheses_for_precedence(self):
+        """Test using parentheses to control operator precedence."""
+        from decimal import Decimal
+
+        # Test arithmetic precedence - returns Decimal
+        assert _try_powerfx_eval("=(1 + 2) * 3") == Decimal("9")
+        assert _try_powerfx_eval("=1 + 2 * 3") == Decimal("7")
+
+        # Test logical precedence - returns bool
+        result = _try_powerfx_eval('=("a" = "a" Or "b" = "c") And "d" = "d"')
+        assert result is True
+
+    def test_env_with_special_characters(self, monkeypatch):
+        """Test env variables containing special characters in values."""
+        monkeypatch.setenv("URL_WITH_QUERY", "https://example.com?param=value")
+        monkeypatch.setenv("PATH_WITH_SPACES", "C:\\Program Files\\App")
+
+        result = _try_powerfx_eval("=Env.URL_WITH_QUERY")
+        assert result == "https://example.com?param=value"
+
+        result = _try_powerfx_eval("=Env.PATH_WITH_SPACES")
+        assert result == "C:\\Program Files\\App"
+
+
 class TestAgentManifest:
     """Tests for AgentManifest class."""
 
@@ -776,3 +1021,31 @@ class TestAgentManifest:
         assert isinstance(manifest.template, AgentDefinition)
         assert len(manifest.resources) == 1
         assert isinstance(manifest.resources[0], ModelResource)
+
+    def test_agent_manifest_with_dict_resources(self):
+        """Test AgentManifest with dict format for resources (MAML YAML dict syntax)."""
+        data = {
+            "name": "manifest-with-dict-resources",
+            "description": "Test manifest with dict resources",
+            "resources": {
+                "gptModelDeployment": {"kind": "model", "id": "gpt-4o"},
+                "webSearchInstance": {"kind": "tool", "id": "web-search"},
+                "analyticsTool": {"kind": "tool", "id": "analytics"},
+            },
+        }
+        manifest = AgentManifest.from_dict(data)
+        assert manifest.name == "manifest-with-dict-resources"
+        assert len(manifest.resources) == 3
+
+        # Check that all resources were converted correctly
+        resource_names = {r.name for r in manifest.resources}
+        assert resource_names == {"gptModelDeployment", "webSearchInstance", "analyticsTool"}
+
+        # Check specific resource
+        gpt_resource = next(r for r in manifest.resources if r.name == "gptModelDeployment")
+        assert isinstance(gpt_resource, ModelResource)
+        assert gpt_resource.id == "gpt-4o"
+
+        web_resource = next(r for r in manifest.resources if r.name == "webSearchInstance")
+        assert isinstance(web_resource, ToolResource)
+        assert web_resource.id == "web-search"

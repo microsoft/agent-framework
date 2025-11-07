@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import pytest
-from agent_framework_declarative._agent_factory import load_maml
+from pathlib import Path
 
+import pytest
+
+from agent_framework_declarative._loader import load_maml
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -420,3 +422,37 @@ properties:
     assert result.properties[0].kind == "property"
     assert result.properties[1].kind == "object"
     assert result.properties[2].kind == "array"
+
+
+def test_load_maml_agent_samples():
+    """Test that load_maml successfully loads all YAML files from agent-samples directory."""
+    # Find agent-samples directory (should be at repo root level, parallel to python/)
+    current_file = Path(__file__)
+    repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
+    agent_samples_dir = repo_root.parent / "agent-samples"
+
+    # Skip test if agent-samples directory doesn't exist
+    if not agent_samples_dir.exists():
+        pytest.skip(f"agent-samples directory not found at {agent_samples_dir}")
+
+    # Find all YAML files in agent-samples directory
+    yaml_files = list(agent_samples_dir.rglob("*.yaml")) + list(agent_samples_dir.rglob("*.yml"))
+
+    assert len(yaml_files) > 0, f"No YAML files found in {agent_samples_dir}"
+
+    # Test each YAML file
+    errors = []
+    for yaml_file in yaml_files:
+        try:
+            with open(yaml_file) as f:
+                content = f.read()
+            result = load_maml(content)
+            # Result can be None for unknown kinds, but should not raise exceptions
+            assert result is not None, f"load_maml returned None for {yaml_file.relative_to(agent_samples_dir)}"
+        except Exception as e:
+            errors.append(f"{yaml_file.relative_to(agent_samples_dir)}: {e}")
+
+    # Report all errors at once
+    if errors:
+        error_msg = "\n".join(errors)
+        pytest.fail(f"Failed to load {len(errors)} out of {len(yaml_files)} YAML files:\n{error_msg}")
