@@ -39,15 +39,45 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     }
 
     /// <inheritdoc/>
+    public ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        CancellationToken cancellationToken = default)
+    {
+        // Extract agent name from agent.name or model parameter
+        string? agentName = GetAgentName(request);
+
+        if (string.IsNullOrEmpty(agentName))
+        {
+            return ValueTask.FromResult<ResponseError?>(new ResponseError
+            {
+                Code = "missing_required_parameter",
+                Message = "No 'agent.name' or 'model' specified in the request."
+            });
+        }
+
+        // Validate that the agent can be resolved
+        AIAgent? agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
+        if (agent is null)
+        {
+            this._logger.LogWarning("Failed to resolve agent with name '{AgentName}'", agentName);
+            return ValueTask.FromResult<ResponseError?>(new ResponseError
+            {
+                Code = "agent_not_found",
+                Message = $"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent()."
+            });
+        }
+
+        return ValueTask.FromResult<ResponseError?>(null);
+    }
+
+    /// <inheritdoc/>
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Validate and resolve agent synchronously to ensure validation errors are thrown immediately
-        AIAgent agent = this.ResolveAgent(request);
-
-        // Create options with properties from the request
+        string agentName = GetAgentName(request)!;
+        AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
         var chatOptions = new ChatOptions
         {
             ConversationId = request.Conversation?.Id,
@@ -58,8 +88,6 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             ModelId = request.Model,
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
-
-        // Convert input to chat messages
         var messages = new List<ChatMessage>();
 
         foreach (var inputMessage in request.Input.GetInputMessages())
@@ -67,7 +95,6 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             messages.Add(inputMessage.ToChatMessage());
         }
 
-        // Use the extension method to convert streaming updates to streaming response events
         await foreach (var streamingEvent in agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
             .ToStreamingResponseAsync(request, context, cancellationToken).ConfigureAwait(false))
         {
@@ -76,15 +103,12 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     }
 
     /// <summary>
-    /// Resolves an agent from the service provider based on the request.
-    /// Checks agent.name first, then metadata["entity_id"].
+    /// Extracts the agent name for a request from the agent.name property, falling back to metadata["entity_id"].
     /// </summary>
     /// <param name="request">The create response request.</param>
-    /// <returns>The resolved AIAgent instance.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the agent cannot be resolved.</exception>
-    private AIAgent ResolveAgent(CreateResponse request)
+    /// <returns>The agent name.</returns>
+    private static string? GetAgentName(CreateResponse request)
     {
-        // Extract agent name from agent.name first (highest priority)
         string? agentName = request.Agent?.Name;
 
         // Fall back to metadata["entity_id"] if agent.name is not present
@@ -93,33 +117,6 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             agentName = entityId;
         }
 
-        // Never use model field for entity ID - it's for the actual model name
-        if (string.IsNullOrEmpty(agentName))
-        {
-            throw new InvalidOperationException("No 'agent.name' or 'metadata.entity_id' specified in the request.");
-        }
-
-        // Resolve the keyed agent service
-        try
-        {
-            return this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        }
-        catch (InvalidOperationException ex)
-        {
-            this._logger.LogError(ex, "Failed to resolve agent with name '{AgentName}'", agentName);
-            throw new InvalidOperationException($"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent().", ex);
-        }
-    }
-
-    /// <summary>
-    /// Validates that the agent can be resolved without actually resolving it.
-    /// This allows early validation before starting async execution.
-    /// </summary>
-    /// <param name="request">The create response request.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the agent cannot be resolved.</exception>
-    public void ValidateAgent(CreateResponse request)
-    {
-        // Use the same logic as ResolveAgent but don't return the agent
-        _ = this.ResolveAgent(request);
+        return agentName;
     }
 }

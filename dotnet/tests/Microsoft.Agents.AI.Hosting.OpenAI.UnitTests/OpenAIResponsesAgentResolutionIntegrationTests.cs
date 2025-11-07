@@ -235,7 +235,7 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         using HttpResponseMessage httpResponse = await this._httpClient!.PostAsync(new Uri("/v1/responses", UriKind.Relative), requestContent);
 
         // Assert
-        Assert.Equal(System.Net.HttpStatusCode.NotFound, httpResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
         Assert.Contains("non-existent-agent", responseJson);

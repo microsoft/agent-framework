@@ -64,7 +64,7 @@ internal static class AgentRunResponseExtensions
             PromptCacheKey = request.PromptCacheKey,
             Reasoning = request.Reasoning,
             SafetyIdentifier = request.SafetyIdentifier,
-            ServiceTier = request.ServiceTier ?? "default",
+            ServiceTier = request.ServiceTier,
             Status = ResponseStatus.Completed,
             Store = request.Store ?? true,
             Temperature = request.Temperature ?? 1.0,

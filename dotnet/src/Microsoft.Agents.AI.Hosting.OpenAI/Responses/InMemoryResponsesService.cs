@@ -147,18 +147,27 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         this._conversationStorage = conversationStorage;
     }
 
+    public async ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Conversation is not null && !string.IsNullOrEmpty(request.Conversation.Id) &&
+            !string.IsNullOrEmpty(request.PreviousResponseId))
+        {
+            return new ResponseError
+            {
+                Code = "invalid_request",
+                Message = "Mutually exclusive parameters: 'conversation' and 'previous_response_id'. Ensure you are only providing one of: 'previous_response_id' or 'conversation'."
+            };
+        }
+
+        return await this._executor.ValidateRequestAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<Response> CreateResponseAsync(
         CreateResponse request,
         CancellationToken cancellationToken = default)
     {
-        ValidateRequest(request);
-
-        // Validate agent resolution early for HostedAgentResponseExecutor
-        if (this._executor is HostedAgentResponseExecutor hostedExecutor)
-        {
-            hostedExecutor.ValidateAgent(request);
-        }
-
         if (request.Stream == true)
         {
             throw new InvalidOperationException("Cannot create a streaming response using CreateResponseAsync. Use CreateResponseStreamingAsync instead.");
@@ -189,8 +198,6 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         CreateResponse request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ValidateRequest(request);
-
         if (request.Stream == false)
         {
             throw new InvalidOperationException("Cannot create a non-streaming response using CreateResponseStreamingAsync. Use CreateResponseAsync instead.");
@@ -340,15 +347,6 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             LastId = result.LastOrDefault()?.Id,
             HasMore = hasMore
         });
-    }
-
-    private static void ValidateRequest(CreateResponse request)
-    {
-        if (request.Conversation is not null && !string.IsNullOrEmpty(request.Conversation.Id) &&
-            !string.IsNullOrEmpty(request.PreviousResponseId))
-        {
-            throw new InvalidOperationException("Mutually exclusive parameters: 'conversation' and 'previous_response_id'. Ensure you are only providing one of: 'previous_response_id' or 'conversation'.");
-        }
     }
 
     private ResponseState InitializeResponse(string responseId, CreateResponse request)
