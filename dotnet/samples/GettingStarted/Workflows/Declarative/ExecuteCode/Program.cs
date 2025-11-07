@@ -2,13 +2,11 @@
 
 using System.Diagnostics;
 using System.Reflection;
-using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using Test.WorkflowProviders;
 
 namespace Demo.DeclarativeCode;
 
@@ -32,7 +30,7 @@ internal sealed class Program
     {
         // Use DeclarativeWorkflowBuilder to build a workflow based on a YAML file.
         DeclarativeWorkflowOptions options =
-            new(new AzureAgentProvider(this.FoundryEndpoint, new AzureCliCredential()))
+            new(new AzureAgentProvider(new Uri(this.FoundryEndpoint), new AzureCliCredential()))
             {
                 Configuration = this.Configuration
             };
