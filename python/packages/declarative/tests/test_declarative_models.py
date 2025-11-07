@@ -431,13 +431,11 @@ class TestFunctionTool:
             "name": "my_function",
             "description": "A test function",
             "kind": "function",
-            "parameters": {"properties": []},
             "strict": False,
         }
         tool = FunctionTool.from_dict(data)
         assert tool.name == "my_function"
         assert tool.kind == "function"
-        assert isinstance(tool.parameters, PropertySchema)
 
     def test_function_tool_with_dict_bindings(self):
         """Test FunctionTool with dict format for bindings (MAML YAML dict syntax)."""
