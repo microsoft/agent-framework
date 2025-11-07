@@ -38,13 +38,73 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     }
 
     /// <inheritdoc/>
+    public ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        CancellationToken cancellationToken = default)
+    {
+        // Extract agent name from agent.name or model parameter
+        string? agentName = request.Agent?.Name ?? request.Model;
+
+        if (string.IsNullOrEmpty(agentName))
+        {
+            return ValueTask.FromResult<ResponseError?>(new ResponseError
+            {
+                Code = "missing_required_parameter",
+                Message = "No 'agent.name' or 'model' specified in the request."
+            });
+        }
+
+        // Validate that the agent can be resolved
+        AIAgent? agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
+        if (agent is null)
+        {
+            this._logger.LogWarning("Failed to resolve agent with name '{AgentName}'", agentName);
+            return ValueTask.FromResult<ResponseError?>(new ResponseError
+            {
+                Code = "agent_not_found",
+                Message = $"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent()."
+            });
+        }
+
+        return ValueTask.FromResult<ResponseError?>(null);
+    }
+
+    /// <inheritdoc/>
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Extract agent name from agent.name or model parameter
+        string? model;
+        if (request.Agent?.Name is { } agentName)
+        {
+            model = request.Model;
+        }
+        else
+        {
+            // If the model is being used for the agent name, do not also use it for the model.
+            agentName = request.Model;
+            model = null;
+        }
+
+        if (string.IsNullOrEmpty(agentName))
+        {
+            throw new InvalidOperationException("No 'agent.name' or 'model' specified in the request.");
+        }
+
         // Validate and resolve agent synchronously to ensure validation errors are thrown immediately
-        AIAgent agent = this.ResolveAgent(request);
+        AIAgent agent;
+        try
+        {
+            // Resolve the keyed agent service
+            agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            this._logger.LogError(ex, "Failed to resolve agent with name '{AgentName}'", agentName);
+            throw new InvalidOperationException($"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent().", ex);
+        }
 
         // Create options with properties from the request
         var chatOptions = new ChatOptions
@@ -54,7 +114,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             TopP = (float?)request.TopP,
             MaxOutputTokens = request.MaxOutputTokens,
             Instructions = request.Instructions,
-            ModelId = request.Model,
+            ModelId = model,
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
 
@@ -72,44 +132,5 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         {
             yield return streamingEvent;
         }
-    }
-
-    /// <summary>
-    /// Resolves an agent from the service provider based on the request.
-    /// </summary>
-    /// <param name="request">The create response request.</param>
-    /// <returns>The resolved AIAgent instance.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when the agent cannot be resolved.</exception>
-    private AIAgent ResolveAgent(CreateResponse request)
-    {
-        // Extract agent name from agent.name or model parameter
-        var agentName = request.Agent?.Name ?? request.Model;
-        if (string.IsNullOrEmpty(agentName))
-        {
-            throw new InvalidOperationException("No 'agent.name' or 'model' specified in the request.");
-        }
-
-        // Resolve the keyed agent service
-        try
-        {
-            return this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
-        }
-        catch (InvalidOperationException ex)
-        {
-            this._logger.LogError(ex, "Failed to resolve agent with name '{AgentName}'", agentName);
-            throw new InvalidOperationException($"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent().", ex);
-        }
-    }
-
-    /// <summary>
-    /// Validates that the agent can be resolved without actually resolving it.
-    /// This allows early validation before starting async execution.
-    /// </summary>
-    /// <param name="request">The create response request.</param>
-    /// <exception cref="InvalidOperationException">Thrown when the agent cannot be resolved.</exception>
-    public void ValidateAgent(CreateResponse request)
-    {
-        // Use the same logic as ResolveAgent but don't return the agent
-        _ = this.ResolveAgent(request);
     }
 }
