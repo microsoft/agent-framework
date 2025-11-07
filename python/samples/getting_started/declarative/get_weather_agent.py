@@ -5,7 +5,7 @@ from random import randint
 from typing import Literal
 
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework_declarative import AgentFactory
+from agent_framework.declarative import AgentFactory
 from azure.identity import AzureCliCredential
 
 

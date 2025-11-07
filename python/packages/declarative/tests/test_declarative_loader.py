@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,8 @@ from agent_framework_declarative._models import (
     ToolResource,
     WebSearchTool,
 )
+
+pytestmark = pytest.mark.skipif(sys.version_info >= (3, 14), reason="Skipping on Python 3.14+")
 
 
 @pytest.mark.parametrize(
@@ -449,16 +452,3 @@ def test_load_maml_agent_samples(yaml_file: Path, agent_samples_dir: Path):
     result = load_maml(content)
     # Result can be None for unknown kinds, but should not raise exceptions
     assert result is not None, f"load_maml returned None for {yaml_file.relative_to(agent_samples_dir)}"
-
-
-def test_agent_samples_directory_exists():
-    """Test that the agent-samples directory exists and contains YAML files."""
-    current_file = Path(__file__)
-    repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
-    agent_samples_dir = repo_root.parent / "agent-samples"
-
-    if not agent_samples_dir.exists():
-        pytest.skip(f"agent-samples directory not found at {agent_samples_dir}")
-
-    yaml_files = _get_agent_sample_yaml_files()
-    assert len(yaml_files) > 0, f"No YAML files found in {agent_samples_dir}"

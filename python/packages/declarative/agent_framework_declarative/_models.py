@@ -5,9 +5,14 @@ from typing import Any, TypeVar
 
 from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
-from powerfx import Engine
 
-engine = Engine()
+try:
+    from powerfx import Engine
+
+    engine = Engine()
+except ImportError:
+    engine = None
+
 
 logger = get_logger("agent_framework.declarative")
 
@@ -16,13 +21,15 @@ def _try_powerfx_eval(value: str | None) -> str | None:
     """Check if a value refers to a environment variable and parse it if so."""
     if not value or not value.startswith("="):
         return value
+    if engine is None:
+        logger.warning(
+            f"PowerFx engine not available for evaluating value: {value}"
+            "Ensure you are on python 3.13 or less and have the powerfx package installed."
+            "Otherwise replace all powerfx statements in your yaml with strings."
+        )
+        return value
     try:
-        env = dict(os.environ)
-    except Exception as exc:
-        logger.info("Failed to get environment variables for PowerFx evaluation: %s", exc)
-        env = {}
-    try:
-        return engine.eval(value[1:], symbols={"Env": env})
+        return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         logger.info("PowerFx evaluation failed for value '%s': %s", value, exc)
         return None
@@ -78,12 +85,8 @@ class Property(SerializationMixin):
 
         kind = value.get("kind", "")
         if kind == "array":
-            from agent_framework_declarative._models import ArrayProperty
-
             return ArrayProperty.from_dict(value, dependencies=dependencies)
         if kind == "object":
-            from agent_framework_declarative._models import ObjectProperty
-
             return ObjectProperty.from_dict(value, dependencies=dependencies)
         # Default to Property for kind="property" or empty
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
@@ -444,8 +447,6 @@ class AgentDefinition(SerializationMixin):
 
         kind = value.get("kind", "")
         if kind == "Prompt" or kind == "Agent":
-            from agent_framework_declarative._models import PromptAgent
-
             return PromptAgent.from_dict(value, dependencies=dependencies)
         # Default to AgentDefinition
         return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
