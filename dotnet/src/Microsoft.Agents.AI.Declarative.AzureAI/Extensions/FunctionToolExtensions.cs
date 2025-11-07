@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Text.Json;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;

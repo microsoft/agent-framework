@@ -1,14 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Bot.ObjectModel.Abstractions;
-using Microsoft.Bot.ObjectModel.Analysis;
-using Microsoft.Bot.ObjectModel.PowerFx;
 using Microsoft.Bot.ObjectModel.Yaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;

@@ -25,6 +25,8 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <param name="aiAgent">The agent instance.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    [RequiresUnreferencedCode()]
+    [RequiresDynamicCode()]
     public static IEndpointConventionBuilder MapAGUI(
         this IEndpointRouteBuilder endpoints,
         [StringSyntax("route")] string pattern,

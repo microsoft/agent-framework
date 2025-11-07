@@ -4,7 +4,6 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Threading.Tasks;
-using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
 
