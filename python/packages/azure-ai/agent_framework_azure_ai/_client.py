@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import MutableSequence
+from collections.abc import MutableMapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatMessage,
     ChatOptions,
+    HostedMCPTool,
     TextContent,
     get_logger,
     use_chat_middleware,
@@ -18,6 +19,7 @@ from agent_framework.observability import use_observability
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
     ResponseTextFormatConfigurationJsonSchema,
@@ -325,3 +327,27 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # to update the agent name in the client.
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
+
+    def get_mcp_tool(self, tool: HostedMCPTool) -> MutableMapping[str, Any]:
+        """Get MCP tool from HostedMCPTool."""
+        mcp: MCPTool = {
+            "type": "mcp",
+            "server_label": tool.name.replace(" ", "_"),
+            "server_url": str(tool.url),
+        }
+
+        if tool.allowed_tools:
+            mcp["allowed_tools"] = list(tool.allowed_tools)
+
+        # TODO (dmytrostruk): Check "always" approval mode
+        if tool.approval_mode:
+            match tool.approval_mode:
+                case str():
+                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
+                case _:
+                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
+                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+
+        return mcp
