@@ -602,7 +602,7 @@ public static class AgentsClientExtensions
         OpenAIClientOptions? openAIClientOptions,
         bool requireInvocableTools)
     {
-        IChatClient chatClient = new AzureAIAgentChatClient(agentsClient, agentVersion, openAIClientOptions);
+        IChatClient chatClient = new AzureAIAgentChatClient(agentsClient, agentVersion, agentOptions.ChatOptions, openAIClientOptions);
 
         if (clientFactory is not null)
         {
@@ -623,7 +623,7 @@ public static class AgentsClientExtensions
         => CreateChatClientAgent(
             agentsClient,
             agentVersion,
-            CreateChatClientAgentOptions(agentVersion, tools, requireInvocableTools),
+            CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             openAIClientOptions,
             requireInvocableTools);
@@ -632,7 +632,7 @@ public static class AgentsClientExtensions
     /// This method creates <see cref="ChatClientAgentOptions"/> for the specified <see cref="AgentVersion"/> and the provided tools.
     /// </summary>
     /// <param name="agentVersion">The agent version.</param>
-    /// <param name="tools">The tools to use when interacting with the agent.</param>
+    /// <param name="chatOptions">The <see cref="ChatOptions"/> to use when interacting with the agent.</param>
     /// <param name="requireInvocableTools">Indicates whether to enforce the presence of invocable tools when the AIAgent is created with an agent definition that uses them.</param>
     /// <returns>The created <see cref="ChatClientAgentOptions"/>.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the agent definition requires in-process tools but none were provided.</exception>
@@ -641,7 +641,7 @@ public static class AgentsClientExtensions
     /// This method rebuilds the agent options from the agent definition returned by the version and combine with the in-proc tools when provided
     /// this ensures that all required tools are provided and the definition of the agent options are consistent with the agent definition coming from the server.
     /// </remarks>
-    private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, IList<AITool>? tools, bool requireInvocableTools)
+    private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatOptions? chatOptions, bool requireInvocableTools)
     {
         var agentDefinition = agentVersion.Definition;
 
@@ -649,7 +649,7 @@ public static class AgentsClientExtensions
         if (agentDefinition is PromptAgentDefinition { Tools: { Count: > 0 } definitionTools })
         {
             // Check if no tools were provided while the agent definition requires in-proc tools.
-            if (requireInvocableTools && tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
+            if (requireInvocableTools && chatOptions?.Tools is null or { Count: 0 } && definitionTools.Any(t => t is FunctionTool))
             {
                 throw new ArgumentException("The agent definition in-process tools must be provided in the extension method tools parameter.");
             }
@@ -663,7 +663,7 @@ public static class AgentsClientExtensions
                 if (responseTool is FunctionTool functionTool)
                 {
                     // Check if a tool with the same type and name exists in the provided tools.
-                    var matchingTool = tools?.FirstOrDefault(t =>
+                    var matchingTool = chatOptions?.Tools?.FirstOrDefault(t =>
                         requireInvocableTools
                             ? t is AIFunction tf && functionTool.FunctionName == tf.Name // When invocable tools are required, match only AIFunction.
                             : (t is AIFunctionDeclaration tfd && functionTool.FunctionName == tfd.Name) ? true // When not required, match AIFunctionDeclaration OR
@@ -698,18 +698,16 @@ public static class AgentsClientExtensions
 
         if (agentDefinition is PromptAgentDefinition promptAgentDefinition)
         {
+            agentOptions.ChatOptions ??= chatOptions?.Clone() ?? new();
             agentOptions.Instructions = promptAgentDefinition.Instructions;
-            agentOptions.ChatOptions = new()
-            {
-                Temperature = promptAgentDefinition.Temperature,
-                TopP = promptAgentDefinition.TopP,
-                Instructions = promptAgentDefinition.Instructions,
-            };
+            agentOptions.ChatOptions.Temperature = promptAgentDefinition.Temperature;
+            agentOptions.ChatOptions.TopP = promptAgentDefinition.TopP;
+            agentOptions.ChatOptions.Instructions = promptAgentDefinition.Instructions;
         }
 
         if (agentTools is { Count: > 0 })
         {
-            agentOptions.ChatOptions ??= new ChatOptions();
+            agentOptions.ChatOptions ??= chatOptions?.Clone() ?? new();
             agentOptions.ChatOptions.Tools = agentTools;
         }
 
@@ -728,7 +726,7 @@ public static class AgentsClientExtensions
     /// <returns>A <see cref="ChatClientAgentOptions"/> instance configured according to the specified parameters.</returns>
     private static ChatClientAgentOptions CreateChatClientAgentOptions(AgentVersion agentVersion, ChatClientAgentOptions? options, bool requireInvocableTools)
     {
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options?.ChatOptions?.Tools, requireInvocableTools);
+        var agentOptions = CreateChatClientAgentOptions(agentVersion, options?.ChatOptions, requireInvocableTools);
         if (options is not null)
         {
             agentOptions.AIContextProviderFactory = options.AIContextProviderFactory;

@@ -22,6 +22,7 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
     private readonly ChatClientMetadata? _metadata;
     private readonly AgentsClient _agentsClient;
     private readonly AgentVersion _agentVersion;
+    private readonly ChatOptions? _chatOptions;
 
     /// <summary>
     /// The usage of a no-op model is a necessary change to avoid OpenAIClients to throw exceptions when
@@ -34,16 +35,17 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
     /// </summary>
     /// <param name="agentsClient">An instance of <see cref="AgentsClient"/> to interact with Azure AI Agents services.</param>
     /// <param name="agentRecord">An instance of <see cref="AgentRecord"/> representing the specific agent to use.</param>
+    /// <param name="chatOptions">An instance of <see cref="ChatOptions"/> representing the options on how the agent was predefined</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
     /// <remarks>
     /// The <see cref="IChatClient"/> provided should be decorated with a <see cref="AzureAIAgentChatClient"/> for proper functionality.
     /// </remarks>
-    internal AzureAIAgentChatClient(AgentsClient agentsClient, AgentRecord agentRecord, OpenAIClientOptions? openAIClientOptions = null)
-        : this(agentsClient, Throw.IfNull(agentRecord).Versions.Latest, openAIClientOptions)
+    internal AzureAIAgentChatClient(AgentsClient agentsClient, AgentRecord agentRecord, ChatOptions? chatOptions, OpenAIClientOptions? openAIClientOptions = null)
+        : this(agentsClient, Throw.IfNull(agentRecord).Versions.Latest, chatOptions, openAIClientOptions)
     {
     }
 
-    internal AzureAIAgentChatClient(AgentsClient agentsClient, AgentVersion agentVersion, OpenAIClientOptions? openAIClientOptions = null)
+    internal AzureAIAgentChatClient(AgentsClient agentsClient, AgentVersion agentVersion, ChatOptions? chatOptions, OpenAIClientOptions? openAIClientOptions = null)
         : base(agentsClient
             .GetOpenAIClient(openAIClientOptions)
             .GetOpenAIResponseClient((agentVersion.Definition as PromptAgentDefinition)?.Model ?? NoOpModel)
@@ -52,6 +54,7 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
         this._agentsClient = Throw.IfNull(agentsClient);
         this._agentVersion = Throw.IfNull(agentVersion);
         this._metadata = new ChatClientMetadata("azure.ai.agents");
+        this._chatOptions = chatOptions;
     }
 
     /// <inheritdoc/>
@@ -94,8 +97,8 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
 
     private ChatOptions GetConversationEnabledChatOptions(ChatOptions? chatOptions, string conversationId)
     {
-        // Ignore all the chatOptions provided as agents options can't be set per-request basis.
-        var conversationChatOptions = new ChatOptions();
+        // Ignore all the chatOptions provided per-request and use by default the one provided at the agent creation.
+        ChatOptions conversationChatOptions = this._chatOptions?.Clone() ?? new();
 
         // Preserve the original RawRepresentationFactory
         var originalFactory = chatOptions?.RawRepresentationFactory;
