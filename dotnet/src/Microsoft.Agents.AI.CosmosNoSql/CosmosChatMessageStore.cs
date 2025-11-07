@@ -65,6 +65,13 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     public int MaxBatchSize { get; set; } = 100;
 
     /// <summary>
+    /// Gets or sets the maximum number of messages to retrieve from the store.
+    /// This helps prevent exceeding LLM context windows in long conversations.
+    /// Default is null (no limit). When set, only the most recent messages are returned.
+    /// </summary>
+    public int? MaxMessagesToRetrieve { get; set; }
+
+    /// <summary>
     /// Gets or sets the Time-To-Live (TTL) in seconds for messages.
     /// Default is 86400 seconds (24 hours). Set to null to disable TTL.
     /// </summary>
@@ -305,8 +312,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         }
 #pragma warning restore CA1513
 
-        // Use type discriminator for efficient queries
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type ORDER BY c.timestamp ASC")
+        // Fetch most recent messages in descending order when limit is set, then reverse to ascending
+        var orderDirection = this.MaxMessagesToRetrieve.HasValue ? "DESC" : "ASC";
+        var query = new QueryDefinition($"SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type ORDER BY c.timestamp {orderDirection}")
             .WithParameter("@conversationId", this._conversationId)
             .WithParameter("@type", "ChatMessage");
 
@@ -317,6 +325,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         });
 
         var messages = new List<ChatMessage>();
+        int messageCount = 0;
 
         while (iterator.HasMoreResults)
         {
@@ -324,15 +333,32 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
             foreach (var document in response)
             {
+                if (this.MaxMessagesToRetrieve.HasValue && messageCount >= this.MaxMessagesToRetrieve.Value)
+                {
+                    break;
+                }
+
                 if (!string.IsNullOrEmpty(document.Message))
                 {
                     var message = JsonSerializer.Deserialize<ChatMessage>(document.Message, s_defaultJsonOptions);
                     if (message != null)
                     {
                         messages.Add(message);
+                        messageCount++;
                     }
                 }
             }
+
+            if (this.MaxMessagesToRetrieve.HasValue && messageCount >= this.MaxMessagesToRetrieve.Value)
+            {
+                break;
+            }
+        }
+
+        // If we fetched in descending order (most recent first), reverse to ascending order
+        if (this.MaxMessagesToRetrieve.HasValue)
+        {
+            messages.Reverse();
         }
 
         return messages;

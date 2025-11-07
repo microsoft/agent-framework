@@ -688,5 +688,72 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
     }
 
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task MaxMessagesToRetrieve_ShouldLimitAndReturnMostRecentAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "max-messages-test";
+
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, ConversationId);
+
+        // Add 10 messages
+        var messages = new List<ChatMessage>();
+        for (int i = 1; i <= 10; i++)
+        {
+            messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
+            await Task.Delay(10); // Small delay to ensure different timestamps
+        }
+        await store.AddMessagesAsync(messages);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Act - Set max to 5 and retrieve
+        store.MaxMessagesToRetrieve = 5;
+        var retrievedMessages = await store.GetMessagesAsync();
+        var messageList = retrievedMessages.ToList();
+
+        // Assert - Should get the 5 most recent messages (6-10) in ascending order
+        Assert.Equal(5, messageList.Count);
+        Assert.Equal("Message 6", messageList[0].Text);
+        Assert.Equal("Message 7", messageList[1].Text);
+        Assert.Equal("Message 8", messageList[2].Text);
+        Assert.Equal("Message 9", messageList[3].Text);
+        Assert.Equal("Message 10", messageList[4].Text);
+    }
+
+    [Fact]
+    [Trait("Category", "CosmosDB")]
+    public async Task MaxMessagesToRetrieve_Null_ShouldReturnAllMessagesAsync()
+    {
+        // Arrange
+        this.SkipIfEmulatorNotAvailable();
+        const string ConversationId = "max-messages-null-test";
+
+        using var store = new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, ConversationId);
+
+        // Add 10 messages
+        var messages = new List<ChatMessage>();
+        for (int i = 1; i <= 10; i++)
+        {
+            messages.Add(new ChatMessage(ChatRole.User, $"Message {i}"));
+        }
+        await store.AddMessagesAsync(messages);
+
+        // Wait for eventual consistency
+        await Task.Delay(100);
+
+        // Act - No limit set (default null)
+        var retrievedMessages = await store.GetMessagesAsync();
+        var messageList = retrievedMessages.ToList();
+
+        // Assert - Should get all 10 messages
+        Assert.Equal(10, messageList.Count);
+        Assert.Equal("Message 1", messageList[0].Text);
+        Assert.Equal("Message 10", messageList[9].Text);
+    }
+
     #endregion
 }
