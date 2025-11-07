@@ -40,7 +40,7 @@ internal sealed class WorkflowRunner
 
     /// <summary>
     /// When enabled, checkpoints will be persisted to disk as JSON files.
-    /// Otherise  an in-memory checkpoint store that will not persist checkpoints
+    /// Otherwise  an in-memory checkpoint store that will not persist checkpoints
     /// beyond the lifetime of the process.
     /// </summary>
     public bool UseJsonCheckpoints { get; init; }
