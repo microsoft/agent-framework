@@ -188,6 +188,4 @@ def create_protection_scopes_cache_key(request: ProtectionScopesRequest) -> str:
 
 __all__ = [
     "CacheProvider",
-    "InMemoryCacheProvider",
-    "create_protection_scopes_cache_key",
 ]

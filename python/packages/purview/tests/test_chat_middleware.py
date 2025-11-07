@@ -140,7 +140,6 @@ class TestPurviewChatPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: ChatContext) -> None:
-                # Create a mock result with messages attribute
                 result = MagicMock()
                 result.messages = [ChatMessage(role=Role.ASSISTANT, text="Response")]
                 ctx.result = result

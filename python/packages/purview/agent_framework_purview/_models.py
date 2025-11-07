@@ -643,11 +643,7 @@ class ContentToProcess(_AliasSerializable):
 class ProcessContentRequest(_AliasSerializable):
     _ALIASES: ClassVar[dict[str, str]] = {"content_to_process": "contentToProcess"}
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {
-        "user_id",
-        "tenant_id",
         "correlation_id",
-        "process_inline",
-        "scope_identifier",
     }
 
     def __init__(
@@ -679,7 +675,7 @@ class ProcessContentRequest(_AliasSerializable):
 
 
 class ProtectionScopesRequest(_AliasSerializable):
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"user_id", "tenant_id", "correlation_id", "scope_identifier"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
     _ALIASES: ClassVar[dict[str, str]] = {
         "pivot_on": "pivotOn",
         "device_metadata": "deviceMetadata",
@@ -751,7 +747,7 @@ class ContentActivitiesRequest(_AliasSerializable):
         "scope_identifier": "scopeIdentifier",
         "content_to_process": "contentMetadata",
     }
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"tenant_id", "correlation_id"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
 
     def __init__(
         self,

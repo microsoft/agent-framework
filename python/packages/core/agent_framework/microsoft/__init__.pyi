@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_copilotstudio import CopilotStudioAgent, __version__, acquire_token
-from agent_framework_purview import CacheProvider as CacheProvider
 from agent_framework_purview import (
+    CacheProvider,
     PurviewAppLocation,
     PurviewAuthenticationError,
     PurviewChatPolicyMiddleware,

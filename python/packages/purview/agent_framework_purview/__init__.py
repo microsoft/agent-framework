@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from ._cache import CacheProvider, InMemoryCacheProvider
+from ._cache import CacheProvider
 from ._exceptions import (
     PurviewAuthenticationError,
     PurviewPaymentRequiredError,
@@ -13,7 +13,6 @@ from ._settings import PurviewAppLocation, PurviewLocationType, PurviewSettings
 
 __all__ = [
     "CacheProvider",
-    "InMemoryCacheProvider",
     "PurviewAppLocation",
     "PurviewAuthenticationError",
     "PurviewChatPolicyMiddleware",
