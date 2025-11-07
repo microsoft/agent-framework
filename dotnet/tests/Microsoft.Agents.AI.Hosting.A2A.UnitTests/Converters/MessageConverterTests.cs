@@ -5,7 +5,7 @@ using A2A;
 using Microsoft.Agents.AI.Hosting.A2A.Converters;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.Hosting.A2A.Tests.Converters;
+namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests.Converters;
 
 public class MessageConverterTests
 {

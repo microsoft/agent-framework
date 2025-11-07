@@ -3,6 +3,7 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
@@ -17,6 +18,29 @@ namespace Microsoft.AspNetCore.Builder;
 /// </summary>
 public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions
 {
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="IHostedAgentBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
+        => MapOpenAIResponses(endpoints, agentBuilder, path: null);
+
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="IHostedAgentBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    /// <param name="path">Custom route path for the OpenAI Responses endpoint.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
+        return MapOpenAIResponses(endpoints, agent, path);
+    }
+
     /// <summary>
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
     /// </summary>

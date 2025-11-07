@@ -4,6 +4,8 @@
 // capabilities to an AI agent. The provider runs a search against an external knowledge base
 // before each model invocation and injects the results into the model context.
 
+// Also see the AgentWithRAG folder for more advanced RAG scenarios.
+
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
