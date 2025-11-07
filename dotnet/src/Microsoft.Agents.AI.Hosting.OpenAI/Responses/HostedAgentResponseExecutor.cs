@@ -51,7 +51,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             return ValueTask.FromResult<ResponseError?>(new ResponseError
             {
                 Code = "missing_required_parameter",
-                Message = "No 'agent.name' or 'model' specified in the request."
+                Message = "No 'agent.name' or 'metadata[\"entity_id\"]' specified in the request."
             });
         }
 
