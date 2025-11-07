@@ -228,16 +228,16 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
 
         # Create field definition for create_model
         if prop_name in required:
-            if description:
-                field_definitions[prop_name] = (python_type, Field(description=description))
-            else:
-                field_definitions[prop_name] = (python_type, ...)
+            field_definitions[prop_name] = (
+                (python_type, Field(description=description)) if description else (python_type, ...)
+            )
         else:
             default_value = prop_details.get("default", None)
-            if description:
-                field_definitions[prop_name] = (python_type, Field(default=default_value, description=description))
-            else:
-                field_definitions[prop_name] = (python_type, default_value)
+            field_definitions[prop_name] = (
+                (python_type, Field(default=default_value, description=description))
+                if description
+                else (python_type, default_value)
+            )
 
     return create_model(f"{tool.name}_input", **field_definitions)
 
