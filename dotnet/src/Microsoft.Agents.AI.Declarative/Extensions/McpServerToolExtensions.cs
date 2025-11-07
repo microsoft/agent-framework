@@ -32,7 +32,8 @@ public static class McpServerToolExtensions
         {
             ServerDescription = tool.ServerDescription?.LiteralValue,
             AllowedTools = tool.AllowedTools?.LiteralValue,
-            ApprovalMode = tool.ApprovalMode?.ToHostedMcpServerToolApprovalMode(),
+            // TODO Blocked by bug in object model
+            //ApprovalMode = tool.ApprovalMode?.ToHostedMcpServerToolApprovalMode(),
         };
     }
 }

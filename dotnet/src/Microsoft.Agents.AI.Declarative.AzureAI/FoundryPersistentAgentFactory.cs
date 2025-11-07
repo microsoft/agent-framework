@@ -63,7 +63,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    #region
+    #region private
     private readonly PersistentAgentsClient? _agentClient;
     private readonly TokenCredential? _tokenCredential;
 

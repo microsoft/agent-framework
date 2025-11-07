@@ -45,7 +45,7 @@ public sealed class ChatClientAgentFactory : AgentFactory
         return Task.FromResult<AIAgent?>(agent);
     }
 
-    #region
+    #region private
     private readonly IChatClient _chatClient;
     private readonly IList<AIFunction>? _functions;
     private readonly ILoggerFactory? _loggerFactory;

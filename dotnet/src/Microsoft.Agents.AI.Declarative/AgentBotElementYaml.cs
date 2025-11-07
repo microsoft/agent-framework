@@ -30,7 +30,7 @@ internal static class AgentBotElementYaml
     {
         Throw.IfNullOrEmpty(text);
 
-        var yamlReader = new StringReader(text);
+        using var yamlReader = new StringReader(text);
         BotElement rootElement = YamlSerializer.Deserialize<BotElement>(yamlReader) ?? throw new InvalidDataException("Text does not contain a valid agent definition.");
 
         if (rootElement is not GptComponentMetadata promptAgent)
@@ -40,23 +40,10 @@ internal static class AgentBotElementYaml
 
         var botDefinition = WrapPromptAgentWithBot(promptAgent, configuration);
 
-        // Use PowerFx to check the expressions in the bot definition.
-        SemanticModel semanticModel = botDefinition.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-
-        var values = new Dictionary<string, string?>();
-        foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
-        {
-            values[variableName] = configuration?[variableName];
-        }
-
-        // TODO: What do I have to do to apply the values are applied to the GptComponentMetadata?
-
         return botDefinition.Descendants().OfType<GptComponentMetadata>().First();
     }
 
     #region private
-    private static readonly AgentFeatureConfiguration s_semanticFeatureConfig = new();
-
     private sealed class AgentFeatureConfiguration : IFeatureConfiguration
     {
         public long GetInt64Value(string settingName, long defaultValue) => defaultValue;
