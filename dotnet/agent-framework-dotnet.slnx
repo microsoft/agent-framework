@@ -32,7 +32,6 @@
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_With_AzureAIAgent.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryAgent/Agent_With_AzureFoundryAgent.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
@@ -43,6 +42,26 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentProviders/AzureAIAgents/">
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step01_Basics/Agent_Step01_Basics.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step01_Running/Agent_Step01_Running.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step03.1_UsingFunctionTools/Agent_Step03.1_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step03.2_UsingFunctionTools_FromOpenAPI/Agent_Step03.2_UsingFunctionTools_FromOpenAPI.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step07_3rdPartyThreadStorage/Agent_Step07_3rdPartyThreadStorage.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step08_Observability/Agent_Step08_Observability.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step09_DependencyInjection/Agent_Step09_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Agents/">
     <File Path="samples/GettingStarted/Agents/README.md" />
@@ -283,8 +302,8 @@
     <Project Path="src/Microsoft.Agents.AI.A2A/Microsoft.Agents.AI.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AGUI/Microsoft.Agents.AI.AGUI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
