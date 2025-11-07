@@ -11,7 +11,6 @@ Functions host."""
 
 import json
 import logging
-import os
 from typing import Any, cast
 from collections.abc import Mapping
 
@@ -19,16 +18,12 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
-from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
-# 1. Define the environment variable keys required by the Azure OpenAI client.
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+# 1. Define agent names shared across the orchestration.
 SPAM_AGENT_NAME = "SpamDetectionAgent"
 EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
@@ -46,34 +41,9 @@ class EmailPayload(BaseModel):
     email_id: str
     email_content: str
 
-# 2. Centralize Azure OpenAI keyword arguments for consistent agent creation.
-def _build_client_kwargs() -> dict[str, Any]:
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
-# 3. Instantiate both agents so they can be registered with AgentFunctionApp.
+# 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = AzureOpenAIChatClient()
 
     spam_agent = chat_client.create_agent(
         name=SPAM_AGENT_NAME,
@@ -91,7 +61,7 @@ def _create_agents() -> list[Any]:
 app = AgentFunctionApp(agents=_create_agents(), enable_health_check=True)
 
 
-# 4. Activities handle the side effects for spam and legitimate emails.
+# 3. Activities handle the side effects for spam and legitimate emails.
 @app.activity_trigger(input_name="reason")
 def handle_spam_email(reason: str) -> str:
     return f"Email marked as spam: {reason}"
@@ -102,7 +72,7 @@ def send_email(message: str) -> str:
     return f"Email sent: {message}"
 
 
-# 5. Orchestration validates input, runs agents, and branches on spam results.
+# 4. Orchestration validates input, runs agents, and branches on spam results.
 @app.orchestration_trigger(context_name="context")
 def spam_detection_orchestration(context: DurableOrchestrationContext):
     payload_raw = context.get_input()
@@ -159,7 +129,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     return result
 
 
-# 6. HTTP starter endpoint launches the orchestration for each email payload.
+# 5. HTTP starter endpoint launches the orchestration for each email payload.
 @app.route(route="spamdetection/run", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start_spam_detection_orchestration(
@@ -210,7 +180,7 @@ async def start_spam_detection_orchestration(
     )
 
 
-# 7. Status endpoint mirrors Durable Functions default payload with agent data.
+# 6. Status endpoint mirrors Durable Functions default payload with agent data.
 @app.route(route="spamdetection/status/{instanceId}", methods=["GET"])
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
@@ -253,7 +223,7 @@ async def get_orchestration_status(
     )
 
 
-# 8. Helper utilities keep URL construction and structured parsing deterministic.
+# 7. Helper utilities keep URL construction and structured parsing deterministic.
 def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     base_url, _, _ = request_url.partition("/api/")
     if not base_url:

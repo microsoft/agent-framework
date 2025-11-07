@@ -10,7 +10,6 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`,
 
 import json
 import logging
-import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, DefaultDict
@@ -18,43 +17,13 @@ from typing import Any, DefaultDict
 import azure.functions as func
 from agent_framework import AgentRunResponseUpdate
 from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
 
 from agent_framework.azurefunctions import AgentFunctionApp, AgentCallbackContext, AgentResponseCallbackProtocol
 
 logger = logging.getLogger(__name__)
 
-# 1. Define the environment variable keys required to build the Azure OpenAI client.
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
-
-# 2. Centralize Azure OpenAI configuration so the agent uses consistent credentials.
-def _build_client_kwargs() -> dict[str, Any]:
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
-# 3. Maintain an in-memory store for callback events (replace with durable storage in production).
+# 1. Maintain an in-memory store for callback events (replace with durable storage in production).
 CallbackStore = DefaultDict[str, list[dict[str, Any]]]
 callback_events: CallbackStore = defaultdict(list)
 
@@ -135,8 +104,8 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
         }
 
 
-# 4. Create the agent that will emit streaming updates and final responses.
-callback_agent = AzureOpenAIChatClient(**_build_client_kwargs()).create_agent(
+# 2. Create the agent that will emit streaming updates and final responses.
+callback_agent = AzureOpenAIChatClient().create_agent(
     name="CallbackAgent",
     instructions=(
         "You are a friendly assistant that narrates actions while responding. "
@@ -145,7 +114,7 @@ callback_agent = AzureOpenAIChatClient(**_build_client_kwargs()).create_agent(
 )
 
 
-# 5. Register the agent inside AgentFunctionApp with a default callback instance.
+# 3. Register the agent inside AgentFunctionApp with a default callback instance.
 audit_callback = ConversationAuditTrail()
 app = AgentFunctionApp(enable_health_check=True, default_callback=audit_callback)
 app.add_agent(callback_agent)

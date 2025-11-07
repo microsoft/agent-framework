@@ -10,54 +10,24 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-import os
 from typing import Any
 
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
-from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
 
-# 1. Define environment variable keys and agent names shared across the orchestration.
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+# 1. Define agent names shared across the orchestration.
 PHYSICIST_AGENT_NAME = "PhysicistAgent"
 CHEMIST_AGENT_NAME = "ChemistAgent"
 
 
-# 2. Build Azure OpenAI client options reused by both agents.
-def _build_client_kwargs() -> dict[str, Any]:
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
-# 3. Instantiate both agents that the orchestration will run concurrently.
+# 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = AzureOpenAIChatClient()
 
     physicist = chat_client.create_agent(
         name=PHYSICIST_AGENT_NAME,
@@ -72,14 +42,14 @@ def _create_agents() -> list[Any]:
     return [physicist, chemist]
 
 
-# 4. Register both agents with AgentFunctionApp and selectively enable HTTP endpoints.
+# 3. Register both agents with AgentFunctionApp and selectively enable HTTP endpoints.
 agents = _create_agents()
 app = AgentFunctionApp(enable_health_check=True, enable_http_endpoints=False)
 app.add_agent(agents[0], enable_http_endpoint=True)
 app.add_agent(agents[1])
 
 
-# 5. Durable Functions orchestration that runs both agents in parallel.
+# 4. Durable Functions orchestration that runs both agents in parallel.
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     """Fan out to two domain-specific agents and aggregate their responses."""
@@ -105,7 +75,7 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     }
 
 
-# 6. HTTP endpoint to accept prompts and start the concurrent orchestration.
+# 5. HTTP endpoint to accept prompts and start the concurrent orchestration.
 @app.route(route="multiagent/run", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start_multi_agent_concurrent_orchestration(
@@ -146,7 +116,7 @@ async def start_multi_agent_concurrent_orchestration(
     )
 
 
-# 7. HTTP endpoint to retrieve orchestration status and aggregated outputs.
+# 6. HTTP endpoint to retrieve orchestration status and aggregated outputs.
 @app.route(route="multiagent/status/{instanceId}", methods=["GET"])
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
@@ -189,7 +159,7 @@ async def get_orchestration_status(
     )
 
 
-# 8. Helper to construct durable status URLs that mirror the .NET sample output.
+# 7. Helper to construct durable status URLs.
 def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     base_url, _, _ = request_url.partition("/api/")
     if not base_url:

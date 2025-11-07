@@ -10,54 +10,21 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-import os
 from typing import Any
 
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
-from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
 
-# 1. Define environment variable keys and the agent name used across the orchestration.
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+# 1. Define the agent name used across the orchestration.
 WRITER_AGENT_NAME = "WriterAgent"
 
 
-# 2. Build Azure OpenAI client options shared by the orchestration and agent.
-def _build_client_kwargs() -> dict[str, Any]:
-    """Construct Azure OpenAI client options."""
-
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    logger.info("[SingleAgentOrchestration] Using deployment '%s' at '%s'", deployment, endpoint)
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
-# 3. Create the writer agent that will be invoked twice within the orchestration.
+# 2. Create the writer agent that will be invoked twice within the orchestration.
 def _create_writer_agent() -> Any:
     """Create the writer agent with the same persona as the C# sample."""
 
@@ -66,17 +33,17 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(**_build_client_kwargs()).create_agent(
+    return AzureOpenAIChatClient().create_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
 
 
-# 4. Register the agent with AgentFunctionApp so HTTP and orchestration triggers are exposed.
+# 3. Register the agent with AgentFunctionApp so HTTP and orchestration triggers are exposed.
 app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True)
 
 
-# 5. Orchestration that runs the agent sequentially on a shared thread for chaining behaviour.
+# 4. Orchestration that runs the agent sequentially on a shared thread for chaining behaviour.
 @app.orchestration_trigger(context_name="context")
 def single_agent_orchestration(context: DurableOrchestrationContext):
     """Run the writer agent twice on the same thread to mirror chaining behaviour."""
@@ -102,7 +69,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
     return refined.get("response", "")
 
 
-# 6. HTTP endpoint to kick off the orchestration and return the status query URI.
+# 5. HTTP endpoint to kick off the orchestration and return the status query URI.
 @app.route(route="singleagent/run", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start_single_agent_orchestration(
@@ -132,7 +99,7 @@ async def start_single_agent_orchestration(
     )
 
 
-# 7. HTTP endpoint to fetch orchestration status using the original instance ID.
+# 6. HTTP endpoint to fetch orchestration status using the original instance ID.
 @app.route(route="singleagent/status/{instanceId}", methods=["GET"])
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
@@ -175,7 +142,7 @@ async def get_orchestration_status(
     )
 
 
-# 8. Helper to construct durable status URLs similar to the .NET sample implementation.
+# 7. Helper to construct durable status URLs similar to the .NET sample implementation.
 def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     """Construct the status query URI similar to DurableHttpApiExtensions in C#."""
 

@@ -10,7 +10,6 @@ either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func sta
 
 import json
 import logging
-import os
 from datetime import timedelta
 from typing import Any
 from collections.abc import Mapping
@@ -19,16 +18,12 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
-from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
-# 1. Define the environment variable keys and orchestration constants.
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+# 1. Define orchestration constants used throughout the workflow.
 WRITER_AGENT_NAME = "WriterAgent"
 HUMAN_APPROVAL_EVENT = "HumanApproval"
 
@@ -49,31 +44,7 @@ class HumanApproval(BaseModel):
     feedback: str = ""
 
 
-# 2. Centralize Azure OpenAI keyword arguments to reuse credential logic.
-def _build_client_kwargs() -> dict[str, Any]:
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
-# 3. Create the writer agent that produces structured JSON responses.
+# 2. Create the writer agent that produces structured JSON responses.
 def _create_writer_agent() -> Any:
     instructions = (
         "You are a professional content writer who creates high-quality articles on various topics. "
@@ -81,7 +52,7 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(**_build_client_kwargs()).create_agent(
+    return AzureOpenAIChatClient().create_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -90,7 +61,7 @@ def _create_writer_agent() -> Any:
 app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True)
 
 
-# 4. Activities encapsulate external work for review notifications and publishing.
+# 3. Activities encapsulate external work for review notifications and publishing.
 @app.activity_trigger(input_name="content")
 def notify_user_for_approval(content: dict[str, Any]) -> None:
     model = GeneratedContent.model_validate(content)
@@ -108,7 +79,7 @@ def publish_content(content: dict[str, Any]) -> None:
     logger.info("Content: %s", model.content)
 
 
-# 5. Orchestration loops until the human approves, times out, or attempts are exhausted.
+# 4. Orchestration loops until the human approves, times out, or attempts are exhausted.
 @app.orchestration_trigger(context_name="context")
 def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
     payload_raw = context.get_input()
@@ -184,7 +155,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
     raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
 
 
-# 6. HTTP endpoint that starts the human-in-the-loop orchestration.
+# 5. HTTP endpoint that starts the human-in-the-loop orchestration.
 @app.route(route="hitl/run", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def start_content_generation(
@@ -233,7 +204,7 @@ async def start_content_generation(
     )
 
 
-# 7. Endpoint that delivers human approval or rejection back into the orchestration.
+# 6. Endpoint that delivers human approval or rejection back into the orchestration.
 @app.route(route="hitl/approve/{instanceId}", methods=["POST"])
 @app.durable_client_input(client_name="client")
 async def send_human_approval(
@@ -284,7 +255,7 @@ async def send_human_approval(
     )
 
 
-# 8. Endpoint that mirrors Durable Functions status plus custom workflow messaging.
+# 7. Endpoint that mirrors Durable Functions status plus custom workflow messaging.
 @app.route(route="hitl/status/{instanceId}", methods=["GET"])
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
@@ -339,7 +310,7 @@ async def get_orchestration_status(
     )
 
 
-# 9. Helper utilities keep parsing logic deterministic.
+# 8. Helper utilities keep parsing logic deterministic.
 def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     base_url, _, _ = request_url.partition("/api/")
     if not base_url:
