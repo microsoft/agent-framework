@@ -10,21 +10,21 @@ model:
         temperature: 0.9
         topP: 0.95
     connection:
-        kind: ApiKey
+        kind: key
         key: =Env.OPENAI_APIKEY
 outputSchema:
     name: AssistantResponse
     description: The response from the assistant.
     properties:
         language:
-            type: string
+            kind: string
             required: true
             description: The language of the answer.
         answer:
-            type: string
+            kind: string
             required: true
             description: The answer text.
         type:
-            type: string
+            kind: string
             required: true
             description: The type of the response.

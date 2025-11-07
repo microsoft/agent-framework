@@ -8,15 +8,15 @@ model:
         temperature: 0.9
         topP: 0.95
     connection:
-        kind: ExternalReference
+        kind: remote
         endpoint: =Env.AZURE_FOUNDRY_PROJECT_ENDPOINT
 outputSchema:
     properties:
         language:
-            type: string
+            kind: string
             required: true
             description: The language of the answer.
         answer:
-            type: string
+            kind: string
             required: true
             description: The answer text.

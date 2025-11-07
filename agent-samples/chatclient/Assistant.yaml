@@ -9,10 +9,10 @@ model:
 outputSchema:
     properties:
         language:
-            type: string
+            kind: string
             required: true
             description: The language of the answer.
         answer:
-            type: string
+            kind: string
             required: true
             description: The answer text.

@@ -7,19 +7,22 @@ model:
     provider: AzureOpenAI
     apiType: Responses
     options:
-        temperature: 0.9
-        topP: 0.95
+        text:
+            verbosity: medium
+    connection:
+        kind: remote
+        endpoint: =Env.AZURE_OPENAI_ENDPOINT
 outputSchema:
     properties:
         language:
-            type: string
+            kind: string
             required: true
             description: The language of the answer.
         answer:
-            type: string
+            kind: string
             required: true
             description: The answer text.
         type:
-            type: string
+            kind: string
             required: true
             description: The type of the response.
