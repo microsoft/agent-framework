@@ -107,7 +107,7 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
             RawBindings =
             [
                 $$"""{"name":"context","type":"mcpToolTrigger","direction":"In","toolName":"{{agentName}}","description":"{{description}}","toolProperties":"[{\"propertyName\":\"query\",\"propertyType\":\"string\",\"description\":\"The query to send to the agent.\",\"isRequired\":true,\"isArray\":false},{\"propertyName\":\"threadId\",\"propertyType\":\"string\",\"description\":\"Optional thread identifier.\",\"isRequired\":false,\"isArray\":false}]"}""",
-                """{"name":"query","type":"mcpToolProperty","direction":"In","propertyName":"query","description":"The query to send to the agent","isRequired":false,"dataType":"String","propertyType":"string"}""",
+                """{"name":"query","type":"mcpToolProperty","direction":"In","propertyName":"query","description":"The query to send to the agent","isRequired":true,"dataType":"String","propertyType":"string"}""",
                 """{"name":"threadId","type":"mcpToolProperty","direction":"In","propertyName":"threadId","description":"The thread identifier.","isRequired":false,"dataType":"String","propertyType":"string"}""",
                 """{"name":"client","type":"durableClient","direction":"In"}"""
             ],
