@@ -110,14 +110,16 @@ internal sealed class Program
                 """,
             Tools =
             {
-                //ResponseTool.CreateWebSearchTool() // %%% API BUG - Use Bing Grounding when available
+                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
+                //    new BingGroundingSearchToolParameters(
+                //        [new BingGroundingSearchConfiguration(this.GetSetting(Settings.FoundryGroundingTool))]))
             }
         };
 
     private static PromptAgentDefinition DefinePlannerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
-            Instructions = // %%% API BUG - Use Structured Inputs / Prompt Template
+            Instructions = // TODO: Use Structured Inputs / Prompt Template
                 """
                 Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
 
@@ -136,7 +138,7 @@ internal sealed class Program
     private static PromptAgentDefinition DefineManagerAgent(IConfiguration configuration) =>
         new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
-            Instructions = // %%% API BUG - Use Structured Inputs / Prompt Template
+            Instructions = // TODO: Use Structured Inputs / Prompt Template
                 """
                 Recall we have assembled the following team:
 
@@ -239,7 +241,9 @@ internal sealed class Program
         {
             Tools =
             {
-                //ResponseTool.CreateWebSearchTool() // %%% API BUG - Use Bing Grounding when available
+                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
+                //    new BingGroundingSearchToolParameters(
+                //        [new BingGroundingSearchConfiguration(this.GetSetting(Settings.FoundryGroundingTool))]))
             }
         };
 

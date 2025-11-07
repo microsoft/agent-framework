@@ -46,7 +46,7 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
                 """,
             Tools =
             {
-                //AgentTool.CreateBingGroundingTool( // %%% API BUG - Use Bing Grounding when available
+                //AgentTool.CreateBingGroundingTool( // TODO: Use Bing Grounding when available
                 //    new BingGroundingSearchToolParameters(
                 //        [new BingGroundingSearchConfiguration(this.GetSetting(Settings.FoundryGroundingTool))]))
             }
