@@ -140,8 +140,7 @@
         "role": { "type": "string", "enum": ["user", "assistant", "system", "tool"] },
         "contents": {
           "type": "array",
-          "items": { "$ref": "#/$defs/chatContentItem" },
-          "minItems": 1
+          "items": { "$ref": "#/$defs/chatContentItem" }
         },
         "createdAt": { "type": "string", "format": "date-time", "description": "When this message was created (RFC 3339)." }
       },
@@ -150,8 +149,7 @@
     "chatMessages": {
       "type": "array",
       "description": "Ordered list of chat messages.",
-      "items": { "$ref": "#/$defs/chatMessage" },
-      "minItems": 1
+      "items": { "$ref": "#/$defs/chatMessage" }
     },
     "conversationEntry": {
       "type": "object",
@@ -159,44 +157,48 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "When this exchange was created (RFC 3339)." },
         "correlationId": { "type": "string", "description": "An optional correlation ID to group related exchanges." },
         "messages": { "$ref": "#/$defs/chatMessages" }
-      }
+      },
+      "required": ["createdAt"]
     },
     "agentRequest": {
-        "$ref": "#/$defs/conversationEntry",
-        "description": "The request (i.e. prompt) sent to the agent.",
-        "properties": {
-            "$type": { "type": "string", "const": "request" },
-            "responseSchema": {
-                "type": "object",
-                "description": "If the expected response type is JSON, this schema defines the expected structure of the response."
-            },
-            "responseType": {
-                "type": "string",
-                "description": "The expected type of the response (e.g., 'text', 'json')."
-            }
+      "allOf": [
+        { "$ref": "#/$defs/conversationEntry" }
+      ],
+      "description": "The request (i.e. prompt) sent to the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "request" },
+        "responseSchema": {
+          "type": "object",
+          "description": "If the expected response type is JSON, this schema defines the expected structure of the response."
+        },
+        "responseType": {
+          "type": "string",
+          "description": "The expected type of the response (e.g., 'text', 'json')."
         }
+      }
     },
     "agentResponse": {
-        "$ref": "#/$defs/conversationEntry",
-        "description": "The response received from the agent.",
-        "properties": {
-            "$type": { "type": "string", "const": "response" },
-            "usage": {
-                "$ref": "#/$defs/usage"
-            }
+      "allOf": [
+        { "$ref": "#/$defs/conversationEntry" }
+      ],
+      "description": "The response received from the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "response" },
+        "usage": {
+          "$ref": "#/$defs/usage"
         }
+      }
     },
     "data": {
-        "type": "object",
-        "description": "The durable agent's state data.",
-        "properties": {
-            "conversationHistory": {
-            "type": "array",
-            "description": "Ordered list of conversation entries.",
-            "items": { "$ref": "#/$defs/conversationEntry" },
-            "minItems": 1
-            }
+      "type": "object",
+      "description": "The durable agent's state data.",
+      "properties": {
+        "conversationHistory": {
+          "type": "array",
+          "description": "Ordered list of conversation entries.",
+          "items": { "$ref": "#/$defs/conversationEntry" }
         }
+      }
     }
   },
   "type": "object",
