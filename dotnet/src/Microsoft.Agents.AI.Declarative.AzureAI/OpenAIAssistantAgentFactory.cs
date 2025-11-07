@@ -51,7 +51,7 @@ public sealed class OpenAIAssistantAgentFactory : OpenAIAgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        var model = promptAgent.Model as ExternalModel;
+        var model = promptAgent.Model as CurrentModels;
         var apiType = model?.ApiType;
         if (apiType?.IsUnknown() == true && apiType.UnknownValue?.Equals(API_TYPE_ASSISTANTS, StringComparison.OrdinalIgnoreCase) == true)
         {

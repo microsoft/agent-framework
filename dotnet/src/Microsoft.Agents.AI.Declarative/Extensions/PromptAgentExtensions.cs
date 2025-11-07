@@ -34,9 +34,9 @@ public static class PromptAgentExtensions
         return new ChatOptions()
         {
             Instructions = promptAgent.ResponseInstructions?.ToTemplateString(),
-            Temperature = (float?)modelOptions?.Temperature.LiteralValue,
+            Temperature = (float?)modelOptions?.Temperature?.LiteralValue,
             MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.LiteralValue,
-            TopP = (float?)modelOptions?.TopP.LiteralValue,
+            TopP = (float?)modelOptions?.TopP?.LiteralValue,
             TopK = (int?)modelOptions?.TopK?.LiteralValue,
             FrequencyPenalty = (float?)modelOptions?.FrequencyPenalty?.LiteralValue,
             PresencePenalty = (float?)modelOptions?.PresencePenalty?.LiteralValue,
@@ -73,10 +73,10 @@ public static class PromptAgentExtensions
     }
 
     #region private
-    private const string CodeInterpreterKind = "code_interpreter";
-    private const string FileSearchKind = "file_search";
+    private const string CodeInterpreterKind = "codeInterpreter";
+    private const string FileSearchKind = "fileSearch";
     private const string FunctionKind = "function";
-    private const string WebSearchKind = "web_search";
+    private const string WebSearchKind = "webSearch";
     private const string McpKind = "mcp";
 
     private static readonly string[] s_validToolKinds =

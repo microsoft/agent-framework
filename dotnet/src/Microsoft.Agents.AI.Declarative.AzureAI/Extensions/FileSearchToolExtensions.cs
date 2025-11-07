@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.Agents.Persistent;
@@ -33,14 +32,7 @@ internal static class FileSearchToolExtensions
     /// <param name="tool">Instance of <see cref="FileSearchTool"/></param>
     internal static List<string>? GetVectorStoreIds(this FileSearchTool tool)
     {
-        return tool.Inputs.Select(input =>
-        {
-            return input switch
-            {
-                VectorStoreContent => ((VectorStoreContent)input).VectorStoreId!,
-                _ => throw new NotSupportedException($"Unable to create file search input because of unsupported input type: {input.Kind}"),
-            };
-        }).ToList();
+        return tool.VectorStoreIds?.LiteralValue.ToList();
     }
 
     internal static IList<VectorStoreConfigurations>? GetVectorStoreConfigurations(this FileSearchTool tool)

@@ -12,7 +12,6 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -65,7 +64,7 @@ internal static class PromptAgents
                 - "DeletePersonInfo"
               NeverRequireApprovalToolNames:
                 - "GetPersonInfo"
-          - kind: webSearch
+          - kind: bingSearch
             name: WebSearchTool
             description: Search the web for information.
           - kind: fileSearch
@@ -75,13 +74,10 @@ internal static class PromptAgents
             scoreThreshold: 0.5
             maxResults: 5
             maxContentLength: 2000
-            Inputs:
-              - kind: VectorStoreContent
-                vectorStoreId: 1
-              - kind: VectorStoreContent
-                vectorStoreId: 2
-              - kind: VectorStoreContent
-                vectorStoreId: 3
+            vectorStoreIds:
+              - 1
+              - 2
+              - 3
         """;
 
     internal const string AgentWithOutputSchema =
@@ -90,7 +86,6 @@ internal static class PromptAgents
         name: Translation Assistant
         description: A helpful assistant that translates text to a specified language.
         model:
-            kind: ExternalModel
             id: gpt-4o
             options:
                 temperature: 0.9
@@ -124,7 +119,6 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: gpt-4o
           connection:
             kind: ApiKey
@@ -139,10 +133,9 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: gpt-4o
           connection:
-            kind: ExternalReferenceConnection
+            kind: ExternalReference
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
         """;
 
@@ -153,7 +146,6 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: =Env.OpenAIModelId
           connection:
             kind: apiKey
@@ -168,7 +160,6 @@ internal static class PromptAgents
         description: Helpful assistant
         instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
         model:
-            kind: ExternalModel
             id: =Env.OPENAI_MODEL
             options:
                 temperature: 0.9
@@ -188,14 +179,13 @@ internal static class PromptAgents
                     description: The answer text.        
         """;
 
-    internal const string AgentWithExternalModel =
+    internal const string AgentWithCurrentModels =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -214,14 +204,13 @@ internal static class PromptAgents
             chatToolMode: auto
         """;
 
-    internal const string AgentWithExternalModelSnakeCase =
+    internal const string AgentWithCurrentModelsSnakeCase =
         """
         kind: Prompt
         name: AgentName
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          kind: ExternalModel
           id: gpt-4o
           options:
             temperature: 0.7
@@ -252,7 +241,6 @@ internal static class PromptAgents
             instructions: You are a helpful assistant.
             additionalInstructions: Provide detailed and accurate responses.
             model:
-              kind: ExternalModel
               id: gpt-4o
               publisher: {publisher}
               apiType: {apiType}
@@ -300,7 +288,7 @@ internal static class PromptAgents
                 connection:
                     kind: AnonymousConnection
                     endpoint: https://my-mcp-endpoint.com/api
-              - kind: webSearch
+              - kind: bingSearch
                 name: WebSearchTool
                 description: Search the web for information.
               - kind: fileSearch

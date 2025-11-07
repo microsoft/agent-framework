@@ -49,7 +49,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected ChatClient? CreateChatClient(GptComponentMetadata promptAgent)
     {
-        var model = promptAgent.Model as ExternalModel;
+        var model = promptAgent.Model as CurrentModels;
         var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
         if (provider == ModelProvider.OpenAI)
         {
@@ -70,7 +70,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected AssistantClient? CreateAssistantClient(GptComponentMetadata promptAgent)
     {
-        var model = promptAgent.Model as ExternalModel;
+        var model = promptAgent.Model as CurrentModels;
         var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
         if (provider == ModelProvider.OpenAI)
         {
@@ -91,7 +91,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
     /// </summary>
     protected OpenAIResponseClient? CreateResponseClient(GptComponentMetadata promptAgent)
     {
-        var model = promptAgent.Model as ExternalModel;
+        var model = promptAgent.Model as CurrentModels;
         var provider = model?.Provider?.Value ?? ModelProvider.OpenAI;
         if (provider == ModelProvider.OpenAI)
         {
@@ -161,7 +161,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
 
     private static OpenAIClient CreateOpenAIClient(GptComponentMetadata promptAgent)
     {
-        var model = promptAgent.Model as ExternalModel;
+        var model = promptAgent.Model as CurrentModels;
 
         var keyConnection = model?.Connection as ApiKeyConnection;
         Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");

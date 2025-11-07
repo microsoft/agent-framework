@@ -20,7 +20,7 @@ public class AgentBotElementYamlTests
     [InlineData(PromptAgents.AgentWithEnvironmentVariables)]
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
-    [InlineData(PromptAgents.AgentWithExternalModel)]
+    [InlineData(PromptAgents.AgentWithCurrentModels)]
     [InlineData(PromptAgents.AgentWithExternalReferenceConnection)]
     public void FromYaml_DoesNotThrow(string text)
     {
@@ -47,18 +47,18 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_ExternalModel()
+    public void FromYaml_CurrentModels()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithExternalModel);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithCurrentModels);
 
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
         Assert.Equal("gpt-4o", agent.Model.ModelNameHint);
         Assert.NotNull(agent.Model.Options);
-        Assert.Equal(0.7f, (float?)agent.Model.Options?.Temperature.LiteralValue);
-        Assert.Equal(0.9f, (float?)agent.Model.Options?.TopP.LiteralValue);
+        Assert.Equal(0.7f, (float?)agent.Model.Options?.Temperature?.LiteralValue);
+        Assert.Equal(0.9f, (float?)agent.Model.Options?.TopP?.LiteralValue);
 
         // Assert contents using extension methods
         Assert.Equal(1024, agent.Model.Options?.MaxOutputTokens?.LiteralValue);
@@ -197,14 +197,11 @@ public class AgentBotElementYamlTests
         Assert.NotNull(fileSearchTool);
 
         // Verify vector store content property exists and has correct values
-        Assert.NotEmpty(fileSearchTool.Inputs);
-        Assert.Equal(3, fileSearchTool.Inputs.Length);
-        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[0]);
-        Assert.Equal("1", ((VectorStoreContent)fileSearchTool.Inputs[0]).VectorStoreId);
-        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[1]);
-        Assert.Equal("2", ((VectorStoreContent)fileSearchTool.Inputs[1]).VectorStoreId);
-        Assert.IsAssignableFrom<VectorStoreContent>(fileSearchTool.Inputs[2]);
-        Assert.Equal("3", ((VectorStoreContent)fileSearchTool.Inputs[2]).VectorStoreId);
+        Assert.NotNull(fileSearchTool.VectorStoreIds);
+        Assert.Equal(3, fileSearchTool.VectorStoreIds.LiteralValue.Length);
+        Assert.Equal("1", fileSearchTool.VectorStoreIds.LiteralValue[0]);
+        Assert.Equal("2", fileSearchTool.VectorStoreIds.LiteralValue[1]);
+        Assert.Equal("3", fileSearchTool.VectorStoreIds.LiteralValue[2]);
     }
 
     [Fact]
@@ -216,7 +213,7 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as ExternalModel;
+        var model = agent.Model as CurrentModels;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
@@ -235,7 +232,7 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as ExternalModel;
+        var model = agent.Model as CurrentModels;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ExternalReferenceConnection>(model.Connection);
@@ -263,10 +260,10 @@ public class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as ExternalModel;
+        var model = agent.Model as CurrentModels;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
-        //Assert.IsType<KeyConnection>(agent.Model.Connection);
+        Assert.IsType<ApiKeyConnection>(model.Connection);
         //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection.Endpoint?.LiteralValue);
         //Assert.Equal("apiKey", connection.Key?.LiteralValue);
         //Assert.Equal("modelId", model.Id);
