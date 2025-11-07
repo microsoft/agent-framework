@@ -126,7 +126,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
         }
 
-        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
+        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
 
         foreach (ChatMessage message in messages)
         {
@@ -149,7 +149,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             }
             else
             {
-                throw new PurviewException("No app location provided or inferred for Purview request. Please provide an app location in PurviewSettings or configure the TokenCredential to authenticate to an entra app.");
+                throw new PurviewRequestException("No app location provided or inferred for Purview request. Please provide an app location in PurviewSettings or configure the TokenCredential to authenticate to an entra app.");
             }
 
             string appVersion = !string.IsNullOrEmpty(settings.AppVersion) ? settings.AppVersion : "Unknown";
@@ -183,7 +183,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
             if (string.IsNullOrEmpty(userId))
             {
-                throw new PurviewException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
+                throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
             }
 
             ProcessContentRequest pcRequest = new(contentToProcess, userId, tenantId);

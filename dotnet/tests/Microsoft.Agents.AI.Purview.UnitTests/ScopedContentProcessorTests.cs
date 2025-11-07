@@ -386,7 +386,7 @@ public sealed class ScopedContentProcessorTests
             .ReturnsAsync(tokenInfo);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<PurviewException>(() =>
+        var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._processor.ProcessMessagesAsync(messages, "thread-123", Activity.UploadText, settings, "user-123", CancellationToken.None));
 
         Assert.Contains("No tenant id provided or inferred", exception.Message);
@@ -407,7 +407,7 @@ public sealed class ScopedContentProcessorTests
             .ReturnsAsync(tokenInfo);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<PurviewException>(() =>
+        var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._processor.ProcessMessagesAsync(messages, "thread-123", Activity.UploadText, settings, null, CancellationToken.None));
 
         Assert.Contains("No user id provided or inferred", exception.Message);

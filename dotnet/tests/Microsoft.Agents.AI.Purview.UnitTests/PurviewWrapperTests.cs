@@ -173,7 +173,7 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewException("Prompt processing error")); // Response processing succeeds
+            .ThrowsAsync(new PurviewRequestException("Prompt processing error")); // Response processing succeeds
 
         // Act
         var result = await wrapper.ProcessChatContentAsync(messages, null, mockChatClient.Object, CancellationToken.None);
@@ -200,10 +200,10 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewException("Prompt processing error"));
+            .ThrowsAsync(new PurviewRequestException("Prompt processing error"));
 
         // Act & Assert
-        await Assert.ThrowsAsync<PurviewException>(() =>
+        await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._wrapper.ProcessChatContentAsync(messages, null, mockChatClient.Object, CancellationToken.None));
     }
 
@@ -390,7 +390,7 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewException("Prompt processing error"))
+            .ThrowsAsync(new PurviewRequestException("Prompt processing error"))
             .ReturnsAsync((false, "user-123")); // Response processing succeeds
 
         // Act
@@ -418,10 +418,10 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<PurviewSettings>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewException("Processing error"));
+            .ThrowsAsync(new PurviewRequestException("Processing error"));
 
         // Act & Assert
-        await Assert.ThrowsAsync<PurviewException>(() =>
+        await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._wrapper.ProcessAgentContentAsync(messages, null, null, mockAgent.Object, CancellationToken.None));
     }
 

@@ -70,7 +70,7 @@ internal sealed class PurviewClient : IPurviewClient
         string[] parts = tokenString.Split('.');
         if (parts.Length < 2)
         {
-            throw new PurviewException("Invalid JWT access token format.");
+            throw new PurviewRequestException("Invalid JWT access token format.");
         }
 
         string payload = parts[1];
@@ -164,7 +164,7 @@ internal sealed class PurviewClient : IPurviewClient
                 {
                     const string DeserializeExceptionError = "Failed to deserialize ProcessContent response.";
                     this._logger.LogError(jsonException, DeserializeExceptionError);
-                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                    throw new PurviewRequestException(DeserializeExceptionError, jsonException);
                 }
 
                 if (deserializedResponse != null)
@@ -174,7 +174,7 @@ internal sealed class PurviewClient : IPurviewClient
 
                 const string DeserializeError = "Failed to deserialize ProcessContent response. Response was null.";
                 this._logger.LogError(DeserializeError);
-                throw new PurviewException(DeserializeError);
+                throw new PurviewRequestException(DeserializeError);
             }
 
             this._logger.LogError("Failed to process content. Status code: {StatusCode}", response.StatusCode);
@@ -228,7 +228,7 @@ internal sealed class PurviewClient : IPurviewClient
                 {
                     const string DeserializeExceptionError = "Failed to deserialize ProtectionScopes response.";
                     this._logger.LogError(jsonException, DeserializeExceptionError);
-                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                    throw new PurviewRequestException(DeserializeExceptionError, jsonException);
                 }
 
                 if (deserializedResponse != null)
@@ -239,7 +239,7 @@ internal sealed class PurviewClient : IPurviewClient
 
                 const string DeserializeError = "Failed to deserialize ProtectionScopes response.";
                 this._logger.LogError(DeserializeError);
-                throw new PurviewException(DeserializeError);
+                throw new PurviewRequestException(DeserializeError);
             }
 
             this._logger.LogError("Failed to retrieve protection scopes. Status code: {StatusCode}", response.StatusCode);
@@ -292,7 +292,7 @@ internal sealed class PurviewClient : IPurviewClient
                 {
                     const string DeserializeExceptionError = "Failed to deserialize ContentActivities response.";
                     this._logger.LogError(jsonException, DeserializeExceptionError);
-                    throw new PurviewException(DeserializeExceptionError, jsonException);
+                    throw new PurviewRequestException(DeserializeExceptionError, jsonException);
                 }
 
                 if (deserializedResponse != null)
@@ -302,7 +302,7 @@ internal sealed class PurviewClient : IPurviewClient
 
                 const string DeserializeError = "Failed to deserialize ContentActivities response.";
                 this._logger.LogError(DeserializeError);
-                throw new PurviewException(DeserializeError);
+                throw new PurviewRequestException(DeserializeError);
             }
 
             this._logger.LogError("Failed to create content activities. Status code: {StatusCode}", response.StatusCode);

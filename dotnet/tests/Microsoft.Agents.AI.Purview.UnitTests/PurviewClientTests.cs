@@ -186,7 +186,7 @@ public sealed class PurviewClientTests : IDisposable
         this._handler.ResponseToReturn = "invalid json";
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<PurviewException>(() =>
+        var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._client.ProcessContentAsync(request, CancellationToken.None));
 
         Assert.Contains("Failed to deserialize ProcessContent response", exception.Message);
@@ -311,7 +311,7 @@ public sealed class PurviewClientTests : IDisposable
         this._handler.ResponseToReturn = "invalid json";
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<PurviewException>(() =>
+        var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._client.GetProtectionScopesAsync(request, CancellationToken.None));
 
         Assert.Contains("Failed to deserialize ProtectionScopes response", exception.Message);
@@ -442,7 +442,7 @@ public sealed class PurviewClientTests : IDisposable
         this._handler.ResponseToReturn = "invalid json";
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<PurviewException>(() =>
+        var exception = await Assert.ThrowsAsync<PurviewRequestException>(() =>
             this._client.SendContentActivitiesAsync(request, CancellationToken.None));
 
         Assert.Contains("Failed to deserialize ContentActivities response", exception.Message);

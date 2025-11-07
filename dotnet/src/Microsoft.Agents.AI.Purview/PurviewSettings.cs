@@ -69,7 +69,7 @@ public class PurviewSettings
     /// <summary>
     /// The size limit of the default in memory cache in bytes. This only applies if no cache is provided when creating Purview resources.
     /// </summary>
-    public long? InMemoryCacheSizeLimit { get; set; } = 100_000_000_000;
+    public long? InMemoryCacheSizeLimit { get; set; } = 100_000_000;
 
     /// <summary>
     /// The TTL of each cache entry.
