@@ -1,5 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// This sample demonstrates how to configure AI agents to be accessible as MCP tools.
+// When using AddAIAgent and enabling MCP tool triggers, the Functions host will automatically
+// generate a remote MCP endpoint for the app at /runtime/webhooks/mcp with a agent-specific
+// query tool name.
+
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;

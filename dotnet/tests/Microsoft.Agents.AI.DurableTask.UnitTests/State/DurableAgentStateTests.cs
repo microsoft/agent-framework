@@ -10,12 +10,14 @@ public sealed class DurableAgentStateTests
     [Fact]
     public void InvalidVersion()
     {
+        // Arrange
         const string JsonText = """
             {
                 "schemaVersion": "hello"
             }
             """;
 
+        // Act & Assert
         Assert.Throws<InvalidOperationException>(
             () => JsonSerializer.Deserialize(JsonText, DurableAgentStateJsonContext.Default.DurableAgentState));
     }
@@ -23,12 +25,14 @@ public sealed class DurableAgentStateTests
     [Fact]
     public void BreakingVersion()
     {
+        // Arrange
         const string JsonText = """
             {
                 "schemaVersion": "2.0.0"
             }
             """;
 
+        // Act & Assert
         Assert.Throws<InvalidOperationException>(
             () => JsonSerializer.Deserialize(JsonText, DurableAgentStateJsonContext.Default.DurableAgentState));
     }
@@ -36,12 +40,14 @@ public sealed class DurableAgentStateTests
     [Fact]
     public void MissingData()
     {
+        // Arrange
         const string JsonText = """
             {
                 "schemaVersion": "1.0.0"
             }
             """;
 
+        // Act & Assert
         Assert.Throws<InvalidOperationException>(
             () => JsonSerializer.Deserialize(JsonText, DurableAgentStateJsonContext.Default.DurableAgentState));
     }
@@ -49,6 +55,7 @@ public sealed class DurableAgentStateTests
     [Fact]
     public void ExtraData()
     {
+        // Arrange
         const string JsonText = """
             {
                 "schemaVersion": "1.0.0",
@@ -59,17 +66,20 @@ public sealed class DurableAgentStateTests
             }
             """;
 
+        // Act
         DurableAgentState? state = JsonSerializer.Deserialize(JsonText, DurableAgentStateJsonContext.Default.DurableAgentState);
 
+        // Assert
         Assert.NotNull(state?.Data?.ExtensionData);
 
         Assert.True(state.Data.ExtensionData!.ContainsKey("extraField"));
         Assert.Equal("someValue", state.Data.ExtensionData["extraField"]!.ToString());
 
+        // Act
         string jsonState = JsonSerializer.Serialize(state, DurableAgentStateJsonContext.Default.DurableAgentState);
-
         JsonDocument? jsonDocument = JsonSerializer.Deserialize<JsonDocument>(jsonState);
 
+        // Assert
         Assert.NotNull(jsonDocument);
         Assert.True(jsonDocument.RootElement.TryGetProperty("data", out JsonElement dataElement));
         Assert.True(dataElement.TryGetProperty("extraField", out JsonElement extraFieldElement));
@@ -79,6 +89,7 @@ public sealed class DurableAgentStateTests
     [Fact]
     public void BasicState()
     {
+        // Arrange
         const string JsonText = """
           {
               "schemaVersion": "1.0.0",
@@ -121,10 +132,12 @@ public sealed class DurableAgentStateTests
           }
           """;
 
+        // Act
         DurableAgentState? state = JsonSerializer.Deserialize(
             JsonText,
             DurableAgentStateJsonContext.Default.DurableAgentState);
 
+        // Assert
         Assert.NotNull(state);
         Assert.Equal("1.0.0", state.SchemaVersion);
         Assert.NotNull(state.Data);

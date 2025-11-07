@@ -15,6 +15,7 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void ErrorContentSerializationDeserialization()
     {
+        // Arrange
         ErrorContent errorContent = new("message")
         {
             Details = "details",
@@ -23,11 +24,13 @@ public sealed class DurableAgentStateContentTests
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(errorContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -42,15 +45,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void TextContentSerializationDeserialization()
     {
+        // Arrange
         TextContent textContent = new("Hello, world!");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(textContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -63,6 +69,7 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void FunctionCallContentSerializationDeserialization()
     {
+        // Arrange
         FunctionCallContent functionCallContent = new(
             "call-123",
             "MyFunction",
@@ -74,11 +81,13 @@ public sealed class DurableAgentStateContentTests
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(functionCallContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -105,15 +114,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void FunctionResultContentSerializationDeserialization()
     {
+        // Arrange
         FunctionResultContent functionResultContent = new("call-123", "return value");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(functionResultContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -133,15 +145,18 @@ public sealed class DurableAgentStateContentTests
     [InlineData("data:;base64,SGVsbG8sIFdvcmxkIQ==", "text/plain")] // Valid data URI without media type; pass media
     public void DataContentSerializationDeserialization(string dataUri, string? mediaType)
     {
+        // Arrange
         DataContent dataContent = new(dataUri, mediaType);
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(dataContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -155,15 +170,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void HostedFileContentSerializationDeserialization()
     {
+        // Arrange
         HostedFileContent hostedFileContent = new("file-123");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(hostedFileContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -176,14 +194,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void HostedVectorStoreContentSerializationDeserialization()
     {
+        // Arrange
         HostedVectorStoreContent hostedVectorStoreContent = new("vs-123");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(hostedVectorStoreContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
+
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -196,15 +218,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void TextReasoningContentSerializationDeserialization()
     {
+        // Arrange
         TextReasoningContent textReasoningContent = new("Reasoning chain...");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(textReasoningContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -217,15 +242,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void UriContentSerializationDeserialization()
     {
+        // Arrange
         UriContent uriContent = new(new Uri("https://example.com"), "text/html");
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(uriContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -239,6 +267,7 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void UsageContentSerializationDeserialization()
     {
+        // Arrange
         UsageDetails usageDetails = new()
         {
             InputTokenCount = 10,
@@ -250,11 +279,13 @@ public sealed class DurableAgentStateContentTests
 
         DurableAgentStateContent durableContent = DurableAgentStateContent.FromAIContent(usageContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();
@@ -270,15 +301,18 @@ public sealed class DurableAgentStateContentTests
     [Fact]
     public void UnknownContentSerializationDeserialization()
     {
+        // Arrange
         TextContent originalContent = new("Some unknown content");
 
         DurableAgentStateContent durableContent = DurableAgentStateUnknownContent.FromUnknownContent(originalContent);
 
+        // Act
         string jsonContent = JsonSerializer.Serialize(durableContent, s_stateContentTypeInfo);
 
         DurableAgentStateContent? convertedJsonContent =
             (DurableAgentStateContent?)JsonSerializer.Deserialize(jsonContent, s_stateContentTypeInfo);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         AIContent convertedContent = convertedJsonContent.ToAIContent();

@@ -11,6 +11,7 @@ public sealed class DurableAgentStateMessageTests
     [Fact]
     public void MessageSerializationDeserialization()
     {
+        // Arrange
         TextContent textContent = new("Hello, world!");
         ChatMessage message = new(ChatRole.User, [textContent])
         {
@@ -20,10 +21,16 @@ public sealed class DurableAgentStateMessageTests
 
         DurableAgentStateMessage durableMessage = DurableAgentStateMessage.FromChatMessage(message);
 
-        string jsonContent = JsonSerializer.Serialize(durableMessage, DurableAgentStateJsonContext.Default.GetTypeInfo(typeof(DurableAgentStateMessage))!);
+        // Act
+        string jsonContent = JsonSerializer.Serialize(
+            durableMessage,
+            DurableAgentStateJsonContext.Default.GetTypeInfo(typeof(DurableAgentStateMessage))!);
 
-        DurableAgentStateMessage? convertedJsonContent = (DurableAgentStateMessage?)JsonSerializer.Deserialize(jsonContent, DurableAgentStateJsonContext.Default.GetTypeInfo(typeof(DurableAgentStateMessage))!);
+        DurableAgentStateMessage? convertedJsonContent = (DurableAgentStateMessage?)JsonSerializer.Deserialize(
+            jsonContent,
+            DurableAgentStateJsonContext.Default.GetTypeInfo(typeof(DurableAgentStateMessage))!);
 
+        // Assert
         Assert.NotNull(convertedJsonContent);
 
         ChatMessage convertedMessage = convertedJsonContent.ToChatMessage();

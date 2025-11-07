@@ -20,6 +20,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         bool enableMcp,
         int expectedMetadataCount)
     {
+        // Arrange
         Dictionary<string, Func<IServiceProvider, AIAgent>> agents = new()
         {
             { "testAgent", _ => new TestAgent("testAgent", "Test agent description") }
@@ -43,8 +44,10 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
             new FakeServiceProvider(),
             agentOptionsProvider);
 
+        // Act
         transformer.Transform(metadataList);
 
+        // Assert
         Assert.Equal(initialMetadataEntryCount + expectedMetadataCount, metadataList.Count);
 
         DefaultFunctionMetadata agentTrigger = Assert.IsType<DefaultFunctionMetadata>(metadataList[initialMetadataEntryCount]);
@@ -70,6 +73,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
     [Fact]
     public void Transform_AddsTriggers_ForMultipleAgents()
     {
+        // Arrange
         Dictionary<string, Func<IServiceProvider, AIAgent>> agents = new()
         {
             { "agentA", _ => new TestAgent("testAgentA", "Test agent description") },
@@ -107,8 +111,10 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         const int InitialMetadataEntryCount = 2;
         List<IFunctionMetadata> metadataList = BuildFunctionMetadataList(InitialMetadataEntryCount);
 
+        // Act
         transformer.Transform(metadataList);
 
+        // Assert
         Assert.Equal(InitialMetadataEntryCount + (agents.Count * 2) + 2, metadataList.Count);
 
         foreach (string agentName in agents.Keys)
