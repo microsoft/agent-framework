@@ -7,12 +7,12 @@ This folder contains examples demonstrating different ways to create and use age
 | File | Description |
 |------|-------------|
 | [`azure_ai_basic.py`](azure_ai_basic.py) | The simplest way to create an agent using `AzureAIClient`. Demonstrates both streaming and non-streaming responses with function tools. Shows automatic agent creation and basic weather functionality. |
-| [`azure_ai_response_format.py`](azure_ai_response_format.py) | Shows how to use structured outputs (response format) with Azure AI agents using Pydantic models to enforce specific response schemas. |
 | [`azure_ai_use_latest_version.py`](azure_ai_use_latest_version.py) | Demonstrates how to reuse the latest version of an existing agent instead of creating a new agent version on each instantiation using the `use_latest_version=True` parameter. |
 | [`azure_ai_with_code_interpreter.py`](azure_ai_with_code_interpreter.py) | Shows how to use the `HostedCodeInterpreterTool` with Azure AI agents to write and execute Python code for mathematical problem solving and data analysis. |
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with a pre-existing agent by providing the agent name and version to the Azure AI client. Demonstrates agent reuse patterns for production scenarios. |
 | [`azure_ai_with_existing_conversation.py`](azure_ai_with_existing_conversation.py) | Shows how to work with a pre-existing conversation by providing the conversation ID to continue existing chat sessions. |
 | [`azure_ai_with_explicit_settings.py`](azure_ai_with_explicit_settings.py) | Shows how to create an agent with explicitly configured `AzureAIClient` settings, including project endpoint, model deployment, and credentials rather than relying on environment variable defaults. |
+| [`azure_ai_with_response_format.py`](azure_ai_with_response_format.py) | Shows how to use structured outputs (response format) with Azure AI agents using Pydantic models to enforce specific response schemas. |
 | [`azure_ai_with_thread.py`](azure_ai_with_thread.py) | Demonstrates thread management with Azure AI agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
 
 ## Environment Variables
