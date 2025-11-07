@@ -74,15 +74,15 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_anthropic"]
+targets = ["agent_framework_declarative"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_anthropic"
-test = "pytest --cov=agent_framework_anthropic --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_declarative"
+test = "pytest --cov=agent_framework_declarative --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
