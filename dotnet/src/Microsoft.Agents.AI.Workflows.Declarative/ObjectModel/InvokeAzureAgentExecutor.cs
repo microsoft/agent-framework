@@ -151,14 +151,14 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 
     private string? GetAdditionalInstructions()
     {
-        string? additionalInstructions = null;
+        //string? additionalInstructions = null;
 
-        if (this.AgentInput?.AdditionalInstructions is not null)
-        {
-            additionalInstructions = this.Engine.Format(this.AgentInput.AdditionalInstructions);
-        }
+        //if (this.AgentInput?.AdditionalInstructions is not null)
+        //{
+        //    additionalInstructions = this.Engine.Format(this.AgentInput.AdditionalInstructions);
+        //}
 
-        return additionalInstructions;
+        return null;
     }
 
     private bool GetAutoSendValue()

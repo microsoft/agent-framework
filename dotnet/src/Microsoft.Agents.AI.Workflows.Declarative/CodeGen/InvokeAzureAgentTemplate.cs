@@ -61,7 +61,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen
 
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
-        EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
+        //EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");
             this.Write(@"
         

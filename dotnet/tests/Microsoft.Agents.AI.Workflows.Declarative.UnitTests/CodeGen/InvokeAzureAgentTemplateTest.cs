@@ -141,7 +141,7 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                     new AzureAgentInput.Builder
                     {
                         Messages = messages,
-                        AdditionalInstructions = additionalInstructions,
+                        //AdditionalInstructions = additionalInstructions,
                     },
                 Output =
                     new AzureAgentOutput.Builder

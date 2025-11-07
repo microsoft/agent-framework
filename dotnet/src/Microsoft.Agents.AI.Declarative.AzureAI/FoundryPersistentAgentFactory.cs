@@ -70,7 +70,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     private PersistentAgentsClient CreatePersistentAgentClient(GptComponentMetadata promptAgent)
     {
         var externalModel = promptAgent.Model as CurrentModels;
-        var connection = externalModel?.Connection as ExternalReferenceConnection;
+        var connection = externalModel?.Connection as RemoteConnection;
         if (connection is not null)
         {
             var endpoint = connection.Endpoint?.LiteralValue;

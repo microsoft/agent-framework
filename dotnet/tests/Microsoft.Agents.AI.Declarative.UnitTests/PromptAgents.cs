@@ -64,7 +64,7 @@ internal static class PromptAgents
                 - "DeletePersonInfo"
               NeverRequireApprovalToolNames:
                 - "GetPersonInfo"
-          - kind: bingSearch
+          - kind: webSearch
             name: WebSearchTool
             description: Search the web for information.
           - kind: fileSearch
@@ -126,7 +126,7 @@ internal static class PromptAgents
             key: my-api-key
         """;
 
-    internal const string AgentWithExternalReferenceConnection =
+    internal const string AgentWithRemoteConnection =
         """
         kind: Prompt
         name: AgentName
@@ -135,7 +135,7 @@ internal static class PromptAgents
         model:
           id: gpt-4o
           connection:
-            kind: ExternalReference
+            kind: Remote
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
         """;
 
@@ -288,7 +288,7 @@ internal static class PromptAgents
                 connection:
                     kind: AnonymousConnection
                     endpoint: https://my-mcp-endpoint.com/api
-              - kind: bingSearch
+              - kind: webSearch
                 name: WebSearchTool
                 description: Search the web for information.
               - kind: fileSearch

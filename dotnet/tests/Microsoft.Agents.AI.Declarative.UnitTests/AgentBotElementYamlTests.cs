@@ -21,7 +21,7 @@ public class AgentBotElementYamlTests
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
     [InlineData(PromptAgents.AgentWithCurrentModels)]
-    [InlineData(PromptAgents.AgentWithExternalReferenceConnection)]
+    [InlineData(PromptAgents.AgentWithRemoteConnection)]
     public void FromYaml_DoesNotThrow(string text)
     {
         // Arrange & Act
@@ -224,10 +224,10 @@ public class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_ExternalReferenceConnection()
+    public void FromYaml_RemoteConnection()
     {
         // Arrange & Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithExternalReferenceConnection);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithRemoteConnection);
 
         // Assert
         Assert.NotNull(agent);
@@ -235,8 +235,8 @@ public class AgentBotElementYamlTests
         var model = agent.Model as CurrentModels;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
-        Assert.IsType<ExternalReferenceConnection>(model.Connection);
-        var connection = model.Connection as ExternalReferenceConnection;
+        Assert.IsType<RemoteConnection>(model.Connection);
+        var connection = model.Connection as RemoteConnection;
         Assert.NotNull(connection);
         Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
     }
