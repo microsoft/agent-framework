@@ -14,7 +14,7 @@ public static class DevUIExtensions
     /// </summary>
     /// <remarks>
     /// DevUI requires the OpenAI Responses and Conversations services to be registered with
-    /// See <see cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIResponses(IServiceCollection)"/> and
+    /// <see cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIResponses(IServiceCollection)"/> and
     /// <see cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIConversations(IServiceCollection)"/>,
     /// and the corresponding endpoints to be mapped using
     /// <see cref="MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses(IEndpointRouteBuilder)"/> and
