@@ -66,6 +66,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_TextSearchRag/Agent_Step18_TextSearchRag.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step19_Mem0Provider/Agent_Step19_Mem0Provider.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step20_BackgroundResponsesWithToolsAndPersistence/Agent_Step20_BackgroundResponsesWithToolsAndPersistence.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step21_ChatHistoryMemoryProvider/Agent_Step21_ChatHistoryMemoryProvider.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
