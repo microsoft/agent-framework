@@ -123,11 +123,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
             // Locally: Skip if emulator connection check failed
             var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOS_EMULATOR_AVAILABLE"), "true", StringComparison.OrdinalIgnoreCase);
 
-            if (!ciEmulatorAvailable && !this._emulatorAvailable)
-            {
-                // Skip test if emulator is not available
-                return;
-            }
+            Xunit.Skip.If(!ciEmulatorAvailable && !this._emulatorAvailable, "Cosmos DB Emulator is not available");
         }
 
     #region Constructor Tests
