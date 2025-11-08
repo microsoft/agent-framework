@@ -66,15 +66,13 @@ pytestmark = [
 The `function_app_for_test` fixture:
 1. Loads environment variables from `.env`
 2. Validates required variables are present
-3. Starts the function app on port 7071
+3. Starts the function app on a dynamically allocated port
 4. Waits for the app to be ready
 5. Runs your tests
 6. Tears down the function app
 
 ## Troubleshooting
 
-**Port 7071 already in use:**
-Stop any running function apps before running tests.
 
 **Missing environment variables:**
 Ensure your `.env` file contains all required variables from `.env.example`.

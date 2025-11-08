@@ -379,6 +379,7 @@ def cleanup_function_app(func_process: subprocess.Popen) -> None:
                 func_process.kill()
                 func_process.wait()
         except Exception:
+            # Ignore all exceptions during fallback cleanup; best effort to terminate process.
             pass
     except Exception:
         pass  # Best effort cleanup
