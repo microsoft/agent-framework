@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
-using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -24,9 +23,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 {
     private readonly CosmosClient _cosmosClient;
     private readonly Container _container;
-    private readonly string _conversationId;
-    private readonly string _databaseId;
-    private readonly string _containerId;
     private readonly bool _ownsClient;
     private bool _disposed;
 
@@ -79,17 +75,17 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <summary>
     /// Gets the conversation ID associated with this message store.
     /// </summary>
-    public string ConversationId => this._conversationId;
+    public string ConversationId { get; init; }
 
     /// <summary>
     /// Gets the database ID associated with this message store.
     /// </summary>
-    public string DatabaseId => this._databaseId;
+    public string DatabaseId { get; init; }
 
     /// <summary>
     /// Gets the container ID associated with this message store.
     /// </summary>
-    public string ContainerId => this._containerId;
+    public string ContainerId { get; init; }
 
     /// <summary>
     /// Internal primary constructor used by all public constructors.
@@ -105,9 +101,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     {
         this._cosmosClient = Throw.IfNull(cosmosClient);
         this._container = this._cosmosClient.GetContainer(Throw.IfNullOrWhitespace(databaseId), Throw.IfNullOrWhitespace(containerId));
-        this._conversationId = Throw.IfNullOrWhitespace(conversationId);
-        this._databaseId = databaseId;
-        this._containerId = containerId;
+        this.ConversationId = Throw.IfNullOrWhitespace(conversationId);
+        this.DatabaseId = databaseId;
+        this.ContainerId = containerId;
         this._ownsClient = ownsClient;
 
         // Initialize partitioning mode
@@ -269,8 +265,8 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     public CosmosChatMessageStore(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
-        this._databaseId = Throw.IfNullOrWhitespace(databaseId);
-        this._containerId = Throw.IfNullOrWhitespace(containerId);
+        this.DatabaseId = Throw.IfNullOrWhitespace(databaseId);
+        this.ContainerId = Throw.IfNullOrWhitespace(containerId);
         this._container = this._cosmosClient.GetContainer(databaseId, containerId);
         this._ownsClient = false;
 
@@ -279,7 +275,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
             if (state?.ConversationIdentifier is { } conversationId)
             {
-                this._conversationId = conversationId;
+                this.ConversationId = conversationId;
 
                 // Initialize hierarchical partitioning if available in state
                 this._tenantId = state.TenantId;
@@ -314,7 +310,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         // Fetch most recent messages in descending order when limit is set, then reverse to ascending
         var orderDirection = this.MaxMessagesToRetrieve.HasValue ? "DESC" : "ASC";
         var query = new QueryDefinition($"SELECT * FROM c WHERE c.conversationId = @conversationId AND c.type = @type ORDER BY c.timestamp {orderDirection}")
-            .WithParameter("@conversationId", this._conversationId)
+            .WithParameter("@conversationId", this.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<CosmosMessageDocument>(query, requestOptions: new QueryRequestOptions
@@ -474,7 +470,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         return new CosmosMessageDocument
         {
             Id = Guid.NewGuid().ToString(),
-            ConversationId = this._conversationId,
+            ConversationId = this.ConversationId,
             Timestamp = timestamp,
             MessageId = message.MessageId,
             Role = message.Role.Value,
@@ -484,7 +480,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             // Include hierarchical metadata when using hierarchical partitioning
             TenantId = this._useHierarchicalPartitioning ? this._tenantId : null,
             UserId = this._useHierarchicalPartitioning ? this._userId : null,
-            SessionId = this._useHierarchicalPartitioning ? this._conversationId : null
+            SessionId = this._useHierarchicalPartitioning ? this.ConversationId : null
         };
     }
 
@@ -500,7 +496,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         var state = new StoreState
         {
-            ConversationIdentifier = this._conversationId,
+            ConversationIdentifier = this.ConversationId,
             TenantId = this._tenantId,
             UserId = this._userId,
             UseHierarchicalPartitioning = this._useHierarchicalPartitioning
@@ -527,7 +523,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         // Efficient count query
         var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
-            .WithParameter("@conversationId", this._conversationId)
+            .WithParameter("@conversationId", this.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<int>(query, requestOptions: new QueryRequestOptions
@@ -561,17 +557,17 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         // Batch delete for efficiency
         var query = new QueryDefinition("SELECT VALUE c.id FROM c WHERE c.conversationId = @conversationId AND c.Type = @type")
-            .WithParameter("@conversationId", this._conversationId)
+            .WithParameter("@conversationId", this.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
         var iterator = this._container.GetItemQueryIterator<string>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = new PartitionKey(this._conversationId),
+            PartitionKey = new PartitionKey(this.ConversationId),
             MaxItemCount = this.MaxItemCount
         });
 
         var deletedCount = 0;
-        var partitionKey = new PartitionKey(this._conversationId);
+        var partitionKey = new PartitionKey(this.ConversationId);
 
         while (iterator.HasMoreResults)
         {
