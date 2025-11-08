@@ -136,10 +136,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     private void SkipIfEmulatorNotAvailable()
     {
-        if (!this._emulatorAvailable)
-        {
-            Assert.Fail("Cosmos DB Emulator is not available. Start the emulator to run these tests.");
-        }
+        Skip.If(!this._emulatorAvailable, "Cosmos DB Emulator is not available. Start the emulator to run these tests.");
     }
 
     #region Constructor Tests

@@ -119,11 +119,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     private void SkipIfEmulatorNotAvailable()
     {
-        if (!_emulatorAvailable)
-        {
-            // For now let's just fail to see if tests work
-            Assert.Fail("Cosmos DB Emulator is not available. Start the emulator to run these tests.");
-        }
+        Skip.If(!this._emulatorAvailable, "Cosmos DB Emulator is not available. Start the emulator to run these tests.");
     }
 
     #region Constructor Tests
