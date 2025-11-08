@@ -136,9 +136,13 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
         private void SkipIfEmulatorNotAvailable()
         {
-            if (!this._emulatorAvailable)
+            // In CI: Skip if COSMOS_EMULATOR_AVAILABLE is not set to "true"
+            // Locally: Skip if emulator connection check failed
+            var ciEmulatorAvailable = string.Equals(Environment.GetEnvironmentVariable("COSMOS_EMULATOR_AVAILABLE"), "true", StringComparison.OrdinalIgnoreCase);
+
+            if (!ciEmulatorAvailable && !this._emulatorAvailable)
             {
-                // Skip test if emulator is not available (e.g., on Linux CI runners)
+                // Skip test if emulator is not available
                 return;
             }
         }
