@@ -32,7 +32,7 @@ source .venv/bin/activate
 - Azurite storage emulator – the sample uses `AzureWebJobsStorage=UseDevelopmentStorage=true`; start Azurite before launching the app.
 - Durable Task local backend – `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` expects the Durable Task scheduler listening on `http://localhost:8080` (start the Durable Functions emulator if it is not already running).
 - Python dependencies – from this folder, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
-- Copy `local.settings.json.template` to `local.settings.json` and update the values for `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` (and optionally `AZURE_OPENAI_API_KEY`) with your Azure OpenAI resource details; keep the other values as provided unless you are using custom infrastructure.
+- Copy `local.settings.json.template` to `local.settings.json` and update the values for `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and (optionally) `AZURE_OPENAI_API_KEY` to match your Azure OpenAI resource; make sure `TASKHUB_NAME` stays aligned with the durable task hub name specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default is `default`).
 
 ## Running the Sample
 

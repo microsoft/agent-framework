@@ -31,7 +31,7 @@ See the [README.md](../README.md) file in the parent directory for more informat
 
 ### 3. Configure local settings
 
-Copy `local.settings.json.template` to `local.settings.json`, then set the Azure OpenAI values (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and optionally `AZURE_OPENAI_API_KEY`) to match your environment.
+- Copy `local.settings.json.template` to `local.settings.json`, then set the Azure OpenAI values (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and optionally `AZURE_OPENAI_API_KEY`) to match your environment, and confirm `TASKHUB_NAME` matches the `TaskHub` configured in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (the default is `default`).
 
 ## Running the Sample
 

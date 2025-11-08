@@ -48,7 +48,7 @@ an HTTP API that can be polled by a web client or dashboard.
    pip install -r requirements.txt
    ```
 
-3. Copy `local.settings.json.template` to `local.settings.json` and update the values (or export them as environment variables) with your Azure resources.
+3. Copy `local.settings.json.template` to `local.settings.json` and update the values (or export them as environment variables) with your Azure resources, making sure `TASKHUB_NAME` matches the durable task hub specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (`default` by default).
 
 4. Start the Functions host:
 

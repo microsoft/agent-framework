@@ -8,7 +8,8 @@ when appropriate, drafts a response using an email assistant agent.
 - Azure Functions Core Tools (`func`) available on the PATH.
 - Environment variables `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
   `AZURE_OPENAI_API_KEY` or an active Azure CLI login.
-- Copy `local.settings.json.template` to `local.settings.json` and populate those Azure OpenAI settings (and storage values) before starting the host.
+- `TASKHUB_NAME` that matches the durable task hub specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default `default`).
+- Copy `local.settings.json.template` to `local.settings.json` and populate those Azure OpenAI settings (and storage values) before starting the host, keeping `TASKHUB_NAME` synchronized with the scheduler connection string.
 
 ## Scenario Overview
 - Two Azure OpenAI agents share a single deployment: one flags spam, the other drafts replies.

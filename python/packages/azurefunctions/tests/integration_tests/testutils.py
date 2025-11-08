@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -293,6 +294,9 @@ def start_function_app(sample_path: Path, port: int) -> subprocess.Popen:
 
     Returns the subprocess.Popen object for the running process.
     """
+    env = os.environ.copy()
+    env["TASKHUB_NAME"] = f"test{uuid.uuid4().hex[:8]}"
+
     # On Windows, use CREATE_NEW_PROCESS_GROUP to allow proper termination
     # shell=True only on Windows to handle PATH resolution
     if sys.platform == "win32":
@@ -301,9 +305,10 @@ def start_function_app(sample_path: Path, port: int) -> subprocess.Popen:
             cwd=str(sample_path),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             shell=True,
+            env=env,
         )
     # On Unix, don't use shell=True to avoid shell wrapper issues
-    return subprocess.Popen(["func", "start", "--port", str(port)], cwd=str(sample_path))
+    return subprocess.Popen(["func", "start", "--port", str(port)], cwd=str(sample_path), env=env)
 
 
 def wait_for_function_app_ready(func_process: subprocess.Popen, port: int, max_wait: int = 60) -> None:

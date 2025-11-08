@@ -9,7 +9,8 @@ output or a maximum number of attempts is reached.
 - Azure Functions Core Tools (`func`) available on the PATH.
 - Environment variables `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
    `AZURE_OPENAI_API_KEY` or an active Azure CLI session.
-- Copy `local.settings.json.template` to `local.settings.json` and configure those keys (plus storage settings) before starting the Functions host.
+- `TASKHUB_NAME` matching the durable task hub specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default is `default`).
+- Copy `local.settings.json.template` to `local.settings.json` and configure those keys (plus storage settings) before starting the Functions host, ensuring the `TaskHub` in the scheduler connection string stays in sync with `TASKHUB_NAME`.
 
 ## What It Shows
 - Identical environment variable usage (`AZURE_OPENAI_ENDPOINT`,

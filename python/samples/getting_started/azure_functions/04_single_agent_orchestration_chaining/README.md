@@ -16,7 +16,8 @@ preserving the conversation state between runs.
   - `AZURE_OPENAI_ENDPOINT`
   - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
   - `AZURE_OPENAI_API_KEY` (omit if using Azure CLI authentication)
-- Copy `local.settings.json.template` to `local.settings.json` and populate those keys (and any storage settings) before running the Functions host.
+- `TASKHUB_NAME` matching the durable task hub defined in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default is `default`).
+- Copy `local.settings.json.template` to `local.settings.json` and populate those keys (and any storage settings) before running the Functions host, ensuring the `TaskHub` setting in the scheduler connection string stays in sync with `TASKHUB_NAME`.
 - Dependencies installed: `pip install -r requirements.txt`
 
 ## Running the Sample
