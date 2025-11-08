@@ -145,7 +145,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region Constructor Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithConnectionString_ShouldCreateInstance()
     {
@@ -162,7 +162,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithConnectionStringNoConversationId_ShouldCreateInstance()
     {
@@ -179,7 +179,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(TestContainerId, store.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithNullConnectionString_ShouldThrowArgumentException()
     {
@@ -188,7 +188,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             new CosmosChatMessageStore((string)null!, TestDatabaseId, TestContainerId, "test-conversation"));
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithEmptyConversationId_ShouldThrowArgumentException()
     {
@@ -203,7 +203,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region AddMessagesAsync Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task AddMessagesAsync_WithSingleMessage_ShouldAddMessageAsync()
     {
@@ -263,7 +263,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(ChatRole.User, messageList[0].Role);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task AddMessagesAsync_WithMultipleMessages_ShouldAddAllMessagesAsync()
     {
@@ -294,7 +294,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region GetMessagesAsync Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task GetMessagesAsync_WithNoMessages_ShouldReturnEmptyAsync()
     {
@@ -309,7 +309,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Empty(messages);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task GetMessagesAsync_WithConversationIsolation_ShouldOnlyReturnMessagesForConversationAsync()
     {
@@ -341,7 +341,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region Integration Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task FullWorkflow_AddAndGet_ShouldWorkCorrectlyAsync()
     {
@@ -385,7 +385,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region Disposal Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_AfterUse_ShouldNotThrow()
     {
@@ -397,7 +397,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         store.Dispose(); // Should not throw
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Dispose_MultipleCalls_ShouldNotThrow()
     {
@@ -414,7 +414,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
     #region Hierarchical Partitioning Tests
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalConnectionString_ShouldCreateInstance()
     {
@@ -431,7 +431,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalEndpoint_ShouldCreateInstance()
     {
@@ -449,7 +449,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalCosmosClient_ShouldCreateInstance()
     {
@@ -466,7 +466,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, store.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalNullTenantId_ShouldThrowArgumentException()
     {
@@ -477,7 +477,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             new CosmosChatMessageStore(this._connectionString, TestDatabaseId, TestContainerId, null!, "user-456", "session-789"));
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalEmptyUserId_ShouldThrowArgumentException()
     {
@@ -488,7 +488,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "", "session-789"));
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public void Constructor_WithHierarchicalWhitespaceSessionId_ShouldThrowArgumentException()
     {
@@ -499,7 +499,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
             new CosmosChatMessageStore(this._connectionString, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "   "));
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task AddMessagesAsync_WithHierarchicalPartitioning_ShouldAddMessageWithMetadataAsync()
     {
@@ -548,7 +548,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(SessionId, (string)document!.sessionId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task AddMessagesAsync_WithHierarchicalMultipleMessages_ShouldAddAllMessagesAsync()
     {
@@ -582,7 +582,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Third hierarchical message", messageList[2].Text);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task GetMessagesAsync_WithHierarchicalPartitionIsolation_ShouldIsolateMessagesByUserIdAsync()
     {
@@ -618,7 +618,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message from user 2", messageList2[0].Text);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task SerializeDeserialize_WithHierarchicalPartitioning_ShouldPreserveStateAsync()
     {
@@ -656,7 +656,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(HierarchicalTestContainerId, deserializedStore.ContainerId);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task HierarchicalAndSimplePartitioning_ShouldCoexistAsync()
     {
@@ -689,7 +689,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Hierarchical partitioning message", hierarchicalMessageList[0].Text);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_ShouldLimitAndReturnMostRecentAsync()
     {
@@ -725,7 +725,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal("Message 10", messageList[4].Text);
     }
 
-    [Fact]
+    [SkippableFact]
     [Trait("Category", "CosmosDB")]
     public async Task MaxMessagesToRetrieve_Null_ShouldReturnAllMessagesAsync()
     {
