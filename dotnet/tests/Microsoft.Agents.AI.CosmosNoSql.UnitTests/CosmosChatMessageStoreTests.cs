@@ -44,7 +44,7 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 {
     // Cosmos DB Emulator connection settings
-    private const string s_emulatorEndpoint = "https://localhost:8081";
+    private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "ChatMessages";
     private const string HierarchicalTestContainerId = "HierarchicalChatMessages";
@@ -64,12 +64,12 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
-        this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
 
         try
         {
             // Only create CosmosClient for test setup - the actual tests will use connection string constructors
-            this._setupClient = new CosmosClient(s_emulatorEndpoint, EmulatorKey);
+            this._setupClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
 
             // Test connection by attempting to create database
             var databaseResponse = await this._setupClient.CreateDatabaseIfNotExistsAsync(TestDatabaseId);
@@ -440,7 +440,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
 
         // Act
         TokenCredential credential = new DefaultAzureCredential();
-        using var store = new CosmosChatMessageStore(s_emulatorEndpoint, credential, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
+        using var store = new CosmosChatMessageStore(EmulatorEndpoint, credential, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
 
         // Assert
         Assert.NotNull(store);
@@ -456,7 +456,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         // Arrange & Act
         this.SkipIfEmulatorNotAvailable();
 
-        using var cosmosClient = new CosmosClient(s_emulatorEndpoint, EmulatorKey);
+        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
         using var store = new CosmosChatMessageStore(cosmosClient, TestDatabaseId, HierarchicalTestContainerId, "tenant-123", "user-456", "session-789");
 
         // Assert
@@ -635,7 +635,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         var serializedState = originalStore.Serialize();
 
         // Create a new store from the serialized state
-        using var cosmosClient = new CosmosClient(s_emulatorEndpoint, EmulatorKey);
+        using var cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
         var serializerOptions = new JsonSerializerOptions
         {
             TypeInfoResolver = new DefaultJsonTypeInfoResolver()

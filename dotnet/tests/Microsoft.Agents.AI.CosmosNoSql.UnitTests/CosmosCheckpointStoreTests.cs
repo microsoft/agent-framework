@@ -30,7 +30,7 @@ namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 {
     // Cosmos DB Emulator connection settings
-    private const string s_emulatorEndpoint = "https://localhost:8081";
+    private const string EmulatorEndpoint = "https://localhost:8081";
     private const string EmulatorKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
     private const string TestContainerId = "Checkpoints";
     // Use unique database ID per test class instance to avoid conflicts
@@ -62,11 +62,11 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
 
-        this._connectionString = $"AccountEndpoint={s_emulatorEndpoint};AccountKey={EmulatorKey}";
+        this._connectionString = $"AccountEndpoint={EmulatorEndpoint};AccountKey={EmulatorKey}";
 
         try
         {
-            this._cosmosClient = new CosmosClient(s_emulatorEndpoint, EmulatorKey);
+            this._cosmosClient = new CosmosClient(EmulatorEndpoint, EmulatorKey);
 
             // Test connection by attempting to create database
             this._database = await this._cosmosClient.CreateDatabaseIfNotExistsAsync(TestDatabaseId);
@@ -440,7 +440,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     public void Dispose()
     {
-        Dispose(true);
+        this.Dispose(true);
         GC.SuppressFinalize(this);
     }
 
