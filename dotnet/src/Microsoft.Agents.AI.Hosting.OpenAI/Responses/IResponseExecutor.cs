@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
@@ -12,6 +13,16 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// </summary>
 internal interface IResponseExecutor
 {
+    /// <summary>
+    /// Validates a create response request before execution.
+    /// </summary>
+    /// <param name="request">The create response request to validate.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A <see cref="ResponseError"/> if validation fails, null if validation succeeds.</returns>
+    ValueTask<ResponseError?> ValidateRequestAsync(
+        CreateResponse request,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Executes a response generation request and returns streaming events.
     /// </summary>
