@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Concurrent;
 using Azure;
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -135,31 +134,5 @@ internal sealed class TestHelper : IDisposable
     internal IReadOnlyCollection<LogEntry> GetLogs()
     {
         return this._loggerProvider.GetAllLogs();
-    }
-
-    private sealed class TestAgentResponseHandler : IAgentResponseHandler
-    {
-        private readonly ConcurrentDictionary<string, List<AgentRunResponse>> _responses = [];
-
-        public async ValueTask OnStreamingResponseUpdateAsync(
-            IAsyncEnumerable<AgentRunResponseUpdate> messageStream,
-            CancellationToken cancellationToken)
-        {
-            AgentRunResponse response = await messageStream.ToAgentRunResponseAsync(cancellationToken);
-            await this.OnAgentResponseAsync(response, cancellationToken);
-        }
-
-        public ValueTask OnAgentResponseAsync(AgentRunResponse message, CancellationToken cancellationToken)
-        {
-            if (message.AgentId == null)
-            {
-                throw new InvalidOperationException("Received an agent response with a null AgentId.");
-            }
-
-            List<AgentRunResponse> threadResponses = this._responses.GetOrAdd(message.AgentId, _ => []);
-            threadResponses.Add(message);
-
-            return ValueTask.CompletedTask;
-        }
     }
 }
