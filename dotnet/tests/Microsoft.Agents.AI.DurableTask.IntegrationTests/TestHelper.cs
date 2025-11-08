@@ -28,7 +28,6 @@ internal sealed class TestHelper : IDisposable
     // The static Start method should be used to create instances of this class.
     private TestHelper(
         TestLoggerProvider loggerProvider,
-        TestAgentResponseHandler responseHandler,
         IHost host,
         DurableTaskClient client)
     {
@@ -77,7 +76,6 @@ internal sealed class TestHelper : IDisposable
         Action<DurableTaskRegistry>? durableTaskRegistry)
     {
         TestLoggerProvider loggerProvider = new(outputHelper);
-        TestAgentResponseHandler responseHandler = new();
 
         IHost host = Host.CreateDefaultBuilder()
             .ConfigureServices((ctx, services) =>
@@ -97,9 +95,6 @@ internal sealed class TestHelper : IDisposable
                         }
                     },
                     clientBuilder: builder => builder.UseDurableTaskScheduler(dtsConnectionString));
-
-                // Capture output from all agents.
-                services.AddSingleton<IAgentResponseHandler>(responseHandler);
             })
             .ConfigureLogging((_, logging) =>
             {
@@ -110,7 +105,7 @@ internal sealed class TestHelper : IDisposable
         host.Start();
 
         DurableTaskClient client = host.Services.GetRequiredService<DurableTaskClient>();
-        return new TestHelper(loggerProvider, responseHandler, host, client);
+        return new TestHelper(loggerProvider, host, client);
     }
 
     private static string GetDurableTaskSchedulerConnectionString(IConfiguration configuration)

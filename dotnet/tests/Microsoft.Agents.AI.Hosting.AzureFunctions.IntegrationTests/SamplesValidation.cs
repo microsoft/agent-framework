@@ -113,10 +113,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
             JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
 
-            Assert.True(startResult.TryGetProperty("instanceId", out JsonElement instanceIdElement));
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
-
-            string instanceId = instanceIdElement.GetString()!;
             Uri statusUri = new(statusUriElement.GetString()!);
 
             // Wait for orchestration to complete
@@ -238,10 +235,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
             JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
 
-            Assert.True(startResult.TryGetProperty("instanceId", out JsonElement instanceIdElement));
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
-
-            string instanceId = instanceIdElement.GetString()!;
             Uri statusUri = new(statusUriElement.GetString()!);
 
             // Wait for orchestration to complete (it should timeout due to short timeout)
@@ -338,9 +332,9 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 condition: async () =>
                 {
                     this._outputHelper.WriteLine($"Checking status of orchestration at {statusUri}...");
-                    using HttpResponseMessage statusResponse = await s_sharedHttpClient.PostAsync(
-                        statusUri,
-                        content: new StringContent("Get the status of the workflow", Encoding.UTF8, "text/plain"));
+
+                    using StringContent content = new("Get the status of the workflow", Encoding.UTF8, "text/plain");
+                    using HttpResponseMessage statusResponse = await s_sharedHttpClient.PostAsync(statusUri, content);
                     Assert.True(
                         statusResponse.IsSuccessStatusCode,
                         $"Status check failed with status: {statusResponse.StatusCode}");
@@ -571,8 +565,8 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
     private async Task StartDockerContainerAsync(string containerName, string image, string[] ports)
     {
         // Stop existing container if it exists
-        await this.RunCommandAsync("docker", ["stop", containerName], ignoreErrors: true);
-        await this.RunCommandAsync("docker", ["rm", containerName], ignoreErrors: true);
+        await this.RunCommandAsync("docker", ["stop", containerName]);
+        await this.RunCommandAsync("docker", ["rm", containerName]);
 
         // Start new container
         List<string> args = ["run", "-d", "--name", containerName];
@@ -597,7 +591,14 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationTokenSource.Token);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationTokenSource.Token);
+            }
+            catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Timeout waiting for '{message}'");
+            }
         }
     }
 
@@ -743,12 +744,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         }
     }
 
-    private async Task RunCommandAsync(string command, string[] args, bool ignoreErrors = false)
+    private async Task RunCommandAsync(string command, string[] args)
     {
-        await this.RunCommandAsync(command, workingDirectory: null, args: args, ignoreErrors: ignoreErrors);
+        await this.RunCommandAsync(command, workingDirectory: null, args: args);
     }
 
-    private async Task RunCommandAsync(string command, string? workingDirectory, string[] args, bool ignoreErrors = false)
+    private async Task RunCommandAsync(string command, string? workingDirectory, string[] args)
     {
         ProcessStartInfo startInfo = new()
         {

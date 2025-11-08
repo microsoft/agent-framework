@@ -52,12 +52,12 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 
         // Act: send a prompt to the agent and wait for a response
         AgentThread thread = simpleAgentProxy.GetNewThread();
-        AgentRunResponse response = await simpleAgentProxy.RunAsync(
+        await simpleAgentProxy.RunAsync(
             message: "Hello!",
             thread,
             cancellationToken: this.TestTimeoutToken);
 
-        response = await simpleAgentProxy.RunAsync(
+        AgentRunResponse response = await simpleAgentProxy.RunAsync(
             message: "Repeat what you just said but say it like a pirate",
             thread,
             cancellationToken: this.TestTimeoutToken);
@@ -195,17 +195,21 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 
         // Act: send a prompt to the agent
         AgentThread thread = workflowManagerAgentProxy.GetNewThread();
-        AgentRunResponse response = await workflowManagerAgentProxy.RunAsync(
+        await workflowManagerAgentProxy.RunAsync(
             message: "Start a greeting workflow for \"John Doe\".",
             thread,
             cancellationToken: this.TestTimeoutToken);
 
         // Act: prompt it again to wait for the workflow to complete
-        response = await workflowManagerAgentProxy.RunAsync(
+        AgentRunResponse response = await workflowManagerAgentProxy.RunAsync(
             message: "Wait for the workflow to complete and tell me the result.",
             thread,
             cancellationToken: this.TestTimeoutToken);
 
+        // Assert: verify the agent responded appropriately
+        // We can't predict the exact response, but we can check that there is one response
+        Assert.NotNull(response);
+        Assert.NotEmpty(response.Text);
         Assert.Contains("John Doe", response.Text);
     }
 }
