@@ -3,7 +3,9 @@
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
 from collections.abc import AsyncIterable
-from typing import Any, Never
+from typing import Any
+
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,
