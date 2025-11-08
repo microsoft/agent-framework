@@ -120,6 +120,9 @@ class TestPurviewPolicyMiddleware:
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
         """Test middleware handles result that doesn't have messages attribute."""
+        # Set ignore_exceptions to True so AttributeError is caught and logged
+        middleware._settings.ignore_exceptions = True
+
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Hello")])
 
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
@@ -153,7 +156,10 @@ class TestPurviewPolicyMiddleware:
     async def test_middleware_handles_pre_check_exception(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
-        """Test that exceptions in pre-check are logged but don't stop processing."""
+        """Test that exceptions in pre-check are logged but don't stop processing when ignore_exceptions=True."""
+        # Set ignore_exceptions to True
+        middleware._settings.ignore_exceptions = True
+
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
 
         with patch.object(
@@ -175,7 +181,10 @@ class TestPurviewPolicyMiddleware:
     async def test_middleware_handles_post_check_exception(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
     ) -> None:
-        """Test that exceptions in post-check are logged but don't affect result."""
+        """Test that exceptions in post-check are logged but don't affect result when ignore_exceptions=True."""
+        # Set ignore_exceptions to True
+        middleware._settings.ignore_exceptions = True
+
         context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
 
         call_count = 0
@@ -199,3 +208,49 @@ class TestPurviewPolicyMiddleware:
             # Result should still be set
             assert context.result is not None
             assert hasattr(context.result, "messages")
+
+    async def test_middleware_with_ignore_exceptions_true(self, mock_credential: AsyncMock) -> None:
+        """Test that middleware logs but doesn't throw when ignore_exceptions is True."""
+        settings = PurviewSettings(app_name="Test App", ignore_exceptions=True)
+        middleware = PurviewPolicyMiddleware(mock_credential, settings)
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test-agent"
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+
+        # Mock processor to raise an exception
+        async def mock_process_messages(*args, **kwargs):
+            raise ValueError("Test error")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx):
+                ctx.result = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="Response")])
+
+            # Should not raise, just log
+            await middleware.process(context, mock_next)
+
+            # Result should be set because next was called despite the error
+            assert context.result is not None
+
+    async def test_middleware_with_ignore_exceptions_false(self, mock_credential: AsyncMock) -> None:
+        """Test that middleware throws exceptions when ignore_exceptions is False."""
+        settings = PurviewSettings(app_name="Test App", ignore_exceptions=False)
+        middleware = PurviewPolicyMiddleware(mock_credential, settings)
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test-agent"
+        context = AgentRunContext(agent=mock_agent, messages=[ChatMessage(role=Role.USER, text="Test")])
+
+        # Mock processor to raise an exception
+        async def mock_process_messages(*args, **kwargs):
+            raise ValueError("Test error")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx):
+                pass
+
+            # Should raise the exception
+            with pytest.raises(ValueError, match="Test error"):
+                await middleware.process(context, mock_next)
