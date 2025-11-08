@@ -1,0 +1,30 @@
+### Callback Sample - API Tests
+### Use with VS Code REST Client or another HTTP testing tool.
+###
+### Endpoints introduced in this sample:
+### - POST /api/agents/{agentName}/run                          : send a message to the agent
+### - GET  /api/agents/{agentName}/callbacks/{conversationId}   : retrieve callback telemetry
+### - DELETE /api/agents/{agentName}/callbacks/{conversationId} : clear stored callback events
+
+@baseUrl = http://localhost:7071
+@agentName = CallbackAgent
+@agentRoute = {{baseUrl}}/api/agents/{{agentName}}
+@conversationId = test-stream-00
+
+### Health Check
+GET {{baseUrl}}/api/health
+
+### Send message (callbacks will capture streaming + final response)
+POST {{agentRoute}}/run
+Content-Type: application/json
+
+{
+  "message": "Generate a short weather update for Paris and mention streaming callbacks.",
+  "sessionId": "{{conversationId}}"
+}
+
+### Inspect callback telemetry
+GET {{agentRoute}}/callbacks/{{conversationId}}
+
+### Clear stored callback telemetry for the conversation
+DELETE {{agentRoute}}/callbacks/{{conversationId}}

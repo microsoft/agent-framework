@@ -29,11 +29,15 @@ public static class FunctionsApplicationBuilderExtensions
         // The main agent services registration is done in Microsoft.DurableTask.Agents.
         builder.Services.ConfigureDurableAgents(configure);
 
-        builder.Services.TryAddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
+        builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
+            new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
 
-        // Handling of built-in function execution for Agent HTTP or Entity invocations.
+        builder.Services.AddSingleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>();
+
+        // Handling of built-in function execution for Agent HTTP, MCP tool, or Entity invocations.
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal));
         builder.Services.AddSingleton<BuiltInFunctionExecutor>();
 

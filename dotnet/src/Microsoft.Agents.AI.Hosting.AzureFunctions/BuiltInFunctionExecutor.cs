@@ -2,6 +2,7 @@
 
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Context.Features;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Azure.Functions.Worker.Invocation;
 using Microsoft.DurableTask.Client;
@@ -36,6 +37,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         HttpRequestData? httpRequestData = null;
         TaskEntityDispatcher? dispatcher = null;
         DurableTaskClient? durableTaskClient = null;
+        ToolInvocationContext? mcpToolInvocationContext = null;
 
         foreach (var binding in values)
         {
@@ -50,20 +52,24 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 case DurableTaskClient client:
                     durableTaskClient = client;
                     break;
+                case ToolInvocationContext toolContext:
+                    mcpToolInvocationContext = toolContext;
+                    break;
             }
         }
 
-        bool isAgentHttpInvocation = string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal);
+        if (durableTaskClient is null)
+        {
+            // This is not expected to happen since all built-in functions are
+            // expected to have a Durable Task client binding.
+            throw new InvalidOperationException($"Durable Task client binding is missing for the invocation {context.InvocationId}.");
+        }
 
-        if (isAgentHttpInvocation)
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunAgentHttpFunctionEntryPoint)
         {
             if (httpRequestData == null)
             {
                 throw new InvalidOperationException($"HTTP request data binding is missing for the invocation {context.InvocationId}.");
-            }
-            if (durableTaskClient == null)
-            {
-                throw new InvalidOperationException($"Durable Task client binding is missing for the invocation {context.InvocationId}.");
             }
 
             context.GetInvocationResult().Value = await BuiltInFunctions.RunAgentHttpAsync(
@@ -73,19 +79,32 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
             return;
         }
 
-        // If not HTTP invocation, It will be entity invocation path.
-        if (dispatcher == null)
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunAgentEntityFunctionEntryPoint)
         {
-            throw new InvalidOperationException($"Task entity dispatcher binding is missing for the invocation {context.InvocationId}.");
-        }
-        if (durableTaskClient == null)
-        {
-            throw new InvalidOperationException($"Durable Task client binding is missing for the invocation {context.InvocationId}.");
+            if (dispatcher is null)
+            {
+                throw new InvalidOperationException($"Task entity dispatcher binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            await BuiltInFunctions.InvokeAgentAsync(
+                dispatcher,
+                durableTaskClient,
+                context);
+            return;
         }
 
-        await BuiltInFunctions.InvokeAgentAsync(
-            dispatcher,
-            durableTaskClient,
-            context);
+        if (context.FunctionDefinition.EntryPoint == BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint)
+        {
+            if (mcpToolInvocationContext is null)
+            {
+                throw new InvalidOperationException($"MCP tool invocation context binding is missing for the invocation {context.InvocationId}.");
+            }
+
+            context.GetInvocationResult().Value =
+                await BuiltInFunctions.RunMcpToolAsync(mcpToolInvocationContext, durableTaskClient, context);
+            return;
+        }
+
+        throw new InvalidOperationException($"Unsupported function entry point '{context.FunctionDefinition.EntryPoint}' for invocation {context.InvocationId}.");
     }
 }
