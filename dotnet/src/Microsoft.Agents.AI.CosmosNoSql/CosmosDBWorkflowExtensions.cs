@@ -30,11 +30,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(connectionString));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore(connectionString, databaseId, containerId);
     }
@@ -55,11 +63,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (string.IsNullOrWhiteSpace(accountEndpoint))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
     }
@@ -81,11 +97,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (cosmosClient is null)
+        {
             throw new ArgumentNullException(nameof(cosmosClient));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore(cosmosClient, databaseId, containerId);
     }
@@ -107,11 +131,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(connectionString));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore<T>(connectionString, databaseId, containerId);
     }
@@ -133,11 +165,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (string.IsNullOrWhiteSpace(accountEndpoint))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore<T>(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
     }
@@ -160,11 +200,19 @@ public static class CosmosDBWorkflowExtensions
         string containerId)
     {
         if (cosmosClient is null)
+        {
             throw new ArgumentNullException(nameof(cosmosClient));
+        }
+
         if (string.IsNullOrWhiteSpace(databaseId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
+        }
+
         if (string.IsNullOrWhiteSpace(containerId))
+        {
             throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
+        }
 
         return new CosmosCheckpointStore<T>(cosmosClient, databaseId, containerId);
     }

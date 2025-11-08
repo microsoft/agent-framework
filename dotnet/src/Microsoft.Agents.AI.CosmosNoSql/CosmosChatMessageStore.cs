@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
@@ -308,7 +307,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
-            throw new ObjectDisposedException(GetType().FullName);
+            throw new ObjectDisposedException(this.GetType().FullName);
         }
 #pragma warning restore CA1513
 
@@ -375,7 +374,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
-            throw new ObjectDisposedException(GetType().FullName);
+            throw new ObjectDisposedException(this.GetType().FullName);
         }
 #pragma warning restore CA1513
 
@@ -495,7 +494,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
-            throw new ObjectDisposedException(GetType().FullName);
+            throw new ObjectDisposedException(this.GetType().FullName);
         }
 #pragma warning restore CA1513
 
@@ -522,7 +521,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
-            throw new ObjectDisposedException(GetType().FullName);
+            throw new ObjectDisposedException(this.GetType().FullName);
         }
 #pragma warning restore CA1513
 
@@ -556,7 +555,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
         {
-            throw new ObjectDisposedException(GetType().FullName);
+            throw new ObjectDisposedException(this.GetType().FullName);
         }
 #pragma warning restore CA1513
 
