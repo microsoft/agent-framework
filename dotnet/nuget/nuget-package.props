@@ -14,7 +14,7 @@
     <!-- Validate assembly attributes only for Publish builds -->
     <NoWarn Condition="'$(Configuration)' != 'Publish'">$(NoWarn);CP0003;NU1900;NU1603</NoWarn>
     <!-- Do not validate reference assemblies -->
-    <NoWarn>$(NoWarn);CP1002;NU1900;NU1603</NoWarn>
+    <NoWarn>$(NoWarn);CP1002</NoWarn>
 
     <!-- Enable NuGet package auditing -->
     <NuGetAudit>true</NuGetAudit>

@@ -3,13 +3,12 @@
 using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
 
 /// <summary>
-/// Extension methods for <see cref="HostedFileSearchTool"/>.
+/// Extension methods for <see cref="FileSearchTool"/>.
 /// </summary>
 internal static class FileSearchToolExtensions
 {

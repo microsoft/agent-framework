@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure OpenAI as the backend.
+// This sample shows how to create an agent from a YAML based declarative representation.
 
 using Azure.AI.OpenAI;
 using Azure.Identity;

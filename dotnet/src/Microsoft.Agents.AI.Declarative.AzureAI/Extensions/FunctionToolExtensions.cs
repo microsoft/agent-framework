@@ -2,7 +2,6 @@
 
 using System;
 using Azure.AI.Agents.Persistent;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -13,7 +12,7 @@ namespace Microsoft.Bot.ObjectModel;
 public static class FunctionToolExtensions
 {
     /// <summary>
-    /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="InvokeClientTaskAction"/>.
+    /// Creates a <see cref="FunctionToolDefinition"/> from a <see cref="InvokeClientTaskAction"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
     internal static FunctionToolDefinition CreateFunctionToolDefinition(this InvokeClientTaskAction tool)
