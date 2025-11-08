@@ -1,11 +1,10 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using Azure.Identity;
-using Microsoft.Azure.Cosmos;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Azure.Cosmos;
 
 namespace Microsoft.Agents.AI.Workflows;
 
