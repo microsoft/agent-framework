@@ -119,7 +119,7 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
         >
           <div className="relative group">
             <div
-              className={`rounded px-3 py-2 text-sm break-all ${
+              className={`rounded px-3 py-2 text-sm ${
                 isUser
                   ? "bg-primary text-primary-foreground"
                   : isError
