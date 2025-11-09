@@ -58,6 +58,7 @@ internal static class PromptAgentExtensions
         {
             toolResources.FileSearch = fileSearch;
         }
+        // TODO Handle MCP tool resources
 
         return toolResources;
     }

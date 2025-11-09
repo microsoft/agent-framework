@@ -20,8 +20,6 @@ public static class McpServerToolExtensions
         Throw.IfNull(tool.ServerName?.LiteralValue);
         Throw.IfNull(tool.Connection);
 
-        // TODO: Add support for ServerDescription, AllowedTools, ApprovalMode, and Headers.
-
         var connection = tool.Connection as AnonymousConnection;
         Throw.IfNull(connection);
 
@@ -32,8 +30,7 @@ public static class McpServerToolExtensions
         {
             ServerDescription = tool.ServerDescription?.LiteralValue,
             AllowedTools = tool.AllowedTools?.LiteralValue,
-            // TODO Blocked by bug in object model
-            //ApprovalMode = tool.ApprovalMode?.ToHostedMcpServerToolApprovalMode(),
+            ApprovalMode = tool.ApprovalMode?.ToHostedMcpServerToolApprovalMode(),
         };
     }
 }

@@ -49,7 +49,7 @@ internal static class PromptAgents
                   - fahrenheit
           - kind: mcp
             serverName: PersonInfoTool
-            description: Get information about a person.
+            serverDescription: Get information about a person.
             connection:
                 kind: AnonymousConnection
                 endpoint: https://my-mcp-endpoint.com/api
@@ -284,7 +284,18 @@ internal static class PromptAgents
                       - fahrenheit
               - kind: mcp
                 serverName: PersonInfoTool
-                description: Get information about a person.
+                serverDescription: Get information about a person.
+                allowedTools:
+                  - "GetPersonInfo"
+                  - "UpdatePersonInfo"
+                  - "DeletePersonInfo"
+                approvalMode:
+                  kind: HostedMcpServerToolRequireSpecificApprovalMode
+                  AlwaysRequireApprovalToolNames:
+                    - "UpdatePersonInfo"
+                    - "DeletePersonInfo"
+                  NeverRequireApprovalToolNames:
+                    - "GetPersonInfo"
                 connection:
                     kind: AnonymousConnection
                     endpoint: https://my-mcp-endpoint.com/api
