@@ -45,7 +45,6 @@
         "logit",
         "logprobs",
         "lowlevel",
-        "maml",
         "Magentic",
         "mistralai",
         "mongocluster",

@@ -87,9 +87,9 @@ PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
         "name": "OpenAIChatClient",
         "model_id_field": "model_id",
     },
-    "OpenAI.Completions": {
+    "OpenAI.Assistants": {
         "package": "agent_framework.openai",
-        "name": "OpenAICompletionsClient",
+        "name": "OpenAIAssistantsClient",
         "model_id_field": "model_id",
     },
     "OpenAI.Responses": {
@@ -122,7 +122,7 @@ class ProviderLookupError(DeclarativeLoaderError):
     pass
 
 
-def load_maml(yaml_str: str) -> Any | None:
+def load_yaml_spec(yaml_str: str) -> Any | None:
     """Load a MAML object from a YAML string.
 
     This function can parse any MAML object type and return the appropriate
@@ -275,7 +275,7 @@ class AgentFactory:
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> ChatAgent:
         """Create a MAML object from a YAML file path asynchronously.
 
-        This method wraps the synchronous load_maml function to provide
+        This method wraps the synchronous load_yaml_spec function to provide
         asynchronous behavior.
 
         Args:
@@ -300,11 +300,11 @@ class AgentFactory:
     def create_agent_from_yaml(self, yaml_str: str) -> ChatAgent:
         """Create a MAML object from a YAML string asynchronously.
 
-        This method wraps the synchronous load_maml function to provide
+        This method wraps the synchronous load_yaml_spec function to provide
         asynchronous behavior.
 
         This method does the following things:
-        1. Loads the YAML string into a MAML object using load_maml.
+        1. Loads the YAML string into a MAML object using load_yaml_spec.
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
@@ -322,7 +322,7 @@ class AgentFactory:
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
         """
-        prompt_agent = load_maml(yaml_str)
+        prompt_agent = load_yaml_spec(yaml_str)
         if not isinstance(prompt_agent, PromptAgent):
             raise DeclarativeLoaderError("Only PromptAgent kind is supported for agent creation")
 
