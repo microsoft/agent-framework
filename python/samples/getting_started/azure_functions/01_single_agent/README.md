@@ -31,7 +31,7 @@ source .venv/bin/activate
 - [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) – install so you can run `func start` locally.
 - [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) – install and start Azurite before launching the app (the sample uses `AzureWebJobsStorage=UseDevelopmentStorage=true`).
 - Python dependencies – from this folder, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
-- Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and (optionally) `AZURE_OPENAI_API_KEY` to match your Azure OpenAI resource; keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY` so the Azure OpenAI SDK can authenticate; keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
 
 ## Running the Sample
 

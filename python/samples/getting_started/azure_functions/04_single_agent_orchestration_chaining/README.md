@@ -15,9 +15,9 @@ preserving the conversation state between runs.
 - Environment variables configured:
   - `AZURE_OPENAI_ENDPOINT`
   - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
-  - `AZURE_OPENAI_API_KEY` (omit if using Azure CLI authentication)
+  - `AZURE_OPENAI_API_KEY` (required for key-based auth; ensure Azure CLI is logged in if you prefer token-based auth)
 - Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
-- Copy `local.settings.json.template` to `local.settings.json` and populate those keys (and any storage settings) before running the Functions host.
+- Copy `local.settings.json.template` to `local.settings.json` and populate those keys—including `AZURE_OPENAI_API_KEY`—along with any storage settings before running the Functions host.
 - Install dependencies with `pip install -r requirements.txt`
 
 ## Running the Sample

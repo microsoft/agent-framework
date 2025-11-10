@@ -21,6 +21,3 @@ Content-Type: application/json
 POST {{agentRoute}}/run
 
 Give me a programming joke about race conditions.
-
-### Retrieve conversation state
-GET {{agentRoute}}/session-001

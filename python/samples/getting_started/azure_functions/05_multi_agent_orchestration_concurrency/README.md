@@ -14,9 +14,9 @@ This sample starts a Durable Functions orchestration that runs two agents in par
 - Environment variables configured:
   - `AZURE_OPENAI_ENDPOINT`
   - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
-  - `AZURE_OPENAI_API_KEY` (omit when using Azure CLI auth)
+  - `AZURE_OPENAI_API_KEY` (required for key-based auth; ensure the Azure CLI is logged in if you rely on token-based auth)
 - Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
-- Copy `local.settings.json.template` to `local.settings.json` and fill in those Azure OpenAI values (and storage settings) before starting the Functions host.
+- Copy `local.settings.json.template` to `local.settings.json` and fill in those Azure OpenAI values—including `AZURE_OPENAI_API_KEY`—along with storage settings before starting the Functions host.
 - Install dependencies with `pip install -r requirements.txt`
 
 ## Running the Sample

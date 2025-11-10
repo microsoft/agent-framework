@@ -33,7 +33,7 @@ source .venv/bin/activate
 
 ### 3. Configure local settings
 
-- Copy `local.settings.json.template` to `local.settings.json`, then set the Azure OpenAI values (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and optionally `AZURE_OPENAI_API_KEY`) to match your environment, and keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json`, then set the Azure OpenAI values (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`) so the SDK can authenticate, and keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
 
 ## Running the Sample
 
