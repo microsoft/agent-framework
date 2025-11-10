@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
-    <NoWarn>$(NoWarn);IDE1006;IDE0130;NU1504;OPENAI001;IL2026;IL3050;MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);OPENAI001;MEAI001</NoWarn>
     <RootNamespace>Microsoft.Agents.AI.Hosting.OpenAI</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
