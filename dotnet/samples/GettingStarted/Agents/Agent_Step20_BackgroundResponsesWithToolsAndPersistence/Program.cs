@@ -29,16 +29,13 @@ AIAgent agent = new AzureOpenAIClient(
                       "Write complete chapters without asking for approval or feedback. Do not ask the user about tone, style, pace, or format preferences - just write the novel based on the request.",
         tools: [AIFunctionFactory.Create(ResearchSpaceFactsAsync), AIFunctionFactory.Create(GenerateCharacterProfilesAsync)]);
 
-// Enable background responses (only supported by {Azure}OpenAI Responses at this time).
-AgentRunOptions options = new() { AllowBackgroundResponses = true };
-
 AgentThread thread = agent.GetNewThread();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread, options);
+AgentRunResponse response = await agent.RunBackgroundAsync("Write a very long novel about a team of astronauts exploring an uncharted galaxy.", thread);
 
 // Poll for background responses until complete.
-while (response.ContinuationToken is not null)
+while (response.ContinuationToken is { } token)
 {
     PersistAgentState(thread, response.ContinuationToken);
 
@@ -46,8 +43,7 @@ while (response.ContinuationToken is not null)
 
     RestoreAgentState(agent, out thread, out object? continuationToken);
 
-    options.ContinuationToken = continuationToken;
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunBackgroundAsync(thread, token);
 }
 
 Console.WriteLine(response.Text);

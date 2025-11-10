@@ -165,14 +165,12 @@ public class AgentRunResponse
     /// </summary>
     /// <remarks>
     /// <see cref="AIAgent"/> implementations that support background responses will return
-    /// a continuation token if background responses are allowed in <see cref="AgentRunOptions.AllowBackgroundResponses"/>
-    /// and the result of the response has not been obtained yet. If the response has completed and the result has been obtained,
+    /// a continuation token if background responses are requested and the result of the response
+    /// has not been obtained yet. If the response has completed and the result has been obtained,
     /// the token will be <see langword="null"/>.
     /// <para>
-    /// This property should be used in conjunction with <see cref="AgentRunOptions.ContinuationToken"/> to
-    /// continue to poll for the completion of the response. Pass this token to
-    /// <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
-    /// to poll for completion.
+    /// This property should be used in conjunction with <see cref="AIAgent.RunBackgroundAsync(AgentThread, object?, AgentRunOptions?, System.Threading.CancellationToken)"/> to
+    /// continue to poll for the completion of the response.
     /// </para>
     /// </remarks>
     public object? ContinuationToken { get; set; }

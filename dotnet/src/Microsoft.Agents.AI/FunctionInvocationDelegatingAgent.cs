@@ -27,6 +27,12 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.InnerAgent.RunStreamingAsync(messages, thread, this.AgentRunOptionsWithFunctionMiddleware(options), cancellationToken);
 
+    public override Task<AgentRunResponse> RunBackgroundAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.RunBackgroundAsync(messages, thread, continuationToken, this.AgentRunOptionsWithFunctionMiddleware(options), cancellationToken);
+
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        => this.InnerAgent.RunBackgroundStreamingAsync(messages, thread, continuationToken, this.AgentRunOptionsWithFunctionMiddleware(options), cancellationToken);
+
     // Decorate options to add the middleware function
     private AgentRunOptions? AgentRunOptionsWithFunctionMiddleware(AgentRunOptions? options)
     {

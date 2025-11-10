@@ -16,13 +16,10 @@ AIAgent agent = new AzureOpenAIClient(
      .GetOpenAIResponseClient(deploymentName)
      .CreateAIAgent();
 
-// Enable background responses (only supported by OpenAI Responses at this time).
-AgentRunOptions options = new() { AllowBackgroundResponses = true };
-
 AgentThread thread = agent.GetNewThread();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about otters in space.", thread, options);
+AgentRunResponse response = await agent.RunBackgroundAsync("Write a very long novel about otters in space.", thread);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -31,21 +28,17 @@ while (response.ContinuationToken is { } token)
     await Task.Delay(TimeSpan.FromSeconds(2));
 
     // Continue with the token.
-    options.ContinuationToken = token;
-
-    response = await agent.RunAsync(thread, options);
+    response = await agent.RunBackgroundAsync(thread, token);
 }
 
 // Display the result.
 Console.WriteLine(response.Text);
 
-// Reset options and thread for streaming.
-options = new() { AllowBackgroundResponses = true };
 thread = agent.GetNewThread();
 
 AgentRunResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", thread, options))
+await foreach (AgentRunResponseUpdate update in agent.RunBackgroundStreamingAsync("Write a very long novel about otters in space.", thread))
 {
     // Output each update.
     Console.Write(update.Text);
@@ -61,9 +54,7 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a
 }
 
 // Resume from interruption point.
-options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
-
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread, options))
+await foreach (AgentRunResponseUpdate update in agent.RunBackgroundStreamingAsync(thread, lastReceivedUpdate?.ContinuationToken))
 {
     // Output each update.
     Console.Write(update.Text);

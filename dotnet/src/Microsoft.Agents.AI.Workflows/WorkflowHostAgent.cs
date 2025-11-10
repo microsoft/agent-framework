@@ -118,4 +118,14 @@ internal sealed class WorkflowHostAgent : AIAgent
             yield return update;
         }
     }
+
+    public override Task<AgentRunResponse> RunBackgroundAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return this.RunAsync(messages, thread, options, cancellationToken);
+    }
+
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        return this.RunStreamingAsync(messages, thread, options, cancellationToken);
+    }
 }

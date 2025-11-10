@@ -100,6 +100,18 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    public override Task<AgentRunResponse> RunBackgroundAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Clarify how to handle background runs here.");
+    }
+
+    /// <inheritdoc/>
+    public override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Clarify how to handle background runs here.");
+    }
+
     /// <summary>Augments the current activity created by the <see cref="OpenTelemetryChatClient"/> with agent-specific information.</summary>
     /// <param name="previousActivity">The <see cref="Activity"/> that was current prior to the <see cref="OpenTelemetryChatClient"/>'s invocation.</param>
     private void UpdateCurrentActivity(Activity? previousActivity)

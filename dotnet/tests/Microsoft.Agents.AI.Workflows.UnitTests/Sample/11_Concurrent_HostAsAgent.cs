@@ -36,12 +36,12 @@ internal static class Step11EntryPoint
         AgentThread thread = hostAgent.GetNewThread();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
-            object? continuationToken = null;
-            do
+            AgentRunResponse response = await hostAgent.RunBackgroundAsync(input, thread);
+
+            while (response.ContinuationToken is { } token)
             {
-                response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });
-            } while ((continuationToken = response.ContinuationToken) is { });
+                response = await hostAgent.RunBackgroundAsync(thread, token);
+            }
 
             foreach (ChatMessage message in response.Messages)
             {

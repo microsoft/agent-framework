@@ -154,11 +154,11 @@ public class AgentRunResponseUpdate
     /// </summary>
     /// <remarks>
     /// <see cref="AIAgent"/> implementations that support background responses will return
-    /// a continuation token on each update if background responses are allowed in <see cref="AgentRunOptions.AllowBackgroundResponses"/>
+    /// a continuation token if background responses are requested on each update
     /// except for the last update, for which the token will be <see langword="null"/>.
     /// <para>
     /// This property should be used for stream resumption, where the continuation token of the latest received update should be
-    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// passed to <see cref="AIAgent.RunBackgroundStreamingAsync(AgentThread, object?, AgentRunOptions?, System.Threading.CancellationToken)"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>

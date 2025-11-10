@@ -94,4 +94,12 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
     /// <inheritdoc/>
     public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         base.RunStreamingAsync(messages, thread, options, cancellationToken);
+
+    /// <inheritdoc/>
+    public sealed override Task<AgentRunResponse> RunBackgroundAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunBackgroundAsync(messages, thread, continuationToken, options, cancellationToken);
+
+    /// <inheritdoc/>
+    public sealed override IAsyncEnumerable<AgentRunResponseUpdate> RunBackgroundStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread thread, object? continuationToken = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunBackgroundStreamingAsync(messages, thread, continuationToken, options, cancellationToken);
 }
