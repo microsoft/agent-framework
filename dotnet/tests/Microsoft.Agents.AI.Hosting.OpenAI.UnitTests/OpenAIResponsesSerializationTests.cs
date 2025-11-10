@@ -345,6 +345,20 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
     }
 
     [Fact]
+    public void Deserialize_InvalidInputObject_ThrowsHelpfulException()
+    {
+        // Arrange
+        const string Json = "{\"model\":\"gpt-4o-mini\",\"input\":{\"input\":\"testing!\"},\"stream\":true}";
+
+        // Act & Assert
+        var exception = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize(Json, OpenAIHostingJsonContext.Default.CreateResponse));
+
+        Assert.Contains("ResponseInput must be either a string or an array of messages", exception.Message);
+        Assert.Contains("Objects are not supported", exception.Message);
+    }
+
+    [Fact]
     public void Deserialize_AllRequests_CanBeDeserialized()
     {
         // Arrange

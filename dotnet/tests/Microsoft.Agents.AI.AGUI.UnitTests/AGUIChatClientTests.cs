@@ -1282,6 +1282,312 @@ public sealed class AGUIAgentTests
         // AG-UI requirement: full history on every turn (which happens when ConversationId is null for FunctionInvokingChatClient)
         Assert.True(captureHandler.RequestWasMade);
     }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ExtractsStateFromDataContent_AndRemovesStateMessageAsync()
+    {
+        // Arrange
+        var stateData = new { counter = 42, status = "active" };
+        string stateJson = JsonSerializer.Serialize(stateData);
+        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
+        var dataContent = new DataContent(stateBytes, "application/json");
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg1", Delta = "Response" },
+            new TextMessageEndEvent { MessageId = "msg1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.System, [dataContent])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.NotNull(captureHandler.CapturedState);
+        Assert.Equal(42, captureHandler.CapturedState.Value.GetProperty("counter").GetInt32());
+        Assert.Equal("active", captureHandler.CapturedState.Value.GetProperty("status").GetString());
+
+        // Verify state message was removed - only user message should be in the request
+        Assert.Equal(1, captureHandler.CapturedMessageCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithNoStateDataContent_SendsEmptyStateAsync()
+    {
+        // Arrange
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg1", Delta = "Response" },
+            new TextMessageEndEvent { MessageId = "msg1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.Null(captureHandler.CapturedState);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithMalformedStateJson_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        byte[] invalidJson = System.Text.Encoding.UTF8.GetBytes("{invalid json");
+        var dataContent = new DataContent(invalidJson, "application/json");
+
+        using HttpClient httpClient = this.CreateMockHttpClient([]);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.System, [dataContent])
+        ];
+
+        // Act & Assert
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+            {
+                // Just consume the stream
+            }
+        });
+
+        Assert.Contains("Failed to deserialize state JSON", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithEmptyStateObject_SendsEmptyObjectAsync()
+    {
+        // Arrange
+        var emptyState = new { };
+        string stateJson = JsonSerializer.Serialize(emptyState);
+        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
+        var dataContent = new DataContent(stateBytes, "application/json");
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+            new ChatMessage(ChatRole.System, [dataContent])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.NotNull(captureHandler.CapturedState);
+        Assert.Equal(JsonValueKind.Object, captureHandler.CapturedState.Value.ValueKind);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_OnlyProcessesDataContentFromLastMessage_IgnoresEarlierOnesAsync()
+    {
+        // Arrange
+        var oldState = new { counter = 10 };
+        string oldStateJson = JsonSerializer.Serialize(oldState);
+        byte[] oldStateBytes = System.Text.Encoding.UTF8.GetBytes(oldStateJson);
+        var oldDataContent = new DataContent(oldStateBytes, "application/json");
+
+        var newState = new { counter = 20 };
+        string newStateJson = JsonSerializer.Serialize(newState);
+        byte[] newStateBytes = System.Text.Encoding.UTF8.GetBytes(newStateJson);
+        var newDataContent = new DataContent(newStateBytes, "application/json");
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "First message"),
+            new ChatMessage(ChatRole.System, [oldDataContent]),
+            new ChatMessage(ChatRole.User, "Second message"),
+            new ChatMessage(ChatRole.System, [newDataContent])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.NotNull(captureHandler.CapturedState);
+        // Should use the new state from the last message
+        Assert.Equal(20, captureHandler.CapturedState.Value.GetProperty("counter").GetInt32());
+
+        // Should have removed only the last state message
+        Assert.Equal(3, captureHandler.CapturedMessageCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithNonJsonMediaType_IgnoresDataContentAsync()
+    {
+        // Arrange
+        byte[] imageData = System.Text.Encoding.UTF8.GetBytes("fake image data");
+        var dataContent = new DataContent(imageData, "image/png");
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new TextContent("Hello"), dataContent])
+        ];
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert
+        Assert.True(captureHandler.RequestWasMade);
+        Assert.Null(captureHandler.CapturedState);
+        // Message should not be removed since it's not state
+        Assert.Equal(1, captureHandler.CapturedMessageCount);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_RoundTripState_PreservesJsonStructureAsync()
+    {
+        // Arrange - Server returns state snapshot
+        var returnedState = new { counter = 100, nested = new { value = "test" } };
+        JsonElement stateSnapshot = JsonSerializer.SerializeToElement(returnedState);
+
+        var captureHandler = new StateCapturingTestDelegatingHandler();
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new StateSnapshotEvent { Snapshot = stateSnapshot },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+        captureHandler.AddResponse(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
+            new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
+            new TextMessageContentEvent { MessageId = "msg1", Delta = "Done" },
+            new TextMessageEndEvent { MessageId = "msg1" },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
+        ]);
+        using HttpClient httpClient = new(captureHandler);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
+
+        // Act - First turn: receive state
+        DataContent? receivedStateContent = null;
+        await foreach (var update in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            if (update.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"))
+            {
+                receivedStateContent = (DataContent)update.Contents.First(c => c is DataContent);
+            }
+        }
+
+        // Second turn: send the received state back
+        Assert.NotNull(receivedStateContent);
+        messages.Add(new ChatMessage(ChatRole.System, [receivedStateContent]));
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            // Just consume the stream
+        }
+
+        // Assert - Verify the round-tripped state
+        Assert.NotNull(captureHandler.CapturedState);
+        Assert.Equal(100, captureHandler.CapturedState.Value.GetProperty("counter").GetInt32());
+        Assert.Equal("test", captureHandler.CapturedState.Value.GetProperty("nested").GetProperty("value").GetString());
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_ReceivesStateSnapshot_AsDataContentWithAdditionalPropertiesAsync()
+    {
+        // Arrange
+        var state = new { sessionId = "abc123", step = 5 };
+        JsonElement stateSnapshot = JsonSerializer.SerializeToElement(state);
+
+        using HttpClient httpClient = this.CreateMockHttpClient(
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new StateSnapshotEvent { Snapshot = stateSnapshot },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ]);
+
+        var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (var update in chatClient.GetStreamingResponseAsync(messages, null))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate stateUpdate = updates.First(u => u.Contents.Any(c => c is DataContent));
+        Assert.NotNull(stateUpdate.AdditionalProperties);
+        Assert.True((bool)stateUpdate.AdditionalProperties!["is_state_snapshot"]!);
+
+        DataContent dataContent = (DataContent)stateUpdate.Contents[0];
+        Assert.Equal("application/json", dataContent.MediaType);
+
+        string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
+        JsonElement deserializedState = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        Assert.Equal("abc123", deserializedState.GetProperty("sessionId").GetString());
+        Assert.Equal(5, deserializedState.GetProperty("step").GetInt32());
+    }
 }
 
 internal sealed class TestDelegatingHandler : DelegatingHandler
@@ -1358,6 +1664,61 @@ internal sealed class CapturingTestDelegatingHandler : DelegatingHandler
         if (this._responseFactories.Count == 0)
         {
             throw new InvalidOperationException("No more responses configured for CapturingTestDelegatingHandler.");
+        }
+
+        var factory = this._responseFactories.Dequeue();
+        return await factory(request);
+    }
+
+    private static HttpResponseMessage CreateResponse(BaseEvent[] events)
+    {
+        string sseContent = string.Join("", events.Select(e =>
+            $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
+
+        return new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent(sseContent)
+        };
+    }
+}
+
+internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
+{
+    private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responseFactories = new();
+
+    public bool RequestWasMade { get; private set; }
+    public JsonElement? CapturedState { get; private set; }
+    public int CapturedMessageCount { get; private set; }
+
+    public void AddResponse(BaseEvent[] events)
+    {
+        this._responseFactories.Enqueue(_ => Task.FromResult(CreateResponse(events)));
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        this.RequestWasMade = true;
+
+        // Capture the state and message count from the request
+#if NET472 || NETSTANDARD2_0
+        string requestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
+#else
+        string requestBody = await request.Content!.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#endif
+        RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
+        if (input != null)
+        {
+            if (input.State.ValueKind != JsonValueKind.Undefined && input.State.ValueKind != JsonValueKind.Null)
+            {
+                this.CapturedState = input.State;
+            }
+            this.CapturedMessageCount = input.Messages.Count();
+        }
+
+        if (this._responseFactories.Count == 0)
+        {
+            throw new InvalidOperationException("No more responses configured for StateCapturingTestDelegatingHandler.");
         }
 
         var factory = this._responseFactories.Dequeue();

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -152,6 +153,8 @@ public sealed class AGUIChatClient : DelegatingChatClient
 
     private sealed class AGUIChatClientHandler : IChatClient
     {
+        private static readonly MediaTypeHeaderValue s_json = new("application/json");
+
         private readonly AGUIHttpService _httpService;
         private readonly JsonSerializerOptions _jsonSerializerOptions;
         private readonly ILogger _logger;
@@ -199,6 +202,9 @@ public sealed class AGUIChatClient : DelegatingChatClient
             var threadId = ExtractTemporaryThreadId(messagesList) ??
                 ExtractThreadIdFromOptions(options) ?? $"thread_{Guid.NewGuid():N}";
 
+            // Extract state from the last message if it contains DataContent with application/json
+            JsonElement state = this.ExtractAndRemoveStateFromMessages(messagesList);
+
             // Create the input for the AGUI service
             var input = new RunAgentInput
             {
@@ -207,6 +213,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
                 ThreadId = threadId,
                 RunId = runId,
                 Messages = messagesList.AsAGUIMessages(this._jsonSerializerOptions),
+                State = state,
             };
 
             // Add tools if provided
@@ -300,6 +307,51 @@ public sealed class AGUIChatClient : DelegatingChatClient
             return threadId;
         }
 
+        // Extract state from the last message's DataContent with application/json media type
+        // and remove that message from the list
+        private JsonElement ExtractAndRemoveStateFromMessages(List<ChatMessage> messagesList)
+        {
+            if (messagesList.Count == 0)
+            {
+                return default;
+            }
+
+            // Check the last message for state DataContent
+            ChatMessage lastMessage = messagesList[messagesList.Count - 1];
+            for (int i = 0; i < lastMessage.Contents.Count; i++)
+            {
+                if (lastMessage.Contents[i] is DataContent dataContent &&
+                    MediaTypeHeaderValue.TryParse(dataContent.MediaType, out var mediaType) &&
+                    mediaType.Equals(s_json))
+                {
+                    // Deserialize the state JSON directly from UTF-8 bytes
+                    try
+                    {
+                        JsonElement stateElement = (JsonElement)JsonSerializer.Deserialize(
+                            dataContent.Data.Span,
+                            this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))!;
+
+                        // Remove the DataContent from the message contents
+                        lastMessage.Contents.RemoveAt(i);
+
+                        // If no contents remain, remove the entire message
+                        if (lastMessage.Contents.Count == 0)
+                        {
+                            messagesList.RemoveAt(messagesList.Count - 1);
+                        }
+
+                        return stateElement;
+                    }
+                    catch (JsonException ex)
+                    {
+                        throw new InvalidOperationException($"Failed to deserialize state JSON from DataContent: {ex.Message}", ex);
+                    }
+                }
+            }
+
+            return default;
+        }
+
         public void Dispose()
         {
             // No resources to dispose
@@ -316,7 +368,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
         }
     }
 
-    private class ServerFunctionCallContent(FunctionCallContent functionCall) : AIContent
+    private sealed class ServerFunctionCallContent(FunctionCallContent functionCall) : AIContent
     {
         public FunctionCallContent FunctionCallContent { get; } = functionCall;
     }
