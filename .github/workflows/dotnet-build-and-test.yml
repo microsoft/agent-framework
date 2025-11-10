@@ -8,11 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   merge_group:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   push:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -143,7 +143,7 @@ jobs:
         run: echo "github.event_name:${{ github.event_name }} matrix.integration-tests:${{ matrix.integration-tests }} github.event.action:${{ github.event.action }} github.event.pull_request.merged:${{ github.event.pull_request.merged }}" 
 
       - name: Azure CLI Login
-        if: matrix.integration-tests
+        if: github.event_name != 'pull_request' && matrix.integration-tests
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -152,7 +152,7 @@ jobs:
 
       - name: Run Integration Tests
         shell: bash
-        if: matrix.integration-tests
+        if: github.event_name != 'pull_request' && matrix.integration-tests
         run: |
           export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | tr '\n' ' ')
           for project in $INTEGRATION_TEST_PROJECTS; do
