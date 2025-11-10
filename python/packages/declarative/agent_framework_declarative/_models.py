@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
 from collections.abc import MutableMapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Union
 
 from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
@@ -16,10 +16,14 @@ except ImportError:
 
 logger = get_logger("agent_framework.declarative")
 
+TEvalInput = TypeVar("TEvalInput", (str | None))
 
-def _try_powerfx_eval(value: str | None) -> str | None:
+
+def _try_powerfx_eval(value: TEvalInput) -> TEvalInput:
     """Check if a value refers to a environment variable and parse it if so."""
-    if not value or not value.startswith("="):
+    if value is None:
+        return value
+    if not value.startswith("="):
         return value
     if engine is None:
         logger.warning(
@@ -32,7 +36,7 @@ def _try_powerfx_eval(value: str | None) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         logger.info("PowerFx evaluation failed for value '%s': %s", value, exc)
-        return None
+        return value
 
 
 class Binding(SerializationMixin):
@@ -190,6 +194,17 @@ class PropertySchema(SerializationMixin):
         # but aren't PropertySchema params
         kwargs = {k: v for k, v in value.items() if k not in ("type", "kind", "name", "description")}
         return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)  # type: ignore[misc]
+
+    def to_json_schema(self) -> dict[str, Any]:
+        """Get a schema out of this PropertySchema to create pydantic models."""
+        json_schema = self.to_dict(exclude={"type"}, exclude_none=True)
+        new_props = {}
+        for prop in json_schema.get("properties", []):
+            prop_name = prop.pop("name")
+            prop["type"] = prop.pop("kind", None)
+            new_props[prop_name] = prop
+        json_schema["properties"] = new_props
+        return json_schema
 
 
 class Connection(SerializationMixin):
@@ -920,3 +935,136 @@ class AgentManifest(SerializationMixin):
                 resource = Resource.from_dict(temp_resource)
                 converted_resources.append(resource)
         self.resources = converted_resources
+
+
+AgentSchemaSpec = Union[
+    AgentManifest,
+    AgentDefinition,
+    PromptAgent,
+    Tool,
+    FunctionTool,
+    CustomTool,
+    WebSearchTool,
+    FileSearchTool,
+    McpTool,
+    OpenApiTool,
+    CodeInterpreterTool,
+    Resource,
+    ModelResource,
+    ToolResource,
+    Connection,
+    ReferenceConnection,
+    RemoteConnection,
+    ApiKeyConnection,
+    AnonymousConnection,
+    Property,
+    ArrayProperty,
+    ObjectProperty,
+    PropertySchema,
+    McpServerApprovalMode,
+    McpServerToolAlwaysRequireApprovalMode,
+    McpServerToolNeverRequireApprovalMode,
+    McpServerToolSpecifyApprovalMode,
+    Binding,
+    Format,
+    Parser,
+    Template,
+    Model,
+    ModelOptions,
+    ProtocolVersionRecord,
+    EnvironmentVariable,
+]
+
+
+def agent_schema_dispatch(schema: dict[str, Any]) -> AgentSchemaSpec | None:
+    """Create a component instance from a dictionary, dispatching to the appropriate class based on 'kind' field."""
+    kind = schema.get("kind")
+
+    # If no kind field, assume it's an AgentManifest
+    if kind is None:
+        return AgentManifest.from_dict(schema)
+    # Match on the kind field to determine which class to instantiate
+    match kind.lower():
+        # Agent types
+        case "prompt":
+            return PromptAgent.from_dict(schema)
+        case "agent":
+            return AgentDefinition.from_dict(schema)
+
+        # Resource types
+        case "tool":
+            return ToolResource.from_dict(schema)
+        case "model":
+            return ModelResource.from_dict(schema)
+        case "resource":
+            return Resource.from_dict(schema)
+
+        # Tool types
+        case "function":
+            return FunctionTool.from_dict(schema)
+        case "custom":
+            return CustomTool.from_dict(schema)
+        case "web_search":
+            return WebSearchTool.from_dict(schema)
+        case "file_search":
+            return FileSearchTool.from_dict(schema)
+        case "mcp":
+            return McpTool.from_dict(schema)
+        case "openapi":
+            return OpenApiTool.from_dict(schema)
+        case "code_interpreter":
+            return CodeInterpreterTool.from_dict(schema)
+
+        # Connection types
+        case "reference":
+            return ReferenceConnection.from_dict(schema)
+        case "remote":
+            return RemoteConnection.from_dict(schema)
+        case "key":
+            return ApiKeyConnection.from_dict(schema)
+        case "anonymous":
+            return AnonymousConnection.from_dict(schema)
+        case "connection":
+            return Connection.from_dict(schema)
+
+        # Property types
+        case "array":
+            return ArrayProperty.from_dict(schema)
+        case "object":
+            return ObjectProperty.from_dict(schema)
+        case "property":
+            return Property.from_dict(schema)
+
+        # MCP Server Approval Mode types
+        case "always":
+            return McpServerToolAlwaysRequireApprovalMode.from_dict(schema)
+        case "never":
+            return McpServerToolNeverRequireApprovalMode.from_dict(schema)
+        case "specify":
+            return McpServerToolSpecifyApprovalMode.from_dict(schema)
+        case "approval_mode":
+            return McpServerApprovalMode.from_dict(schema)
+
+        # Other component types
+        case "binding":
+            return Binding.from_dict(schema)
+        case "format":
+            return Format.from_dict(schema)
+        case "parser":
+            return Parser.from_dict(schema)
+        case "template":
+            return Template.from_dict(schema)
+        case "model":
+            return Model.from_dict(schema)
+        case "model_options":
+            return ModelOptions.from_dict(schema)
+        case "property_schema":
+            return PropertySchema.from_dict(schema)
+        case "protocol_version":
+            return ProtocolVersionRecord.from_dict(schema)
+        case "environment_variable":
+            return EnvironmentVariable.from_dict(schema)
+
+        # Unknown kind
+        case _:
+            return None
