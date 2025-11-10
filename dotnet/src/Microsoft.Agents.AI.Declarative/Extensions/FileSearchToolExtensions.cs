@@ -9,7 +9,7 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="FileSearchTool"/>.
 /// </summary>
-public static class FileSearchToolExtensions
+internal static class FileSearchToolExtensions
 {
     /// <summary>
     /// Create a <see cref="HostedFileSearchTool"/> from a <see cref="FileSearchTool"/>.

@@ -10,13 +10,13 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="ModelOptions"/>.
 /// </summary>
-public static class ModelOptionsExtensions
+internal static class ModelOptionsExtensions
 {
     /// <summary>
-    /// Retrieves the 'chat_tool_modelOptions' property from a <see cref="ModelOptions"/>.
+    /// Converts the 'chatToolMode' property from a <see cref="ModelOptions"/> to a <see cref="ChatToolMode"/>.
     /// </summary>
     /// <param name="modelOptions">Instance of <see cref="ModelOptions"/></param>
-    public static ChatToolMode? GetChatToolMode(this ModelOptions modelOptions)
+    internal static ChatToolMode? AsChatToolMode(this ModelOptions modelOptions)
     {
         Throw.IfNull(modelOptions);
 
@@ -40,12 +40,12 @@ public static class ModelOptionsExtensions
     /// </summary>
     /// <param name="modelOptions">Instance of <see cref="ModelOptions"/></param>
     /// <param name="excludedProperties">List of properties which should not be included in additional properties.</param>
-    public static AdditionalPropertiesDictionary? GetAdditionalProperties(this ModelOptions modelOptions, string[] excludedProperties)
+    internal static AdditionalPropertiesDictionary? GetAdditionalProperties(this ModelOptions modelOptions, string[] excludedProperties)
     {
         Throw.IfNull(modelOptions);
 
         var options = modelOptions.ExtensionData;
-        if (options is null)
+        if (options is null || options.Properties.Count == 0)
         {
             return null;
         }

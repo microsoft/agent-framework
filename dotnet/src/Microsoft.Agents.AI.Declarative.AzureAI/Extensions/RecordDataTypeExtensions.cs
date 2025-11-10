@@ -9,7 +9,7 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="RecordDataType"/>.
 /// </summary>
-public static class RecordDataTypeExtensions
+internal static class RecordDataTypeExtensions
 {
     /// <summary>
     /// Creates a <see cref="ChatResponseFormat"/> from a <see cref="RecordDataType"/>.
@@ -17,7 +17,7 @@ public static class RecordDataTypeExtensions
     /// <param name="recordDataType">Instance of <see cref="RecordDataType"/></param>
 #pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 #pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-    public static BinaryData? AsBinaryData(this RecordDataType recordDataType)
+    internal static BinaryData? AsBinaryData(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 

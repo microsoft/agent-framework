@@ -16,7 +16,7 @@ public static class RecordDataTypeExtensions
     /// Creates a <see cref="ChatResponseFormat"/> from a <see cref="RecordDataType"/>.
     /// </summary>
     /// <param name="recordDataType">Instance of <see cref="RecordDataType"/></param>
-    public static ChatResponseFormat? AsChatResponseFormat(this RecordDataType recordDataType)
+    internal static ChatResponseFormat? AsChatResponseFormat(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 
@@ -58,7 +58,7 @@ public static class RecordDataTypeExtensions
     /// <summary>
     /// Retrieves the 'schemaName' property from a <see cref="RecordDataType"/>.
     /// </summary>
-    public static string? GetSchemaName(this RecordDataType recordDataType)
+    internal static string? GetSchemaName(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 
@@ -68,7 +68,7 @@ public static class RecordDataTypeExtensions
     /// <summary>
     /// Retrieves the 'schemaDescription' property from a <see cref="RecordDataType"/>.
     /// </summary>
-    public static string? GetSchemaDescription(this RecordDataType recordDataType)
+    internal static string? GetSchemaDescription(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 

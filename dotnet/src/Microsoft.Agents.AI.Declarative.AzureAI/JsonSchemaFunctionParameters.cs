@@ -3,11 +3,12 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 
-namespace Microsoft.Extensions.AI.Agents.AzureAI;
+namespace Microsoft.Agents.AI.Declarative.AzureAI;
 
 /// <summary>
-/// A class to describe the parameters of an KernelFunctionFactory in a JSON Schema friendly way.
+/// A class to describe the parameters of an <see cref="AIFunction"/> in a JSON Schema friendly way.
 /// </summary>
 internal sealed class JsonSchemaFunctionParameters
 {

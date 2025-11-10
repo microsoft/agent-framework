@@ -8,7 +8,7 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="WebSearchTool"/>.
 /// </summary>
-public static class WebSearchToolExtensions
+internal static class WebSearchToolExtensions
 {
     /// <summary>
     /// Create a <see cref="HostedWebSearchTool"/> from a <see cref="WebSearchTool"/>.

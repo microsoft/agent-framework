@@ -88,7 +88,6 @@ public static class RecordDataValueExtensions
 #pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
 #pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
 
-    #region private
     internal static object? ToObject(this DataValue? value)
     {
         if (value is null)
@@ -105,5 +104,4 @@ public static class RecordDataValueExtensions
             _ => throw new NotSupportedException($"Unsupported DataValue type: {value.GetType().FullName}"),
         };
     }
-    #endregion
 }
