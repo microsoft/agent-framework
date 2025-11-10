@@ -9,16 +9,16 @@ preserving the conversation state between runs.
 - HTTP endpoints for starting the orchestration and polling for status/output
 
 ## Prerequisites
-- Python 3.11+
-- Azure Functions Core Tools v4
-- Local Azure Storage / Azurite and the Durable Task sidecar running
+- Python 3.10+
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`
 - Environment variables configured:
   - `AZURE_OPENAI_ENDPOINT`
   - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
   - `AZURE_OPENAI_API_KEY` (omit if using Azure CLI authentication)
-- `TASKHUB_NAME` matching the durable task hub defined in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default is `default`).
-- Copy `local.settings.json.template` to `local.settings.json` and populate those keys (and any storage settings) before running the Functions host, ensuring the `TaskHub` setting in the scheduler connection string stays in sync with `TASKHUB_NAME`.
-- Dependencies installed: `pip install -r requirements.txt`
+- Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json` and populate those keys (and any storage settings) before running the Functions host.
+- Install dependencies with `pip install -r requirements.txt`
 
 ## Running the Sample
 1. Start the Functions host: `func start`.

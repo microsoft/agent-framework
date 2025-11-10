@@ -17,8 +17,9 @@ an HTTP API that can be polled by a web client or dashboard.
 
 ## Prerequisites
 
-- Python 3.11+
-- Azure Functions Core Tools v4
+- Python 3.10+
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`
 - Access to an Azure OpenAI deployment (configure the environment variables listed in
   `local.settings.json` or export them in your shell)
 - Dependencies from `requirements.txt` installed in your environment

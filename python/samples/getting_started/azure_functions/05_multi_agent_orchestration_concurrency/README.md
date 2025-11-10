@@ -8,16 +8,16 @@ This sample starts a Durable Functions orchestration that runs two agents in par
 - HTTP routes (`/api/multiagent/run` and `/api/multiagent/status/{instanceId}`) mirror the .NET sample for parity.
 
 ## Prerequisites
-- Python 3.11+
-- Azure Functions Core Tools v4
-- Azurite / Azure Storage emulator and Durable Task sidecar running locally
+- Python 3.10+
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`
 - Environment variables configured:
   - `AZURE_OPENAI_ENDPOINT`
   - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
   - `AZURE_OPENAI_API_KEY` (omit when using Azure CLI auth)
-- `TASKHUB_NAME` that matches the durable task hub specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default is `default`).
-- Copy `local.settings.json.template` to `local.settings.json` and fill in those Azure OpenAI values (and storage settings) before starting the Functions host, keeping `TASKHUB_NAME` aligned with the connection string's `TaskHub` value.
-- Install dependencies: `pip install -r requirements.txt`
+- Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json` and fill in those Azure OpenAI values (and storage settings) before starting the Functions host.
+- Install dependencies with `pip install -r requirements.txt`
 
 ## Running the Sample
 1. Start the Functions host: `func start`.

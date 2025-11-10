@@ -4,12 +4,13 @@ This sample evaluates incoming emails with a spam detector agent and,
 when appropriate, drafts a response using an email assistant agent.
 
 ## Prerequisites
-- Python 3.11 environment with dependencies from `requirements.txt` installed.
-- Azure Functions Core Tools (`func`) available on the PATH.
+- Python 3.10+ environment with dependencies from `requirements.txt` installed.
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) available on the PATH.
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`.
 - Environment variables `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
   `AZURE_OPENAI_API_KEY` or an active Azure CLI login.
-- `TASKHUB_NAME` that matches the durable task hub specified in `DURABLE_TASK_SCHEDULER_CONNECTION_STRING` (default `default`).
-- Copy `local.settings.json.template` to `local.settings.json` and populate those Azure OpenAI settings (and storage values) before starting the host, keeping `TASKHUB_NAME` synchronized with the scheduler connection string.
+- Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json` and populate those Azure OpenAI settings (and storage values) before starting the host.
 
 ## Scenario Overview
 - Two Azure OpenAI agents share a single deployment: one flags spam, the other drafts replies.
