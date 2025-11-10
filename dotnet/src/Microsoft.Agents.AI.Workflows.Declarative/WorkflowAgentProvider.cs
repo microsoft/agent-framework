@@ -16,8 +16,8 @@ public abstract class WorkflowAgentProvider
     /// <summary>
     /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
     /// If an agent is configured with a function tool that is not available, a <see cref="RequestPort"/> is executed
-    /// that provides an <see cref="AgentFunctionToolRequest"/> that describes the function calls requested.  The caller may
-    /// then respond with a corrsponding <see cref="AgentFunctionToolResponse"/> that includes the results of the function calls.
+    /// that provides an <see cref="ExternalInputRequest"/> that describes the function calls requested.  The caller may
+    /// then respond with a corrsponding <see cref="ExternalInputResponse"/> that includes the results of the function calls.
     /// </summary>
     /// <remarks>
     /// These will not impact the requests sent to the model by the <see cref="FunctionInvokingChatClient"/>.
@@ -57,14 +57,6 @@ public abstract class WorkflowAgentProvider
     public bool AllowMultipleToolCalls { get; init; }
 
     /// <summary>
-    /// Asynchronously retrieves an AI agent by its unique identifier.
-    /// </summary>
-    /// <param name="agentId">The unique identifier of the AI agent to retrieve. Cannot be null or empty.</param>
-    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
-    /// <returns>The task result contains the <see cref="AIAgent"/> associated.</returns>
-    public abstract Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Asynchronously creates a new conversation and returns its unique identifier.
     /// </summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -87,6 +79,17 @@ public abstract class WorkflowAgentProvider
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>The requested message</returns>
     public abstract Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asynchronously retrieves an AI agent by its unique identifier.
+    /// </summary>
+    /// <param name="agentId">The unique identifier of the AI agent to retrieve. Cannot be null or empty.</param>
+    /// <param name="agentVersion">An optional agent version.</param>
+    /// <param name="conversationId">Optional identifier of the target conversation.</param>
+    /// <param name="messages">The messages to include in the invocation.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>Asynchronous set of <see cref="AgentRunResponseUpdate"/>.</returns>
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(string agentId, string? agentVersion, string? conversationId, IEnumerable<ChatMessage>? messages, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a set of messages from a conversation.

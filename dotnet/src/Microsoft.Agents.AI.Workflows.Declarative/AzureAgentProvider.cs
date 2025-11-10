@@ -1,15 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents.Persistent;
+using Azure.AI.Agents;
 using Azure.Core;
-using Azure.Core.Pipeline;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
 
@@ -18,31 +21,23 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 /// <remarks>This class is used to retrieve and manage AI agents associated with a Foundry project.  It requires a
 /// project endpoint and credentials to authenticate requests.</remarks>
-/// <param name="projectEndpoint">The endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
+/// <param name="projectEndpoint">A <see cref="Uri"/> instance representing the endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
 /// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
-public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
+public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
 {
-    private static readonly Dictionary<string, MessageRole> s_roleMap =
-        new()
-        {
-            [ChatRole.User.Value.ToUpperInvariant()] = MessageRole.User,
-            [ChatRole.Assistant.Value.ToUpperInvariant()] = MessageRole.Agent,
-            [ChatRole.System.Value.ToUpperInvariant()] = new MessageRole(ChatRole.System.Value),
-            [ChatRole.Tool.Value.ToUpperInvariant()] = new MessageRole(ChatRole.Tool.Value),
-        };
+    private readonly Dictionary<string, AgentVersion> _versionCache = [];
+    private readonly Dictionary<string, AIAgent> _agentCache = [];
 
-    private PersistentAgentsClient? _agentsClient;
+    private AgentClient? _agentClient;
+    private ConversationClient? _conversationClient;
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        PersistentAgentThread conversation =
-            await this.GetAgentsClient().Threads.CreateThreadAsync(
-                messages: null,
-                toolResources: null,
-                metadata: null,
-                cancellationToken).ConfigureAwait(false);
+        AgentConversation conversation =
+            await this.GetConversationClient()
+                .CreateConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
 
         return conversation.Id;
     }
@@ -50,61 +45,117 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
     /// <inheritdoc/>
     public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
-        PersistentThreadMessage newMessage =
-            await this.GetAgentsClient().Messages.CreateMessageAsync(
+        ReadOnlyCollection<ResponseItem> newItems =
+            await this.GetConversationClient().CreateConversationItemsAsync(
                 conversationId,
-                role: s_roleMap[conversationMessage.Role.Value.ToUpperInvariant()],
-                contentBlocks: GetContent(),
-                attachments: null,
-                metadata: GetMetadata(),
+                items: GetResponseItems(),
+                include: null,
                 cancellationToken).ConfigureAwait(false);
 
-        return ToChatMessage(newMessage);
+        return newItems.AsChatMessages().Single();
 
-        Dictionary<string, string>? GetMetadata()
+        IEnumerable<ResponseItem> GetResponseItems()
         {
-            if (conversationMessage.AdditionalProperties is null)
+            IEnumerable<ChatMessage> messages = [conversationMessage];
+
+            foreach (ResponseItem item in messages.AsOpenAIResponseItems())
             {
-                return null;
-            }
-
-            return conversationMessage.AdditionalProperties.ToDictionary(prop => prop.Key, prop => prop.Value?.ToString() ?? string.Empty);
-        }
-
-        IEnumerable<MessageInputContentBlock> GetContent()
-        {
-            foreach (AIContent content in conversationMessage.Contents)
-            {
-                MessageInputContentBlock? contentBlock =
-                    content switch
-                    {
-                        TextContent textContent => new MessageInputTextBlock(textContent.Text),
-                        HostedFileContent fileContent => new MessageInputImageFileBlock(new MessageImageFileParam(fileContent.FileId)),
-                        UriContent uriContent when uriContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(uriContent.Uri.ToString())),
-                        DataContent dataContent when dataContent.Uri is not null => new MessageInputImageUriBlock(new MessageImageUriParam(dataContent.Uri)),
-                        _ => null // Unsupported content type
-                    };
-
-                if (contentBlock is not null)
+                if (string.IsNullOrEmpty(item.Id))
                 {
-                    yield return contentBlock;
+                    yield return item;
+                }
+                else
+                {
+                    yield return new ReferenceResponseItem(item.Id);
                 }
             }
         }
     }
 
     /// <inheritdoc/>
-    public override async Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+        string agentId,
+        string? agentVersion,
+        string? conversationId,
+        IEnumerable<ChatMessage>? messages,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ChatClientAgent agent =
-            await this.GetAgentsClient().GetAIAgentAsync(
-                agentId,
-                new ChatOptions()
-                {
-                    AllowMultipleToolCalls = this.AllowMultipleToolCalls,
-                },
-                clientFactory: null,
-                cancellationToken).ConfigureAwait(false);
+        AgentVersion agentDefinition = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
+        AIAgent agent = await this.GetAgentAsync(agentDefinition, cancellationToken).ConfigureAwait(false);
+
+        ChatOptions chatOptions =
+            new()
+            {
+                ConversationId = conversationId,
+                AllowMultipleToolCalls = this.AllowMultipleToolCalls,
+            };
+
+        ChatClientAgentRunOptions runOptions = new(chatOptions);
+
+        IAsyncEnumerable<AgentRunResponseUpdate> agentResponse =
+            messages is not null ?
+                agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
+                agent.RunStreamingAsync([new ChatMessage(ChatRole.User, string.Empty)], null, runOptions, cancellationToken);
+
+        await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
+        {
+            update.AuthorName = agentDefinition.Name;
+            yield return update;
+        }
+    }
+
+    private async Task<AgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
+    {
+        string agentKey = $"{agentName}:{agentVersion}";
+        if (this._versionCache.TryGetValue(agentKey, out AgentVersion? targetAgent))
+        {
+            return targetAgent;
+        }
+
+        AgentClient client = this.GetAgentClient();
+
+        if (string.IsNullOrEmpty(agentVersion))
+        {
+            AgentRecord agentRecord =
+                await client.GetAgentAsync(
+                    agentName,
+                    cancellationToken).ConfigureAwait(false);
+
+            targetAgent = agentRecord.Versions.Latest;
+        }
+        else
+        {
+            targetAgent =
+                await client.GetAgentVersionAsync(
+                    agentName,
+                    agentVersion,
+                    cancellationToken).ConfigureAwait(false);
+        }
+
+        this._versionCache[agentKey] = targetAgent;
+
+        return targetAgent;
+    }
+
+    private async Task<AIAgent> GetAgentAsync(AgentVersion agentVersion, CancellationToken cancellationToken = default)
+    {
+        if (this._agentCache.TryGetValue(agentVersion.Id, out AIAgent? agent))
+        {
+            return agent;
+        }
+
+        AgentClient client = this.GetAgentClient();
+
+        IList<AITool>? tools = null;
+        if (agentVersion.Definition is PromptAgentDefinition promptAgent)
+        {
+            tools =
+                promptAgent.Tools
+                    .Select(tool => tool.AsAITool())
+                    .ToArray();
+        }
+
+        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -127,14 +178,17 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
             }
         }
 
+        this._agentCache[agentVersion.Id] = agent;
+
         return agent;
     }
 
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        PersistentThreadMessage message = await this.GetAgentsClient().Messages.GetMessageAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
-        return ToChatMessage(message);
+        AgentResponseItem responseItem = await this.GetConversationClient().GetConversationItemAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
+        ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+        return items.AsChatMessages().Single();
     }
 
     /// <inheritdoc/>
@@ -146,69 +200,45 @@ public sealed class AzureAgentProvider(string projectEndpoint, TokenCredential p
         bool newestFirst = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ListSortOrder order = newestFirst ? ListSortOrder.Ascending : ListSortOrder.Descending;
-        await foreach (PersistentThreadMessage message in this.GetAgentsClient().Messages.GetMessagesAsync(conversationId, runId: null, limit, order, after, before, cancellationToken).ConfigureAwait(false))
+        AgentListOrder order = newestFirst ? AgentListOrder.Ascending : AgentListOrder.Descending;
+        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
         {
-            yield return ToChatMessage(message);
+            ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+            foreach (ChatMessage message in items.AsChatMessages())
+            {
+                yield return message;
+            }
         }
     }
 
-    private PersistentAgentsClient GetAgentsClient()
+    private AgentClient GetAgentClient()
     {
-        if (this._agentsClient is null)
+        if (this._agentClient is null)
         {
-            PersistentAgentsAdministrationClientOptions clientOptions = new();
+            AgentClientOptions clientOptions = new();
 
             if (httpClient is not null)
             {
-                clientOptions.Transport = new HttpClientTransport(httpClient);
+                clientOptions.Transport = new HttpClientPipelineTransport(httpClient);
             }
 
-            PersistentAgentsClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
+            AgentClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 
-            Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
+            Interlocked.CompareExchange(ref this._agentClient, newClient, null);
         }
 
-        return this._agentsClient;
+        return this._agentClient;
     }
 
-    private static ChatMessage ToChatMessage(PersistentThreadMessage message)
+    private ConversationClient GetConversationClient()
     {
-        return
-           new ChatMessage(new ChatRole(message.Role.ToString()), [.. GetContent()])
-           {
-               MessageId = message.Id,
-               CreatedAt = message.CreatedAt,
-               AdditionalProperties = GetMetadata()
-           };
-
-        IEnumerable<AIContent> GetContent()
+        if (this._conversationClient is null)
         {
-            foreach (MessageContent contentItem in message.ContentItems)
-            {
-                AIContent? content =
-                    contentItem switch
-                    {
-                        MessageTextContent textContent => new TextContent(textContent.Text),
-                        MessageImageFileContent imageContent => new HostedFileContent(imageContent.FileId),
-                        _ => null // Unsupported content type
-                    };
+            ConversationClient conversationClient = this.GetAgentClient().GetConversationClient();
 
-                if (content is not null)
-                {
-                    yield return content;
-                }
-            }
+            Interlocked.CompareExchange(ref this._conversationClient, conversationClient, null);
         }
 
-        AdditionalPropertiesDictionary? GetMetadata()
-        {
-            if (message.Metadata is null)
-            {
-                return null;
-            }
-
-            return new AdditionalPropertiesDictionary(message.Metadata.Select(m => new KeyValuePair<string, object?>(m.Key, m.Value)));
-        }
+        return this._conversationClient;
     }
 }

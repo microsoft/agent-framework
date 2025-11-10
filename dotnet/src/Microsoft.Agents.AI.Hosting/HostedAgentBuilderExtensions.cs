@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
+using Microsoft.Agents.AI.Hosting.Local;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Shared.Diagnostics;
 
@@ -57,6 +60,54 @@ public static class HostedAgentBuilderExtensions
 
             return store;
         });
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds an AI tool to an agent being configured with the service collection.
+    /// </summary>
+    /// <param name="builder">The hosted agent builder.</param>
+    /// <param name="tool">The AI tool to add to the agent.</param>
+    /// <returns>The same <see cref="IHostedAgentBuilder"/> instance so that additional calls can be chained.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> or <paramref name="tool"/> is <see langword="null"/>.</exception>
+    public static IHostedAgentBuilder WithAITool(this IHostedAgentBuilder builder, AITool tool)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(tool);
+
+        var agentName = builder.Name;
+        var services = builder.ServiceCollection;
+
+        // Get or create the agent tool registry
+        var descriptor = services.FirstOrDefault(sd => !sd.IsKeyedService && sd.ServiceType.Equals(typeof(LocalAgentToolRegistry)));
+        if (descriptor?.ImplementationInstance is not LocalAgentToolRegistry toolRegistry)
+        {
+            toolRegistry = new();
+            services.Add(ServiceDescriptor.Singleton(toolRegistry));
+        }
+
+        toolRegistry.AddTool(agentName, tool);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Adds multiple AI tools to an agent being configured with the service collection.
+    /// </summary>
+    /// <param name="builder">The hosted agent builder.</param>
+    /// <param name="tools">The collection of AI tools to add to the agent.</param>
+    /// <returns>The same <see cref="IHostedAgentBuilder"/> instance so that additional calls can be chained.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> or <paramref name="tools"/> is <see langword="null"/>.</exception>
+    public static IHostedAgentBuilder WithAITools(this IHostedAgentBuilder builder, params AITool[] tools)
+    {
+        Throw.IfNull(builder);
+        Throw.IfNull(tools);
+
+        foreach (var tool in tools)
+        {
+            builder.WithAITool(tool);
+        }
+
         return builder;
     }
 }

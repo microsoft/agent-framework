@@ -10,10 +10,6 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-/// <summary>
-/// Custom JSON converter for polymorphic deserialization of BaseEvent and its derived types.
-/// Uses the "type" property as a discriminator to determine the concrete type to deserialize.
-/// </summary>
 internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
 {
     private const string TypeDiscriminatorPropertyName = "type";
@@ -26,9 +22,8 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
         Type typeToConvert,
         JsonSerializerOptions options)
     {
-        // Parse the JSON into a JsonDocument to inspect properties
-        using JsonDocument document = JsonDocument.ParseValue(ref reader);
-        JsonElement jsonElement = document.RootElement.Clone();
+        var jsonElementTypeInfo = options.GetTypeInfo(typeof(JsonElement));
+        JsonElement jsonElement = (JsonElement)JsonSerializer.Deserialize(ref reader, jsonElementTypeInfo)!;
 
         // Try to get the discriminator property
         if (!jsonElement.TryGetProperty(TypeDiscriminatorPropertyName, out JsonElement discriminatorElement))
@@ -38,21 +33,20 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
 
         string? discriminator = discriminatorElement.GetString();
 
-#if ASPNETCORE
-        AGUIJsonSerializerContext context = (AGUIJsonSerializerContext)options.TypeInfoResolver!;
-#else
-        AGUIJsonSerializerContext context = AGUIJsonSerializerContext.Default;
-#endif
-
-        // Map discriminator to concrete type and deserialize using the serializer context
+        // Map discriminator to concrete type and deserialize using type info from options
         BaseEvent? result = discriminator switch
         {
-            AGUIEventTypes.RunStarted => jsonElement.Deserialize(context.RunStartedEvent),
-            AGUIEventTypes.RunFinished => jsonElement.Deserialize(context.RunFinishedEvent),
-            AGUIEventTypes.RunError => jsonElement.Deserialize(context.RunErrorEvent),
-            AGUIEventTypes.TextMessageStart => jsonElement.Deserialize(context.TextMessageStartEvent),
-            AGUIEventTypes.TextMessageContent => jsonElement.Deserialize(context.TextMessageContentEvent),
-            AGUIEventTypes.TextMessageEnd => jsonElement.Deserialize(context.TextMessageEndEvent),
+            AGUIEventTypes.RunStarted => jsonElement.Deserialize(options.GetTypeInfo(typeof(RunStartedEvent))) as RunStartedEvent,
+            AGUIEventTypes.RunFinished => jsonElement.Deserialize(options.GetTypeInfo(typeof(RunFinishedEvent))) as RunFinishedEvent,
+            AGUIEventTypes.RunError => jsonElement.Deserialize(options.GetTypeInfo(typeof(RunErrorEvent))) as RunErrorEvent,
+            AGUIEventTypes.TextMessageStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(TextMessageStartEvent))) as TextMessageStartEvent,
+            AGUIEventTypes.TextMessageContent => jsonElement.Deserialize(options.GetTypeInfo(typeof(TextMessageContentEvent))) as TextMessageContentEvent,
+            AGUIEventTypes.TextMessageEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(TextMessageEndEvent))) as TextMessageEndEvent,
+            AGUIEventTypes.ToolCallStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallStartEvent))) as ToolCallStartEvent,
+            AGUIEventTypes.ToolCallArgs => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallArgsEvent))) as ToolCallArgsEvent,
+            AGUIEventTypes.ToolCallEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallEndEvent))) as ToolCallEndEvent,
+            AGUIEventTypes.ToolCallResult => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallResultEvent))) as ToolCallResultEvent,
+            AGUIEventTypes.StateSnapshot => jsonElement.Deserialize(options.GetTypeInfo(typeof(StateSnapshotEvent))) as StateSnapshotEvent,
             _ => throw new JsonException($"Unknown BaseEvent type discriminator: '{discriminator}'")
         };
 
@@ -69,35 +63,47 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
         BaseEvent value,
         JsonSerializerOptions options)
     {
-#if ASPNETCORE
-        AGUIJsonSerializerContext context = (AGUIJsonSerializerContext)options.TypeInfoResolver!;
-#else
-        AGUIJsonSerializerContext context = AGUIJsonSerializerContext.Default;
-#endif
-
-        // Serialize the concrete type directly using the serializer context
+        // Serialize the concrete type directly using type info from options
         switch (value)
         {
             case RunStartedEvent runStarted:
-                JsonSerializer.Serialize(writer, runStarted, context.RunStartedEvent);
+                JsonSerializer.Serialize(writer, runStarted, options.GetTypeInfo(typeof(RunStartedEvent)));
                 break;
             case RunFinishedEvent runFinished:
-                JsonSerializer.Serialize(writer, runFinished, context.RunFinishedEvent);
+                JsonSerializer.Serialize(writer, runFinished, options.GetTypeInfo(typeof(RunFinishedEvent)));
                 break;
             case RunErrorEvent runError:
-                JsonSerializer.Serialize(writer, runError, context.RunErrorEvent);
+                JsonSerializer.Serialize(writer, runError, options.GetTypeInfo(typeof(RunErrorEvent)));
                 break;
             case TextMessageStartEvent textStart:
-                JsonSerializer.Serialize(writer, textStart, context.TextMessageStartEvent);
+                JsonSerializer.Serialize(writer, textStart, options.GetTypeInfo(typeof(TextMessageStartEvent)));
                 break;
             case TextMessageContentEvent textContent:
-                JsonSerializer.Serialize(writer, textContent, context.TextMessageContentEvent);
+                JsonSerializer.Serialize(writer, textContent, options.GetTypeInfo(typeof(TextMessageContentEvent)));
                 break;
             case TextMessageEndEvent textEnd:
-                JsonSerializer.Serialize(writer, textEnd, context.TextMessageEndEvent);
+                JsonSerializer.Serialize(writer, textEnd, options.GetTypeInfo(typeof(TextMessageEndEvent)));
+                break;
+            case ToolCallStartEvent toolCallStart:
+                JsonSerializer.Serialize(writer, toolCallStart, options.GetTypeInfo(typeof(ToolCallStartEvent)));
+                break;
+            case ToolCallArgsEvent toolCallArgs:
+                JsonSerializer.Serialize(writer, toolCallArgs, options.GetTypeInfo(typeof(ToolCallArgsEvent)));
+                break;
+            case ToolCallEndEvent toolCallEnd:
+                JsonSerializer.Serialize(writer, toolCallEnd, options.GetTypeInfo(typeof(ToolCallEndEvent)));
+                break;
+            case ToolCallResultEvent toolCallResult:
+                JsonSerializer.Serialize(writer, toolCallResult, options.GetTypeInfo(typeof(ToolCallResultEvent)));
+                break;
+            case StateSnapshotEvent stateSnapshot:
+                JsonSerializer.Serialize(writer, stateSnapshot, options.GetTypeInfo(typeof(StateSnapshotEvent)));
+                break;
+            case StateDeltaEvent stateDelta:
+                JsonSerializer.Serialize(writer, stateDelta, options.GetTypeInfo(typeof(StateDeltaEvent)));
                 break;
             default:
-                throw new JsonException($"Unknown BaseEvent type: {value.GetType().Name}");
+                throw new InvalidOperationException($"Unknown event type: {value.GetType().Name}");
         }
     }
 }
