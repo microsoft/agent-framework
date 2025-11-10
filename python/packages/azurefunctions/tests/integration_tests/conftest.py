@@ -76,7 +76,6 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
     sample_path, error_message = get_sample_path_from_marker(request)
     if error_message:
         pytest.fail(error_message)
-        return
 
     assert sample_path is not None, "Sample path must be resolved before starting the function app"
 

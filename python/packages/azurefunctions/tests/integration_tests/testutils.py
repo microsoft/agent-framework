@@ -251,10 +251,8 @@ def is_port_in_use(port: int, host: str = _DEFAULT_HOST) -> bool:
 
     Returns True if the port is in use, False otherwise.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    result = sock.connect_ex((host, port)) == 0
-    sock.close()
-    return result
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        return sock.connect_ex((host, port)) == 0
 
 
 def load_and_validate_env() -> None:
