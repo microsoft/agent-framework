@@ -87,9 +87,16 @@ public abstract class WorkflowAgentProvider
     /// <param name="agentVersion">An optional agent version.</param>
     /// <param name="conversationId">Optional identifier of the target conversation.</param>
     /// <param name="messages">The messages to include in the invocation.</param>
+    /// <param name="inputArguments">Optional input arguments for agents that provide support.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>Asynchronous set of <see cref="AgentRunResponseUpdate"/>.</returns>
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(string agentId, string? agentVersion, string? conversationId, IEnumerable<ChatMessage>? messages, CancellationToken cancellationToken = default);
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+        string agentId,
+        string? agentVersion,
+        string? conversationId,
+        IEnumerable<ChatMessage>? messages,
+        IDictionary<string, object?>? inputArguments,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a set of messages from a conversation.

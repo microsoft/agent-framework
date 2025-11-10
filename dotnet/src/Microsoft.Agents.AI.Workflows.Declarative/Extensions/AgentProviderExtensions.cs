@@ -17,9 +17,10 @@ internal static class AgentProviderExtensions
         string? conversationId,
         bool autoSend,
         IEnumerable<ChatMessage>? inputMessages = null,
+        IDictionary<string, object?>? inputArguments = null,
         CancellationToken cancellationToken = default)
     {
-        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, cancellationToken);
+        IAsyncEnumerable<AgentRunResponseUpdate> agentUpdates = agentProvider.InvokeAgentAsync(agentName, null, conversationId, inputMessages, inputArguments, cancellationToken);
 
         // Enable "autoSend" behavior if this is the workflow conversation.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
