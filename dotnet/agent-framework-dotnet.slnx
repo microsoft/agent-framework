@@ -20,6 +20,7 @@
   </Folder>
   <Folder Name="/Samples/AGUIClientServer/">
     <Project Path="samples/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
+    <Project Path="samples/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
     <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">

@@ -44,22 +44,27 @@ public static class AGUIEndpointRouteBuilderExtensions
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
             var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
-            var agent = aiAgent;
+            var clientTools = input.Tools?.AsAITools().ToList();
 
-            ChatClientAgentRunOptions? runOptions = null;
-            List<AITool>? clientTools = input.Tools?.AsAITools().ToList();
-            if (clientTools?.Count > 0)
+            // Create run options with AG-UI context in AdditionalProperties
+            var runOptions = new ChatClientAgentRunOptions
             {
-                runOptions = new ChatClientAgentRunOptions
+                ChatOptions = new ChatOptions
                 {
-                    ChatOptions = new ChatOptions
+                    Tools = clientTools,
+                    AdditionalProperties = new AdditionalPropertiesDictionary
                     {
-                        Tools = clientTools
+                        ["ag_ui_state"] = input.State,
+                        ["ag_ui_context"] = input.Context?.Select(c => new KeyValuePair<string, string>(c.Description, c.Value)).ToArray(),
+                        ["ag_ui_forwarded_properties"] = input.ForwardedProperties,
+                        ["ag_ui_thread_id"] = input.ThreadId,
+                        ["ag_ui_run_id"] = input.RunId
                     }
-                };
-            }
+                }
+            };
 
-            var events = agent.RunStreamingAsync(
+            // Run the agent and convert to AG-UI events
+            var events = aiAgent.RunStreamingAsync(
                 messages,
                 options: runOptions,
                 cancellationToken: cancellationToken)
