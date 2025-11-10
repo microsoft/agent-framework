@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Declarative.UnitTests;
 /// <summary>
 /// Unit tests for <see cref="AgentBotElementYaml"/>
 /// </summary>
-public class AgentBotElementYamlTests
+public sealed class AgentBotElementYamlTests
 {
     [Theory]
     [InlineData(PromptAgents.AgentWithEverything)]
