@@ -846,6 +846,7 @@ def _trace_get_response(
                 kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -933,6 +934,7 @@ def _trace_get_streaming_response(
                 kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -1324,7 +1326,10 @@ def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
 ) -> Generator["trace.Span", Any, Any]:
-    """Start a span for a agent run."""
+    """Start a span for a agent run.
+
+    Note: `attributes` must contain the `span_name_attribute` key.
+    """
     span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
     with trace.use_span(

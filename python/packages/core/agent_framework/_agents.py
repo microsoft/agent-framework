@@ -691,7 +691,7 @@ class ChatAgent(BaseAgent):
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
-            model_id=model_id or str(chat_client.model_id) if hasattr(chat_client, "model_id") else None,
+            model_id=model_id or (str(chat_client.model_id) if hasattr(chat_client, "model_id") else None),
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
