@@ -318,9 +318,12 @@ class MCPTool:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
             except Exception as ex:
                 await self._exit_stack.aclose()
-                raise ToolException(
-                    "Failed to connect to the MCP server. Please check your configuration.", inner_exception=ex
-                ) from ex
+                command = getattr(self, "command", None)
+                if command:
+                    error_msg = f"Failed to start MCP server '{command}': {ex}"
+                else:
+                    error_msg = f"Failed to connect to MCP server: {ex}"
+                raise ToolException(error_msg, inner_exception=ex) from ex
             try:
                 session = await self._exit_stack.enter_async_context(
                     ClientSession(
@@ -335,9 +338,21 @@ class MCPTool:
             except Exception as ex:
                 await self._exit_stack.aclose()
                 raise ToolException(
-                    message="Failed to create a session. Please check your configuration.", inner_exception=ex
+                    message="Failed to create MCP session. Please check your configuration.", inner_exception=ex
                 ) from ex
-            await session.initialize()
+            try:
+                await session.initialize()
+            except Exception as ex:
+                await self._exit_stack.aclose()
+                # Provide context about initialization failure
+                command = getattr(self, "command", None)
+                if command:
+                    args_str = " ".join(getattr(self, "args", []))
+                    full_command = f"{command} {args_str}".strip()
+                    error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
+                else:
+                    error_msg = f"MCP server failed to initialize: {ex}"
+                raise ToolException(error_msg, inner_exception=ex) from ex
             self.session = session
         elif self.session._request_id == 0:  # type: ignore[reportPrivateUsage]
             # If the session is not initialized, we need to reinitialize it

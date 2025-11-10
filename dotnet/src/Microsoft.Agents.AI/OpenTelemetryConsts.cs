@@ -18,6 +18,11 @@ internal static class OpenTelemetryConsts
             public const string Description = "gen_ai.agent.description";
         }
 
+        public static class Operation
+        {
+            public const string Name = "gen_ai.operation.name";
+        }
+
         public static class Provider
         {
             public const string Name = "gen_ai.provider.name";

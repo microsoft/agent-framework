@@ -1,90 +1,162 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel.Primitives;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.OpenAI;
+using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Responses;
 
-namespace Microsoft.Agents.AI.Hosting.OpenAI;
+namespace Microsoft.AspNetCore.Builder;
 
 /// <summary>
 /// Provides extension methods for mapping OpenAI capabilities to an <see cref="AIAgent"/>.
 /// </summary>
-public static partial class EndpointRouteBuilderExtensions
+public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions
 {
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="IHostedAgentBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder)
+        => MapOpenAIResponses(endpoints, agentBuilder, path: null);
+
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="IHostedAgentBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
+    /// <param name="path">Custom route path for the OpenAI Responses endpoint.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
+        return MapOpenAIResponses(endpoints, agent, path);
+    }
+
     /// <summary>
     /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
-    /// <param name="agentName">The name of the AI agent service registered in the dependency injection container. This name is used to resolve the <see cref="AIAgent"/> instance from the keyed services.</param>
+    /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, AIAgent agent) =>
+        MapOpenAIResponses(endpoints, agent, responsesPath: null);
+
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/> for the given <see cref="AIAgent"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
-    /// <param name="conversationsPath">Custom route path for the conversations endpoint.</param>
-    public static void MapOpenAIResponses(
+    public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
-        string agentName,
-        [StringSyntax("Route")] string? responsesPath = null,
-        [StringSyntax("Route")] string? conversationsPath = null)
+        AIAgent agent,
+        [StringSyntax("Route")] string? responsesPath)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
-        ArgumentNullException.ThrowIfNull(agentName);
-        if (responsesPath is null || conversationsPath is null)
-        {
-            ValidateAgentName(agentName);
-        }
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agent.Name, nameof(agent.Name));
+        ValidateAgentName(agent.Name);
 
-        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        responsesPath ??= $"/{agent.Name}/v1/responses";
 
-        responsesPath ??= $"/{agentName}/v1/responses";
-        var responsesRouteGroup = endpoints.MapGroup(responsesPath);
-        MapResponses(responsesRouteGroup, agent);
+        // Create an executor for this agent
+        var executor = new AIAgentResponseExecutor(agent);
+        var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
+        var conversationStorage = endpoints.ServiceProvider.GetService<IConversationStorage>();
+        var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage);
 
-        // Will be included once we obtain the API to operate with thread (conversation).
+        var handlers = new ResponsesHttpHandler(responsesService);
 
-        // conversationsPath ??= $"/{agentName}/v1/conversations";
-        // var conversationsRouteGroup = endpoints.MapGroup(conversationsPath);
-        // MapConversations(conversationsRouteGroup, agent, loggerFactory);
+        var group = endpoints.MapGroup(responsesPath);
+        var endpointAgentName = agent.DisplayName;
+
+        // Create response endpoint
+        group.MapPost("/", handlers.CreateResponseAsync)
+            .WithName(endpointAgentName + "/CreateResponse")
+            .WithSummary("Creates a model response for the given input");
+
+        // Get response endpoint
+        group.MapGet("{responseId}", handlers.GetResponseAsync)
+            .WithName(endpointAgentName + "/GetResponse")
+            .WithSummary("Retrieves a response by ID");
+
+        // Cancel response endpoint
+        group.MapPost("{responseId}/cancel", handlers.CancelResponseAsync)
+            .WithName(endpointAgentName + "/CancelResponse")
+            .WithSummary("Cancels an in-progress response");
+
+        // Delete response endpoint
+        group.MapDelete("{responseId}", handlers.DeleteResponseAsync)
+            .WithName(endpointAgentName + "/DeleteResponse")
+            .WithSummary("Deletes a response");
+
+        // List response input items endpoint
+        group.MapGet("{responseId}/input_items", handlers.ListResponseInputItemsAsync)
+            .WithName(endpointAgentName + "/ListResponseInputItems")
+            .WithSummary("Lists the input items for a response");
+
+        return group;
     }
 
-    private static void MapResponses(IEndpointRouteBuilder routeGroup, AIAgent agent)
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints) =>
+        MapOpenAIResponses(endpoints, responsesPath: null);
+
+    /// <summary>
+    /// Maps OpenAI Responses API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
+    /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("Route")] string? responsesPath)
     {
-        var endpointAgentName = agent.DisplayName;
-        var responsesProcessor = new AIAgentResponsesProcessor(agent);
+        ArgumentNullException.ThrowIfNull(endpoints);
 
-        routeGroup.MapPost("/", async (HttpContext requestContext, CancellationToken cancellationToken) =>
-        {
-            var requestBinary = await BinaryData.FromStreamAsync(requestContext.Request.Body, cancellationToken).ConfigureAwait(false);
+        responsesPath ??= "/v1/responses";
+        var responsesService = endpoints.ServiceProvider.GetService<IResponsesService>()
+            ?? throw new InvalidOperationException("IResponsesService is not registered. Call AddOpenAIResponses() in your service configuration.");
+        var handlers = new ResponsesHttpHandler(responsesService);
 
-            var responseOptions = new ResponseCreationOptions();
-            var responseOptionsJsonModel = responseOptions as IJsonModel<ResponseCreationOptions>;
-            Debug.Assert(responseOptionsJsonModel is not null);
+        var group = endpoints.MapGroup(responsesPath);
 
-            responseOptions = responseOptionsJsonModel.Create(requestBinary, ModelReaderWriterOptions.Json);
-            if (responseOptions is null)
-            {
-                return Results.BadRequest("Invalid request payload.");
-            }
+        // Create response endpoint
+        group.MapPost("/", handlers.CreateResponseAsync)
+            .WithName("CreateResponse")
+            .WithSummary("Creates a model response for the given input");
 
-            return await responsesProcessor.CreateModelResponseAsync(responseOptions, cancellationToken).ConfigureAwait(false);
-        }).WithName(endpointAgentName + "/CreateResponse");
-    }
+        // Get response endpoint
+        group.MapGet("{responseId}", handlers.GetResponseAsync)
+            .WithName("GetResponse")
+            .WithSummary("Retrieves a response by ID");
 
-#pragma warning disable IDE0051 // Remove unused private members
-    private static void MapConversations(IEndpointRouteBuilder routeGroup, AIAgent agent)
-#pragma warning restore IDE0051 // Remove unused private members
-    {
-        var endpointAgentName = agent.DisplayName;
-        var conversationsProcessor = new AIAgentConversationsProcessor(agent);
+        // Cancel response endpoint
+        group.MapPost("{responseId}/cancel", handlers.CancelResponseAsync)
+            .WithName("CancelResponse")
+            .WithSummary("Cancels an in-progress response");
 
-        routeGroup.MapGet("/{conversation_id}", (string conversationId, CancellationToken cancellationToken)
-            => conversationsProcessor.GetConversationAsync(conversationId, cancellationToken)
-        ).WithName(endpointAgentName + "/RetrieveConversation");
+        // Delete response endpoint
+        group.MapDelete("{responseId}", handlers.DeleteResponseAsync)
+            .WithName("DeleteResponse")
+            .WithSummary("Deletes a response");
+
+        // List response input items endpoint
+        group.MapGet("{responseId}/input_items", handlers.ListResponseInputItemsAsync)
+            .WithName("ListResponseInputItems")
+            .WithSummary("Lists the input items for a response");
+
+        return group;
     }
 
     private static void ValidateAgentName([NotNull] string agentName)

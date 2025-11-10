@@ -345,6 +345,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     options_dict[key] = value
         if "store" not in options_dict:
             options_dict["store"] = False
+        if (tool_choice := options_dict.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            options_dict["tool_choice"] = tool_choice["mode"]
         return options_dict
 
     def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
@@ -391,6 +393,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             args["metadata"] = message.additional_properties
         for content in message.contents:
             match content:
+                case TextReasoningContent():
+                    # Don't send reasoning content back to model
+                    continue
                 case FunctionResultContent():
                     new_args: dict[str, Any] = {}
                     new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
@@ -485,6 +490,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
+                    "status": None,
                 }
             case FunctionResultContent():
                 # call_id for the result needs to be the same as the call_id for the function call
@@ -495,8 +501,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 }
                 if content.result:
                     args["output"] = prepare_function_call_results(content.result)
-                if content.exception:
-                    args["output"] = "Error: " + str(content.exception)
                 return args
             case FunctionApprovalRequestContent():
                 return {

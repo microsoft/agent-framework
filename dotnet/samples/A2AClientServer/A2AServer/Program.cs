@@ -2,7 +2,7 @@
 using A2A;
 using A2A.AspNetCore;
 using A2AServer;
-using Microsoft.Agents.AI.A2A;
+using Microsoft.Agents.AI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -47,10 +47,12 @@ IList<AITool> tools =
     AIFunctionFactory.Create(invoiceQueryPlugin.QueryByInvoiceId)
     ];
 
-A2AHostAgent? hostAgent = null;
+AIAgent hostA2AAgent;
+AgentCard hostA2AAgentCard;
+
 if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentId))
 {
-    hostAgent = agentType.ToUpperInvariant() switch
+    (hostA2AAgent, hostA2AAgentCard) = agentType.ToUpperInvariant() switch
     {
         "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId, tools),
         "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId),
@@ -60,7 +62,7 @@ if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentId))
 }
 else if (!string.IsNullOrEmpty(apiKey))
 {
-    hostAgent = agentType.ToUpperInvariant() switch
+    (hostA2AAgent, hostA2AAgentCard) = agentType.ToUpperInvariant() switch
     {
         "INVOICE" => await HostAgentFactory.CreateChatCompletionHostAgentAsync(
             agentType, model, apiKey, "InvoiceAgent",
@@ -102,7 +104,10 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentId must be provided");
 }
 
-app.MapA2A(hostAgent!.TaskManager!, "/");
-app.MapWellKnownAgentCard(hostAgent!.TaskManager!, "/");
+var a2aTaskManager = app.MapA2A(
+    hostA2AAgent,
+    path: "/",
+    agentCard: hostA2AAgentCard,
+    taskManager => app.MapWellKnownAgentCard(taskManager, "/"));
 
 await app.RunAsync();

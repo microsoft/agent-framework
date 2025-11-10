@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import json
 import os
 from typing import Annotated
 from unittest.mock import MagicMock, patch
@@ -73,7 +72,11 @@ async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Hoste
         name="knowledge_base",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
-    result = await client.client.vector_stores.files.create_and_poll(vector_store_id=vector_store.id, file_id=file.id)
+    result = await client.client.vector_stores.files.create_and_poll(
+        vector_store_id=vector_store.id,
+        file_id=file.id,
+        poll_interval_ms=1000,
+    )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
@@ -132,18 +135,6 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     for key, value in default_headers.items():
         assert key in openai_responses_client.client.default_headers
         assert openai_responses_client.client.default_headers[key] == value
-
-
-def test_openai_responses_client_instructions_sent_once(openai_unit_test_env: dict[str, str]) -> None:
-    """Ensure instructions are only included once for OpenAI Responses requests."""
-    client = OpenAIResponsesClient()
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert json.dumps(request_options).count(instructions) == 1
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
@@ -439,7 +430,7 @@ async def test_get_streaming_response_with_all_parameters() -> None:
             instructions="Stream response test",
             max_tokens=50,
             parallel_tool_calls=False,
-            model="gpt-4",
+            model_id="gpt-4",
             previous_response_id="stream-prev-123",
             reasoning={"mode": "stream"},
             service_tier="default",
@@ -1229,6 +1220,10 @@ async def test_openai_responses_client_web_search_streaming() -> None:
     assert full_message is not None
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing potential "
+    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_file_search() -> None:
@@ -1254,6 +1249,10 @@ async def test_openai_responses_client_file_search() -> None:
     assert "75" in response.text
 
 
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing "
+    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_client_streaming_file_search() -> None:

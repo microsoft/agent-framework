@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+
 # Ensure local getting_started package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
 if str(_SAMPLES_ROOT) not in sys.path:
@@ -17,16 +20,13 @@ from agent_framework import (  # noqa: E402
     Executor,
     FunctionCallContent,
     FunctionResultContent,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
     Role,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    response_handler,
 )
-from agent_framework.openai import OpenAIChatClient  # noqa: E402
 from getting_started.workflows.agents.workflow_as_agent_reflection_pattern import (  # noqa: E402
     ReviewRequest,
     ReviewResponse,
@@ -40,20 +40,20 @@ Purpose:
 This sample demonstrates how to build a workflow agent that escalates uncertain
 decisions to a human manager. A Worker generates results, while a Reviewer
 evaluates them. When the Reviewer is not confident, it escalates the decision
-to a human via RequestInfoExecutor, receives the human response, and then
-forwards that response back to the Worker. The workflow completes when idle.
+to a human, receives the human response, and then forwards that response back
+to the Worker. The workflow completes when idle.
 
 Prerequisites:
 - OpenAI account configured and accessible for OpenAIChatClient.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
-- Understanding of request-response message handling (RequestInfoMessage, RequestResponse).
+- Understanding of request-response message handling in executors.
 - (Optional) Review of reflection and escalation patterns, such as those in
   workflow_as_agent_reflection.py.
 """
 
 
 @dataclass
-class HumanReviewRequest(RequestInfoMessage):
+class HumanReviewRequest:
     """A request message type for escalation to a human reviewer."""
 
     agent_request: ReviewRequest | None = None
@@ -62,14 +62,13 @@ class HumanReviewRequest(RequestInfoMessage):
 class ReviewerWithHumanInTheLoop(Executor):
     """Executor that always escalates reviews to a human manager."""
 
-    def __init__(self, worker_id: str, request_info_id: str, reviewer_id: str | None = None) -> None:
+    def __init__(self, worker_id: str, reviewer_id: str | None = None) -> None:
         unique_id = reviewer_id or f"{worker_id}-reviewer"
         super().__init__(id=unique_id)
         self._worker_id = worker_id
-        self._request_info_id = request_info_id
 
     @handler
-    async def review(self, request: ReviewRequest, ctx: WorkflowContext[ReviewResponse | HumanReviewRequest]) -> None:
+    async def review(self, request: ReviewRequest, ctx: WorkflowContext) -> None:
         # In this simplified example, we always escalate to a human manager.
         # See workflow_as_agent_reflection.py for an implementation
         # using an automated agent to make the review decision.
@@ -77,23 +76,21 @@ class ReviewerWithHumanInTheLoop(Executor):
         print("Reviewer: Escalating to human manager...")
 
         # Forward the request to a human manager by sending a HumanReviewRequest.
-        await ctx.send_message(
-            HumanReviewRequest(agent_request=request),
-            target_id=self._request_info_id,
-        )
+        await ctx.request_info(request_data=HumanReviewRequest(agent_request=request), response_type=ReviewResponse)
 
-    @handler
+    @response_handler
     async def accept_human_review(
-        self, response: RequestResponse[HumanReviewRequest, ReviewResponse], ctx: WorkflowContext[ReviewResponse]
+        self,
+        original_request: ReviewRequest,
+        response: ReviewResponse,
+        ctx: WorkflowContext[ReviewResponse],
     ) -> None:
         # Accept the human review response and forward it back to the Worker.
-        human_response = response.data
-        assert isinstance(human_response, ReviewResponse)
-        print(f"Reviewer: Accepting human review for request {human_response.request_id[:8]}...")
-        print(f"Reviewer: Human feedback: {human_response.feedback}")
-        print(f"Reviewer: Human approved: {human_response.approved}")
+        print(f"Reviewer: Accepting human review for request {response.request_id[:8]}...")
+        print(f"Reviewer: Human feedback: {response.feedback}")
+        print(f"Reviewer: Human approved: {response.approved}")
         print("Reviewer: Forwarding human review back to worker...")
-        await ctx.send_message(human_response, target_id=self._worker_id)
+        await ctx.send_message(response, target_id=self._worker_id)
 
 
 async def main() -> None:
@@ -102,20 +99,17 @@ async def main() -> None:
 
     # Create executors for the workflow.
     print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
+    mini_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     worker = Worker(id="sub-worker", chat_client=mini_chat_client)
-    request_info_executor = RequestInfoExecutor(id="request_info")
-    reviewer = ReviewerWithHumanInTheLoop(worker_id=worker.id, request_info_id=request_info_executor.id)
+    reviewer = ReviewerWithHumanInTheLoop(worker_id=worker.id)
 
-    print("Building workflow with Worker ↔ Reviewer cycle...")
+    print("Building workflow with Worker-Reviewer cycle...")
     # Build a workflow with bidirectional communication between Worker and Reviewer,
     # and escalation paths for human review.
     agent = (
         WorkflowBuilder()
         .add_edge(worker, reviewer)  # Worker sends requests to Reviewer
         .add_edge(reviewer, worker)  # Reviewer sends feedback to Worker
-        .add_edge(reviewer, request_info_executor)  # Reviewer requests human input
-        .add_edge(request_info_executor, reviewer)  # Human input forwarded back to Reviewer
         .set_start_executor(worker)
         .build()
         .as_agent()  # Convert workflow into an agent interface

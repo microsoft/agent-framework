@@ -26,6 +26,7 @@ internal static class AgentFactory
         new()
         {
             ["FOUNDRY_AGENT_TEST"] = "TestAgent.yaml",
+            ["FOUNDRY_AGENT_TOOL"] = "ToolAgent.yaml",
             ["FOUNDRY_AGENT_ANSWER"] = "QuestionAgent.yaml",
             ["FOUNDRY_AGENT_STUDENT"] = "StudentAgent.yaml",
             ["FOUNDRY_AGENT_TEACHER"] = "TeacherAgent.yaml",
@@ -50,6 +51,7 @@ internal static class AgentFactory
         IKernelBuilder kernelBuilder = Kernel.CreateBuilder();
         kernelBuilder.Services.AddSingleton(clientAgents);
         kernelBuilder.Services.AddSingleton(clientProjects);
+        kernelBuilder.Plugins.AddFromType<Agents.MenuPlugin>();
         AgentCreationOptions creationOptions = new() { Kernel = kernelBuilder.Build() };
         AzureAIAgentFactory factory = new();
         string repoRoot = WorkflowTest.GetRepoFolder();
