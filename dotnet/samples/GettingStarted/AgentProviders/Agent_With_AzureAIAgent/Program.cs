@@ -13,14 +13,13 @@ const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-var agentsClient = new AgentsClient(new Uri(endpoint), new AzureCliCredential());
+var agentsClient = new AgentClient(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-var agentDefinition = new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions };
-
+var agentVersionCreationOptions = new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions });
 // Azure.AI.Agents SDK creates and manages agent by name and versions.
 // You can create a server side agent version with the Azure.AI.Agents SDK client below.
-var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, definition: agentDefinition);
+var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, options: agentVersionCreationOptions);
 
 // Note:
 //      agentVersion.Id = "<agentName>:<versionNumber>",

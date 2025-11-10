@@ -45,14 +45,14 @@ internal sealed class Program
 
     private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
+        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentsClient.CreateAgentAsync(
+        await agentClient.CreateAgentAsync(
             agentName: "StudentAgent",
             agentDefinition: DefineStudentAgent(configuration),
             agentDescription: "Student agent for MathChat workflow");
 
-        await agentsClient.CreateAgentAsync(
+        await agentClient.CreateAgentAsync(
             agentName: "TeacherAgent",
             agentDefinition: DefineTeacherAgent(configuration),
             agentDescription: "Teacher agent for MathChat workflow");

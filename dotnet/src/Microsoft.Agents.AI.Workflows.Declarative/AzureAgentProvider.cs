@@ -30,7 +30,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     private readonly Dictionary<string, AgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
 
-    private AgentsClient? _agentsClient;
+    private AgentClient? _agentClient;
     private ConversationClient? _conversationClient;
 
     /// <inheritdoc/>
@@ -131,7 +131,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
             return targetAgent;
         }
 
-        AgentsClient client = this.GetAgentsClient();
+        AgentClient client = this.GetAgentClient();
 
         if (string.IsNullOrEmpty(agentVersion))
         {
@@ -156,17 +156,17 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         return targetAgent;
     }
 
-    private async Task<AIAgent> GetAgentAsync(AgentVersion agentDefinition, CancellationToken cancellationToken = default)
+    private async Task<AIAgent> GetAgentAsync(AgentVersion agentVersion, CancellationToken cancellationToken = default)
     {
-        if (this._agentCache.TryGetValue(agentDefinition.Id, out AIAgent? agent))
+        if (this._agentCache.TryGetValue(agentVersion.Id, out AIAgent? agent))
         {
             return agent;
         }
 
-        AgentsClient client = this.GetAgentsClient();
+        AgentClient client = this.GetAgentClient();
 
         IList<AITool>? tools = null;
-        if (agentDefinition.Definition is PromptAgentDefinition promptAgent)
+        if (agentVersion.Definition is PromptAgentDefinition promptAgent)
         {
             tools =
                 promptAgent.Tools
@@ -174,7 +174,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                     .ToArray();
         }
 
-        agent = client.GetAIAgent(agentDefinition, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, cancellationToken);
+        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -197,7 +197,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
             }
         }
 
-        this._agentCache[agentDefinition.Id] = agent;
+        this._agentCache[agentVersion.Id] = agent;
 
         return agent;
     }
@@ -219,7 +219,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         bool newestFirst = false,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentsListOrder order = newestFirst ? AgentsListOrder.Asc : AgentsListOrder.Desc;
+        AgentListOrder order = newestFirst ? AgentListOrder.Ascending : AgentListOrder.Descending;
         await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
         {
             ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
@@ -230,30 +230,30 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
     }
 
-    private AgentsClient GetAgentsClient()
+    private AgentClient GetAgentClient()
     {
-        if (this._agentsClient is null)
+        if (this._agentClient is null)
         {
-            AgentsClientOptions clientOptions = new();
+            AgentClientOptions clientOptions = new();
 
             if (httpClient is not null)
             {
                 clientOptions.Transport = new HttpClientPipelineTransport(httpClient);
             }
 
-            AgentsClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
+            AgentClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 
-            Interlocked.CompareExchange(ref this._agentsClient, newClient, null);
+            Interlocked.CompareExchange(ref this._agentClient, newClient, null);
         }
 
-        return this._agentsClient;
+        return this._agentClient;
     }
 
     private ConversationClient GetConversationClient()
     {
         if (this._conversationClient is null)
         {
-            ConversationClient conversationClient = this.GetAgentsClient().GetConversationClient();
+            ConversationClient conversationClient = this.GetAgentClient().GetConversationClient();
 
             Interlocked.CompareExchange(ref this._conversationClient, conversationClient, null);
         }

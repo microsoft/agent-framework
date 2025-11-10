@@ -55,9 +55,9 @@ internal sealed class Program
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration, AIFunction[] functions)
     {
-        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
+        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentsClient.CreateAgentAsync(
+        await agentClient.CreateAgentAsync(
             agentName: "MenuAgent",
             agentDefinition: DefineMenuAgent(configuration, functions),
             agentDescription: "Provides information about the restaurant menu");

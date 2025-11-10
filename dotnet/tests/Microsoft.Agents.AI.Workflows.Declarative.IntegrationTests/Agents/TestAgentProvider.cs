@@ -13,10 +13,10 @@ internal sealed class TestAgentProvider(IConfiguration configuration) : AgentPro
 {
     protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
-        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
+        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
 
         yield return
-            await agentsClient.CreateAgentAsync(
+            await agentClient.CreateAgentAsync(
                 agentName: "TestAgent",
                 agentDefinition: this.DefineMenuAgent(),
                 agentDescription: "Provides information about the restaurant menu");
