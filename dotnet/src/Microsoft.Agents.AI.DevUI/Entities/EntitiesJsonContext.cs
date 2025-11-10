@@ -15,10 +15,12 @@ namespace Microsoft.Agents.AI.DevUI.Entities;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(EntityInfo))]
 [JsonSerializable(typeof(DiscoveryResponse))]
+[JsonSerializable(typeof(MetaResponse))]
 [JsonSerializable(typeof(EnvVarRequirement))]
 [JsonSerializable(typeof(List<EntityInfo>))]
 [JsonSerializable(typeof(List<JsonElement>))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
+[JsonSerializable(typeof(Dictionary<string, bool>))]
 [JsonSerializable(typeof(JsonElement))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class EntitiesJsonContext : JsonSerializerContext;

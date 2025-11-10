@@ -86,7 +86,7 @@
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Anthropic.SDK" Version="5.8.0" />
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.2" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.6" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
     <PackageVersion Include="OpenAI" Version="2.6.0" />

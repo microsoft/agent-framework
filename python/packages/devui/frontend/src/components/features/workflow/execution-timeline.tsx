@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent } from "@/types";
 import type { ExecutorState } from "./executor-node";
+import { truncateText } from "@/utils/workflow-utils";
 
 interface ExecutorRun {
   executorId: string;
@@ -112,24 +113,28 @@ function ExecutorRunItem({
           if (canExpand) onToggle();
         }}
       >
-        <div className="flex items-center gap-2 mb-1">
-          {canExpand && (
-            <div className="text-muted-foreground">
-              {isExpanded ? (
-                <ChevronDown className="w-3 h-3" />
-              ) : (
-                <ChevronRight className="w-3 h-3" />
-              )}
-            </div>
-          )}
-          {getStateIcon(run.state)}
-          <span className="font-medium text-sm truncate flex-1">
+        <div className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-2 mb-1">
+          <div className="w-3 text-muted-foreground">
+            {canExpand && (
+              <>
+                {isExpanded ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+              </>
+            )}
+          </div>
+          <div>{getStateIcon(run.state)}</div>
+          <span className="font-medium text-sm truncate overflow-hidden">
             {run.executorName}
           </span>
-          {run.runNumber > 1 && (
-            <Badge variant="outline" className="text-xs">
+          {run.runNumber > 1 ? (
+            <Badge variant="outline" className="text-xs whitespace-nowrap">
               Run #{run.runNumber}
             </Badge>
+          ) : (
+            <div></div>
           )}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground ml-5">
@@ -228,7 +233,7 @@ export function ExecutionTimeline({
 
           runs.push({
             executorId,
-            executorName: executorId,
+            executorName: truncateText(executorId, 35),
             itemId,
             state: "running",
             output: itemOutputs[itemId] || "",
@@ -244,7 +249,7 @@ export function ExecutionTimeline({
 
           runs.push({
             executorId,
-            executorName: executorId,
+            executorName: truncateText(executorId, 35),
             itemId,
             state: "running",
             output: itemOutputs[itemId] || "",
@@ -310,7 +315,7 @@ export function ExecutionTimeline({
 
         runs.push({
           executorId,
-          executorName: executorId,
+          executorName: truncateText(executorId, 35),
           itemId: syntheticItemId,
           state: "running",
           output: itemOutputs[syntheticItemId] || "",
