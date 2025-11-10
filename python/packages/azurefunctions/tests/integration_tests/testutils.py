@@ -295,6 +295,9 @@ def start_function_app(sample_path: Path, port: int) -> subprocess.Popen:
     Returns the subprocess.Popen object for the running process.
     """
     env = os.environ.copy()
+    # Use a unique TASKHUB_NAME for each test run to ensure test isolation.
+    # This prevents conflicts between parallel or repeated test runs, as Durable Functions
+    # use the task hub name to separate orchestration state.
     env["TASKHUB_NAME"] = f"test{uuid.uuid4().hex[:8]}"
 
     # On Windows, use CREATE_NEW_PROCESS_GROUP to allow proper termination
