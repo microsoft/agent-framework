@@ -23,7 +23,7 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
-from agent_framework._workflows._handoff import _clone_chat_agent
+from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
 
 
 @dataclass
@@ -392,12 +392,218 @@ async def test_clone_chat_agent_preserves_mcp_tools() -> None:
     )
 
     assert hasattr(original_agent, "_local_mcp_tools")
-    assert len(original_agent._local_mcp_tools) == 1
-    assert original_agent._local_mcp_tools[0] == mock_mcp_tool
+    assert len(original_agent._local_mcp_tools) == 1  # type: ignore[reportPrivateUsage]
+    assert original_agent._local_mcp_tools[0] == mock_mcp_tool  # type: ignore[reportPrivateUsage]
 
     cloned_agent = _clone_chat_agent(original_agent)
 
     assert hasattr(cloned_agent, "_local_mcp_tools")
-    assert len(cloned_agent._local_mcp_tools) == 1
-    assert cloned_agent._local_mcp_tools[0] == mock_mcp_tool
+    assert len(cloned_agent._local_mcp_tools) == 1  # type: ignore[reportPrivateUsage]
+    assert cloned_agent._local_mcp_tools[0] == mock_mcp_tool  # type: ignore[reportPrivateUsage]
+    assert cloned_agent.chat_options.tools is not None
     assert len(cloned_agent.chat_options.tools) == 1
+
+
+async def test_return_to_previous_routing():
+    """Test that return-to-previous routes back to the current specialist handling the conversation."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
+    specialist_a = _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
+    specialist_b = _RecordingAgent(name="specialist_b")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
+        .set_coordinator(triage)
+        .add_handoff(triage, [specialist_a, specialist_b])
+        .add_handoff(specialist_a, specialist_b)
+        .enable_return_to_previous(True)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 4)
+        .build()
+    )
+
+    # Start conversation - triage hands off to specialist_a
+    events = await _drain(workflow.run_stream("Initial request"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+    assert len(specialist_a.calls) > 0
+
+    # Specialist_a should have been called with initial request
+    initial_specialist_a_calls = len(specialist_a.calls)
+
+    # Second user message - specialist_a hands off to specialist_b
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need more help"}))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Specialist_b should have been called
+    assert len(specialist_b.calls) > 0
+    initial_specialist_b_calls = len(specialist_b.calls)
+
+    # Third user message - with return_to_previous, should route back to specialist_b (current agent)
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
+    third_requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+
+    # Specialist_b should have been called again (return-to-previous routes to current agent)
+    assert len(specialist_b.calls) > initial_specialist_b_calls, (
+        "Specialist B should be called again due to return-to-previous routing to current agent"
+    )
+
+    # Specialist_a should NOT be called again (it's no longer the current agent)
+    assert len(specialist_a.calls) == initial_specialist_a_calls, (
+        "Specialist A should not be called again - specialist_b is the current agent"
+    )
+
+    # Triage should only have been called once at the start
+    assert len(triage.calls) == 1, "Triage should only be called once (initial routing)"
+
+    # Verify awaiting_agent_id is set to specialist_b (the agent that just responded)
+    if third_requests:
+        user_input_req = third_requests[-1].data
+        assert isinstance(user_input_req, HandoffUserInputRequest)
+        assert user_input_req.awaiting_agent_id == "specialist_b", (
+            f"Expected awaiting_agent_id 'specialist_b' but got '{user_input_req.awaiting_agent_id}'"
+        )
+
+
+async def test_return_to_previous_disabled_routes_to_coordinator():
+    """Test that with return-to-previous disabled, routing goes back to coordinator."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
+    specialist_a = _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
+    specialist_b = _RecordingAgent(name="specialist_b")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
+        .set_coordinator(triage)
+        .add_handoff(triage, [specialist_a, specialist_b])
+        .add_handoff(specialist_a, specialist_b)
+        .enable_return_to_previous(False)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
+        .build()
+    )
+
+    # Start conversation - triage hands off to specialist_a
+    events = await _drain(workflow.run_stream("Initial request"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+    assert len(triage.calls) == 1
+
+    # Second user message - specialist_a hands off to specialist_b
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need more help"}))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Third user message - without return_to_previous, should route back to triage
+    await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
+
+    # Triage should have been called twice total: initial + after specialist_b responds
+    assert len(triage.calls) == 2, "Triage should be called twice (initial + default routing to coordinator)"
+
+
+async def test_return_to_previous_enabled():
+    """Verify that enable_return_to_previous() keeps control with the current specialist."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
+    specialist_a = _RecordingAgent(name="specialist_a")
+    specialist_b = _RecordingAgent(name="specialist_b")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
+        .set_coordinator("triage")
+        .enable_return_to_previous(True)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
+        .build()
+    )
+
+    # Start conversation - triage hands off to specialist_a
+    events = await _drain(workflow.run_stream("Initial request"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+    assert len(triage.calls) == 1
+    assert len(specialist_a.calls) == 1
+
+    # Second user message - with return_to_previous, should route to specialist_a (not triage)
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Triage should only have been called once (initial) - specialist_a handles follow-up
+    assert len(triage.calls) == 1, "Triage should only be called once (initial)"
+    assert len(specialist_a.calls) == 2, "Specialist A should handle follow-up with return_to_previous enabled"
+
+
+async def test_tool_choice_preserved_from_agent_config():
+    """Verify that agent-level tool_choice configuration is preserved and not overridden."""
+    from unittest.mock import AsyncMock
+
+    from agent_framework import ChatResponse, ToolMode
+
+    # Create a mock chat client that records the tool_choice used
+    recorded_tool_choices: list[Any] = []
+
+    async def mock_get_response(messages: Any, **kwargs: Any) -> ChatResponse:
+        chat_options = kwargs.get("chat_options")
+        if chat_options:
+            recorded_tool_choices.append(chat_options.tool_choice)
+        return ChatResponse(
+            messages=[ChatMessage(role=Role.ASSISTANT, text="Response")],
+            response_id="test_response",
+        )
+
+    mock_client = MagicMock()
+    mock_client.get_response = AsyncMock(side_effect=mock_get_response)
+
+    # Create agent with specific tool_choice configuration
+    agent = ChatAgent(
+        chat_client=mock_client,
+        name="test_agent",
+        tool_choice=ToolMode(mode="required"),  # type: ignore[arg-type]
+    )
+
+    # Run the agent
+    await agent.run("Test message")
+
+    # Verify tool_choice was preserved
+    assert len(recorded_tool_choices) > 0, "No tool_choice recorded"
+    last_tool_choice = recorded_tool_choices[-1]
+    assert last_tool_choice is not None, "tool_choice should not be None"
+    assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
+
+
+async def test_return_to_previous_state_serialization():
+    """Test that return_to_previous state is properly serialized/deserialized for checkpointing."""
+    from agent_framework._workflows._handoff import _HandoffCoordinator  # type: ignore[reportPrivateUsage]
+
+    # Create a coordinator with return_to_previous enabled
+    coordinator = _HandoffCoordinator(
+        starting_agent_id="triage",
+        specialist_ids={"specialist_a": "specialist_a", "specialist_b": "specialist_b"},
+        input_gateway_id="gateway",
+        termination_condition=lambda conv: False,
+        id="test-coordinator",
+        return_to_previous=True,
+    )
+
+    # Set the current agent (simulating a handoff scenario)
+    coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
+
+    # Snapshot the state
+    state = coordinator.snapshot_state()
+
+    # Verify pattern metadata includes current_agent_id
+    assert "metadata" in state
+    assert "current_agent_id" in state["metadata"]
+    assert state["metadata"]["current_agent_id"] == "specialist_a"
+
+    # Create a new coordinator and restore state
+    coordinator2 = _HandoffCoordinator(
+        starting_agent_id="triage",
+        specialist_ids={"specialist_a": "specialist_a", "specialist_b": "specialist_b"},
+        input_gateway_id="gateway",
+        termination_condition=lambda conv: False,
+        id="test-coordinator",
+        return_to_previous=True,
+    )
+
+    # Restore state
+    coordinator2.restore_state(state)
+
+    # Verify current_agent_id was restored
+    assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]

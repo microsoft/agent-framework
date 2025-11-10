@@ -46,6 +46,7 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
             AGUIEventTypes.ToolCallArgs => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallArgsEvent))) as ToolCallArgsEvent,
             AGUIEventTypes.ToolCallEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallEndEvent))) as ToolCallEndEvent,
             AGUIEventTypes.ToolCallResult => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallResultEvent))) as ToolCallResultEvent,
+            AGUIEventTypes.StateSnapshot => jsonElement.Deserialize(options.GetTypeInfo(typeof(StateSnapshotEvent))) as StateSnapshotEvent,
             _ => throw new JsonException($"Unknown BaseEvent type discriminator: '{discriminator}'")
         };
 
@@ -95,8 +96,14 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
             case ToolCallResultEvent toolCallResult:
                 JsonSerializer.Serialize(writer, toolCallResult, options.GetTypeInfo(typeof(ToolCallResultEvent)));
                 break;
+            case StateSnapshotEvent stateSnapshot:
+                JsonSerializer.Serialize(writer, stateSnapshot, options.GetTypeInfo(typeof(StateSnapshotEvent)));
+                break;
+            case StateDeltaEvent stateDelta:
+                JsonSerializer.Serialize(writer, stateDelta, options.GetTypeInfo(typeof(StateDeltaEvent)));
+                break;
             default:
-                throw new JsonException($"Unknown BaseEvent type: {value.GetType().Name}");
+                throw new InvalidOperationException($"Unknown event type: {value.GetType().Name}");
         }
     }
 }
