@@ -587,9 +587,11 @@ class ChatAgent(BaseAgent):
         name: str | None = None,
         description: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        conversation_id: str | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
+        # chat option params
+        allow_multiple_tool_calls: bool | None = None,
+        conversation_id: str | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -630,10 +632,11 @@ class ChatAgent(BaseAgent):
             description: A brief description of the agent's purpose.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            conversation_id: The conversation ID for service-managed threads.
-                Cannot be used together with chat_message_store_factory.
             context_providers: The collection of multiple context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
+            conversation_id: The conversation ID for service-managed threads.
+                Cannot be used together with chat_message_store_factory.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -688,6 +691,7 @@ class ChatAgent(BaseAgent):
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
             model_id=model_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             instructions=instructions,
@@ -758,6 +762,7 @@ class ChatAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -793,6 +798,7 @@ class ChatAgent(BaseAgent):
 
         Keyword Args:
             thread: The thread to use for the agent.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -844,6 +850,7 @@ class ChatAgent(BaseAgent):
         co = run_chat_options & ChatOptions(
             model_id=model_id,
             conversation_id=thread.service_thread_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -887,6 +894,7 @@ class ChatAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -922,6 +930,7 @@ class ChatAgent(BaseAgent):
 
         Keyword Args:
             thread: The thread to use for the agent.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -971,6 +980,7 @@ class ChatAgent(BaseAgent):
 
         co = run_chat_options & ChatOptions(
             conversation_id=thread.service_thread_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
