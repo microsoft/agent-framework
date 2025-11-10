@@ -27,16 +27,4 @@
     </None>
   </ItemGroup>
 
-  <ItemGroup>
-    <Content Remove="ConformanceTraces\ChatCompletions\function_calling\request.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\function_calling\response.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\json_mode\request.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\json_mode\response.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\multi_turn\request.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\multi_turn\response.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\streaming\request.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\system_message\request.json" />
-    <Content Remove="ConformanceTraces\ChatCompletions\system_message\response.json" />
-  </ItemGroup>
-
 </Project>

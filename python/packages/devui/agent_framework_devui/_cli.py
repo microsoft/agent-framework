@@ -55,6 +55,41 @@ Examples:
 
     parser.add_argument("--tracing", action="store_true", help="Enable OpenTelemetry tracing for Agent Framework")
 
+    parser.add_argument(
+        "--mode",
+        choices=["developer", "user"],
+        default=None,
+        help="Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)",
+    )
+
+    # Add --dev/--no-dev as a convenient alternative to --mode
+    parser.add_argument(
+        "--dev",
+        dest="dev_mode",
+        action="store_true",
+        default=None,
+        help="Enable developer mode (shorthand for --mode developer)",
+    )
+
+    parser.add_argument(
+        "--no-dev",
+        dest="dev_mode",
+        action="store_false",
+        help="Disable developer mode (shorthand for --mode user)",
+    )
+
+    parser.add_argument(
+        "--auth",
+        action="store_true",
+        help="Enable authentication via Bearer token (required for deployed environments)",
+    )
+
+    parser.add_argument(
+        "--auth-token",
+        type=str,
+        help="Custom authentication token (auto-generated if not provided with --auth)",
+    )
+
     parser.add_argument("--version", action="version", version=f"Agent Framework DevUI {get_version()}")
 
     return parser
@@ -78,26 +113,35 @@ def validate_directory(directory: str) -> str:
     abs_dir = os.path.abspath(directory)
 
     if not os.path.exists(abs_dir):
-        print(f"❌ Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
+        print(f"Error: Directory '{directory}' does not exist", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     if not os.path.isdir(abs_dir):
-        print(f"❌ Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
+        print(f"Error: '{directory}' is not a directory", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     return abs_dir
 
 
-def print_startup_info(entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool) -> None:
+def print_startup_info(
+    entities_dir: str, host: str, port: int, ui_enabled: bool, reload: bool, auth_token: str | None = None
+) -> None:
     """Print startup information."""
-    print("🤖 Agent Framework DevUI")  # noqa: T201
+    print("Agent Framework DevUI")  # noqa: T201
     print("=" * 50)  # noqa: T201
-    print(f"📁 Entities directory: {entities_dir}")  # noqa: T201
-    print(f"🌐 Server URL: http://{host}:{port}")  # noqa: T201
-    print(f"🎨 UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
-    print(f"🔄 Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
+    print(f"Entities directory: {entities_dir}")  # noqa: T201
+    print(f"Server URL: http://{host}:{port}")  # noqa: T201
+    print(f"UI enabled: {'Yes' if ui_enabled else 'No'}")  # noqa: T201
+    print(f"Auto-reload: {'Yes' if reload else 'No'}")  # noqa: T201
+
+    # Display auth token if authentication is enabled
+    if auth_token:
+        print("Authentication: Enabled")  # noqa: T201
+        print(f"Auth token: {auth_token}")  # noqa: T201
+        print("💡 Use this token in Authorization: Bearer <token> header")  # noqa: T201
+
     print("=" * 50)  # noqa: T201
-    print("🔍 Scanning for entities...")  # noqa: T201
+    print("Scanning for entities...")  # noqa: T201
 
 
 def main() -> None:
@@ -114,8 +158,19 @@ def main() -> None:
     # Extract parameters directly from args
     ui_enabled = not args.headless
 
-    # Print startup info
-    print_startup_info(entities_dir, args.host, args.port, ui_enabled, args.reload)
+    # Determine mode from --mode or --dev/--no-dev flags
+    if args.dev_mode is not None:
+        # --dev or --no-dev was specified
+        mode = "developer" if args.dev_mode else "user"
+    elif args.mode is not None:
+        # --mode was specified
+        mode = args.mode
+    else:
+        # Default to developer mode
+        mode = "developer"
+
+    # Print startup info (don't show token - serve() will handle it)
+    print_startup_info(entities_dir, args.host, args.port, ui_enabled, args.reload, None)
 
     # Import and start server
     try:
@@ -128,14 +183,17 @@ def main() -> None:
             auto_open=not args.no_open,
             ui_enabled=ui_enabled,
             tracing_enabled=args.tracing,
+            mode=mode,
+            auth_enabled=args.auth,
+            auth_token=args.auth_token,  # Pass through explicit token only
         )
 
     except KeyboardInterrupt:
-        print("\n👋 Shutting down Agent Framework DevUI...")  # noqa: T201
+        print("\nShutting down Agent Framework DevUI...")  # noqa: T201
         sys.exit(0)
     except Exception as e:
         logger.exception("Failed to start server")
-        print(f"❌ Error: {e}", file=sys.stderr)  # noqa: T201
+        print(f"Error: {e}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
 

@@ -8,11 +8,6 @@
     <FrontendNodeModules>$(FrontendRoot)\node_modules</FrontendNodeModules>
   </PropertyGroup>
 
-  <!-- Ensure npm packages are installed before building -->
-  <Target Name="EnsureNodeModules" BeforeTargets="BeforeBuild" Condition="!Exists('$(FrontendNodeModules)')">
-    <Exec Command="npm install" WorkingDirectory="$(FrontendRoot)" />
-  </Target>
-
   <!-- Collect frontend source files for incremental build tracking -->
   <ItemGroup>
     <FrontendSourceFiles Include="$(FrontendRoot)\src\**\*" />
@@ -27,19 +22,6 @@
     <FrontendAsset Include="$(FrontendBuildOutput)\agentframework.svg" />
   </ItemGroup>
 
-  <!-- Use a marker file for incremental build tracking -->
-  <PropertyGroup>
-    <FrontendBuildMarker>$(BaseIntermediateOutputPath)\frontend.build.marker</FrontendBuildMarker>
-  </PropertyGroup>
-
-  <!-- Build the frontend -->
-  <Target Name="BuildFrontend" BeforeTargets="AssignTargetPaths" DependsOnTargets="EnsureNodeModules" Inputs="@(FrontendSourceFiles)" Outputs="$(FrontendBuildMarker)">
-    <!-- Set VITE_API_BASE_URL to empty string for relative URLs -->
-    <Exec Command="npm run build" WorkingDirectory="$(FrontendRoot)" EnvironmentVariables="VITE_API_BASE_URL=" />
-    <!-- Create marker file to track successful build -->
-    <Touch Files="$(FrontendBuildMarker)" AlwaysCreate="true" />
-  </Target>
-
   <!-- Statically include frontend assets as embedded resources for VS to show them -->
   <ItemGroup>
     <EmbeddedResource Include="$(FrontendBuildOutput)\**\*" Condition="Exists('$(FrontendBuildOutput)')">
@@ -48,7 +30,7 @@
   </ItemGroup>
 
   <!-- Verify required frontend assets are present -->
-  <Target Name="ValidateFrontendAssets" BeforeTargets="CoreCompile" DependsOnTargets="BuildFrontend">
+  <Target Name="ValidateFrontendAssets" BeforeTargets="CoreCompile">
     <ItemGroup>
       <MissingAsset Include="@(FrontendAsset)" Condition="!Exists('%(Identity)')" />
     </ItemGroup>
