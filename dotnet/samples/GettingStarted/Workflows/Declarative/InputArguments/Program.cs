@@ -46,7 +46,7 @@ internal sealed class Program
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentsClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
+        AgentClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
         await agentsClient.CreateAgentAsync(
             agentName: "LocationAgent",
@@ -67,7 +67,7 @@ internal sealed class Program
                 ["location"] =
                     new StructuredInputDefinition
                     {
-                        Required = false,
+                        IsRequired = false,
                         DefaultValue = BinaryData.FromString(@"""unknown"""),
                         Description = "The user's location",
                     }

@@ -21,7 +21,7 @@ trigger:
       id: invoke_search
       conversationId: =System.ConversationId
       agent:
-        name: MenuAgent
+        name: LocationAgent
       input:
         arguments:
           location: =Local.UserLocation

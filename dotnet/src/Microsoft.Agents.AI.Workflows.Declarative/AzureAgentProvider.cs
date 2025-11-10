@@ -103,8 +103,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
             {
                 TruncationMode = ResponseTruncationMode.Auto, // %%% REMOVE
             };
-            responseCreationOptions.SetConversationReference(conversationId);
-            responseCreationOptions.SetAgentReference(agentDefinition);
+            //responseCreationOptions.SetConversationReference(conversationId);
+            //responseCreationOptions.SetAgentReference(agentDefinition);
             responseCreationOptions.SetStructuredInputs(BinaryData.FromString(json.RootElement.GetRawText()));
             chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;
         }
