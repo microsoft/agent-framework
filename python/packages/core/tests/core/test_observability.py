@@ -368,6 +368,7 @@ def mock_chat_agent():
             self.name = "test_agent"
             self.display_name = "Test Agent"
             self.description = "Test agent description"
+            self.chat_options = ChatOptions(model_id="TestModel")
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentRunResponse(
@@ -405,7 +406,7 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
@@ -433,7 +434,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:
         assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
 

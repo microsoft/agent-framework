@@ -1080,7 +1080,7 @@ def use_observability(
 
 def _trace_agent_run(
     run_func: Callable[..., Awaitable["AgentRunResponse"]],
-    provider_name: str | None,
+    provider_name: str,
 ) -> Callable[..., Awaitable["AgentRunResponse"]]:
     """Decorator to trace chat completion activities.
 
@@ -1142,7 +1142,7 @@ def _trace_agent_run(
 
 def _trace_agent_run_stream(
     run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
-    provider_name: str | None,
+    provider_name: str,
 ) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
 
@@ -1262,13 +1262,13 @@ def use_agent_observability(
             agent = MyCustomAgent()
             response = await agent.run("Perform a task")
     """
-    provider_name = str(agent.AGENT_SYSTEM_NAME) if hasattr(agent, "AGENT_SYSTEM_NAME") else None
+    provider_name = str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
     try:
-        agent.run = _trace_agent_run(agent.run, provider_name)
+        agent.run = _trace_agent_run(agent.run, provider_name)  # type: ignore
     except AttributeError as exc:
         raise AgentInitializationError(f"The agent {agent.__name__} does not have a run method.", exc) from exc
     try:
-        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)
+        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)  # type: ignore
     except AttributeError as exc:
         raise AgentInitializationError(f"The agent {agent.__name__} does not have a run_stream method.", exc) from exc
     setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
