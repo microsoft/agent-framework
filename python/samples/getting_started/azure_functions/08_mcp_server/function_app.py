@@ -1,85 +1,64 @@
-"""Expose Azure OpenAI agents as MCP (Model Context Protocol) tools.
+"""
+Example showing how to configure AI agents with different trigger configurations.
 
-Components used in this sample:
-- AzureOpenAIChatClient to create an agent with the Azure OpenAI deployment.
-- AgentFunctionApp to expose standard HTTP endpoints via Durable Functions.
-- MCPServerExtension to automatically generate MCP-compliant endpoints for agent tools.
+This sample demonstrates how to configure agents to be accessible as both HTTP endpoints
+and Model Context Protocol (MCP) tools, enabling flexible integration patterns for AI agent
+consumption.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, plus either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Key concepts demonstrated:
+- Multi-trigger Agent Configuration: Configure agents to support HTTP triggers, MCP tool triggers, or both
+- Microsoft Agent Framework Integration: Use the framework to define AI agents with specific roles
+- Flexible Agent Registration: Register agents with customizable trigger configurations
 
-import logging
-from typing import Any
+This sample creates three agents with different trigger configurations:
+- Joker: HTTP trigger only (default)
+- StockAdvisor: MCP tool trigger only (HTTP disabled)
+- PlantAdvisor: Both HTTP and MCP tool triggers enabled
 
-from agent_framework.azure import AzureOpenAIChatClient
+Required environment variables:
+- AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
+- AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: Your Azure OpenAI deployment name
+
+Authentication uses AzureCliCredential (Azure Identity).
+"""
+
 from agent_framework.azurefunctions import AgentFunctionApp
-from agent_framework.azurefunctions.mcp import MCPServerExtension
+from agent_framework.azure import AzureOpenAIChatClient
 
-logger = logging.getLogger(__name__)
+# Create Azure OpenAI Chat Client
+# This uses AzureCliCredential for authentication (requires 'az login')
+chat_client = AzureOpenAIChatClient()
 
+# Define three AI agents with different roles
+# Agent 1: Joker - HTTP trigger only (default)
+agent1 = chat_client.create_agent(
+    name="Joker",
+    instructions="You are good at telling jokes.",
+)
 
-def get_weather(location: str) -> dict[str, Any]:
-    """Get current weather for a location."""
+# Agent 2: StockAdvisor - MCP tool trigger only
+agent2 = chat_client.create_agent(
+    name="StockAdvisor",
+    instructions="Check stock prices.",
+)
 
-    logger.info(f"🔧 [TOOL CALLED] get_weather(location={location})")
-    result = {
-        "location": location,
-        "temperature": 72,
-        "conditions": "Sunny",
-        "humidity": 45,
-        "wind_speed": 5,
-    }
-    logger.info(f"✓ [TOOL RESULT] {result}")
-    return result
+# Agent 3: PlantAdvisor - Both HTTP and MCP tool triggers
+agent3 = chat_client.create_agent(
+    name="PlantAdvisor",
+    instructions="Recommend plants.",
+    description="Get plant recommendations.",
+)
 
+# Create the AgentFunctionApp with selective trigger configuration
+app = AgentFunctionApp(
+    enable_health_check=True,
+)
 
-# 1. Create the weather agent with a tool function.
-def _create_weather_agent() -> Any:
-    """Create the WeatherAgent with get_weather tool."""
+# Agent 1: HTTP trigger only (default)
+app.add_agent(agent1)
 
-    return AzureOpenAIChatClient().create_agent(
-        name="WeatherAgent",
-        instructions="You are a helpful weather assistant. Use the get_weather tool to provide weather information.",
-        tools=[get_weather],
-    )
+# Agent 2: Disable HTTP trigger, enable MCP tool trigger only
+app.add_agent(agent2, enable_http_endpoint=False, enable_mcp_tool_trigger=True)
 
-
-# 2. Register the agent with AgentFunctionApp to expose standard HTTP endpoints.
-app = AgentFunctionApp(agents=[_create_weather_agent()], enable_health_check=True)
-
-# 3. Enable MCP protocol support with 2 additional lines.
-mcp = MCPServerExtension(app)
-app.register_mcp_server(mcp)
-
-"""
-Expected output when invoking `POST /api/agents/WeatherAgent/run`:
-
-HTTP/1.1 202 Accepted
-{
-  "status": "accepted",
-  "response": "Agent request accepted",
-  "message": "What is the weather in Seattle?",
-  "conversation_id": "<guid>",
-  "correlation_id": "<guid>"
-}
-
-Expected output when invoking `GET /api/mcp/v1/tools`:
-
-HTTP/1.1 200 OK
-{
-  "tools": [
-    {
-      "name": "WeatherAgent",
-      "description": "You are a helpful weather assistant...",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "message": {"type": "string"},
-          "sessionId": {"type": "string"}
-        },
-        "required": ["message"]
-      }
-    }
-  ]
-}
-"""
+# Agent 3: Enable both HTTP and MCP tool triggers
+app.add_agent(agent3, enable_http_endpoint=True, enable_mcp_tool_trigger=True)

@@ -21,9 +21,6 @@ from ._errors import IncomingRequestError
 from ._models import AgentSessionId, ChatRole, RunRequest
 from ._state import AgentState
 
-if TYPE_CHECKING:
-    from .mcp._extension import MCPServerExtension
-
 logger = get_logger("agent_framework.azurefunctions")
 
 SESSION_ID_FIELD: str = "sessionId"
@@ -430,7 +427,11 @@ class AgentFunctionApp(df.DFApp):
                 )
 
     def _setup_mcp_tool_trigger(self, agent_name: str, agent_description: str | None) -> None:
-        """Register an MCP tool trigger for an agent.
+        """
+        Register an MCP tool trigger for an agent using Azure Functions native MCP support.
+
+        This creates a native Azure Functions MCP tool trigger that exposes the agent
+        as an MCP tool, allowing it to be invoked by MCP-compatible clients.
 
         Args:
             agent_name: The agent name (used as the MCP tool name)
@@ -438,6 +439,7 @@ class AgentFunctionApp(df.DFApp):
         """
         mcp_function_name = f"mcptool_{agent_name}"
 
+        # Define tool properties as JSON (MCP tool parameters)
         tool_properties = json.dumps(
             [
                 {
@@ -470,30 +472,61 @@ class AgentFunctionApp(df.DFApp):
             """Handle MCP tool invocation for the agent."""
             return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
 
-        logger.debug(f"[AgentFunctionApp] Registered MCP tool trigger: {agent_name}")
+        logger.info(f"[AgentFunctionApp] Registered MCP tool trigger: {agent_name}")
 
     async def _handle_mcp_tool_invocation(
         self, agent_name: str, context: Any, client: df.DurableOrchestrationClient
     ) -> str:
-        """Handle an MCP tool invocation."""
+        """
+        Handle an MCP tool invocation.
+
+        This method processes MCP tool requests and delegates to the agent entity.
+
+        Args:
+            agent_name: Name of the agent being invoked
+            context: MCP tool invocation context containing arguments
+            client: Durable orchestration client
+
+        Returns:
+            Agent response text
+
+        Raises:
+            ValueError: If required arguments are missing
+            RuntimeError: If agent execution fails
+        """
+        # Parse context if it's a JSON string
+        if isinstance(context, str):
+            try:
+                context = json.loads(context)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid MCP context format: {e}")
+        
+        # Extract arguments from MCP context
         arguments = context.get("arguments", {}) if isinstance(context, dict) else {}
 
+        # Validate required 'query' argument
         query = arguments.get("query")
         if not query or not isinstance(query, str):
             raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
 
+        # Extract optional threadId
         thread_id = arguments.get("threadId")
 
+        # Create or parse session ID
         if thread_id and isinstance(thread_id, str) and thread_id.strip():
             try:
                 session_id = AgentSessionId.parse(thread_id)
             except Exception:
+                # If parsing fails, create new session ID with thread_id as key
                 session_id = AgentSessionId(name=agent_name, key=thread_id)
         else:
+            # Generate new session ID
             session_id = AgentSessionId.with_random_key(agent_name)
 
+        # Build entity instance ID
         entity_instance_id = session_id.to_entity_id()
 
+        # Create run request
         correlation_id = self._generate_unique_id()
         run_request = self._build_request_data(
             req_body={"message": query, "role": "user"},
@@ -502,10 +535,14 @@ class AgentFunctionApp(df.DFApp):
             correlation_id=correlation_id,
         )
 
-        logger.debug(f"[MCP Tool] Invoking agent '{agent_name}' with query: {query[:50]}...")
+        logger.info(
+            f"[MCP Tool] Invoking agent '{agent_name}' with query: {query[:50]}..." + ("" if len(query) <= 50 else "")
+        )
 
+        # Signal entity to run agent
         await client.signal_entity(entity_instance_id, "run_agent", run_request)
 
+        # Poll for response (similar to HTTP handler)
         try:
             result = await self._get_response_from_entity(
                 client=client,
@@ -515,9 +552,10 @@ class AgentFunctionApp(df.DFApp):
                 session_key=str(session_id),
             )
 
+            # Extract and return response text
             if result.get("status") == "success":
                 response_text = result.get("response", "No response")
-                logger.debug(f"[MCP Tool] Agent '{agent_name}' responded successfully")
+                logger.info(f"[MCP Tool] Agent '{agent_name}' responded successfully")
                 return response_text
             else:
                 error_msg = result.get("error", "Unknown error")
@@ -943,33 +981,6 @@ class AgentFunctionApp(df.DFApp):
         agent_state = AgentState()
         agent_state.restore_state(state_payload)
         return agent_state
-
-    def register_mcp_server(self, mcp_extension: "MCPServerExtension") -> None:
-        """Register MCP server endpoints.
-
-        This enables the Model Context Protocol (MCP) for exposing agents as tools
-        that can be used by MCP clients like Claude Desktop, Cursor, etc.
-
-        Args:
-            mcp_extension: MCPServerExtension instance configured with desired settings
-
-        Example:
-            ```python
-            from agent_framework.azurefunctions.mcp import MCPServerExtension
-
-            mcp = MCPServerExtension(app)
-            app.register_mcp_server(mcp)
-            ```
-
-        Note:
-            This should be called after all agents are registered via add_agent().
-        """
-        logger.info(f"Registering MCP server with route prefix: {mcp_extension.route_prefix}")
-        logger.info(f"Exposing {len(mcp_extension.get_exposed_agents())} agents as MCP tools")
-
-        mcp_extension.register()
-
-        logger.info("MCP server registered successfully")
 
     def _coerce_to_bool(self, value: Any) -> bool:
         """Convert various representations into a boolean flag."""
