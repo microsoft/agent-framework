@@ -83,8 +83,6 @@ public class AgentBotElementYamlTests
         var responseFormat = agent.OutputType.AsChatResponseFormat() as ChatResponseFormatJson;
         Assert.NotNull(responseFormat);
         Assert.NotNull(responseFormat.Schema);
-        var str = responseFormat.Schema.ToString();
-        Assert.Equal(str, responseFormat.Schema.ToString());
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to load an AI agent from a YAML file and process a prompt using Azure OpenAI as the backend.
+// This sample shows how to load an AI agent from a YAML file and process a prompt using OpenAI as the backend.
 
 using System.ComponentModel;
 using Microsoft.Agents.AI;

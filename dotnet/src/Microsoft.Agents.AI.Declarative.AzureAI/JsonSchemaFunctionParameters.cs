@@ -25,7 +25,7 @@ internal sealed class JsonSchemaFunctionParameters
     public List<string> Required { get; set; } = [];
 
     /// <summary>
-    /// A dictionary of properties name => JSON Schema.
+    /// A dictionary of properties, keyed by name => JSON Schema.
     /// </summary>
     [JsonPropertyName("properties")]
     public Dictionary<string, JsonElement> Properties { get; set; } = [];

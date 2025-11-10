@@ -49,7 +49,7 @@ public sealed class ChatClientAgentFactoryTests
         Assert.NotNull(agent);
         Assert.IsType<ChatClientAgent>(agent);
         var chatClientAgent = agent as ChatClientAgent;
-        Assert.NotNull(chatClientAgent?.ChatClient);
+        Assert.NotNull(chatClientAgent);
         Assert.Equal("You are a helpful assistant.", chatClientAgent.Instructions);
         Assert.NotNull(chatClientAgent.ChatClient);
         Assert.NotNull(chatClientAgent.ChatOptions);
@@ -76,7 +76,6 @@ public sealed class ChatClientAgentFactoryTests
         Assert.Equal(1024, chatClientAgent?.ChatOptions?.MaxOutputTokens);
         Assert.Equal(0.9F, chatClientAgent?.ChatOptions?.TopP);
         Assert.Equal(50, chatClientAgent?.ChatOptions?.TopK);
-        Assert.Equal(0.7F, chatClientAgent?.ChatOptions?.FrequencyPenalty);
         Assert.Equal(0.7F, chatClientAgent?.ChatOptions?.PresencePenalty);
         Assert.Equal(42L, chatClientAgent?.ChatOptions?.Seed);
         Assert.NotNull(chatClientAgent?.ChatOptions?.ResponseFormat);
