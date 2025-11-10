@@ -1080,7 +1080,7 @@ def use_observability(
 
 def _trace_agent_run(
     run_func: Callable[..., Awaitable["AgentRunResponse"]],
-    provider_name: str,
+    provider_name: str | None,
 ) -> Callable[..., Awaitable["AgentRunResponse"]]:
     """Decorator to trace chat completion activities.
 
@@ -1142,7 +1142,7 @@ def _trace_agent_run(
 
 def _trace_agent_run_stream(
     run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
-    provider_name: str,
+    provider_name: str | None,
 ) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
 
@@ -1262,13 +1262,13 @@ def use_agent_observability(
             agent = MyCustomAgent()
             response = await agent.run("Perform a task")
     """
-    provider_name = str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
+    provider_name = str(agent.AGENT_SYSTEM_NAME) if hasattr(agent, "AGENT_SYSTEM_NAME") else None
     try:
-        agent.run = _trace_agent_run(agent.run, provider_name)  # type: ignore
+        agent.run = _trace_agent_run(agent.run, provider_name)
     except AttributeError as exc:
         raise AgentInitializationError(f"The agent {agent.__name__} does not have a run method.", exc) from exc
     try:
-        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)  # type: ignore
+        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)
     except AttributeError as exc:
         raise AgentInitializationError(f"The agent {agent.__name__} does not have a run_stream method.", exc) from exc
     setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
@@ -1353,7 +1353,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model", "unknown")
+    if model_id := kwargs.get("model", chat_options.model_id):
+        attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
     if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):
