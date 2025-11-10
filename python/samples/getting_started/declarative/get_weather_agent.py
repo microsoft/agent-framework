@@ -30,7 +30,7 @@ async def main():
         bindings={"get_weather": get_weather},
     )
     # create the agent from the yaml
-    agent = agent_factory.create_agent_from_yaml(yaml_str)
+    agent = agent_factory.create_agent_from_yaml(yaml_str, use_maml=True)
     # use the agent
     response = await agent.run("What's the weather in Amsterdam, in celsius?")
     print("Agent response:", response.text)

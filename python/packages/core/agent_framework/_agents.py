@@ -850,7 +850,6 @@ class ChatAgent(BaseAgent):
 
         co = run_chat_options & ChatOptions(
             model_id=model_id,
-            allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=thread.service_thread_id,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,

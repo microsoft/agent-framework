@@ -23,40 +23,15 @@ from agent_framework.exceptions import AgentFrameworkException
 from dotenv import load_dotenv
 
 from ._models import (
-    AgentDefinition,
-    AgentManifest,
-    AnonymousConnection,
-    ApiKeyConnection,
-    ArrayProperty,
-    Binding,
     CodeInterpreterTool,
-    Connection,
-    CustomTool,
-    EnvironmentVariable,
     FileSearchTool,
-    Format,
     FunctionTool,
-    McpServerApprovalMode,
-    McpServerToolAlwaysRequireApprovalMode,
-    McpServerToolNeverRequireApprovalMode,
     McpServerToolSpecifyApprovalMode,
     McpTool,
-    Model,
     ModelOptions,
-    ModelResource,
-    ObjectProperty,
-    OpenApiTool,
-    Parser,
     PromptAgent,
-    Property,
-    PropertySchema,
-    ProtocolVersionRecord,
-    ReferenceConnection,
-    RemoteConnection,
-    Resource,
-    Template,
-    ToolResource,
     WebSearchTool,
+    agent_schema_dispatch,
 )
 
 
@@ -120,114 +95,6 @@ class ProviderLookupError(DeclarativeLoaderError):
     """Exception raised for errors in provider type lookup."""
 
     pass
-
-
-def load_yaml_spec(yaml_str: str) -> Any | None:
-    """Load a MAML object from a YAML string.
-
-    This function can parse any MAML object type and return the appropriate
-    Python object. The type is determined by the 'kind' field in the YAML.
-    If no 'kind' field is present, it's assumed to be an AgentManifest.
-
-    Args:
-        yaml_str: YAML string representation of a MAML object
-
-    Returns:
-        The appropriate MAML object instance, or None if the kind is not recognized
-    """
-    as_dict = yaml.safe_load(yaml_str)
-
-    kind = as_dict.get("kind", None)
-
-    # If no kind field, assume it's an AgentManifest
-    if kind is None:
-        return AgentManifest.from_dict(as_dict)
-
-    # Match on the kind field to determine which class to instantiate
-    match kind:
-        # Agent types
-        case "Prompt":
-            return PromptAgent.from_dict(as_dict)
-        case "Agent":
-            return AgentDefinition.from_dict(as_dict)
-
-        # Resource types
-        case "Tool":
-            return ToolResource.from_dict(as_dict)
-        case "Model":
-            return ModelResource.from_dict(as_dict)
-        case "Resource":
-            return Resource.from_dict(as_dict)
-
-        # Tool types
-        case "function":
-            return FunctionTool.from_dict(as_dict)
-        case "custom":
-            return CustomTool.from_dict(as_dict)
-        case "web_search":
-            return WebSearchTool.from_dict(as_dict)
-        case "file_search":
-            return FileSearchTool.from_dict(as_dict)
-        case "mcp":
-            return McpTool.from_dict(as_dict)
-        case "openapi":
-            return OpenApiTool.from_dict(as_dict)
-        case "code_interpreter":
-            return CodeInterpreterTool.from_dict(as_dict)
-
-        # Connection types
-        case "reference":
-            return ReferenceConnection.from_dict(as_dict)
-        case "remote":
-            return RemoteConnection.from_dict(as_dict)
-        case "key":
-            return ApiKeyConnection.from_dict(as_dict)
-        case "anonymous":
-            return AnonymousConnection.from_dict(as_dict)
-        case "connection":
-            return Connection.from_dict(as_dict)
-
-        # Property types
-        case "array":
-            return ArrayProperty.from_dict(as_dict)
-        case "object":
-            return ObjectProperty.from_dict(as_dict)
-        case "property":
-            return Property.from_dict(as_dict)
-
-        # MCP Server Approval Mode types
-        case "always":
-            return McpServerToolAlwaysRequireApprovalMode.from_dict(as_dict)
-        case "never":
-            return McpServerToolNeverRequireApprovalMode.from_dict(as_dict)
-        case "specify":
-            return McpServerToolSpecifyApprovalMode.from_dict(as_dict)
-        case "approval_mode":
-            return McpServerApprovalMode.from_dict(as_dict)
-
-        # Other component types
-        case "binding":
-            return Binding.from_dict(as_dict)
-        case "format":
-            return Format.from_dict(as_dict)
-        case "parser":
-            return Parser.from_dict(as_dict)
-        case "template":
-            return Template.from_dict(as_dict)
-        case "model":
-            return Model.from_dict(as_dict)
-        case "model_options":
-            return ModelOptions.from_dict(as_dict)
-        case "property_schema":
-            return PropertySchema.from_dict(as_dict)
-        case "protocol_version":
-            return ProtocolVersionRecord.from_dict(as_dict)
-        case "environment_variable":
-            return EnvironmentVariable.from_dict(as_dict)
-
-        # Unknown kind
-        case _:
-            return None
 
 
 class AgentFactory:
@@ -322,7 +189,7 @@ class AgentFactory:
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
         """
-        prompt_agent = load_yaml_spec(yaml_str)
+        prompt_agent = agent_schema_dispatch(yaml.safe_load(yaml_str))
         if not isinstance(prompt_agent, PromptAgent):
             raise DeclarativeLoaderError("Only PromptAgent kind is supported for agent creation")
 
@@ -331,7 +198,7 @@ class AgentFactory:
         setup_dict.update(self.client_kwargs)
         # resolve connections:
         client: ChatClientProtocol | None = None
-        if prompt_agent.model.connection:
+        if prompt_agent.model and prompt_agent.model.connection:
             if prompt_agent.model.connection.kind == "key":
                 setup_dict["api_key"] = prompt_agent.model.connection.apiKey
                 if prompt_agent.model.connection.endpoint:
@@ -351,7 +218,7 @@ class AgentFactory:
             elif prompt_agent.model.connection.kind == "Anonymous":
                 setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
         # check if there is a model.provider and model.apiType defined
-        if prompt_agent.model.provider and prompt_agent.model.apiType:
+        if prompt_agent.model and prompt_agent.model.provider and prompt_agent.model.apiType:
             # lookup the provider type in the mapping
             class_lookup = f"{prompt_agent.model.provider}.{prompt_agent.model.apiType}"
             if class_lookup in PROVIDER_TYPE_OBJECT_MAPPING:
@@ -364,7 +231,7 @@ class AgentFactory:
                 client = agent_class(**setup_dict)
             else:
                 raise ValueError("Unsupported model provider or apiType in PromptAgent")
-        if not client and prompt_agent.model.id:
+        if not client and prompt_agent.model and prompt_agent.model.id:
             # assume AzureAIAgentClient
             mapping = self._retrieve_provider_configuration("AzureAIAgentClient")
             module_name = mapping["package"]
@@ -414,18 +281,11 @@ class AgentFactory:
                                 if binding.name in self.bindings:
                                     func = self.bindings[binding.name]
                                     break
-                        json_schema = tool_resource.parameters.to_dict(exclude={"type"}, exclude_none=True)
-                        new_props = {}
-                        for prop in json_schema.get("properties", []):
-                            prop_name = prop.pop("name")
-                            prop["type"] = prop.pop("kind", None)
-                            new_props[prop_name] = prop
-                        json_schema["properties"] = new_props
                         tools.append(
                             AIFunction(  # type: ignore
                                 name=tool_resource.name,
                                 description=tool_resource.description,
-                                input_model=json_schema,
+                                input_model=tool_resource.parameters.to_json_schema(),
                                 func=func,
                             )
                         )
@@ -460,19 +320,20 @@ class AgentFactory:
                         )
                     case McpTool():
                         approval_mode: HostedMCPSpecificApproval | str | None = None
-                        if tool_resource.approvalMode.kind == "always":
-                            approval_mode = "always_require"
-                        elif tool_resource.approvalMode.kind == "never":
-                            approval_mode = "never_require"
-                        elif isinstance(tool_resource.approvalMode, McpServerToolSpecifyApprovalMode):
-                            if tool_resource.approvalMode.alwaysRequireApprovalTools:
-                                approval_mode = {
-                                    "always_require_approval": tool_resource.approvalMode.alwaysRequireApprovalTools
-                                }
-                            else:
-                                approval_mode = {
-                                    "never_require_approval": tool_resource.approvalMode.neverRequireApprovalTools
-                                }
+                        if tool_resource.approvalMode is not None:
+                            if tool_resource.approvalMode.kind == "always":
+                                approval_mode = "always_require"
+                            elif tool_resource.approvalMode.kind == "never":
+                                approval_mode = "never_require"
+                            elif isinstance(tool_resource.approvalMode, McpServerToolSpecifyApprovalMode):
+                                if tool_resource.approvalMode.alwaysRequireApprovalTools:
+                                    approval_mode = {
+                                        "always_require_approval": tool_resource.approvalMode.alwaysRequireApprovalTools
+                                    }
+                                else:
+                                    approval_mode = {
+                                        "never_require_approval": tool_resource.approvalMode.neverRequireApprovalTools
+                                    }
                         tools.append(
                             HostedMCPTool(
                                 name=tool_resource.name,
@@ -487,14 +348,7 @@ class AgentFactory:
 
         # response format
         if prompt_agent.outputSchema:
-            json_schema = prompt_agent.outputSchema.to_dict(exclude={"type"}, exclude_none=True)
-            new_props = {}
-            for prop in json_schema.get("properties", []):
-                prop_name = prop.pop("name")
-                prop["type"] = prop.pop("kind", None)
-                new_props[prop_name] = prop
-            json_schema["properties"] = new_props
-            pydantic_model = _create_model_from_json_schema("agent", json_schema)
+            pydantic_model = _create_model_from_json_schema("agent", prompt_agent.outputSchema.to_json_schema())
             chat_options["response_format"] = pydantic_model
 
         # Step 3: Create the agent instance
