@@ -7,7 +7,7 @@ from typing import Annotated
 
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureAIAgentClient
-from azure.ai.projects.aio import AIProjectClient
+from azure.ai.agents.aio import AgentsClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -33,16 +33,16 @@ async def main() -> None:
     # Create the client
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as client,
+        AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
     ):
         # Create an thread that will persist
-        created_thread = await client.agents.threads.create()
+        created_thread = await agents_client.threads.create()
 
         try:
             async with ChatAgent(
                 # passing in the client is optional here, so if you take the agent_id from the portal
                 # you can use it directly without the two lines above.
-                chat_client=AzureAIAgentClient(project_client=client),
+                chat_client=AzureAIAgentClient(agents_client=agents_client),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             ) as agent:
@@ -52,7 +52,7 @@ async def main() -> None:
                 print(f"Result: {result}\n")
         finally:
             # Clean up the thread manually
-            await client.agents.threads.delete(created_thread.id)
+            await agents_client.threads.delete(created_thread.id)
 
 
 if __name__ == "__main__":

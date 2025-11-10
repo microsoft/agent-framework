@@ -7,6 +7,7 @@ from typing_extensions import Never
 
 from agent_framework import (
     FunctionExecutor,
+    Message,
     WorkflowBuilder,
     WorkflowContext,
     executor,
@@ -230,9 +231,9 @@ class TestFunctionExecutor:
         async def string_processor(text: str, ctx: WorkflowContext[str]) -> None:
             await ctx.send_message(text)
 
-        assert string_processor.can_handle("hello")
-        assert not string_processor.can_handle(123)
-        assert not string_processor.can_handle([])
+        assert string_processor.can_handle(Message(data="hello", source_id="Mock"))
+        assert not string_processor.can_handle(Message(data=123, source_id="Mock"))
+        assert not string_processor.can_handle(Message(data=[], source_id="Mock"))
 
     def test_duplicate_handler_registration(self):
         """Test that registering duplicate handlers raises an error."""
@@ -309,9 +310,9 @@ class TestFunctionExecutor:
         async def int_processor(value: int):
             return value * 2
 
-        assert int_processor.can_handle(42)
-        assert not int_processor.can_handle("hello")
-        assert not int_processor.can_handle([])
+        assert int_processor.can_handle(Message(data=42, source_id="mock"))
+        assert not int_processor.can_handle(Message(data="hello", source_id="mock"))
+        assert not int_processor.can_handle(Message(data=[], source_id="mock"))
 
     async def test_single_parameter_execution(self):
         """Test that single-parameter functions can be executed properly."""
@@ -325,7 +326,7 @@ class TestFunctionExecutor:
         WorkflowBuilder().set_start_executor(double_value).build()
 
         # For testing purposes, we can check that the handler is registered correctly
-        assert double_value.can_handle(5)
+        assert double_value.can_handle(Message(data=5, source_id="mock"))
         assert int in double_value._handlers
 
     def test_sync_function_basic(self):
@@ -369,9 +370,9 @@ class TestFunctionExecutor:
         def string_handler(text: str):
             return text.strip()
 
-        assert string_handler.can_handle("hello")
-        assert not string_handler.can_handle(123)
-        assert not string_handler.can_handle([])
+        assert string_handler.can_handle(Message(data="hello", source_id="mock"))
+        assert not string_handler.can_handle(Message(data=123, source_id="mock"))
+        assert not string_handler.can_handle(Message(data=[], source_id="mock"))
 
     def test_sync_function_validation(self):
         """Test validation for synchronous functions."""
@@ -413,8 +414,8 @@ class TestFunctionExecutor:
         assert isinstance(async_func, FunctionExecutor)
 
         # Both should handle strings
-        assert sync_func.can_handle("test")
-        assert async_func.can_handle("test")
+        assert sync_func.can_handle(Message(data="test", source_id="mock"))
+        assert async_func.can_handle(Message(data="test", source_id="mock"))
 
         # Both should be different instances
         assert sync_func is not async_func
@@ -443,8 +444,8 @@ class TestFunctionExecutor:
         assert async_spec["workflow_output_types"] == [str]  # Second parameter is str
 
         # Verify the executors can handle their input types
-        assert to_upper_sync.can_handle("hello")
-        assert reverse_async.can_handle("HELLO")
+        assert to_upper_sync.can_handle(Message(data="hello", source_id="mock"))
+        assert reverse_async.can_handle(Message(data="HELLO", source_id="mock"))
 
         # For integration testing, we mainly verify that the handlers are properly registered
         # and the functions are wrapped correctly
@@ -478,3 +479,59 @@ class TestFunctionExecutor:
 
         # The actual thread execution test would require a full workflow setup,
         # but the important thing is that asyncio.to_thread is used in the wrapper
+
+    def test_executor_rejects_staticmethod(self):
+        """Test that @executor decorator properly rejects @staticmethod with clear error."""
+        with pytest.raises(ValueError) as exc_info:
+
+            class Example:
+                @executor
+                @staticmethod
+                async def bad_handler(data: str) -> str:
+                    return data.upper()
+
+        assert "cannot be used with @staticmethod" in str(exc_info.value)
+        assert "@handler on instance methods" in str(exc_info.value)
+
+    def test_executor_rejects_classmethod(self):
+        """Test that @executor decorator properly rejects @classmethod with clear error."""
+        with pytest.raises(ValueError) as exc_info:
+
+            class Example:
+                @executor
+                @classmethod
+                async def bad_handler(cls, data: str) -> str:
+                    return data.upper()
+
+        assert "cannot be used with @classmethod" in str(exc_info.value)
+        assert "@handler on instance methods" in str(exc_info.value)
+
+    async def test_async_staticmethod_detection_behavior(self):
+        """Document the behavior of asyncio.iscoroutinefunction with staticmethod descriptors.
+
+        This test explains why the unwrapping is necessary when decorators are stacked.
+        """
+        import asyncio
+
+        # When @staticmethod is applied, it creates a descriptor
+        async def my_async_func():
+            await asyncio.sleep(0.001)
+            return "done"
+
+        # Apply staticmethod (what happens with innermost decorator)
+        static_wrapped = staticmethod(my_async_func)
+
+        # Direct check on descriptor object fails (this is the bug)
+        assert not asyncio.iscoroutinefunction(static_wrapped)
+        assert isinstance(static_wrapped, staticmethod)
+
+        # But unwrapping __func__ reveals the async function
+        unwrapped = static_wrapped.__func__
+        assert asyncio.iscoroutinefunction(unwrapped)
+
+        # When accessed via class attribute, Python's descriptor protocol
+        # automatically unwraps it, so it works:
+        class C:
+            async_static = static_wrapped
+
+        assert asyncio.iscoroutinefunction(C.async_static)  # Works via descriptor protocol

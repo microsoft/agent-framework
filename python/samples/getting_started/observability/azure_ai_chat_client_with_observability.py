@@ -9,7 +9,9 @@ import dotenv
 from agent_framework import HostedCodeInterpreterTool
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.observability import get_tracer
+from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -42,6 +44,25 @@ async def get_weather(
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
 
 
+async def setup_azure_ai_observability(
+    project_client: AIProjectClient, enable_sensitive_data: bool | None = None
+) -> None:
+    """Use this method to setup tracing in your Azure AI Project.
+
+    This will take the connection string from the AIProjectClient instance.
+    It will override any connection string that is set in the environment variables.
+    It will disable any OTLP endpoint that might have been set.
+    """
+    try:
+        conn_string = await project_client.telemetry.get_application_insights_connection_string()
+    except ResourceNotFoundError:
+        print("No Application Insights connection string found for the Azure AI Project.")
+        return
+    from agent_framework.observability import setup_observability
+
+    setup_observability(applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data)
+
+
 async def main() -> None:
     """Run an AI service.
 
@@ -62,13 +83,14 @@ async def main() -> None:
     ]
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIAgentClient(project_client=project) as client,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
+        AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
+        AzureAIAgentClient(agents_client=agents_client) as client,
     ):
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.
         # This will override any existing configuration.
-        await client.setup_azure_ai_observability()
+        await setup_azure_ai_observability(project_client)
 
         with get_tracer().start_as_current_span(
             name="Foundry Telemetry from Agent Framework", kind=SpanKind.CLIENT

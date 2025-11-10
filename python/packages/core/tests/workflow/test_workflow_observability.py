@@ -6,9 +6,9 @@ import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from agent_framework import WorkflowBuilder
+from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message
+from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
 from agent_framework._workflows._shared_state import SharedState
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -127,7 +127,9 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
         }
         with (
-            create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
+            create_processing_span(
+                "executor-456", "TestExecutor", str(MessageType.STANDARD), "TestMessage"
+            ) as processing_span,
             create_workflow_span(
                 OtelAttr.MESSAGE_SEND_SPAN, sending_attributes, kind=trace.SpanKind.PRODUCER
             ) as sending_span,
@@ -155,7 +157,8 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "executor-456"
     assert processing_span.attributes.get("executor.type") == "TestExecutor"
-    assert processing_span.attributes.get("message.type") == "TestMessage"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "TestMessage"
 
     # Check sending span
     sending_span = next(s for s in spans if s.name == "message.send")
@@ -175,7 +178,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,
@@ -218,18 +221,20 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "test-executor"
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
-    assert processing_span.attributes.get("message.type") == "str"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "str"
 
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
+    executor = MockExecutor("test-executor")
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,
@@ -426,7 +431,7 @@ async def test_workflow_error_handling_in_tracing(span_exporter: InMemorySpanExp
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 async def test_message_trace_context_serialization(span_exporter: InMemorySpanExporter) -> None:
     """Test that message trace context is properly serialized/deserialized."""
-    ctx = InProcRunnerContext()
+    ctx = InProcRunnerContext(InMemoryCheckpointStorage())
 
     # Create message with trace context
     message = Message(
@@ -439,16 +444,18 @@ async def test_message_trace_context_serialization(span_exporter: InMemorySpanEx
 
     await ctx.send_message(message)
 
-    # Get checkpoint state (which serializes messages)
-    state = await ctx.get_checkpoint_state()
+    # Create a checkpoint that includes the message
+    checkpoint_id = await ctx.create_checkpoint(SharedState(), 0)
+    checkpoint = await ctx.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
 
     # Check serialized message includes trace context
-    serialized_msg = state["messages"]["source"][0]
+    serialized_msg = checkpoint.messages["source"][0]
     assert serialized_msg["trace_contexts"] == [{"traceparent": "00-trace-span-01"}]
     assert serialized_msg["source_span_ids"] == ["span123"]
 
     # Test deserialization
-    await ctx.set_checkpoint_state(state)
+    await ctx.apply_checkpoint(checkpoint)
     restored_messages = await ctx.drain_messages()
 
     restored_msg = list(restored_messages.values())[0][0]

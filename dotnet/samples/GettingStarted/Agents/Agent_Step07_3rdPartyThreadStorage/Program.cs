@@ -17,9 +17,6 @@ using SampleApp;
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-const string JokerName = "Joker";
-const string JokerInstructions = "You are good at telling jokes.";
-
 // Create a vector store to store the chat messages in.
 // Replace this with a vector store implementation of your choice if you want to persist the chat history to disk.
 VectorStore vectorStore = new InMemoryVectorStore();
@@ -28,19 +25,19 @@ VectorStore vectorStore = new InMemoryVectorStore();
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(new ChatClientAgentOptions
-     {
-         Name = JokerName,
-         Instructions = JokerInstructions,
-         ChatMessageStoreFactory = ctx =>
-         {
-             // Create a new chat message store for this agent that stores the messages in a vector store.
-             // Each thread must get its own copy of the VectorChatMessageStore, since the store
-             // also contains the id that the thread is stored under.
-             return new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions);
-         }
-     });
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(new ChatClientAgentOptions
+    {
+        Instructions = "You are good at telling jokes.",
+        Name = "Joker",
+        ChatMessageStoreFactory = ctx =>
+        {
+            // Create a new chat message store for this agent that stores the messages in a vector store.
+            // Each thread must get its own copy of the VectorChatMessageStore, since the store
+            // also contains the id that the thread is stored under.
+            return new VectorChatMessageStore(vectorStore, ctx.SerializedState, ctx.JsonSerializerOptions);
+        }
+    });
 
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();

@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,19 +32,7 @@ public interface IWorkflowContext
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message, string? targetId = null, CancellationToken cancellationToken = default);
-
-#if NET // What's the right way to do this so we do not make life a misery for netstandard2.0 targets?
-    // What's the value if they have to still write `cancellationToken: cancellationToken` to skip the targetId parameter?
-    // TODO: Remove this? (Maybe not: NET will eventually be the only target framework, right?)
-    /// <summary>
-    /// Queues a message to be sent to connected executors. The message will be sent during the next SuperStep.
-    /// </summary>
-    /// <param name="message">The message to be sent.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-    ValueTask SendMessageAsync(object message, CancellationToken cancellationToken) => this.SendMessageAsync(message, null, cancellationToken);
-#endif
+    ValueTask SendMessageAsync(object message, string? targetId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Adds an output value to the workflow's output queue. These outputs will be bubbled out of the workflow using the
@@ -78,6 +67,24 @@ public interface IWorkflowContext
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
     ValueTask<T?> ReadStateAsync<T>(string key, string? scopeName = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Reads or initialized a state value from the workflow's state store. If no scope is provided, the executor's
+    /// default scope is used.
+    /// </summary>
+    /// <remarks>
+    /// When initializing the state, the state will be queued as an update. If multiple initializations are done in the same
+    /// SuperStep from different executors, an error will be generated at the end of the SuperStep.
+    /// </remarks>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="initialStateFactory">A factory to initialize the state if the key has no value associated with it.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to read. If null, the default scope is
+    /// used.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
+    ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default);
+
 #if NET // See above for musings about this construction
     /// <summary>
     /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
@@ -87,8 +94,21 @@ public interface IWorkflowContext
     /// <param name="key">The key of the state value.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
-    ValueTask<T?> ReadStateAsync<T>(string key, CancellationToken cancellationToken) => this.ReadStateAsync<T>(key, null, cancellationToken);
+    ValueTask<T?> ReadStateAsync<T>(string key, CancellationToken cancellationToken)
+        => this.ReadStateAsync<T>(key, null, cancellationToken);
 
+    /// <summary>
+    /// Reads a state value from the workflow's state store. If no scope is provided, the executor's
+    /// default scope is used.
+    /// </summary>
+    /// <typeparam name="T">The type of the state value.</typeparam>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="initialStateFactory">A factory to initialize the state if the key has no value associated with it.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
+    /// The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ValueTask{T}"/> representing the asynchronous operation.</returns>
+    ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, CancellationToken cancellationToken)
+        => this.ReadOrInitStateAsync(key, initialStateFactory, null, cancellationToken);
 #endif
 
     /// <summary>
@@ -169,4 +189,9 @@ public interface IWorkflowContext
     /// The trace context associated with the current message about to be processed by the executor, if any.
     /// </summary>
     IReadOnlyDictionary<string, string>? TraceContext { get; }
+
+    /// <summary>
+    /// Whether the current execution environment support concurrent runs against the same workflow instance.
+    /// </summary>
+    bool ConcurrentRunsEnabled { get; }
 }

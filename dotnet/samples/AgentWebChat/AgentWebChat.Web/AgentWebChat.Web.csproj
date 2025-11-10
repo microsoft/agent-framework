@@ -4,6 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CA1812</NoWarn>
   </PropertyGroup>
   
   <ItemGroup>
@@ -16,8 +17,8 @@
 
   <!-- A2A dependency -->
   <ItemGroup>
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-preview.5.25277.114" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-preview.5.25277.114" />
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
   </ItemGroup>
   <!-- A2A dependency -->
 

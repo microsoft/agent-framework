@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import inspect
+import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
@@ -47,6 +48,44 @@ else:
 logger = get_logger("agent_framework")
 
 TThreadType = TypeVar("TThreadType", bound="AgentThread")
+
+
+def _sanitize_agent_name(agent_name: str | None) -> str | None:
+    """Sanitize agent name for use as a function name.
+
+    Replaces spaces and special characters with underscores to create
+    a valid Python identifier.
+
+    Args:
+        agent_name: The agent name to sanitize.
+
+    Returns:
+        The sanitized agent name with invalid characters replaced by underscores.
+        If the input is None, returns None.
+        If sanitization results in an empty string (e.g., agent_name="@@@"), returns "agent" as a default.
+    """
+    if agent_name is None:
+        return None
+
+    # Replace any character that is not alphanumeric or underscore with underscore
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", agent_name)
+
+    # Replace multiple consecutive underscores with a single underscore
+    sanitized = re.sub(r"_+", "_", sanitized)
+
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip("_")
+
+    # Handle empty string case
+    if not sanitized:
+        return "agent"
+
+    # Prefix with underscore if the sanitized name starts with a digit
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"_{sanitized}"
+
+    return sanitized
+
 
 __all__ = ["AgentProtocol", "BaseAgent", "ChatAgent"]
 
@@ -396,7 +435,7 @@ class BaseAgent(SerializationMixin):
         if not isinstance(self, AgentProtocol):
             raise TypeError(f"Agent {self.__class__.__name__} must implement AgentProtocol to be used as a tool")
 
-        tool_name = name or self.name
+        tool_name = name or _sanitize_agent_name(self.name)
         if tool_name is None:
             raise ValueError("Agent tool name cannot be None. Either provide a name parameter or set the agent's name.")
         tool_description = description or self.description or ""
@@ -404,7 +443,8 @@ class BaseAgent(SerializationMixin):
 
         # Create dynamic input model with the specified argument name
         field_info = Field(..., description=argument_description)
-        input_model = create_model(f"{name or self.name or 'agent'}_task", **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+        model_name = f"{name or _sanitize_agent_name(self.name) or 'agent'}_task"
+        input_model = create_model(model_name, **{arg_name: (str, field_info)})  # type: ignore[call-overload]
 
         # Check if callback is async once, outside the wrapper
         is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
@@ -547,9 +587,11 @@ class ChatAgent(BaseAgent):
         name: str | None = None,
         description: str | None = None,
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
-        conversation_id: str | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
+        # chat option params
+        allow_multiple_tool_calls: bool | None = None,
+        conversation_id: str | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -590,15 +632,17 @@ class ChatAgent(BaseAgent):
             description: A brief description of the agent's purpose.
             chat_message_store_factory: Factory function to create an instance of ChatMessageStoreProtocol.
                 If not provided, the default in-memory store will be used.
-            conversation_id: The conversation ID for service-managed threads.
-                Cannot be used together with chat_message_store_factory.
             context_providers: The collection of multiple context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
+            conversation_id: The conversation ID for service-managed threads.
+                Cannot be used together with chat_message_store_factory.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
             model_id: The model_id to use for the agent.
+                This overrides the model_id set in the chat client if it contains one.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -647,7 +691,8 @@ class ChatAgent(BaseAgent):
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
-            model_id=model_id,
+            model_id=model_id or (str(chat_client.model_id) if hasattr(chat_client, "model_id") else None),
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             instructions=instructions,
@@ -718,6 +763,7 @@ class ChatAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -753,6 +799,7 @@ class ChatAgent(BaseAgent):
 
         Keyword Args:
             thread: The thread to use for the agent.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -804,6 +851,7 @@ class ChatAgent(BaseAgent):
         co = run_chat_options & ChatOptions(
             model_id=model_id,
             conversation_id=thread.service_thread_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -847,6 +895,7 @@ class ChatAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -882,6 +931,7 @@ class ChatAgent(BaseAgent):
 
         Keyword Args:
             thread: The thread to use for the agent.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -931,6 +981,7 @@ class ChatAgent(BaseAgent):
 
         co = run_chat_options & ChatOptions(
             conversation_id=thread.service_thread_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,

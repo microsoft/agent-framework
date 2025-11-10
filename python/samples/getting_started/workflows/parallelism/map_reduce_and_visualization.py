@@ -37,7 +37,10 @@ Prerequisites:
 - aiofiles installed for async file I/O.
 - Write access to a tmp directory next to this script.
 - A source text at resources/long_text.txt.
-- Optional for SVG export: install the viz extra for agent framework workflow.
+- Optional for SVG export: install graphviz.
+
+Installation:
+    pip install agent-framework aiofiles graphviz
 """
 
 # Define the temporary directory for storing intermediate results

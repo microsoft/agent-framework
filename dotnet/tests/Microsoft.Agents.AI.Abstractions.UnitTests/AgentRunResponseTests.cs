@@ -19,10 +19,12 @@ public class AgentRunResponseTests
         response = new();
         Assert.Empty(response.Messages);
         Assert.Empty(response.Text);
+        Assert.Null(response.ContinuationToken);
 
         response = new((IList<ChatMessage>?)null);
         Assert.Empty(response.Messages);
         Assert.Empty(response.Text);
+        Assert.Null(response.ContinuationToken);
 
         Assert.Throws<ArgumentNullException>("message", () => new AgentRunResponse((ChatMessage)null!));
     }
@@ -55,6 +57,7 @@ public class AgentRunResponseTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Usage = new UsageDetails(),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
 
         AgentRunResponse response = new(chatResponse);
@@ -64,6 +67,7 @@ public class AgentRunResponseTests
         Assert.Equal(chatResponse.ResponseId, response.ResponseId);
         Assert.Same(chatResponse, response.RawRepresentation as ChatResponse);
         Assert.Same(chatResponse.Usage, response.Usage);
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), response.ContinuationToken);
     }
 
     [Fact]
@@ -97,6 +101,10 @@ public class AgentRunResponseTests
         AdditionalPropertiesDictionary additionalProps = [];
         response.AdditionalProperties = additionalProps;
         Assert.Same(additionalProps, response.AdditionalProperties);
+
+        Assert.Null(response.ContinuationToken);
+        response.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), response.ContinuationToken);
     }
 
     [Fact]
@@ -110,11 +118,12 @@ public class AgentRunResponseTests
             Usage = new UsageDetails(),
             RawRepresentation = new(),
             AdditionalProperties = new() { ["key"] = "value" },
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
 
-        string json = JsonSerializer.Serialize(original, TestJsonSerializerContext.Default.AgentRunResponse);
+        string json = JsonSerializer.Serialize(original, AgentAbstractionsJsonUtilities.DefaultOptions);
 
-        AgentRunResponse? result = JsonSerializer.Deserialize(json, TestJsonSerializerContext.Default.AgentRunResponse);
+        AgentRunResponse? result = JsonSerializer.Deserialize<AgentRunResponse>(json, AgentAbstractionsJsonUtilities.DefaultOptions);
 
         Assert.NotNull(result);
         Assert.Equal(ChatRole.Assistant, result.Messages.Single().Role);
@@ -130,6 +139,7 @@ public class AgentRunResponseTests
         Assert.True(result.AdditionalProperties.TryGetValue("key", out object? value));
         Assert.IsType<JsonElement>(value);
         Assert.Equal("value", ((JsonElement)value!).GetString());
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), result.ContinuationToken);
     }
 
     [Fact]

@@ -25,8 +25,8 @@ static string GetWeather([Description("The location to get the weather for.")] s
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetChatClient(deploymentName)
-     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
 // Call the agent and check if there are any user input requests to handle.
 AgentThread thread = agent.GetNewThread();

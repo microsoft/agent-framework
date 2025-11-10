@@ -44,7 +44,7 @@ internal sealed class Program
 
         // Run the workflow, just like any other workflow
         string input = this.GetWorkflowInput();
-        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
+        StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: input);
         await this.MonitorAndDisposeWorkflowRunAsync(run);
 
         Notify("\nWORKFLOW: Done!");
@@ -76,7 +76,7 @@ internal sealed class Program
 
         string? messageId = null;
 
-        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {
             switch (workflowEvent)
             {

@@ -16,12 +16,10 @@ A Writer agent generates content, then a Reviewer agent critiques it.
 The workflow uses streaming so you can observe incremental AgentRunUpdateEvent chunks as each agent produces tokens.
 
 Purpose:
-Show how to wire chat agents into a WorkflowBuilder pipeline using add_agent
-with settings for streaming and workflow outputs.
+Show how to wire chat agents into a WorkflowBuilder pipeline by adding agents directly as edges.
 
 Demonstrate:
 - Automatic streaming of agent deltas via AgentRunUpdateEvent when using run_stream().
-- Add an agent via WorkflowBuilder.add_agent() with output_response=True to emit final AgentRunResponse.
 - Agents adapt to workflow mode: run_stream() emits incremental updates, run() emits complete responses.
 
 Prerequisites:
@@ -67,13 +65,10 @@ async def main() -> None:
                 "Provide the feedback in the most concise manner possible."
             ),
         )
-        # Add agents to workflow with custom settings using add_agent.
+        # Build the workflow by adding agents directly as edges.
         # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
-        # Reviewer agent emits final AgentRunResponse as a workflow output.
         workflow = (
             WorkflowBuilder()
-            .add_agent(writer, id="Writer")
-            .add_agent(reviewer, id="Reviewer", output_response=True)
             .set_start_executor(writer)
             .add_edge(writer, reviewer)
             .build()

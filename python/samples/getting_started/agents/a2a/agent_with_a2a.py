@@ -53,9 +53,7 @@ async def main():
         resolver = A2ACardResolver(httpx_client=http_client, base_url=a2a_agent_host)
 
         # Get agent card
-        agent_card = await resolver.get_agent_card(
-            relative_card_path="/.well-known/agent.json"
-        )
+        agent_card = await resolver.get_agent_card(relative_card_path="/.well-known/agent.json")
         print(f"Found agent: {agent_card.name} - {agent_card.description}")
 
         # Create A2A agent instance

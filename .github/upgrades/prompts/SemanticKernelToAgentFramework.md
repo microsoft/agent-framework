@@ -1052,7 +1052,7 @@ AgentThread thread = agent.GetNewThread();
 
 **Add Agent Framework Packages:**
 ```xml
-<PackageReference Include="Microsoft.Agents.AI.AzureAI" />
+<PackageReference Include="Microsoft.Agents.AI.AzureAI.Persistent" />
 <PackageReference Include="Azure.Identity" />
 ```
 </configuration_changes>

@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import os
 from typing import Annotated
 
@@ -15,7 +14,6 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     HostedCodeInterpreterTool,
@@ -112,18 +110,6 @@ def test_init_with_default_header(azure_openai_unit_test_env: dict[str, str]) ->
     for key, value in default_headers.items():
         assert key in azure_responses_client.client.default_headers
         assert azure_responses_client.client.default_headers[key] == value
-
-
-def test_azure_responses_client_instructions_sent_once(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Ensure instructions are only included once for Azure OpenAI Responses requests."""
-    client = AzureOpenAIResponsesClient()
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert json.dumps(request_options).count(instructions) == 1
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]], indirect=True)

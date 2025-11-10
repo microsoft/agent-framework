@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,34 +40,40 @@ public class RepresentationTests
     private static RequestPort TestRequestPort =>
         RequestPort.Create<FunctionCallContent, FunctionResultContent>("ExternalFunction");
 
-    private static async ValueTask RunExecutorishInfoMatchTestAsync(ExecutorIsh target)
+    private static async ValueTask RunExecutorBindingInfoMatchTestAsync(ExecutorBinding binding)
     {
-        ExecutorRegistration registration = target.Registration;
-        ExecutorInfo info = registration.ToExecutorInfo();
+        ExecutorInfo info = binding.ToExecutorInfo();
 
-        info.IsMatch(await registration.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
+        info.IsMatch(await binding.CreateInstanceAsync(runId: string.Empty)).Should().BeTrue();
     }
 
     [Fact]
-    public async Task Test_Executorish_InfosAsync()
+    public async Task Test_ExecutorBinding_InfosAsync()
     {
         int testsRun = 0;
-        await RunExecutorishTestAsync(new TestExecutor());
-        await RunExecutorishTestAsync(TestRequestPort);
-        await RunExecutorishTestAsync(new TestAgent());
-        await RunExecutorishTestAsync(Step1EntryPoint.WorkflowInstance.ConfigureSubWorkflow(nameof(Step1EntryPoint)));
+        await RunExecutorBindingTestAsync(new TestExecutor());
+        await RunExecutorBindingTestAsync(TestRequestPort);
+        await RunExecutorBindingTestAsync(new TestAgent());
+        await RunExecutorBindingTestAsync(Step1EntryPoint.WorkflowInstance.BindAsExecutor(nameof(Step1EntryPoint)));
 
         Func<int, IWorkflowContext, CancellationToken, ValueTask> function = MessageHandlerAsync;
-        await RunExecutorishTestAsync(function.AsExecutor("FunctionExecutor"));
+        await RunExecutorBindingTestAsync(function.BindAsExecutor("FunctionExecutor"));
 
-        if (Enum.GetValues(typeof(ExecutorIsh.Type)).Length > testsRun + 1)
+        Type bindingBaseType = typeof(ExecutorBinding);
+        Assembly workflowAssembly = bindingBaseType.Assembly;
+        int expectedTests = workflowAssembly.GetTypes()
+                                            .Count(type => type != bindingBaseType
+                                                        && bindingBaseType.IsAssignableFrom(type));
+        expectedTests.Should().BePositive();
+
+        if (expectedTests > testsRun + 1)
         {
-            Assert.Fail("Not all ExecutorIsh types were tested.");
+            Assert.Fail("Not all ExecutorBinding types were tested.");
         }
 
-        async ValueTask RunExecutorishTestAsync(ExecutorIsh executorish)
+        async ValueTask RunExecutorBindingTestAsync(ExecutorBinding binding)
         {
-            await RunExecutorishInfoMatchTestAsync(executorish);
+            await RunExecutorBindingInfoMatchTestAsync(binding);
             testsRun++;
         }
 
@@ -77,8 +85,8 @@ public class RepresentationTests
     [Fact]
     public async Task Test_SpecializedExecutor_InfosAsync()
     {
-        await RunExecutorishInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
-        await RunExecutorishInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
+        await RunExecutorBindingInfoMatchTestAsync(new AIAgentHostExecutor(new TestAgent()));
+        await RunExecutorBindingInfoMatchTestAsync(new RequestInfoExecutor(TestRequestPort));
     }
 
     private static string Source(int id) => $"Source/{id}";
@@ -157,23 +165,17 @@ public class RepresentationTests
     [Fact]
     public async Task Test_Sample_WorkflowInfosAsync()
     {
-        Workflow<string> workflowStep1 = (await Step1EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
-        RunWorkflowInfoMatchTest(workflowStep1);
-
-        Workflow<string> workflowStep2 = (await Step2EntryPoint.WorkflowInstance.TryPromoteAsync<string>())!;
-        RunWorkflowInfoMatchTest(workflowStep2);
-
-        RunWorkflowInfoMatchTest((await Step3EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
-
-        RunWorkflowInfoMatchTest((await Step4EntryPoint.WorkflowInstance.TryPromoteAsync<NumberSignal>())!);
-
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step2EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step3EntryPoint.WorkflowInstance);
+        RunWorkflowInfoMatchTest(Step4EntryPoint.WorkflowInstance);
         // Step 5 reuses the workflow from Step 4, so we don't need to test it separately.
-        RunWorkflowInfoMatchTest((await Step6EntryPoint.CreateWorkflow(2).TryPromoteAsync<List<ChatMessage>>())!);
+        RunWorkflowInfoMatchTest(Step6EntryPoint.CreateWorkflow(maxTurns: 2));
         // Step 7 reuses the workflow from Step 6, so we don't need to test it separately.
 
-        RunWorkflowInfoMatchTest(workflowStep1, workflowStep2, expect: false);
+        RunWorkflowInfoMatchTest(Step1EntryPoint.WorkflowInstance, Step2EntryPoint.WorkflowInstance, expect: false);
 
-        static void RunWorkflowInfoMatchTest<TInput>(Workflow<TInput> workflow, Workflow<TInput>? comparator = null, bool expect = true)
+        static void RunWorkflowInfoMatchTest(Workflow workflow, Workflow? comparator = null, bool expect = true)
         {
             comparator ??= workflow;
 

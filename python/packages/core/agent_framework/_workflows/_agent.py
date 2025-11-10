@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
@@ -14,10 +14,11 @@ from agent_framework import (
     AgentThread,
     BaseAgent,
     ChatMessage,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
-    TextContent,
     UsageDetails,
 )
 
@@ -27,6 +28,8 @@ from ._events import (
     RequestInfoEvent,
     WorkflowEvent,
 )
+from ._message_utils import normalize_messages_input
+from ._typing_utils import is_type_compatible
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -57,10 +60,13 @@ class WorkflowAgent(BaseAgent):
 
         @classmethod
         def from_json(cls, raw: str) -> "WorkflowAgent.RequestInfoFunctionArgs":
-            data = json.loads(raw)
-            if not isinstance(data, dict):
+            try:
+                parsed: Any = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"RequestInfoFunctionArgs JSON payload is malformed: {exc}") from exc
+            if not isinstance(parsed, dict):
                 raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
-            return cls.from_dict(data)
+            return cls.from_dict(cast(dict[str, Any], parsed))
 
     def __init__(
         self,
@@ -91,7 +97,7 @@ class WorkflowAgent(BaseAgent):
         except KeyError as exc:  # Defensive: workflow lacks a configured entry point
             raise ValueError("Workflow's start executor is not defined.") from exc
 
-        if list[ChatMessage] not in start_executor.input_types:
+        if not any(is_type_compatible(list[ChatMessage], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
@@ -129,7 +135,7 @@ class WorkflowAgent(BaseAgent):
         """
         # Collect all streaming updates
         response_updates: list[AgentRunResponseUpdate] = []
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
@@ -163,7 +169,7 @@ class WorkflowAgent(BaseAgent):
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
         """
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
@@ -223,28 +229,6 @@ class WorkflowAgent(BaseAgent):
             if update:
                 yield update
 
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        """Normalize input messages to a list of ChatMessage objects."""
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, contents=[TextContent(text=messages)])]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        normalized: list[ChatMessage] = []
-        for msg in messages:
-            if isinstance(msg, str):
-                normalized.append(ChatMessage(role=Role.USER, contents=[TextContent(text=msg)]))
-            elif isinstance(msg, ChatMessage):
-                normalized.append(msg)
-        return normalized
-
     def _convert_workflow_event_to_agent_update(
         self,
         response_id: str,
@@ -266,16 +250,20 @@ class WorkflowAgent(BaseAgent):
                 # Store the pending request for later correlation
                 self.pending_requests[request_id] = event
 
-                # Convert to function call content
-                # TODO(ekzhu): update this to FunctionApprovalRequestContent
-                # monitor: https://github.com/microsoft/agent-framework/issues/285
+                args = self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict()
+
                 function_call = FunctionCallContent(
                     call_id=request_id,
                     name=self.REQUEST_INFO_FUNCTION_NAME,
-                    arguments=self.RequestInfoFunctionArgs(request_id=request_id, data=event.data).to_dict(),
+                    arguments=args,
+                )
+                approval_request = FunctionApprovalRequestContent(
+                    id=request_id,
+                    function_call=function_call,
+                    additional_properties={"request_id": request_id},
                 )
                 return AgentRunResponseUpdate(
-                    contents=[function_call],
+                    contents=[function_call, approval_request],
                     role=Role.ASSISTANT,
                     author_name=self.name,
                     response_id=response_id,
@@ -293,26 +281,45 @@ class WorkflowAgent(BaseAgent):
         function_responses: dict[str, Any] = {}
         for message in input_messages:
             for content in message.contents:
-                # TODO(ekzhu): update this to FunctionApprovalResponseContent
-                # monitor: https://github.com/microsoft/agent-framework/issues/285
-                if isinstance(content, FunctionResultContent):
+                if isinstance(content, FunctionApprovalResponseContent):
+                    # Parse the function arguments to recover request payload
+                    arguments_payload = content.function_call.arguments
+                    if isinstance(arguments_payload, str):
+                        try:
+                            parsed_args = self.RequestInfoFunctionArgs.from_json(arguments_payload)
+                        except ValueError as exc:
+                            raise AgentExecutionException(
+                                "FunctionApprovalResponseContent arguments must decode to a mapping."
+                            ) from exc
+                    elif isinstance(arguments_payload, dict):
+                        parsed_args = self.RequestInfoFunctionArgs.from_dict(arguments_payload)
+                    else:
+                        raise AgentExecutionException(
+                            "FunctionApprovalResponseContent arguments must be a mapping or JSON string."
+                        )
+
+                    request_id = parsed_args.request_id or content.id
+                    if not content.approved:
+                        raise AgentExecutionException(f"Request '{request_id}' was not approved by the caller.")
+
+                    if request_id in self.pending_requests:
+                        function_responses[request_id] = parsed_args.data
+                    elif bool(self.pending_requests):
+                        raise AgentExecutionException(
+                            "Only responses for pending requests are allowed when there are outstanding approvals."
+                        )
+                elif isinstance(content, FunctionResultContent):
                     request_id = content.call_id
-                    # Check if we have a pending request for this call_id
                     if request_id in self.pending_requests:
                         response_data = content.result if hasattr(content, "result") else str(content)
                         function_responses[request_id] = response_data
                     elif bool(self.pending_requests):
-                        # Function result for unknown request when we have pending requests - this is an error
                         raise AgentExecutionException(
-                            "Only FunctionResultContent for pending requests is allowed in input messages "
-                            "when there are pending requests."
+                            "Only function responses for pending requests are allowed while requests are outstanding."
                         )
                 else:
                     if bool(self.pending_requests):
-                        # Non-function content when we have pending requests - this is an error
-                        raise AgentExecutionException(
-                            "Only FunctionResultContent is allowed in input messages when there are pending requests."
-                        )
+                        raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
         return function_responses
 
     class _ResponseState(TypedDict):

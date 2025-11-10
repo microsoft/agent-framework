@@ -18,7 +18,7 @@ The samples are subdivided into the following categories:
   `AIAgent` and can be used with any underlying service that provides an `AIAgent` implementation.
 - [Getting Started - Agent Providers](./GettingStarted/AgentProviders/README.md): Shows how to create an AIAgent instance for a selection of providers.
 - [Getting Started - Agent Telemetry](./GettingStarted/AgentOpenTelemetry/README.md): Demo which showcases the integration of OpenTelemetry with the Microsoft Agent Framework using Azure OpenAI and .NET Aspire Dashboard for telemetry visualization.
-- [Semantic Kernel Migration](./SemanticKernelMigration/): Semantic Kernel to Agent Framework migration guide
+- [Semantic Kernel to Agent Framework Migration](https://github.com/microsoft/semantic-kernel/tree/main/dotnet/samples/AgentFrameworkMigration): For instructions and samples describing how to migrate from Semantic Kernel to Microsoft Agent Framework
 
 ## Prerequisites
 

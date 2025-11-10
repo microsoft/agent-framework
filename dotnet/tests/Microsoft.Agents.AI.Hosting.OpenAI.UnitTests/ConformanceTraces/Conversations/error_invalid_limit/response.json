@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Invalid 'limit': integer above maximum value. Expected a value <= 100, but got 1000 instead.",
+    "type": "invalid_request_error",
+    "param": "limit",
+    "code": "integer_above_max_value"
+  }
+}

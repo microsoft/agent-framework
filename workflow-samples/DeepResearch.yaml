@@ -1,5 +1,6 @@
 #
-# This workflow demonstrates a multi-agent orchestrator that attempts to address complex user requests.
+# This workflow coordinates multiple agents in order to address complex user requests
+# according to the "Magentic" orchestration pattern introduced by AutoGen.
 # 
 # For this workflow, several agents used, each with a prompt specific to their role:
 # 

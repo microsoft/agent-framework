@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,6 +33,9 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
     public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
+
+    /// <inheritdoc/>
+    public bool ConcurrentRunsEnabled => this.Source.ConcurrentRunsEnabled;
 
     /// <inheritdoc/>
     public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default)
@@ -72,23 +77,56 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         this.State.Bind();
     }
 
+    private bool IsManagedScope(string? scopeName) => scopeName is not null && VariableScopeNames.IsValidName(scopeName);
+
     /// <inheritdoc/>
     public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        bool isManagedScope =
-            scopeName is not null && // null scope cannot be managed
-            VariableScopeNames.IsValidName(scopeName);
-
         return typeof(TValue) switch
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
-            _ when !isManagedScope => await this.Source.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false),
+            _ when !this.IsManagedScope(scopeName) => await this.Source.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false),
             // Retrieve formula values directly from the managed state to avoid conversion.
             _ when typeof(TValue) == typeof(FormulaValue) => (TValue?)(object?)this.State.Get(key, scopeName),
             // Retrieve native types from the source context to avoid conversion.
             _ => await this.Source.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false),
         };
+    }
+
+    public async ValueTask<TValue> ReadOrInitStateAsync<TValue>(string key, Func<TValue> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
+    {
+        return typeof(TValue) switch
+        {
+            // Not a managed scope, just pass through.  This is valid when a declarative
+            // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
+            _ when !this.IsManagedScope(scopeName) => await this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false),
+            // Retrieve formula values directly from the managed state to avoid conversion.
+            _ when typeof(TValue) == typeof(FormulaValue) => await EnsureFormulaValueAsync().ConfigureAwait(false),
+            // Retrieve native types from the source context to avoid conversion.
+            _ => await this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false),
+        };
+
+        async ValueTask<TValue> EnsureFormulaValueAsync()
+        {
+            Debug.Assert(typeof(TValue) == typeof(FormulaValue), "It is a bug to call this method with TValue not === FormulaValue");
+            FormulaValue? result = this.State.Get(key, scopeName);
+
+            if (result is null or BlankValue)
+            {
+                result = initialStateFactory() as FormulaValue;
+                if (result is null)
+                {
+                    throw new InvalidOperationException($"The initial state factory for key '{key}' in scope '{scopeName}' did not return a FormulaValue.");
+                }
+
+                this.State.Set(key, result, scopeName);
+                await this.Source.QueueStateUpdateAsync(key, result.AsPortable(), scopeName, cancellationToken)
+                                 .ConfigureAwait(false);
+            }
+
+            return (TValue)(object)result!; // The null analyzer is confused here, but it is impossible to hit this line with result is null
+        }
     }
 
     /// <inheritdoc/>
@@ -142,27 +180,32 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
             {
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, formulaValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
         ValueTask QueueDataValueStateAsync(DataValue dataValue)
         {
+            FormulaValue formulaValue = dataValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = dataValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, dataValue.ToObject(), scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
 
-        ValueTask QueueNativeStateAsync(object? rawValue)
+        ValueTask QueueNativeStateAsync(object rawValue)
         {
+            FormulaValue formulaValue = rawValue.ToFormula();
+
             if (isManagedScope)
             {
-                FormulaValue formulaValue = rawValue.ToFormula();
                 this.State.Set(key, formulaValue, scopeName);
             }
-            return this.Source.QueueStateUpdateAsync(key, rawValue, scopeName, cancellationToken);
+
+            return this.Source.QueueStateUpdateAsync(key, formulaValue.AsPortable(), scopeName, cancellationToken);
         }
     }
 }

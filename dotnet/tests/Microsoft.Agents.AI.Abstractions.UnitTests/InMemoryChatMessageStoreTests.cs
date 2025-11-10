@@ -115,6 +115,23 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
+    public async Task SerializeAndDeserializeWorksWithExperimentalContentTypesAsync()
+    {
+        var store = new InMemoryChatMessageStore
+        {
+            new ChatMessage(ChatRole.User, [new FunctionApprovalRequestContent("call123", new FunctionCallContent("call123", "some_func"))]),
+            new ChatMessage(ChatRole.Assistant, [new FunctionApprovalResponseContent("call123", true, new FunctionCallContent("call123", "some_func"))])
+        };
+
+        var jsonElement = store.Serialize();
+        var newStore = new InMemoryChatMessageStore(jsonElement);
+
+        Assert.Equal(2, newStore.Count);
+        Assert.IsType<FunctionApprovalRequestContent>(newStore[0].Contents[0]);
+        Assert.IsType<FunctionApprovalResponseContent>(newStore[1].Contents[0]);
+    }
+
+    [Fact]
     public async Task AddMessagesAsyncWithEmptyMessagesDoesNotChangeStoreAsync()
     {
         var store = new InMemoryChatMessageStore();

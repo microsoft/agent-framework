@@ -123,6 +123,8 @@ internal static class FormulaValueExtensions
             _ => DataType.Unspecified,
         };
 
+    public static object AsPortable(this FormulaValue? value) => (value?.ToObject()).AsPortable();
+
     public static string Format(this FormulaValue value) =>
         value switch
         {
@@ -155,12 +157,16 @@ internal static class FormulaValueExtensions
 
         IEnumerable<NamedValue> GetFields()
         {
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new NamedValue(key, value[key].ToFormula());
+                yield return new NamedValue((string)entry.Key, entry.Value.ToFormula());
             }
         }
     }
+    public static RecordValue ToRecord(this Dictionary<string, PortableValue> value) =>
+        FormulaValue.NewRecordFromFields(
+            value.Select(
+                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     private static RecordDataType ToDataType(this RecordType record)
     {
@@ -181,21 +187,6 @@ internal static class FormulaValueExtensions
         }
         return tableType;
     }
-
-    private static RecordType ToRecordType(this ExpandoObject value)
-    {
-        RecordType recordType = RecordType.Empty();
-        foreach (KeyValuePair<string, object?> property in value)
-        {
-            recordType.Add(property.Key, property.Value.GetFormulaType());
-        }
-        return recordType;
-    }
-
-    private static RecordValue ToRecord(this ExpandoObject value) =>
-        FormulaValue.NewRecordFromFields(
-            value.Select(
-                property => new NamedValue(property.Key, property.Value.ToFormula())));
 
     private static TableType ToTableType(this IEnumerable value)
     {
@@ -228,6 +219,22 @@ internal static class FormulaValueExtensions
             elementType switch
             {
                 null => FormulaValue.NewTable(RecordType.EmptySealed(), []),
+                _ when elementType == typeof(string) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<string>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(bool) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<bool>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(int) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<int>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(long) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<long>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(decimal) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<decimal>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(float) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<float>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(DateTime) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<DateTime>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(TimeSpan) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<TimeSpan>().Select(element => FormulaValue.New(element))]),
                 _ when elementType == typeof(ExpandoObject) =>
                     FormulaValue.NewTable(
                         value.ToTableType().ToRecord(),

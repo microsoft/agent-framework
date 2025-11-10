@@ -14,7 +14,7 @@ repos:
       - id: check-json
         name: Check JSON files
         files: \.json$
-        exclude: ^.*\.vscode\/.*
+        exclude: ^.*\.vscode\/.*|^python/demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
       - id: end-of-file-fixer
         name: Fix End of File
         files: \.py$

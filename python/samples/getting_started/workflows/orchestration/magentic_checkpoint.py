@@ -17,7 +17,8 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity._credentials import AzureCliCredential
 
 """
 Sample: Magentic Orchestration + Checkpointing
@@ -29,9 +30,9 @@ checkpoint, and later resume the workflow by feeding in the saved response.
 Concepts highlighted here:
 1. **Deterministic executor IDs** - the orchestrator and plan-review request executor
    must keep stable IDs so the checkpoint state aligns when we rebuild the graph.
-2. **Executor snapshotting** - checkpoints capture the `RequestInfoExecutor` state,
-   specifically the pending plan-review request map, at superstep boundaries.
-3. **Resume with responses** - `Workflow.run_stream_from_checkpoint` accepts a
+2. **Executor snapshotting** - checkpoints capture the pending plan-review request
+   map, at superstep boundaries.
+3. **Resume with responses** - `Workflow.send_responses_streaming` accepts a
    `responses` mapping so we can inject the stored human reply during restoration.
 
 Prerequisites:
@@ -58,14 +59,14 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="ResearcherAgent",
         description="Collects background facts and references for the project.",
         instructions=("You are the research lead. Gather crisp bullet points the team should know."),
-        chat_client=OpenAIChatClient(),
+        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     )
 
     writer = ChatAgent(
         name="WriterAgent",
         description="Synthesizes the final brief for stakeholders.",
         instructions=("You convert the research notes into a structured brief with milestones and risks."),
-        chat_client=OpenAIChatClient(),
+        chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     )
 
     # The builder wires in the Magentic orchestrator, sets the plan review path, and
@@ -75,7 +76,7 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         .participants(researcher=researcher, writer=writer)
         .with_plan_review()
         .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+            chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
             max_round_count=10,
             max_stall_count=3,
         )
@@ -113,7 +114,7 @@ async def main() -> None:
         print("No plan review request emitted; nothing to resume.")
         return
 
-    checkpoints = await checkpoint_storage.list_checkpoints(workflow.workflow.id)
+    checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
     if not checkpoints:
         print("No checkpoints persisted.")
         return
@@ -135,16 +136,23 @@ async def main() -> None:
     print("\n=== Stage 2: resume from checkpoint and approve plan ===")
     resumed_workflow = build_workflow(checkpoint_storage)
 
+    # Construct an approval reply to supply when the plan review request is re-emitted.
     approval = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
-    # Resume execution and supply the recorded approval in a single call.
-    # `run_stream_from_checkpoint` rebuilds executor state, applies the provided responses,
-    # and then continues the workflow. Because we only captured the initial plan review
-    # checkpoint, the resumed run should complete almost immediately.
+
+    # Resume execution and capture the re-emitted plan review request.
+    request_info_event: RequestInfoEvent | None = None
+    async for event in resumed_workflow.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, MagenticPlanReviewRequest):
+            request_info_event = event
+
+    if request_info_event is None:
+        print("No plan review request re-emitted on resume; cannot approve.")
+        return
+    print(f"Resumed plan review request: {request_info_event.request_id}")
+
+    # Supply the approval and continue to run to completion.
     final_event: WorkflowOutputEvent | None = None
-    async for event in resumed_workflow.workflow.run_stream_from_checkpoint(
-        resume_checkpoint.checkpoint_id,
-        responses={plan_review_request_id: approval},
-    ):
+    async for event in resumed_workflow.send_responses_streaming({request_info_event.request_id: approval}):
         if isinstance(event, WorkflowOutputEvent):
             final_event = event
 
@@ -204,10 +212,7 @@ async def main() -> None:
     final_event_post: WorkflowOutputEvent | None = None
     post_emitted_events = False
     post_plan_workflow = build_workflow(checkpoint_storage)
-    async for event in post_plan_workflow.workflow.run_stream_from_checkpoint(
-        post_plan_checkpoint.checkpoint_id,
-        responses={},
-    ):
+    async for event in post_plan_workflow.run_stream(checkpoint_id=post_plan_checkpoint.checkpoint_id):
         post_emitted_events = True
         if isinstance(event, WorkflowOutputEvent):
             final_event_post = event

@@ -38,7 +38,7 @@ jobs:
       - name: Run all tests with coverage report
         run: uv run poe all-tests-cov --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           path: |
             python/python-coverage.xml

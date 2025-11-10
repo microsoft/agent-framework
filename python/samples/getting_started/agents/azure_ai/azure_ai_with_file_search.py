@@ -63,12 +63,24 @@ async def main() -> None:
                 response = await agent.run(user_input)
                 print(f"# Agent: {response.text}")
 
+            # 5. Cleanup: Delete the vector store and file
+            try:
+                if vector_store:
+                    await client.project_client.agents.vector_stores.delete(vector_store.id)
+                if file:
+                    await client.project_client.agents.files.delete(file.id)
+            except Exception:
+                # Ignore cleanup errors to avoid masking issues
+                pass
     finally:
-        # 5. Cleanup: Delete the vector store and file
+        # 6. Cleanup: Delete the vector store and file in case of eariler failure to prevent orphaned resources.
+
+        # Refreshing the client is required since chat agent closes it
+        client = AzureAIAgentClient(async_credential=AzureCliCredential())
         try:
-            if vector_store is not None:
+            if vector_store:
                 await client.project_client.agents.vector_stores.delete(vector_store.id)
-            if file is not None:
+            if file:
                 await client.project_client.agents.files.delete(file.id)
         except Exception:
             # Ignore cleanup errors to avoid masking issues

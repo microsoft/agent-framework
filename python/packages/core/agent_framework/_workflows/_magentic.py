@@ -7,10 +7,10 @@ import logging
 import re
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, Protocol, TypeVar, Union, cast
+from typing import Any, Protocol, TypeVar, Union, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -23,14 +23,25 @@ from agent_framework import (
     FunctionResultContent,
     Role,
 )
-from agent_framework._agents import BaseAgent
 
+from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
+from ._const import EXECUTOR_STATE_KEY
 from ._events import WorkflowEvent
 from ._executor import Executor, handler
+from ._group_chat import (
+    GroupChatBuilder,
+    _GroupChatConfig,  # type: ignore[reportPrivateUsage]
+    _GroupChatParticipantPipeline,  # type: ignore[reportPrivateUsage]
+    _GroupChatRequestMessage,  # type: ignore[reportPrivateUsage]
+    _GroupChatResponseMessage,  # type: ignore[reportPrivateUsage]
+    group_chat_orchestrator,
+)
+from ._message_utils import normalize_messages_input
 from ._model_utils import DictConvertible, encode_value
-from ._request_info_executor import RequestInfoMessage, RequestResponse
-from ._workflow import Workflow, WorkflowBuilder, WorkflowRunResult
+from ._participant_utils import GroupChatParticipantSpec, participant_description
+from ._request_info_mixin import response_handler
+from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
@@ -90,32 +101,20 @@ def _message_from_payload(payload: Any) -> ChatMessage:
 # region Unified callback API (developer-facing)
 
 
-class MagenticCallbackMode(str, Enum):
-    """Controls whether agent deltas are surfaced via on_event.
-
-    STREAMING: emit AgentDeltaEvent chunks and a final AgentMessageEvent.
-    NON_STREAMING: suppress deltas and only emit AgentMessageEvent.
-    """
-
-    STREAMING = "streaming"
-    NON_STREAMING = "non_streaming"
-
-
 @dataclass
-class MagenticOrchestratorMessageEvent:
-    source: Literal["orchestrator"] = "orchestrator"
+class MagenticOrchestratorMessageEvent(WorkflowEvent):
     orchestrator_id: str = ""
     message: ChatMessage | None = None
-    # Kind values include: user_task, task_ledger, instruction, notice
     kind: str = ""
+
+    def __post_init__(self) -> None:
+        super().__init__(data=self.message)
 
 
 @dataclass
-class MagenticAgentDeltaEvent:
-    source: Literal["agent"] = "agent"
+class MagenticAgentDeltaEvent(WorkflowEvent):
     agent_id: str | None = None
     text: str | None = None
-    # Optional: function/tool streaming payloads
     function_call_id: str | None = None
     function_call_name: str | None = None
     function_call_arguments: Any | None = None
@@ -123,18 +122,25 @@ class MagenticAgentDeltaEvent:
     function_result: Any | None = None
     role: Role | None = None
 
+    def __post_init__(self) -> None:
+        super().__init__(data=self.text)
+
 
 @dataclass
-class MagenticAgentMessageEvent:
-    source: Literal["agent"] = "agent"
+class MagenticAgentMessageEvent(WorkflowEvent):
     agent_id: str = ""
     message: ChatMessage | None = None
 
+    def __post_init__(self) -> None:
+        super().__init__(data=self.message)
+
 
 @dataclass
-class MagenticFinalResultEvent:
-    source: Literal["workflow"] = "workflow"
+class MagenticFinalResultEvent(WorkflowEvent):
     message: ChatMessage | None = None
+
+    def __post_init__(self) -> None:
+        super().__init__(data=self.message)
 
 
 MagenticCallbackEvent = Union[
@@ -316,48 +322,71 @@ def _new_participant_descriptions() -> dict[str, str]:
     return {}
 
 
-@dataclass
-class MagenticStartMessage:
-    """A message to start a magentic workflow."""
+def _new_chat_message_list() -> list[ChatMessage]:
+    """Typed default factory for ChatMessage list to satisfy type checkers."""
+    return []
 
-    def __init__(self, task: ChatMessage) -> None:
-        """Create the start message."""
-        self.task = task
+
+@dataclass
+class _MagenticStartMessage(DictConvertible):
+    """Internal: A message to start a magentic workflow."""
+
+    messages: list[ChatMessage] = field(default_factory=_new_chat_message_list)
+
+    def __init__(
+        self,
+        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
+        *,
+        task: ChatMessage | None = None,
+    ) -> None:
+        normalized = normalize_messages_input(messages)
+        if task is not None:
+            normalized += normalize_messages_input(task)
+        if not normalized:
+            raise ValueError("MagenticStartMessage requires at least one message input.")
+        self.messages: list[ChatMessage] = normalized
+
+    @property
+    def task(self) -> ChatMessage:
+        """Final user message for the task."""
+        return self.messages[-1]
 
     @classmethod
-    def from_string(cls, task_text: str) -> "MagenticStartMessage":
-        """Create a MagenticStartMessage from a simple string.
-
-        Args:
-            task_text: The task description as a string.
-
-        Returns:
-            A MagenticStartMessage with the string converted to a ChatMessage.
-        """
-        return cls(task=ChatMessage(role=Role.USER, text=task_text))
+    def from_string(cls, task_text: str) -> "_MagenticStartMessage":
+        """Create a MagenticStartMessage from a simple string."""
+        return cls(task_text)
 
     def to_dict(self) -> dict[str, Any]:
         """Create a dict representation of the message."""
-        return {"task": self.task.to_dict()}
+        return {
+            "messages": [message.to_dict() for message in self.messages],
+            "task": self.task.to_dict(),
+        }
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "MagenticStartMessage":
+    def from_dict(cls, data: dict[str, Any]) -> "_MagenticStartMessage":
         """Create from a dict."""
-        task = ChatMessage.from_dict(value["task"])
-        return cls(task=task)
+        if "messages" in data:
+            raw_messages = data["messages"]
+            if not isinstance(raw_messages, Sequence) or isinstance(raw_messages, (str, bytes)):
+                raise TypeError("MagenticStartMessage 'messages' must be a sequence.")
+            messages: list[ChatMessage] = [ChatMessage.from_dict(raw) for raw in raw_messages]  # type: ignore[arg-type]
+            return cls(messages)
+        if "task" in data:
+            task = ChatMessage.from_dict(data["task"])
+            return cls(task)
+        raise KeyError("Expected 'messages' or 'task' in MagenticStartMessage payload.")
 
 
 @dataclass
-class MagenticRequestMessage:
-    """A request message type for agents in a magentic workflow."""
+class _MagenticRequestMessage(_GroupChatRequestMessage):
+    """Internal: A request message type for agents in a magentic workflow."""
 
-    agent_name: str
-    instruction: str = ""
     task_context: str = ""
 
 
-class MagenticResponseMessage:
-    """A response message type.
+class _MagenticResponseMessage(_GroupChatResponseMessage):
+    """Internal: A response message type.
 
     When emitted by the orchestrator you can mark it as a broadcast to all agents,
     or target a specific agent by name.
@@ -369,6 +398,11 @@ class MagenticResponseMessage:
         target_agent: str | None = None,  # deliver only to this agent if set
         broadcast: bool = False,  # deliver to all agents if True
     ) -> None:
+        agent_name = body.author_name or ""
+        super().__init__(
+            agent_name=agent_name,
+            message=body,
+        )
         self.body = body
         self.target_agent = target_agent
         self.broadcast = broadcast
@@ -378,7 +412,7 @@ class MagenticResponseMessage:
         return {"body": self.body.to_dict(), "target_agent": self.target_agent, "broadcast": self.broadcast}
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "MagenticResponseMessage":
+    def from_dict(cls, value: dict[str, Any]) -> "_MagenticResponseMessage":
         """Create from a dict."""
         body = ChatMessage.from_dict(value["body"])
         target_agent = value.get("target_agent")
@@ -387,11 +421,10 @@ class MagenticResponseMessage:
 
 
 @dataclass
-class MagenticPlanReviewRequest(RequestInfoMessage):
-    """Human-in-the-loop request to review and optionally edit the plan before execution."""
+class _MagenticPlanReviewRequest:
+    """Internal: Human-in-the-loop request to review and optionally edit the plan before execution."""
 
-    # Because RequestInfoMessage defines a default field (request_id),
-    # subclass fields must also have defaults to satisfy dataclass rules.
+    request_id: str = field(default_factory=lambda: str(uuid4()))
     task_text: str = ""
     facts_text: str = ""
     plan_text: str = ""
@@ -404,8 +437,8 @@ class MagenticPlanReviewDecision(str, Enum):
 
 
 @dataclass
-class MagenticPlanReviewReply:
-    """Human reply to a plan review request."""
+class _MagenticPlanReviewReply:
+    """Internal: Human reply to a plan review request."""
 
     decision: MagenticPlanReviewDecision
     edited_plan_text: str | None = None  # if supplied, becomes the new plan text verbatim
@@ -413,8 +446,8 @@ class MagenticPlanReviewReply:
 
 
 @dataclass
-class MagenticTaskLedger(DictConvertible):
-    """Task ledger for the Standard Magentic manager."""
+class _MagenticTaskLedger(DictConvertible):
+    """Internal: Task ledger for the Standard Magentic manager."""
 
     facts: ChatMessage
     plan: ChatMessage
@@ -423,7 +456,7 @@ class MagenticTaskLedger(DictConvertible):
         return {"facts": _message_to_payload(self.facts), "plan": _message_to_payload(self.plan)}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MagenticTaskLedger":
+    def from_dict(cls, data: dict[str, Any]) -> "_MagenticTaskLedger":
         return cls(
             facts=_message_from_payload(data.get("facts")),
             plan=_message_from_payload(data.get("plan")),
@@ -431,8 +464,8 @@ class MagenticTaskLedger(DictConvertible):
 
 
 @dataclass
-class MagenticProgressLedgerItem(DictConvertible):
-    """A progress ledger item."""
+class _MagenticProgressLedgerItem(DictConvertible):
+    """Internal: A progress ledger item."""
 
     reason: str
     answer: str | bool
@@ -441,7 +474,7 @@ class MagenticProgressLedgerItem(DictConvertible):
         return {"reason": self.reason, "answer": self.answer}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MagenticProgressLedgerItem":
+    def from_dict(cls, data: dict[str, Any]) -> "_MagenticProgressLedgerItem":
         answer_value = data.get("answer")
         if not isinstance(answer_value, (str, bool)):
             answer_value = ""  # Default to empty string if not str or bool
@@ -449,14 +482,14 @@ class MagenticProgressLedgerItem(DictConvertible):
 
 
 @dataclass
-class MagenticProgressLedger(DictConvertible):
-    """A progress ledger for tracking workflow progress."""
+class _MagenticProgressLedger(DictConvertible):
+    """Internal: A progress ledger for tracking workflow progress."""
 
-    is_request_satisfied: MagenticProgressLedgerItem
-    is_in_loop: MagenticProgressLedgerItem
-    is_progress_being_made: MagenticProgressLedgerItem
-    next_speaker: MagenticProgressLedgerItem
-    instruction_or_question: MagenticProgressLedgerItem
+    is_request_satisfied: _MagenticProgressLedgerItem
+    is_in_loop: _MagenticProgressLedgerItem
+    is_progress_being_made: _MagenticProgressLedgerItem
+    next_speaker: _MagenticProgressLedgerItem
+    instruction_or_question: _MagenticProgressLedgerItem
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -468,13 +501,13 @@ class MagenticProgressLedger(DictConvertible):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MagenticProgressLedger":
+    def from_dict(cls, data: dict[str, Any]) -> "_MagenticProgressLedger":
         return cls(
-            is_request_satisfied=MagenticProgressLedgerItem.from_dict(data.get("is_request_satisfied", {})),
-            is_in_loop=MagenticProgressLedgerItem.from_dict(data.get("is_in_loop", {})),
-            is_progress_being_made=MagenticProgressLedgerItem.from_dict(data.get("is_progress_being_made", {})),
-            next_speaker=MagenticProgressLedgerItem.from_dict(data.get("next_speaker", {})),
-            instruction_or_question=MagenticProgressLedgerItem.from_dict(data.get("instruction_or_question", {})),
+            is_request_satisfied=_MagenticProgressLedgerItem.from_dict(data.get("is_request_satisfied", {})),
+            is_in_loop=_MagenticProgressLedgerItem.from_dict(data.get("is_in_loop", {})),
+            is_progress_being_made=_MagenticProgressLedgerItem.from_dict(data.get("is_progress_being_made", {})),
+            next_speaker=_MagenticProgressLedgerItem.from_dict(data.get("next_speaker", {})),
+            instruction_or_question=_MagenticProgressLedgerItem.from_dict(data.get("instruction_or_question", {})),
         )
 
 
@@ -631,7 +664,7 @@ class MagenticManagerBase(ABC):
         ...
 
     @abstractmethod
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
         """Create a progress ledger."""
         ...
 
@@ -660,7 +693,7 @@ class StandardMagenticManager(MagenticManagerBase):
     - Final answer synthesis
     """
 
-    task_ledger: MagenticTaskLedger | None
+    task_ledger: _MagenticTaskLedger | None
 
     def snapshot_state(self) -> dict[str, Any]:
         state = super().snapshot_state()
@@ -674,14 +707,14 @@ class StandardMagenticManager(MagenticManagerBase):
         ledger = state.get("task_ledger")
         if ledger is not None:
             try:
-                self.task_ledger = MagenticTaskLedger.from_dict(ledger)
+                self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Failed to restore manager task ledger from checkpoint state")
 
     def __init__(
         self,
         chat_client: ChatClientProtocol,
-        task_ledger: MagenticTaskLedger | None = None,
+        task_ledger: _MagenticTaskLedger | None = None,
         *,
         instructions: str | None = None,
         task_ledger_facts_prompt: str | None = None,
@@ -724,7 +757,7 @@ class StandardMagenticManager(MagenticManagerBase):
 
         self.chat_client: ChatClientProtocol = chat_client
         self.instructions: str | None = instructions
-        self.task_ledger: MagenticTaskLedger | None = task_ledger
+        self.task_ledger: _MagenticTaskLedger | None = task_ledger
 
         # Prompts may be overridden if needed
         self.task_ledger_facts_prompt: str = task_ledger_facts_prompt or ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT
@@ -797,7 +830,7 @@ class StandardMagenticManager(MagenticManagerBase):
         plan_msg = await self._complete([*magentic_context.chat_history, facts_user, facts_msg, plan_user])
 
         # Store ledger and render full combined view
-        self.task_ledger = MagenticTaskLedger(facts=facts_msg, plan=plan_msg)
+        self.task_ledger = _MagenticTaskLedger(facts=facts_msg, plan=plan_msg)
 
         # Also store individual messages in chat_history for better grounding
         # This gives the progress ledger model access to the detailed reasoning
@@ -839,7 +872,7 @@ class StandardMagenticManager(MagenticManagerBase):
         ])
 
         # Store and render
-        self.task_ledger = MagenticTaskLedger(facts=updated_facts, plan=updated_plan)
+        self.task_ledger = _MagenticTaskLedger(facts=updated_facts, plan=updated_plan)
 
         # Also store individual messages in chat_history for better grounding
         # This gives the progress ledger model access to the detailed reasoning
@@ -853,7 +886,7 @@ class StandardMagenticManager(MagenticManagerBase):
         )
         return ChatMessage(role=Role.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
         """Use the model to produce a JSON progress ledger based on the conversation so far.
 
         Adds lightweight retries with backoff for transient parse issues and avoids selecting a
@@ -880,7 +913,7 @@ class StandardMagenticManager(MagenticManagerBase):
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _coerce_model(MagenticProgressLedger, ledger_dict)
+                return _coerce_model(_MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
                 attempts += 1
@@ -913,7 +946,7 @@ class StandardMagenticManager(MagenticManagerBase):
 # region Magentic Executors
 
 
-class MagenticOrchestratorExecutor(Executor):
+class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
     """Magentic orchestrator executor that handles all orchestration logic.
 
     This executor manages the entire Magentic One workflow including:
@@ -937,11 +970,7 @@ class MagenticOrchestratorExecutor(Executor):
         self,
         manager: MagenticManagerBase,
         participants: dict[str, str],
-        result_callback: Callable[[ChatMessage], Awaitable[None]] | None = None,
-        agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None,
-        streaming_agent_response_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None,
         *,
-        message_callback: Callable[[str, ChatMessage, str], Awaitable[None]] | None = None,
         require_plan_signoff: bool = False,
         max_plan_review_rounds: int = 10,
         executor_id: str | None = None,
@@ -951,11 +980,6 @@ class MagenticOrchestratorExecutor(Executor):
         Args:
             manager: The Magentic manager instance.
             participants: A dictionary of participant IDs to their names.
-            result_callback: An optional callback for handling final results.
-            message_callback: An optional generic callback for orchestrator-emitted messages. The third
-                argument is a kind string, e.g., ORCH_MSG_KIND_USER_TASK or ORCH_MSG_KIND_TASK_LEDGER.
-            agent_response_callback: An optional callback for handling agent responses.
-            streaming_agent_response_callback: An optional callback for handling streaming agent responses.
             require_plan_signoff: Whether to require plan sign-off from a human.
             max_plan_review_rounds: The maximum number of plan review rounds.
             executor_id: An optional executor ID.
@@ -963,10 +987,6 @@ class MagenticOrchestratorExecutor(Executor):
         super().__init__(executor_id or f"magentic_orchestrator_{uuid4().hex[:8]}")
         self._manager = manager
         self._participants = participants
-        self._result_callback = result_callback
-        self._message_callback = message_callback
-        self._agent_response_callback = agent_response_callback
-        self._streaming_agent_response_callback = streaming_agent_response_callback
         self._context = None
         self._task_ledger = None
         self._require_plan_signoff = require_plan_signoff
@@ -979,11 +999,52 @@ class MagenticOrchestratorExecutor(Executor):
         # Tracks whether checkpoint state has been applied for this run
         self._state_restored = False
 
+    def _get_author_name(self) -> str:
+        """Get the magentic manager name for orchestrator-generated messages."""
+        return MAGENTIC_MANAGER_NAME
+
     def register_agent_executor(self, name: str, executor: "MagenticAgentExecutor") -> None:
         """Register an agent executor for internal control (no messages)."""
         self._agent_executors[name] = executor
 
+    async def _emit_orchestrator_message(
+        self,
+        ctx: WorkflowContext[Any, ChatMessage],
+        message: ChatMessage,
+        kind: str,
+    ) -> None:
+        """Emit orchestrator message to the workflow event stream.
+
+        Orchestrator messages flow through the unified workflow event stream as
+        MagenticOrchestratorMessageEvent instances. Consumers should subscribe to
+        these events via workflow.run_stream().
+
+        Args:
+            ctx: Workflow context for adding events to the stream
+            message: Orchestrator message to emit (task, plan, instruction, notice)
+            kind: Message classification (user_task, task_ledger, instruction, notice)
+
+        Example:
+            async for event in workflow.run_stream("task"):
+                if isinstance(event, MagenticOrchestratorMessageEvent):
+                    print(f"Orchestrator {event.kind}: {event.message.text}")
+        """
+        event = MagenticOrchestratorMessageEvent(
+            orchestrator_id=self.id,
+            message=message,
+            kind=kind,
+        )
+        await ctx.add_event(event)
+
     def snapshot_state(self) -> dict[str, Any]:
+        """Capture current orchestrator state for checkpointing.
+
+        Uses OrchestrationState for structure but maintains Magentic's complex metadata
+        at the top level for backward compatibility with existing checkpoints.
+
+        Returns:
+            Dict ready for checkpoint persistence
+        """
         state: dict[str, Any] = {
             "plan_review_round": self._plan_review_round,
             "max_plan_review_rounds": self._max_plan_review_rounds,
@@ -1002,6 +1063,22 @@ class MagenticOrchestratorExecutor(Executor):
         return state
 
     def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore orchestrator state from checkpoint.
+
+        Maintains backward compatibility with existing Magentic checkpoints
+        while supporting OrchestrationState structure.
+
+        Args:
+            state: Checkpoint data dict
+        """
+        # Support both old format (direct keys) and new format (wrapped in OrchestrationState)
+        if "metadata" in state and isinstance(state.get("metadata"), dict):
+            # New OrchestrationState format - extract metadata
+            from ._orchestration_state import OrchestrationState
+
+            orch_state = OrchestrationState.from_dict(state)
+            state = orch_state.metadata
+
         ctx_payload = state.get("magentic_context")
         if ctx_payload is not None:
             try:
@@ -1065,13 +1142,35 @@ class MagenticOrchestratorExecutor(Executor):
         for name, description in expected.items():
             restored[name] = description
 
+    def _snapshot_pattern_metadata(self) -> dict[str, Any]:
+        """Serialize pattern-specific state.
+
+        Magentic uses custom snapshot_state() instead of base class hooks.
+        This method exists to satisfy the base class contract.
+
+        Returns:
+            Empty dict (Magentic manages its own state)
+        """
+        return {}
+
+    def _restore_pattern_metadata(self, metadata: dict[str, Any]) -> None:
+        """Restore pattern-specific state.
+
+        Magentic uses custom restore_state() instead of base class hooks.
+        This method exists to satisfy the base class contract.
+
+        Args:
+            metadata: Pattern-specific state dict (ignored)
+        """
+        pass
+
     async def _ensure_state_restored(
         self,
         context: WorkflowContext[Any, Any],
     ) -> None:
         if self._state_restored and self._context is not None:
             return
-        state = await context.get_state()
+        state = await context.get_executor_state()
         if not state:
             self._state_restored = True
             return
@@ -1089,9 +1188,9 @@ class MagenticOrchestratorExecutor(Executor):
     @handler
     async def handle_start_message(
         self,
-        message: MagenticStartMessage,
+        message: _MagenticStartMessage,
         context: WorkflowContext[
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
         ],
     ) -> None:
         """Handle the initial start message to begin orchestration."""
@@ -1103,18 +1202,18 @@ class MagenticOrchestratorExecutor(Executor):
             task=message.task,
             participant_descriptions=self._participants,
         )
+        if message.messages:
+            self._context.chat_history.extend(message.messages)
         self._state_restored = True
         # Non-streaming callback for the orchestrator receipt of the task
-        if self._message_callback:
-            with contextlib.suppress(Exception):
-                await self._message_callback(self.id, message.task, ORCH_MSG_KIND_USER_TASK)
+        await self._emit_orchestrator_message(context, message.task, ORCH_MSG_KIND_USER_TASK)
 
         # Initial planning using the manager with real model calls
         self._task_ledger = await self._manager.plan(self._context.clone(deep=True))
 
         # If a human must sign off, ask now and return. The response handler will resume.
         if self._require_plan_signoff:
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Add task ledger to conversation history
@@ -1122,22 +1221,50 @@ class MagenticOrchestratorExecutor(Executor):
 
         logger.debug("Task ledger created.")
 
-        if self._message_callback:
-            with contextlib.suppress(Exception):
-                await self._message_callback(self.id, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
+        await self._emit_orchestrator_message(context, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
 
         # Start the inner loop
         ctx2 = cast(
-            WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+            WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
             context,
         )
         await self._run_inner_loop(ctx2)
 
     @handler
+    async def handle_task_text(
+        self,
+        task_text: str,
+        context: WorkflowContext[
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+        ],
+    ) -> None:
+        await self.handle_start_message(_MagenticStartMessage.from_string(task_text), context)
+
+    @handler
+    async def handle_task_message(
+        self,
+        task_message: ChatMessage,
+        context: WorkflowContext[
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+        ],
+    ) -> None:
+        await self.handle_start_message(_MagenticStartMessage(task_message), context)
+
+    @handler
+    async def handle_task_messages(
+        self,
+        conversation: list[ChatMessage],
+        context: WorkflowContext[
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+        ],
+    ) -> None:
+        await self.handle_start_message(_MagenticStartMessage(conversation), context)
+
+    @handler
     async def handle_response_message(
         self,
-        message: MagenticResponseMessage,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        message: _MagenticResponseMessage,
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Handle responses from agents."""
         if getattr(self, "_terminated", False):
@@ -1162,13 +1289,14 @@ class MagenticOrchestratorExecutor(Executor):
         # Continue with inner loop
         await self._run_inner_loop(context)
 
-    @handler
+    @response_handler
     async def handle_plan_review_response(
         self,
-        response: RequestResponse[MagenticPlanReviewRequest, MagenticPlanReviewReply],
+        original_request: _MagenticPlanReviewRequest,
+        response: _MagenticPlanReviewReply,
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
         ],
     ) -> None:
         if getattr(self, "_terminated", False):
@@ -1177,26 +1305,21 @@ class MagenticOrchestratorExecutor(Executor):
         if self._context is None:
             return
 
-        human = response.data
-        if human is None:  # type: ignore[unreachable]
-            # Defensive fallback: treat as revise with empty comments
-            human = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="")
-
-        if human.decision == MagenticPlanReviewDecision.APPROVE:
+        if response.decision == MagenticPlanReviewDecision.APPROVE:
             # Close the review loop on approval (no further plan review requests this run)
             self._require_plan_signoff = False
             # If the user supplied an edited plan, adopt it
-            if human.edited_plan_text:
+            if response.edited_plan_text:
                 # Update the manager's internal ledger and rebuild the combined message
                 mgr_ledger = getattr(self._manager, "task_ledger", None)
                 if mgr_ledger is not None:
-                    mgr_ledger.plan.text = human.edited_plan_text
+                    mgr_ledger.plan.text = response.edited_plan_text
                 team_text = _team_block(self._participants)
                 combined = self._manager.task_ledger_full_prompt.format(
                     task=self._context.task.text,
                     team=team_text,
                     facts=(mgr_ledger.facts.text if mgr_ledger else ""),
-                    plan=human.edited_plan_text,
+                    plan=response.edited_plan_text,
                 )
                 self._task_ledger = ChatMessage(
                     role=Role.ASSISTANT,
@@ -1204,10 +1327,10 @@ class MagenticOrchestratorExecutor(Executor):
                     author_name=MAGENTIC_MANAGER_NAME,
                 )
             # If approved with comments but no edited text, apply comments via replan and proceed (no extra review)
-            elif human.comments:
+            elif response.comments:
                 # Record the human feedback for grounding
                 self._context.chat_history.append(
-                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                    ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
                 )
                 # Ask the manager to replan based on comments; proceed immediately
                 self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
@@ -1215,13 +1338,11 @@ class MagenticOrchestratorExecutor(Executor):
             # Record the signed-off plan (no broadcast)
             if self._task_ledger:
                 self._context.chat_history.append(self._task_ledger)
-                if self._message_callback:
-                    with contextlib.suppress(Exception):
-                        await self._message_callback(self.id, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
+                await self._emit_orchestrator_message(context, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
 
             # Enter the normal coordination loop
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -1243,49 +1364,47 @@ class MagenticOrchestratorExecutor(Executor):
                 author_name=MAGENTIC_MANAGER_NAME,
             )
             self._context.chat_history.append(notice)
-            if self._message_callback:
-                with contextlib.suppress(Exception):
-                    await self._message_callback(self.id, notice, ORCH_MSG_KIND_NOTICE)
+            await self._emit_orchestrator_message(context, notice, ORCH_MSG_KIND_NOTICE)
             if self._task_ledger:
                 self._context.chat_history.append(self._task_ledger)
                 # No further review requests; proceed directly into coordination
             ctx2 = cast(
-                WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
                 context,
             )
             await self._run_inner_loop(ctx2)
             return
 
         # If the user provided an edited plan, adopt it directly and ask them to confirm once more
-        if human.edited_plan_text:
+        if response.edited_plan_text:
             mgr_ledger2 = getattr(self._manager, "task_ledger", None)
             if mgr_ledger2 is not None:
-                mgr_ledger2.plan.text = human.edited_plan_text
+                mgr_ledger2.plan.text = response.edited_plan_text
             # Rebuild combined message for preview in the next review request
             team_text = _team_block(self._participants)
             combined = self._manager.task_ledger_full_prompt.format(
                 task=self._context.task.text,
                 team=team_text,
                 facts=(mgr_ledger2.facts.text if mgr_ledger2 else ""),
-                plan=human.edited_plan_text,
+                plan=response.edited_plan_text,
             )
             self._task_ledger = ChatMessage(role=Role.ASSISTANT, text=combined, author_name=MAGENTIC_MANAGER_NAME)
-            await self._send_plan_review_request(context)
+            await self._send_plan_review_request(cast(WorkflowContext, context))
             return
 
         # Else pass comments into the chat history and replan with the manager
-        if human.comments:
+        if response.comments:
             self._context.chat_history.append(
-                ChatMessage(role=Role.USER, text=f"Human plan feedback: {human.comments}")
+                ChatMessage(role=Role.USER, text=f"Human plan feedback: {response.comments}")
             )
 
         # Ask the manager to replan; this only adjusts the plan stage, not a full reset
         self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
-        await self._send_plan_review_request(context)
+        await self._send_plan_review_request(cast(WorkflowContext, context))
 
     async def _run_outer_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the outer orchestration loop - planning phase."""
         if self._context is None:
@@ -1300,16 +1419,15 @@ class MagenticOrchestratorExecutor(Executor):
             self._context.chat_history.append(self._task_ledger)
 
         # Optionally surface the updated task ledger via message callback (no broadcast)
-        if self._task_ledger and self._message_callback:
-            with contextlib.suppress(Exception):
-                await self._message_callback(self.id, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
+        if self._task_ledger is not None:
+            await self._emit_orchestrator_message(context, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
 
         # Start inner loop
         await self._run_inner_loop(context)
 
     async def _run_inner_loop(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run the inner orchestration loop. Coordination phase. Serialized with a lock."""
         if self._context is None or self._task_ledger is None:
@@ -1319,7 +1437,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _run_inner_loop_helper(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Run inner loop with exclusive access."""
         # Narrow optional context for the remainder of this method
@@ -1386,10 +1504,7 @@ class MagenticOrchestratorExecutor(Executor):
             author_name=MAGENTIC_MANAGER_NAME,
         )
         ctx.chat_history.append(instruction_msg)
-        # Surface instruction message to observers
-        if self._message_callback:
-            with contextlib.suppress(Exception):
-                await self._message_callback(self.id, instruction_msg, ORCH_MSG_KIND_INSTRUCTION)
+        await self._emit_orchestrator_message(context, instruction_msg, ORCH_MSG_KIND_INSTRUCTION)
 
         # Determine the selected agent's executor id
         target_executor_id = f"agent_{next_speaker_value}"
@@ -1397,7 +1512,7 @@ class MagenticOrchestratorExecutor(Executor):
         # Request specific agent to respond
         logger.debug("Magentic Orchestrator: Requesting %s to respond", next_speaker_value)
         await context.send_message(
-            MagenticRequestMessage(
+            _MagenticRequestMessage(
                 agent_name=next_speaker_value,
                 instruction=str(instruction),
                 task_context=ctx.task.text,
@@ -1407,7 +1522,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _reset_and_replan(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Reset context and replan."""
         if self._context is None:
@@ -1420,6 +1535,8 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Replan
         self._task_ledger = await self._manager.replan(self._context.clone(deep=True))
+        self._context.chat_history.append(self._task_ledger)
+        await self._emit_orchestrator_message(context, self._task_ledger, ORCH_MSG_KIND_TASK_LEDGER)
 
         # Internally reset all registered agent executors (no handler/messages involved)
         for agent in self._agent_executors.values():
@@ -1431,7 +1548,7 @@ class MagenticOrchestratorExecutor(Executor):
 
     async def _prepare_final_answer(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> None:
         """Prepare the final answer using the manager."""
         if self._context is None:
@@ -1442,13 +1559,11 @@ class MagenticOrchestratorExecutor(Executor):
 
         # Emit a completed event for the workflow
         await context.yield_output(final_answer)
-
-        if self._result_callback:
-            await self._result_callback(final_answer)
+        await context.add_event(MagenticFinalResultEvent(message=final_answer))
 
     async def _check_within_limits_or_complete(
         self,
-        context: WorkflowContext[MagenticResponseMessage | MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
     ) -> bool:
         """Check if orchestrator is within operational limits."""
         if self._context is None:
@@ -1476,20 +1591,13 @@ class MagenticOrchestratorExecutor(Executor):
 
                 # Yield the partial result and signal completion
                 await context.yield_output(partial_result)
-
-                if self._result_callback:
-                    await self._result_callback(partial_result)
+                await context.add_event(MagenticFinalResultEvent(message=partial_result))
             return False
 
         return True
 
-    async def _send_plan_review_request(
-        self,
-        context: WorkflowContext[
-            MagenticResponseMessage | MagenticRequestMessage | MagenticPlanReviewRequest, ChatMessage
-        ],
-    ) -> None:
-        """Emit a PlanReviewRequest via RequestInfoExecutor."""
+    async def _send_plan_review_request(self, context: WorkflowContext) -> None:
+        """Send a PlanReviewRequest."""
         # If plan sign-off is disabled (e.g., ran out of review rounds), do nothing
         if not self._require_plan_signoff:
             return
@@ -1498,19 +1606,22 @@ class MagenticOrchestratorExecutor(Executor):
         plan_text = ledger.plan.text if ledger else ""
         task_text = self._context.task.text if self._context else ""
 
-        req = MagenticPlanReviewRequest(
+        req = _MagenticPlanReviewRequest(
             task_text=task_text,
             facts_text=facts_text,
             plan_text=plan_text,
             round_index=self._plan_review_round,
         )
-        await context.send_message(req)
+        await context.request_info(req, _MagenticPlanReviewReply)
+
+
+# region Magentic Executors
 
 
 class MagenticAgentExecutor(Executor):
     """Magentic agent executor that wraps an agent for participation in workflows.
 
-    This executor handles:
+    Leverages enhanced AgentExecutor with conversation injection hooks for:
     - Receiving task ledger broadcasts
     - Responding to specific agent requests
     - Resetting agent state when needed
@@ -1520,39 +1631,47 @@ class MagenticAgentExecutor(Executor):
         self,
         agent: AgentProtocol | Executor,
         agent_id: str,
-        agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None,
-        streaming_agent_response_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(f"agent_{agent_id}")
         self._agent = agent
         self._agent_id = agent_id
         self._chat_history: list[ChatMessage] = []
-        self._agent_response_callback = agent_response_callback
-        self._streaming_agent_response_callback = streaming_agent_response_callback
         self._state_restored = False
 
     def snapshot_state(self) -> dict[str, Any]:
+        """Capture current executor state for checkpointing.
+
+        Returns:
+            Dict containing serialized chat history
+        """
+        from ._conversation_state import encode_chat_messages
+
         return {
-            "chat_history": [_message_to_payload(msg) for msg in self._chat_history],
+            "chat_history": encode_chat_messages(self._chat_history),
         }
 
     def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore executor state from checkpoint.
+
+        Args:
+            state: Checkpoint data dict
+        """
+        from ._conversation_state import decode_chat_messages
+
         history_payload = state.get("chat_history")
-        if not history_payload:
-            self._chat_history = []
-            return
-        restored: list[ChatMessage] = []
-        for item in history_payload:
+        if history_payload:
             try:
-                restored.append(_message_from_payload(item))
+                self._chat_history = decode_chat_messages(history_payload)
             except Exception as exc:  # pragma: no cover
-                logger.debug("Agent %s: Skipping invalid chat history item during restore: %s", self._agent_id, exc)
-        self._chat_history = restored
+                logger.warning("Agent %s: Failed to restore chat history: %s", self._agent_id, exc)
+                self._chat_history = []
+        else:
+            self._chat_history = []
 
     async def _ensure_state_restored(self, context: WorkflowContext[Any, Any]) -> None:
         if self._state_restored and self._chat_history:
             return
-        state = await context.get_state()
+        state = await context.get_executor_state()
         if not state:
             self._state_restored = True
             return
@@ -1569,7 +1688,7 @@ class MagenticAgentExecutor(Executor):
 
     @handler
     async def handle_response_message(
-        self, message: MagenticResponseMessage, context: WorkflowContext[MagenticResponseMessage]
+        self, message: _MagenticResponseMessage, context: WorkflowContext[_MagenticResponseMessage]
     ) -> None:
         """Handle response message (task ledger broadcast)."""
         logger.debug("Agent %s: Received response message", self._agent_id)
@@ -1608,7 +1727,7 @@ class MagenticAgentExecutor(Executor):
 
     @handler
     async def handle_request_message(
-        self, message: MagenticRequestMessage, context: WorkflowContext[MagenticResponseMessage]
+        self, message: _MagenticRequestMessage, context: WorkflowContext[_MagenticResponseMessage, AgentRunResponse]
     ) -> None:
         """Handle request to respond."""
         if message.agent_name != self._agent_id:
@@ -1639,13 +1758,15 @@ class MagenticAgentExecutor(Executor):
                     text=f"{self._agent_id} is a workflow executor and cannot be invoked directly.",
                     author_name=self._agent_id,
                 )
+                self._chat_history.append(response)
+                await self._emit_agent_message_event(context, response)
             else:
                 # Invoke the agent
-                response = await self._invoke_agent()
-            self._chat_history.append(response)
+                response = await self._invoke_agent(context)
+                self._chat_history.append(response)
 
             # Send response back to orchestrator
-            await context.send_message(MagenticResponseMessage(body=response))
+            await context.send_message(_MagenticResponseMessage(body=response))
 
         except Exception as e:
             logger.warning("Agent %s invoke failed: %s", self._agent_id, e)
@@ -1655,7 +1776,8 @@ class MagenticAgentExecutor(Executor):
                 text=f"Agent {self._agent_id}: Error processing request - {str(e)[:100]}",
             )
             self._chat_history.append(response)
-            await context.send_message(MagenticResponseMessage(body=response))
+            await self._emit_agent_message_event(context, response)
+            await context.send_message(_MagenticResponseMessage(body=response))
 
     def reset(self) -> None:
         """Reset the internal chat history of the agent (internal operation)."""
@@ -1663,7 +1785,55 @@ class MagenticAgentExecutor(Executor):
         self._chat_history.clear()
         self._state_restored = True
 
-    async def _invoke_agent(self) -> ChatMessage:
+    async def _emit_agent_delta_event(
+        self,
+        ctx: WorkflowContext[Any, Any],
+        update: AgentRunResponseUpdate,
+    ) -> None:
+        contents = list(getattr(update, "contents", []) or [])
+        chunk = getattr(update, "text", None)
+        if not chunk:
+            chunk = "".join(getattr(item, "text", "") for item in contents if hasattr(item, "text"))
+        if chunk:
+            await ctx.add_event(
+                MagenticAgentDeltaEvent(
+                    agent_id=self._agent_id,
+                    text=chunk or None,
+                    role=getattr(update, "role", None),
+                )
+            )
+        for item in contents:
+            if isinstance(item, FunctionCallContent):
+                await ctx.add_event(
+                    MagenticAgentDeltaEvent(
+                        agent_id=self._agent_id,
+                        function_call_id=getattr(item, "call_id", None),
+                        function_call_name=getattr(item, "name", None),
+                        function_call_arguments=getattr(item, "arguments", None),
+                        role=getattr(update, "role", None),
+                    )
+                )
+            elif isinstance(item, FunctionResultContent):
+                await ctx.add_event(
+                    MagenticAgentDeltaEvent(
+                        agent_id=self._agent_id,
+                        function_result_id=getattr(item, "call_id", None),
+                        function_result=getattr(item, "result", None),
+                        role=getattr(update, "role", None),
+                    )
+                )
+
+    async def _emit_agent_message_event(
+        self,
+        ctx: WorkflowContext[Any, Any],
+        message: ChatMessage,
+    ) -> None:
+        await ctx.add_event(MagenticAgentMessageEvent(agent_id=self._agent_id, message=message))
+
+    async def _invoke_agent(
+        self,
+        ctx: WorkflowContext[_MagenticResponseMessage, AgentRunResponse],
+    ) -> ChatMessage:
         """Invoke the wrapped agent and return a response."""
         logger.debug(f"Agent {self._agent_id}: Running with {len(self._chat_history)} messages")
 
@@ -1672,20 +1842,10 @@ class MagenticAgentExecutor(Executor):
         agent = cast("AgentProtocol", self._agent)
         async for update in agent.run_stream(messages=self._chat_history):  # type: ignore[attr-defined]
             updates.append(update)
-            if self._streaming_agent_response_callback is not None:
-                with contextlib.suppress(Exception):
-                    await self._streaming_agent_response_callback(
-                        self._agent_id,
-                        update,
-                        False,
-                    )
+            await self._emit_agent_delta_event(ctx, update)
 
         run_result: AgentRunResponse = AgentRunResponse.from_agent_run_response_updates(updates)
 
-        # mark final using last update if available
-        if updates and self._streaming_agent_response_callback is not None:
-            with contextlib.suppress(Exception):
-                await self._streaming_agent_response_callback(self._agent_id, updates[-1], True)
         messages: list[ChatMessage] | None = None
         with contextlib.suppress(Exception):
             messages = list(run_result.messages)  # type: ignore[assignment]
@@ -1695,9 +1855,7 @@ class MagenticAgentExecutor(Executor):
             role: Role = last.role if last.role else Role.ASSISTANT
             text = last.text or str(last)
             msg = ChatMessage(role=role, text=text, author_name=author)
-            if self._agent_response_callback is not None:
-                with contextlib.suppress(Exception):
-                    await self._agent_response_callback(self._agent_id, msg)
+            await self._emit_agent_message_event(ctx, msg)
             return msg
 
         msg = ChatMessage(
@@ -1705,9 +1863,7 @@ class MagenticAgentExecutor(Executor):
             text=f"Agent {self._agent_id}: No output produced",
             author_name=self._agent_id,
         )
-        if self._agent_response_callback is not None:
-            with contextlib.suppress(Exception):
-                await self._agent_response_callback(self._agent_id, msg)
+        await self._emit_agent_message_event(ctx, msg)
         return msg
 
 
@@ -1717,35 +1873,194 @@ class MagenticAgentExecutor(Executor):
 
 
 class MagenticBuilder:
-    """High-level builder for creating Magentic One workflows."""
+    """Fluent builder for creating Magentic One multi-agent orchestration workflows.
+
+    Magentic One workflows use an LLM-powered manager to coordinate multiple agents through
+    dynamic task planning, progress tracking, and adaptive replanning. The manager creates
+    plans, selects agents, monitors progress, and determines when to replan or complete.
+
+    The builder provides a fluent API for configuring participants, the manager, optional
+    plan review, checkpointing, and event callbacks.
+
+    Usage:
+
+    .. code-block:: python
+
+        from agent_framework import MagenticBuilder, StandardMagenticManager
+        from azure.ai.projects.aio import AIProjectClient
+
+        # Create manager with LLM client
+        project_client = AIProjectClient.from_connection_string(...)
+        chat_client = project_client.inference.get_chat_completions_client()
+
+        # Build Magentic workflow with agents
+        workflow = (
+            MagenticBuilder()
+            .participants(researcher=research_agent, writer=writing_agent, coder=coding_agent)
+            .with_standard_manager(chat_client=chat_client, max_round_count=20, max_stall_count=3)
+            .with_plan_review(enable=True)
+            .with_checkpointing(checkpoint_storage)
+            .build()
+        )
+
+        # Execute workflow
+        async for message in workflow.run("Research and write article about AI agents"):
+            print(message.text)
+
+    With custom manager:
+
+    .. code-block:: python
+
+        # Create custom manager subclass
+        class MyCustomManager(MagenticManagerBase):
+            async def plan(self, context: MagenticContext) -> ChatMessage:
+                # Custom planning logic
+                ...
+
+
+        manager = MyCustomManager()
+        workflow = MagenticBuilder().participants(agent1=agent1, agent2=agent2).with_standard_manager(manager).build()
+
+    See Also:
+        - :class:`MagenticManagerBase`: Base class for custom managers
+        - :class:`StandardMagenticManager`: Default LLM-powered manager
+        - :class:`MagenticContext`: Context object passed to manager methods
+        - :class:`MagenticEvent`: Base class for workflow events
+    """
 
     def __init__(self) -> None:
         self._participants: dict[str, AgentProtocol | Executor] = {}
         self._manager: MagenticManagerBase | None = None
-        self._exception_callback: Callable[[Exception], None] | None = None
-        self._result_callback: Callable[[ChatMessage], Awaitable[None]] | None = None
-        # Orchestrator-emitted message callback: (orchestrator_id, message, kind)
-        self._message_callback: Callable[[str, ChatMessage, str], Awaitable[None]] | None = None
-        self._agent_response_callback: Callable[[str, ChatMessage], Awaitable[None]] | None = None
-        self._agent_streaming_callback: Callable[[str, AgentRunResponseUpdate, bool], Awaitable[None]] | None = None
         self._enable_plan_review: bool = False
-        # Unified callback wiring
-        self._unified_callback: CallbackSink | None = None
-        self._callback_mode: MagenticCallbackMode | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
 
     def participants(self, **participants: AgentProtocol | Executor) -> Self:
-        """Add participants (agents) to the workflow."""
+        """Add participant agents or executors to the Magentic workflow.
+
+        Participants are the agents that will execute tasks under the manager's direction.
+        Each participant should have distinct capabilities that complement the team. The
+        manager will select which participant to invoke based on the current plan and
+        progress state.
+
+        Args:
+            **participants: Named agents or executors to add to the workflow. Names should
+                be descriptive of the agent's role (e.g., researcher=research_agent).
+                Accepts BaseAgent instances or custom Executor implementations.
+
+        Returns:
+            Self for method chaining
+
+        Usage:
+
+        .. code-block:: python
+
+            workflow = (
+                MagenticBuilder()
+                .participants(
+                    researcher=research_agent, writer=writing_agent, coder=coding_agent, reviewer=review_agent
+                )
+                .with_standard_manager(chat_client=client)
+                .build()
+            )
+
+        Notes:
+            - Participant names become part of the manager's context for selection
+            - Agent descriptions (if available) are extracted and provided to the manager
+            - Can be called multiple times to add participants incrementally
+        """
         self._participants.update(participants)
         return self
 
     def with_plan_review(self, enable: bool = True) -> "MagenticBuilder":
-        """Require human sign-off on the plan before coordination begins."""
+        """Enable or disable human-in-the-loop plan review before task execution.
+
+        When enabled, the workflow will pause after the manager generates the initial
+        plan and emit a _MagenticPlanReviewRequest event. A human reviewer can then
+        approve, request revisions, or reject the plan. The workflow continues only
+        after approval.
+
+        This is useful for:
+        - High-stakes tasks requiring human oversight
+        - Validating the manager's understanding of requirements
+        - Catching hallucinations or unrealistic plans early
+        - Educational scenarios where learners review AI planning
+
+        Args:
+            enable: Whether to require plan review (default True)
+
+        Returns:
+            Self for method chaining
+
+        Usage:
+
+        .. code-block:: python
+
+            workflow = (
+                MagenticBuilder()
+                .participants(agent1=agent1)
+                .with_standard_manager(chat_client=client)
+                .with_plan_review(enable=True)
+                .build()
+            )
+
+            # During execution, handle plan review
+            async for event in workflow.run_stream("task"):
+                if isinstance(event, _MagenticPlanReviewRequest):
+                    # Review plan and respond
+                    reply = _MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+                    await workflow.send(reply)
+
+        See Also:
+            - :class:`_MagenticPlanReviewRequest`: Event emitted for review
+            - :class:`_MagenticPlanReviewReply`: Response to send back
+            - :class:`MagenticPlanReviewDecision`: Approve/Revise/Reject options
+        """
         self._enable_plan_review = enable
         return self
 
     def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "MagenticBuilder":
-        """Persist workflow state using the provided checkpoint storage."""
+        """Enable workflow state persistence using the provided checkpoint storage.
+
+        Checkpointing allows workflows to be paused, resumed across process restarts,
+        or recovered after failures. The entire workflow state including conversation
+        history, task ledgers, and progress is persisted at key points.
+
+        Args:
+            checkpoint_storage: Storage backend for checkpoints (e.g., InMemoryCheckpointStorage,
+                FileCheckpointStorage, or custom implementations)
+
+        Returns:
+            Self for method chaining
+
+        Usage:
+
+        .. code-block:: python
+
+            from agent_framework import InMemoryCheckpointStorage
+
+            storage = InMemoryCheckpointStorage()
+            workflow = (
+                MagenticBuilder()
+                .participants(agent1=agent1)
+                .with_standard_manager(chat_client=client)
+                .with_checkpointing(storage)
+                .build()
+            )
+
+            # First run
+            thread_id = "task-123"
+            async for msg in workflow.run("task", thread_id=thread_id):
+                print(msg.text)
+
+            # Resume from checkpoint
+            async for msg in workflow.run("continue", thread_id=thread_id):
+                print(msg.text)
+
+        Notes:
+            - Checkpoints are created after each significant state transition
+            - Thread ID must be consistent across runs to resume properly
+            - Storage implementations may have different persistence guarantees
+        """
         self._checkpoint_storage = checkpoint_storage
         return self
 
@@ -1755,7 +2070,7 @@ class MagenticBuilder:
         *,
         # Constructor args for StandardMagenticManager when manager is not provided
         chat_client: ChatClientProtocol | None = None,
-        task_ledger: MagenticTaskLedger | None = None,
+        task_ledger: _MagenticTaskLedger | None = None,
         instructions: str | None = None,
         # Prompt overrides
         task_ledger_facts_prompt: str | None = None,
@@ -1770,18 +2085,106 @@ class MagenticBuilder:
         max_reset_count: int | None = None,
         max_round_count: int | None = None,
     ) -> Self:
-        """Configure the Magentic manager.
+        """Configure the workflow manager for task planning and agent coordination.
 
-        Usage patterns:
-        - Provide an existing manager instance (recommended for custom or preconfigured managers):
-            builder.with_standard_manager(my_manager)
-        - Or pass explicit kwargs to construct a StandardMagenticManager for you:
-            builder.with_standard_manager(chat_client=my_client, max_round_count=10, max_stall_count=3)
+        The manager is responsible for creating plans, selecting agents, tracking progress,
+        and deciding when to replan or complete. This method supports two usage patterns:
+
+        1. **Provide existing manager**: Pass a pre-configured manager instance (custom
+           or standard) for full control over behavior
+        2. **Auto-create standard manager**: Pass chat_client and options to automatically
+           create a StandardMagenticManager with specified configuration
+
+        Args:
+            manager: Pre-configured manager instance (StandardMagenticManager or custom
+                MagenticManagerBase subclass). If provided, all other arguments are ignored.
+            chat_client: LLM chat client for generating plans and decisions. Required if
+                manager is not provided.
+            task_ledger: Optional custom task ledger implementation for specialized
+                prompting or structured output requirements
+            instructions: System instructions prepended to all manager prompts to guide
+                behavior and set expectations
+            task_ledger_facts_prompt: Custom prompt template for extracting facts from
+                task description
+            task_ledger_plan_prompt: Custom prompt template for generating initial plan
+            task_ledger_full_prompt: Custom prompt template for complete task ledger
+                (facts + plan combined)
+            task_ledger_facts_update_prompt: Custom prompt template for updating facts
+                based on agent progress
+            task_ledger_plan_update_prompt: Custom prompt template for replanning when
+                needed
+            progress_ledger_prompt: Custom prompt template for assessing progress and
+                determining next actions
+            final_answer_prompt: Custom prompt template for synthesizing final response
+                when task is complete
+            max_stall_count: Maximum consecutive rounds without progress before triggering
+                replan (default 3). Set to 0 to disable stall detection.
+            max_reset_count: Maximum number of complete resets allowed before failing.
+                None means unlimited resets.
+            max_round_count: Maximum total coordination rounds before stopping with
+                partial result. None means unlimited rounds.
+
+        Returns:
+            Self for method chaining
+
+        Raises:
+            ValueError: If manager is None and chat_client is also None
+
+        Usage with auto-created manager:
+
+        .. code-block:: python
+
+            from azure.ai.projects.aio import AIProjectClient
+
+            project_client = AIProjectClient.from_connection_string(...)
+            chat_client = project_client.inference.get_chat_completions_client()
+
+            workflow = (
+                MagenticBuilder()
+                .participants(agent1=agent1, agent2=agent2)
+                .with_standard_manager(
+                    chat_client=chat_client,
+                    max_round_count=20,
+                    max_stall_count=3,
+                    instructions="Be concise and focus on accuracy",
+                )
+                .build()
+            )
+
+        Usage with custom manager:
+
+        .. code-block:: python
+
+            class MyManager(MagenticManagerBase):
+                async def plan(self, context: MagenticContext) -> ChatMessage:
+                    # Custom planning logic
+                    return ChatMessage(role=Role.ASSISTANT, text="...")
+
+
+            manager = MyManager()
+            workflow = MagenticBuilder().participants(agent1=agent1).with_standard_manager(manager).build()
+
+        Usage with prompt customization:
+
+        .. code-block:: python
+
+            workflow = (
+                MagenticBuilder()
+                .participants(coder=coder_agent, reviewer=reviewer_agent)
+                .with_standard_manager(
+                    chat_client=chat_client,
+                    task_ledger_plan_prompt="Create a detailed step-by-step plan...",
+                    progress_ledger_prompt="Assess progress and decide next action...",
+                    max_stall_count=2,
+                )
+                .build()
+            )
 
         Notes:
-        - If ``manager`` is provided, it is used as-is (can be a StandardMagenticManager or any MagenticManagerBase).
-        - If not provided, ``chat_client`` is required and a new StandardMagenticManager will be created
-          with the provided options.
+            - StandardMagenticManager uses structured LLM calls for all decisions
+            - Custom managers can implement alternative selection strategies
+            - Prompt templates support Jinja2-style variable substitution
+            - Stall detection helps prevent infinite loops in stuck scenarios
         """
         if manager is not None:
             self._manager = manager
@@ -1809,29 +2212,7 @@ class MagenticBuilder:
         )
         return self
 
-    def on_exception(self, callback: Callable[[Exception], None]) -> Self:
-        """Set the exception callback."""
-        self._exception_callback = callback
-        return self
-
-    def on_result(self, callback: Callable[[ChatMessage], Awaitable[None]]) -> Self:
-        """Set the result callback."""
-        self._result_callback = callback
-        return self
-
-    def on_event(
-        self, callback: CallbackSink, *, mode: MagenticCallbackMode = MagenticCallbackMode.NON_STREAMING
-    ) -> Self:
-        """Register a single sink for all workflow, orchestrator, and agent events.
-
-        mode=STREAMING yields AgentDeltaEvent plus AgentMessageEvent at the end.
-        mode=NON_STREAMING only yields AgentMessageEvent at the end (no deltas).
-        """
-        self._unified_callback = callback
-        self._callback_mode = mode
-        return self
-
-    def build(self) -> "MagenticWorkflow":
+    def build(self) -> Workflow:
         """Build a Magentic workflow with the orchestrator and all agent executors."""
         if not self._participants:
             raise ValueError("No participants added to Magentic workflow")
@@ -1844,150 +2225,43 @@ class MagenticBuilder:
         # Create participant descriptions
         participant_descriptions: dict[str, str] = {}
         for name, participant in self._participants.items():
-            if isinstance(participant, BaseAgent):
-                description = getattr(participant, "description", None) or f"Agent {name}"
-            else:
-                description = f"Executor {name}"
-            participant_descriptions[name] = description
+            fallback = f"Executor {name}" if isinstance(participant, Executor) else f"Agent {name}"
+            participant_descriptions[name] = participant_description(participant, fallback)
 
-        # If unified sink is provided, map it to legacy callback surfaces
-        unified = self._unified_callback
-        mode = self._callback_mode
+        # Type narrowing: we already checked self._manager is not None above
+        manager: MagenticManagerBase = self._manager  # type: ignore[assignment]
 
-        if unified is not None:
-            prior_result = self._result_callback
-
-            async def _on_result(msg: ChatMessage) -> None:
-                with contextlib.suppress(Exception):
-                    await unified(MagenticFinalResultEvent(message=msg))
-                if prior_result is not None:
-                    with contextlib.suppress(Exception):
-                        await prior_result(msg)
-
-            async def _on_orch(orch_id: str, msg: ChatMessage, kind: str) -> None:
-                with contextlib.suppress(Exception):
-                    await unified(MagenticOrchestratorMessageEvent(orchestrator_id=orch_id, message=msg, kind=kind))
-
-            async def _on_agent_final(agent_id: str, message: ChatMessage) -> None:
-                with contextlib.suppress(Exception):
-                    await unified(MagenticAgentMessageEvent(agent_id=agent_id, message=message))
-
-            async def _on_agent_delta(agent_id: str, update: AgentRunResponseUpdate, is_final: bool) -> None:
-                if mode == MagenticCallbackMode.STREAMING:
-                    # TODO(evmattso): Make sure we surface other non-text streaming items
-                    # (or per-type events) and plumb through consumers.
-                    chunk: str | None = getattr(update, "text", None)
-                    if not chunk:
-                        with contextlib.suppress(Exception):
-                            contents = getattr(update, "contents", []) or []
-                            chunk = "".join(getattr(c, "text", "") for c in contents) or None
-                    if chunk:
-                        with contextlib.suppress(Exception):
-                            await unified(
-                                MagenticAgentDeltaEvent(
-                                    agent_id=agent_id,
-                                    text=chunk,
-                                    role=getattr(update, "role", None),
-                                )
-                            )
-                    # Emit function call/result items if present on the update
-                    with contextlib.suppress(Exception):
-                        content_items = getattr(update, "contents", []) or []
-                        for item in content_items:
-                            if isinstance(item, FunctionCallContent):
-                                await unified(
-                                    MagenticAgentDeltaEvent(
-                                        agent_id=agent_id,
-                                        function_call_id=getattr(item, "call_id", None),
-                                        function_call_name=getattr(item, "name", None),
-                                        function_call_arguments=getattr(item, "arguments", None),
-                                        role=getattr(update, "role", None),
-                                    )
-                                )
-                            elif isinstance(item, FunctionResultContent):
-                                await unified(
-                                    MagenticAgentDeltaEvent(
-                                        agent_id=agent_id,
-                                        function_result_id=getattr(item, "call_id", None),
-                                        function_result=getattr(item, "result", None),
-                                        role=getattr(update, "role", None),
-                                    )
-                                )
-                # final aggregation handled by _on_agent_final via agent_response_callback
-
-            # Override delegates for orchestrator and agent callbacks
-            self._result_callback = _on_result
-            self._message_callback = _on_orch
-            self._agent_response_callback = _on_agent_final
-            self._agent_streaming_callback = _on_agent_delta if mode == MagenticCallbackMode.STREAMING else None
-
-        # Create orchestrator executor
-        orchestrator_executor = MagenticOrchestratorExecutor(
-            manager=self._manager,
-            participants=participant_descriptions,
-            result_callback=self._result_callback,
-            message_callback=self._message_callback,
-            agent_response_callback=self._agent_response_callback,
-            streaming_agent_response_callback=self._agent_streaming_callback,
-            require_plan_signoff=self._enable_plan_review,
-            executor_id="magentic_orchestrator",
-        )
-
-        # Create workflow builder and set orchestrator as start
-        workflow_builder = WorkflowBuilder().set_start_executor(orchestrator_executor)
-
-        if self._enable_plan_review:
-            from ._request_info_executor import RequestInfoExecutor
-
-            request_info = RequestInfoExecutor(id="magentic_plan_review")
-            workflow_builder = (
-                workflow_builder
-                # Only route plan review asks to request_info
-                .add_edge(
-                    orchestrator_executor,
-                    request_info,
-                    condition=lambda msg: isinstance(msg, MagenticPlanReviewRequest),
-                ).add_edge(request_info, orchestrator_executor)
+        def _orchestrator_factory(wiring: _GroupChatConfig) -> Executor:
+            return MagenticOrchestratorExecutor(
+                manager=manager,
+                participants=participant_descriptions,
+                require_plan_signoff=self._enable_plan_review,
+                executor_id="magentic_orchestrator",
             )
 
-        def _route_to_agent(msg: object, *, agent_name: str) -> bool:
-            """Route only messages meant for this agent.
-
-            - MagenticRequestMessage -> only to the named agent
-            - MagenticResponseMessage -> broadcast=True to all, or target_agent==agent_name
-            Everything else (e.g., RequestInfoMessage) -> do not route to agents.
-            """
-            if isinstance(msg, MagenticRequestMessage):
-                return msg.agent_name == agent_name
-            if isinstance(msg, MagenticResponseMessage):
-                return bool(getattr(msg, "broadcast", False)) or getattr(msg, "target_agent", None) == agent_name
-            return False
-
-        # Add agent executors and connect them
-        for name, participant in self._participants.items():
+        def _participant_factory(
+            spec: GroupChatParticipantSpec,
+            wiring: _GroupChatConfig,
+        ) -> _GroupChatParticipantPipeline:
             agent_executor = MagenticAgentExecutor(
-                participant,
-                name,
-                agent_response_callback=self._agent_response_callback,
-                streaming_agent_response_callback=self._agent_streaming_callback,
+                spec.participant,
+                spec.name,
             )
-            # Register for internal control (e.g., reset)
-            orchestrator_executor.register_agent_executor(name, agent_executor)
+            orchestrator = wiring.orchestrator
+            if isinstance(orchestrator, MagenticOrchestratorExecutor):
+                orchestrator.register_agent_executor(spec.name, agent_executor)
+            return (agent_executor,)
 
-            # Add bidirectional edges between orchestrator and agent
-            def _cond(msg: object, _an: str = name) -> bool:
-                return _route_to_agent(msg, agent_name=_an)
-
-            workflow_builder = workflow_builder.add_edge(
-                orchestrator_executor,
-                agent_executor,
-                condition=_cond,
-            ).add_edge(agent_executor, orchestrator_executor)
+        # Magentic provides its own orchestrator via custom factory, so no manager is needed
+        group_builder = GroupChatBuilder(
+            _orchestrator_factory=group_chat_orchestrator(_orchestrator_factory),
+            _participant_factory=_participant_factory,
+        ).participants(self._participants)
 
         if self._checkpoint_storage is not None:
-            workflow_builder = workflow_builder.with_checkpointing(self._checkpoint_storage)
+            group_builder = group_builder.with_checkpointing(self._checkpoint_storage)
 
-        return MagenticWorkflow(workflow_builder.build())
+        return group_builder.build()
 
     def start_with_string(self, task: str) -> "MagenticWorkflow":
         """Build a Magentic workflow and return a wrapper with convenience methods for string tasks.
@@ -1998,7 +2272,7 @@ class MagenticBuilder:
         Returns:
             A MagenticWorkflow wrapper that provides convenience methods for starting with strings.
         """
-        return MagenticWorkflow(self.build().workflow, task)
+        return MagenticWorkflow(self.build(), task)
 
     def start_with_message(self, task: ChatMessage) -> "MagenticWorkflow":
         """Build a Magentic workflow and return a wrapper with convenience methods for ChatMessage tasks.
@@ -2009,7 +2283,7 @@ class MagenticBuilder:
         Returns:
             A MagenticWorkflow wrapper that provides convenience methods.
         """
-        return MagenticWorkflow(self.build().workflow, task.text)
+        return MagenticWorkflow(self.build(), task.text)
 
     def start_with(self, task: str | ChatMessage) -> "MagenticWorkflow":
         """Build a Magentic workflow and return a wrapper with convenience methods.
@@ -2052,7 +2326,7 @@ class MagenticWorkflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        start_message = MagenticStartMessage.from_string(task_text)
+        start_message = _MagenticStartMessage.from_string(task_text)
         async for event in self._workflow.run_stream(start_message):
             yield event
 
@@ -2065,7 +2339,7 @@ class MagenticWorkflow:
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        start_message = MagenticStartMessage(task=task_message)
+        start_message = _MagenticStartMessage(task_message)
         async for event in self._workflow.run_stream(start_message):
             yield event
 
@@ -2082,11 +2356,11 @@ class MagenticWorkflow:
         if message is None:
             if self._task_text is None:
                 raise ValueError("No message provided and no preset task text available")
-            message = MagenticStartMessage.from_string(self._task_text)
+            message = _MagenticStartMessage.from_string(self._task_text)
         elif isinstance(message, str):
-            message = MagenticStartMessage.from_string(message)
-        elif isinstance(message, ChatMessage):
-            message = MagenticStartMessage(task=message)
+            message = _MagenticStartMessage.from_string(message)
+        elif isinstance(message, (ChatMessage, list)):
+            message = _MagenticStartMessage(message)  # type: ignore[arg-type]
 
         async for event in self._workflow.run_stream(message):
             yield event
@@ -2135,7 +2409,7 @@ class MagenticWorkflow:
             return
 
         # At this point, checkpoint is guaranteed to be WorkflowCheckpoint
-        executor_states = checkpoint.executor_states
+        executor_states: dict[str, Any] = checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {})
         orchestrator_id = getattr(orchestrator, "id", "")
         orchestrator_state = executor_states.get(orchestrator_id)
         if orchestrator_state is None:
@@ -2167,17 +2441,6 @@ class MagenticWorkflow:
             "Ensure MagenticBuilder.participants keys remain stable across runs. "
             f"Missing names: {missing}; unexpected names: {unexpected}."
         )
-
-    async def run_stream_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
-    ) -> AsyncIterable[WorkflowEvent]:
-        """Resume orchestration from a checkpoint and stream resulting events."""
-        await self._validate_checkpoint_participants(checkpoint_id, checkpoint_storage)
-        async for event in self._workflow.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
-            yield event
 
     async def run_with_string(self, task_text: str) -> WorkflowRunResult:
         """Run the workflow with a task string and return all events.
@@ -2222,36 +2485,13 @@ class MagenticWorkflow:
             events.append(event)
         return WorkflowRunResult(events)
 
-    async def run_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
-    ) -> WorkflowRunResult:
-        """Resume orchestration from a checkpoint and collect all resulting events."""
-        events: list[WorkflowEvent] = []
-        async for event in self.run_stream_from_checkpoint(checkpoint_id, checkpoint_storage, responses):
-            events.append(event)
-        return WorkflowRunResult(events)
-
-    async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
-        """Forward responses to pending requests and stream resulting events.
-
-        This delegates to the underlying Workflow implementation.
-        """
-        async for event in self._workflow.send_responses_streaming(responses):
-            yield event
-
-    async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
-        """Forward responses to pending requests and return all resulting events.
-
-        This delegates to the underlying Workflow implementation.
-        """
-        return await self._workflow.send_responses(responses)
-
     def __getattr__(self, name: str) -> Any:
         """Delegate unknown attributes to the underlying workflow."""
         return getattr(self._workflow, name)
 
 
 # endregion Magentic Workflow
+
+# Public aliases for types needed by users implementing custom plan review handlers
+MagenticPlanReviewRequest = _MagenticPlanReviewRequest
+MagenticPlanReviewReply = _MagenticPlanReviewReply

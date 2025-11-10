@@ -1,0 +1,50 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Frontend paths - pointing to the Python package's frontend -->
+    <FrontendRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..\python\packages\devui\frontend'))</FrontendRoot>
+    <FrontendBuildOutput>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..\python\packages\devui\agent_framework_devui\ui'))</FrontendBuildOutput>
+    <FrontendPackageJson>$(FrontendRoot)\package.json</FrontendPackageJson>
+    <FrontendNodeModules>$(FrontendRoot)\node_modules</FrontendNodeModules>
+  </PropertyGroup>
+
+  <!-- Collect frontend source files for incremental build tracking -->
+  <ItemGroup>
+    <FrontendSourceFiles Include="$(FrontendRoot)\src\**\*" />
+    <FrontendSourceFiles Include="$(FrontendPackageJson);$(FrontendRoot)\vite.config.ts;$(FrontendRoot)\tsconfig.json;$(FrontendRoot)\index.html" />
+  </ItemGroup>
+
+  <!-- Define the required frontend assets -->
+  <ItemGroup>
+    <FrontendAsset Include="$(FrontendBuildOutput)\index.html" />
+    <FrontendAsset Include="$(FrontendBuildOutput)\assets\index.js" />
+    <FrontendAsset Include="$(FrontendBuildOutput)\assets\index.css" />
+    <FrontendAsset Include="$(FrontendBuildOutput)\agentframework.svg" />
+  </ItemGroup>
+
+  <!-- Statically include frontend assets as embedded resources for VS to show them -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(FrontendBuildOutput)\**\*" Condition="Exists('$(FrontendBuildOutput)')">
+      <Link>resources\$([MSBuild]::MakeRelative('$(FrontendBuildOutput)', '%(Identity)'))</Link>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- Verify required frontend assets are present -->
+  <Target Name="ValidateFrontendAssets" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <MissingAsset Include="@(FrontendAsset)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    
+    <Error Condition="'@(MissingAsset)' != ''" Text="Required frontend assets are missing: @(MissingAsset, ', '). Frontend build may have failed." />
+  </Target>
+
+  <!-- Verify assets are present before packing -->
+  <Target Name="ValidateFrontendAssetsBeforePack" BeforeTargets="GenerateNuspec">
+    <ItemGroup>
+      <MissingPackageAsset Include="@(FrontendAsset)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    
+    <Error Condition="'@(MissingPackageAsset)' != ''" Text="Cannot create NuGet package: Required frontend assets are missing: @(MissingPackageAsset, ', ')" />
+  </Target>
+
+</Project>

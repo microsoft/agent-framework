@@ -56,6 +56,20 @@ class TestAgentRunContext:
         assert context.is_streaming is True
         assert context.metadata == metadata
 
+    def test_init_with_thread(self, mock_agent: AgentProtocol) -> None:
+        """Test AgentRunContext initialization with thread parameter."""
+        from agent_framework import AgentThread
+
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        thread = AgentThread()
+        context = AgentRunContext(agent=mock_agent, messages=messages, thread=thread)
+
+        assert context.agent is mock_agent
+        assert context.messages == messages
+        assert context.thread is thread
+        assert context.is_streaming is False
+        assert context.metadata == {}
+
 
 class TestFunctionInvocationContext:
     """Test cases for FunctionInvocationContext."""
@@ -336,6 +350,61 @@ class TestAgentMiddlewarePipeline:
         assert updates[1].text == "chunk2"
         assert context.terminate
         assert execution_order == ["handler_start", "handler_end"]
+
+    async def test_execute_with_thread_in_context(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline execution properly passes thread to middleware."""
+        from agent_framework import AgentThread
+
+        captured_thread = None
+
+        class ThreadCapturingMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                nonlocal captured_thread
+                captured_thread = context.thread
+                await next(context)
+
+        middleware = ThreadCapturingMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        thread = AgentThread()
+        context = AgentRunContext(agent=mock_agent, messages=messages, thread=thread)
+
+        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+            return expected_response
+
+        result = await pipeline.execute(mock_agent, messages, context, final_handler)
+        assert result == expected_response
+        assert captured_thread is thread
+
+    async def test_execute_with_no_thread_in_context(self, mock_agent: AgentProtocol) -> None:
+        """Test pipeline execution when no thread is provided."""
+        captured_thread = "not_none"  # Use string to distinguish from None
+
+        class ThreadCapturingMiddleware(AgentMiddleware):
+            async def process(
+                self, context: AgentRunContext, next: Callable[[AgentRunContext], Awaitable[None]]
+            ) -> None:
+                nonlocal captured_thread
+                captured_thread = context.thread
+                await next(context)
+
+        middleware = ThreadCapturingMiddleware()
+        pipeline = AgentMiddlewarePipeline([middleware])
+        messages = [ChatMessage(role=Role.USER, text="test")]
+        context = AgentRunContext(agent=mock_agent, messages=messages, thread=None)
+
+        expected_response = AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
+
+        async def final_handler(ctx: AgentRunContext) -> AgentRunResponse:
+            return expected_response
+
+        result = await pipeline.execute(mock_agent, messages, context, final_handler)
+        assert result == expected_response
+        assert captured_thread is None
 
 
 class TestFunctionMiddlewarePipeline:

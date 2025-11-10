@@ -74,17 +74,18 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_NonUserRoleMessages_ThrowsArgumentExceptionAsync()
+    public async Task RunAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange
         var inputMessages = new List<ChatMessage>
         {
+            new(ChatRole.System, "I am a system message"),
             new(ChatRole.Assistant, "I am an assistant message"),
             new(ChatRole.User, "Valid user message")
         };
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._agent.RunAsync(inputMessages));
+        await this._agent.RunAsync(inputMessages);
     }
 
     [Fact]
@@ -345,21 +346,28 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public async Task RunStreamingAsync_NonUserRoleMessages_ThrowsArgumentExceptionAsync()
+    public async Task RunStreamingAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage()
+        {
+            MessageId = "stream-1",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response" }],
+            ContextId = "new-stream-context"
+        };
+
         var inputMessages = new List<ChatMessage>
         {
-            new(ChatRole.Assistant, "I am an assistant message")
+            new(ChatRole.System, "I am a system message"),
+            new(ChatRole.Assistant, "I am an assistant message"),
+            new(ChatRole.User, "Valid user message")
         };
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        await foreach (var _ in this._agent.RunStreamingAsync(inputMessages))
         {
-            await foreach (var update in this._agent.RunStreamingAsync(inputMessages))
-            {
-            }
-        });
+        }
     }
 
     [Fact]
@@ -371,7 +379,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User,
             [
                 new TextContent("Check this file:"),
-                new HostedFileContent("https://example.com/file.pdf")
+                new UriContent("https://example.com/file.pdf", "application/pdf")
             ])
         };
 
@@ -385,7 +393,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.IsType<TextPart>(message.Parts[0]);
         Assert.Equal("Check this file:", ((TextPart)message.Parts[0]).Text);
         Assert.IsType<FilePart>(message.Parts[1]);
-        Assert.Equal("https://example.com/file.pdf", ((FileWithUri)((FilePart)message.Parts[1]).File).Uri);
+        Assert.Equal("https://example.com/file.pdf", ((FilePart)message.Parts[1]).File.Uri?.ToString());
     }
 
     public void Dispose()

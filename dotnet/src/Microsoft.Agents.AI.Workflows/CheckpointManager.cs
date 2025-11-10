@@ -20,7 +20,7 @@ public sealed class CheckpointManager : ICheckpointManager
         return new CheckpointManagerImpl<TStoreObject>(marshaller, store);
     }
 
-    private CheckpointManager(ICheckpointManager impl)
+    internal CheckpointManager(ICheckpointManager impl)
     {
         this._impl = impl;
     }

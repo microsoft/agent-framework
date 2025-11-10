@@ -69,25 +69,20 @@ internal static class IWorkflowContextExtensions
         await context.AddEventAsync(new ConversationUpdateEvent(conversationId) { IsWorkflow = isExternal }, cancellationToken).ConfigureAwait(false);
     }
 
+    public static string? GetWorkflowConversation(this IWorkflowContext context) =>
+        context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System) switch
+        {
+            StringValue stringValue when stringValue.Value.Length > 0 => stringValue.Value,
+            _ => null,
+        };
+
     public static bool IsWorkflowConversation(
         this IWorkflowContext context,
         string? conversationId,
         out string? workflowConversationId)
     {
-        FormulaValue idValue = context.ReadState(SystemScope.Names.ConversationId, VariableScopeNames.System);
-        switch (idValue)
-        {
-            case BlankValue:
-            case ErrorValue:
-                workflowConversationId = null;
-                return false;
-            case StringValue stringValue when stringValue.Value.Length > 0:
-                workflowConversationId = stringValue.Value;
-                return workflowConversationId.Equals(conversationId, StringComparison.Ordinal);
-            default:
-                // Something has gone terribly wrong.
-                throw new DeclarativeActionException($"Invalid '{SystemScope.Names.ConversationId}' value type: {idValue.GetType().Name}.");
-        }
+        workflowConversationId = context.GetWorkflowConversation();
+        return workflowConversationId?.Equals(conversationId, StringComparison.Ordinal) ?? false;
     }
 
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)

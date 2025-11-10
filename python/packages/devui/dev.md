@@ -120,7 +120,7 @@ Agent Framework content types → OpenAI Responses API events (in `_mapper.py`):
 | `TextReasoningContent`          | `response.reasoning.delta`               | Standard |
 | `FunctionCallContent` (initial) | `response.output_item.added`             | Standard |
 | `FunctionCallContent` (args)    | `response.function_call_arguments.delta` | Standard |
-| `FunctionResultContent`         | `response.function_result.complete`      | Standard |
+| `FunctionResultContent`         | `response.function_result.complete`      | DevUI    |
 | `ErrorContent`                  | `response.error`                         | Standard |
 | `UsageContent`                  | `response.usage.complete`                | Extended |
 | `WorkflowEvent`                 | `response.workflow.event`                | DevUI    |

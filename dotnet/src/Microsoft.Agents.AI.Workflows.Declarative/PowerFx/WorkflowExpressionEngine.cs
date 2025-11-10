@@ -274,6 +274,13 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        return new(this._engine.Eval(expressionText), SensitivityLevel.None);
+        FormulaValue result = this._engine.Eval(expressionText);
+
+        if (result is ErrorValue errorValue)
+        {
+            throw new DeclarativeActionException(errorValue.Format());
+        }
+
+        return new(result, SensitivityLevel.None);
     }
 }

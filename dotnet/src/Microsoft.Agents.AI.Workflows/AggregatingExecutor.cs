@@ -19,34 +19,39 @@ namespace Microsoft.Agents.AI.Workflows;
 /// function receives the current aggregate (or null if this is the first message) and the input message, and returns
 /// the updated aggregate.</param>
 /// <param name="options">Optional configuration settings for the executor. If null, default options are used.</param>
+/// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
 /// <seealso cref="StreamingAggregators"/>
 public class AggregatingExecutor<TInput, TAggregate>(string id,
     Func<TAggregate?, TInput, TAggregate?> aggregator,
-    ExecutorOptions? options = null) : Executor<TInput, TAggregate?>(id, options)
+    ExecutorOptions? options = null,
+    bool declareCrossRunShareable = false) : Executor<TInput, TAggregate?>(id, options, declareCrossRunShareable)
 {
     private const string AggregateStateKey = "Aggregate";
-    private TAggregate? _runningAggregate;
 
     /// <inheritdoc/>
-    public override ValueTask<TAggregate?> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask<TAggregate?> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        this._runningAggregate = aggregator(this._runningAggregate, message);
-        return new(this._runningAggregate);
-    }
+        TAggregate? runningAggregate = default;
+        await context.InvokeWithStateAsync<PortableValue?>(InvokeAggregatorAsync, AggregateStateKey, cancellationToken: cancellationToken)
+                     .ConfigureAwait(false);
 
-    /// <inheritdoc/>
-    protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        await context.QueueStateUpdateAsync(AggregateStateKey, this._runningAggregate, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return runningAggregate;
 
-        await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
-    }
+        ValueTask<PortableValue?> InvokeAggregatorAsync(PortableValue? maybeState, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            if (maybeState == null || !maybeState.Is(out runningAggregate))
+            {
+                runningAggregate = default;
+            }
 
-    /// <inheritdoc/>
-    protected internal override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
-    {
-        await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+            runningAggregate = aggregator(runningAggregate, message);
 
-        this._runningAggregate = await context.ReadStateAsync<TAggregate>(AggregateStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (runningAggregate == null)
+            {
+                return new((PortableValue?)null);
+            }
+
+            return new(new PortableValue(runningAggregate));
+        }
     }
 }

@@ -3,8 +3,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -16,22 +14,34 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal sealed class WorkflowHostAgent : AIAgent
 {
-    private readonly Workflow<List<ChatMessage>> _workflow;
+    private readonly Workflow _workflow;
     private readonly string? _id;
+    private readonly CheckpointManager? _checkpointManager;
+    private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+    private readonly Task<ProtocolDescriptor> _describeTask;
 
     private readonly ConcurrentDictionary<string, string> _assignedRunIds = [];
-    private readonly Dictionary<string, StreamingRun> _runningWorkflows = [];
 
-    public WorkflowHostAgent(Workflow<List<ChatMessage>> workflow, string? id = null, string? name = null)
+    public WorkflowHostAgent(Workflow workflow, string? id = null, string? name = null, string? description = null, CheckpointManager? checkpointManager = null, IWorkflowExecutionEnvironment? executionEnvironment = null)
     {
         this._workflow = Throw.IfNull(workflow);
 
+        this._executionEnvironment = executionEnvironment ?? (workflow.AllowConcurrent
+                                                              ? InProcessExecution.Concurrent
+                                                              : InProcessExecution.OffThread);
+        this._checkpointManager = checkpointManager;
+
         this._id = id;
         this.Name = name;
+        this.Description = description;
+
+        // Kick off the typecheck right away by starting the DescribeProtocol task.
+        this._describeTask = this._workflow.DescribeProtocolAsync().AsTask();
     }
 
-    public override string? Name { get; }
     public override string Id => this._id ?? base.Id;
+    public override string? Name { get; }
+    public override string? Description { get; }
 
     private string GenerateNewId()
     {
@@ -45,59 +55,16 @@ internal sealed class WorkflowHostAgent : AIAgent
         return result;
     }
 
-    public override AgentThread GetNewThread() => new WorkflowThread(this.Id, this.Name, this.GenerateNewId());
+    private async ValueTask ValidateWorkflowAsync()
+    {
+        ProtocolDescriptor protocol = await this._describeTask.ConfigureAwait(false);
+        protocol.ThrowIfNotChatProtocol();
+    }
+
+    public override AgentThread GetNewThread() => new WorkflowThread(this._workflow, this.GenerateNewId(), this._executionEnvironment, this._checkpointManager);
 
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-        => new WorkflowThread(serializedThread, jsonSerializerOptions);
-
-    private async
-    IAsyncEnumerable<AgentRunResponseUpdate> InvokeStageAsync(
-        WorkflowThread conversation,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        string runId = conversation.RunId;
-        List<ChatMessage> messages = conversation.MessageStore.GetFromBookmark().ToList();
-
-        try
-        {
-            // technically there is a race condition here between assigning the ID, and checking if it exists
-            // in the case of new threads.
-            if (!this._runningWorkflows.TryGetValue(runId, out StreamingRun? run))
-            {
-                run = await InProcessExecution.StreamAsync(this._workflow, messages, cancellationToken: cancellationToken)
-                                              .ConfigureAwait(false);
-                this._runningWorkflows[runId] = run;
-            }
-            else
-            {
-                bool sentMessages = await run.TrySendMessageAsync(messages).ConfigureAwait(false);
-                Debug.Assert(sentMessages, "Hosted workflow is required to take List<ChatMessage> as input.");
-            }
-
-            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
-            await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
-                                               .ConfigureAwait(false)
-                                               .WithCancellation(cancellationToken))
-            {
-                switch (evt)
-                {
-                    case AgentRunUpdateEvent agentUpdate:
-                        yield return agentUpdate.Update;
-                        break;
-                    case RequestInfoEvent requestInfo:
-                        FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentRunResponseUpdate update = conversation.CreateUpdate(fcContent);
-                        yield return update;
-                        break;
-                }
-            }
-        }
-        finally
-        {
-            // Do we want to try to undo the step, and not update the bookmark?
-            conversation.MessageStore.UpdateBookmark();
-        }
-    }
+        => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, jsonSerializerOptions);
 
     private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
@@ -119,17 +86,19 @@ internal sealed class WorkflowHostAgent : AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        await this.ValidateWorkflowAsync().ConfigureAwait(false);
+
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
         MessageMerger merger = new();
 
-        await foreach (AgentRunResponseUpdate update in this.InvokeStageAsync(workflowThread, cancellationToken)
-                                                            .ConfigureAwait(false)
-                                                            .WithCancellation(cancellationToken))
+        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
+                                                                      .ConfigureAwait(false)
+                                                                      .WithCancellation(cancellationToken))
         {
             merger.AddUpdate(update);
         }
 
-        return merger.ComputeMerged(workflowThread.ResponseId, this.Id, this.Name);
+        return merger.ComputeMerged(workflowThread.LastResponseId!, this.Id, this.Name);
     }
 
     public override async
@@ -139,10 +108,12 @@ internal sealed class WorkflowHostAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        await this.ValidateWorkflowAsync().ConfigureAwait(false);
+
         WorkflowThread workflowThread = await this.UpdateThreadAsync(messages, thread, cancellationToken).ConfigureAwait(false);
-        await foreach (AgentRunResponseUpdate update in this.InvokeStageAsync(workflowThread, cancellationToken)
-                                                            .ConfigureAwait(false)
-                                                            .WithCancellation(cancellationToken))
+        await foreach (AgentRunResponseUpdate update in workflowThread.InvokeStageAsync(cancellationToken)
+                                                                      .ConfigureAwait(false)
+                                                                      .WithCancellation(cancellationToken))
         {
             yield return update;
         }

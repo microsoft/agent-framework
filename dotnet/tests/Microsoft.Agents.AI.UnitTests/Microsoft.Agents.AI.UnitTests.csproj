@@ -4,6 +4,10 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
   </PropertyGroup>
 
+  <PropertyGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.CopilotStudio\Microsoft.Agents.AI.CopilotStudio.csproj" />

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,9 +12,8 @@ from agent_framework import (
     Executor,
     FileCheckpointStorage,
     RequestInfoEvent,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
     WorkflowContext,
@@ -22,6 +22,7 @@ from agent_framework import (
     WorkflowRunState,
     WorkflowStatusEvent,
     handler,
+    response_handler,
 )
 
 CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_checkpoints"
@@ -30,7 +31,7 @@ CHECKPOINT_DIR = Path(__file__).with_suffix("").parent / "tmp" / "sub_workflow_c
 Sample: Checkpointing for workflows that embed sub-workflows.
 
 This sample shows how a parent workflow that wraps a sub-workflow can:
-- run until the sub-workflow emits a human approval request via RequestInfoExecutor
+- run until the sub-workflow emits a human approval request
 - persist a checkpoint that captures the pending request (including complex payloads)
 - resume later, supplying the human decision directly at restore time
 
@@ -78,14 +79,23 @@ class FinalDraft:
 
 
 @dataclass
-class ReviewRequest(RequestInfoMessage):
-    """Human approval request surfaced via RequestInfoExecutor."""
+class ReviewRequest:
+    """Human approval request surfaced via `request_info`."""
 
+    id: str = str(uuid.uuid4())
     topic: str = ""
     iteration: int = 1
     draft_excerpt: str = ""
     due_iso: str = ""
     reviewer_guidance: list[str] = field(default_factory=list)  # type: ignore
+
+
+@dataclass
+class ReviewDecision:
+    """The review decision to be sent to downstream executors along with the original request."""
+
+    decision: str
+    original_request: ReviewRequest
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +132,8 @@ class DraftReviewRouter(Executor):
         super().__init__(id="draft_review")
 
     @handler
-    async def request_review(self, draft: DraftPackage, ctx: WorkflowContext[ReviewRequest]) -> None:
+    async def request_review(self, draft: DraftPackage, ctx: WorkflowContext) -> None:
+        """Request a review upon receiving a draft."""
         excerpt = draft.content.splitlines()[0]
         request = ReviewRequest(
             topic=draft.topic,
@@ -134,15 +145,17 @@ class DraftReviewRouter(Executor):
                 "Confirm CTA is action-oriented",
             ],
         )
-        await ctx.send_message(request, target_id="sub_review_requests")
+        await ctx.request_info(request_data=request, response_type=str)
 
-    @handler
+    @response_handler
     async def forward_decision(
         self,
-        decision: RequestResponse[ReviewRequest, str],
-        ctx: WorkflowContext[RequestResponse[ReviewRequest, str]],
+        original_request: ReviewRequest,
+        decision: str,
+        ctx: WorkflowContext[ReviewDecision],
     ) -> None:
-        await ctx.send_message(decision, target_id="draft_finaliser")
+        """Route the decision to the next executor."""
+        await ctx.send_message(ReviewDecision(decision=decision, original_request=original_request))
 
 
 class DraftFinaliser(Executor):
@@ -154,11 +167,11 @@ class DraftFinaliser(Executor):
     @handler
     async def on_review_decision(
         self,
-        decision: RequestResponse[ReviewRequest, str],
+        review_decision: ReviewDecision,
         ctx: WorkflowContext[DraftTask, FinalDraft],
     ) -> None:
-        reply = (decision.data or "").strip().lower()
-        original = decision.original_request
+        reply = review_decision.decision.strip().lower()
+        original = review_decision.original_request
         topic = original.topic if original else "unknown topic"
         iteration = original.iteration if original else 1
 
@@ -192,12 +205,11 @@ class LaunchCoordinator(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="launch_coordinator")
-        self._final: FinalDraft | None = None
 
     @handler
     async def kick_off(self, topic: str, ctx: WorkflowContext[DraftTask]) -> None:
         task = DraftTask(topic=topic, due=_utc_now() + timedelta(hours=2))
-        await ctx.send_message(task, target_id="launch_subworkflow")
+        await ctx.send_message(task)
 
     @handler
     async def collect_final(self, draft: FinalDraft, ctx: WorkflowContext[None, FinalDraft]) -> None:
@@ -209,8 +221,6 @@ class LaunchCoordinator(Executor):
                 normalised = replace(draft, approved_at=parsed)
                 approved_at = parsed
 
-        self._final = normalised
-
         approved_display = approved_at.isoformat() if hasattr(approved_at, "isoformat") else str(approved_at)
 
         print("\n>>> Parent workflow received approved draft:")
@@ -221,9 +231,50 @@ class LaunchCoordinator(Executor):
 
         await ctx.yield_output(normalised)
 
-    @property
-    def final_result(self) -> FinalDraft | None:
-        return self._final
+    @handler
+    async def handler_sub_workflow_request(
+        self,
+        request: SubWorkflowRequestMessage,
+        ctx: WorkflowContext,
+    ) -> None:
+        """Handle requests from the sub-workflow.
+
+        Note that the message type must be SubWorkflowRequestMessage to intercept the request.
+        """
+        if not isinstance(request.source_event.data, ReviewRequest):
+            raise TypeError(f"Expected 'ReviewRequest', got {type(request.source_event.data)}")
+
+        # Record the request to response matching
+        review_request = request.source_event.data
+        executor_state = await ctx.get_executor_state() or {}
+        executor_state[review_request.id] = request
+        await ctx.set_executor_state(executor_state)
+
+        # Send the request without modification
+        await ctx.request_info(request_data=review_request, response_type=str)
+
+    @response_handler
+    async def handle_request_response(
+        self,
+        original_request: ReviewRequest,
+        response: str,
+        ctx: WorkflowContext[SubWorkflowResponseMessage],
+    ) -> None:
+        """Process the response and send it back to the sub-workflow.
+
+        Note that the response must be sent back using SubWorkflowResponseMessage to route
+        the response back to the sub-workflow.
+        """
+        executor_state = await ctx.get_executor_state() or {}
+        request_message = executor_state.pop(original_request.id, None)
+
+        # Save the executor state back to the context
+        await ctx.set_executor_state(executor_state)
+
+        if request_message is None:
+            raise ValueError("No matching pending request found for the resource response")
+
+        await ctx.send_message(request_message.create_response(response))
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +285,13 @@ class LaunchCoordinator(Executor):
 def build_sub_workflow() -> WorkflowExecutor:
     writer = DraftWriter()
     router = DraftReviewRouter()
-    request_info = RequestInfoExecutor(id="sub_review_requests")
     finaliser = DraftFinaliser()
 
     sub_workflow = (
         WorkflowBuilder()
         .set_start_executor(writer)
         .add_edge(writer, router)
-        .add_edge(router, request_info)
-        .add_edge(request_info, router, condition=lambda msg: isinstance(msg, RequestResponse))
-        .add_edge(router, finaliser, condition=lambda msg: isinstance(msg, RequestResponse))
-        .add_edge(request_info, finaliser)
+        .add_edge(router, finaliser)
         .add_edge(finaliser, writer)  # permits revision loops
         .build()
     )
@@ -252,27 +299,18 @@ def build_sub_workflow() -> WorkflowExecutor:
     return WorkflowExecutor(sub_workflow, id="launch_subworkflow")
 
 
-def build_parent_workflow(storage: FileCheckpointStorage) -> tuple[LaunchCoordinator, Workflow]:
+def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
     coordinator = LaunchCoordinator()
     sub_executor = build_sub_workflow()
-    parent_request_info = RequestInfoExecutor(id="parent_review_gateway")
 
-    workflow = (
+    return (
         WorkflowBuilder()
         .set_start_executor(coordinator)
         .add_edge(coordinator, sub_executor)
-        .add_edge(sub_executor, coordinator, condition=lambda msg: isinstance(msg, FinalDraft))
-        .add_edge(
-            sub_executor,
-            parent_request_info,
-            condition=lambda msg: isinstance(msg, RequestInfoMessage),
-        )
-        .add_edge(parent_request_info, sub_executor)
+        .add_edge(sub_executor, coordinator)
         .with_checkpointing(storage)
         .build()
     )
-
-    return coordinator, workflow
 
 
 async def main() -> None:
@@ -282,9 +320,10 @@ async def main() -> None:
 
     storage = FileCheckpointStorage(CHECKPOINT_DIR)
 
-    _, workflow = build_parent_workflow(storage)
+    workflow = build_parent_workflow(storage)
 
     print("\n=== Stage 1: run until sub-workflow requests human review ===")
+
     request_id: str | None = None
     async for event in workflow.run_stream("Contoso Gadget Launch"):
         if isinstance(event, RequestInfoEvent) and request_id is None:
@@ -294,52 +333,52 @@ async def main() -> None:
             break
 
     if request_id is None:
-        print("Sub-workflow completed without requesting review.")
-        return
+        raise RuntimeError("Sub-workflow completed without requesting review.")
 
     checkpoints = await storage.list_checkpoints(workflow.id)
     if not checkpoints:
-        print("No checkpoints written.")
-        return
+        raise RuntimeError("No checkpoints found.")
 
+    # Print the checkpoint to show pending requests
+    # We didn't handle the request above so the request is still pending the last checkpoint
     checkpoints.sort(key=lambda cp: cp.timestamp)
     resume_checkpoint = checkpoints[-1]
     print(f"Using checkpoint {resume_checkpoint.checkpoint_id} at iteration {resume_checkpoint.iteration_count}")
 
     checkpoint_path = storage.storage_path / f"{resume_checkpoint.checkpoint_id}.json"
     if checkpoint_path.exists():
-        snapshot = json.loads(checkpoint_path.read_text())
-        exec_states = snapshot.get("executor_states", {})
-        sub_pending = exec_states.get("sub_review_requests", {}).get("request_events", {})
-        parent_pending = exec_states.get("parent_review_gateway", {}).get("request_events", {})
-        print(f"Pending review requests (sub executor snapshot): {list(sub_pending.keys())}")
-        print(f"Pending review requests (parent executor snapshot): {list(parent_pending.keys())}")
+        checkpoint_content_dict = json.loads(checkpoint_path.read_text())
+        print(f"Pending review requests: {checkpoint_content_dict.get('pending_request_info_events', {})}")
 
-    print("\n=== Stage 2: resume from checkpoint and approve draft ===")
+    print("\n=== Stage 2: resume from checkpoint ===")
+
     # Rebuild fresh instances to mimic a separate process resuming
-    coordinator2, workflow2 = build_parent_workflow(storage)
+    workflow2 = build_parent_workflow(storage)
+
+    request_info_event: RequestInfoEvent | None = None
+    async for event in workflow2.run_stream(
+        resume_checkpoint.checkpoint_id,
+    ):
+        if isinstance(event, RequestInfoEvent):
+            request_info_event = event
+
+    if request_info_event is None:
+        raise RuntimeError("No request_info_event captured.")
+
+    print("\n=== Stage 3: approve draft ==")
 
     approval_response = "approve"
-    final_event: WorkflowOutputEvent | None = None
-    async for event in workflow2.run_stream_from_checkpoint(
-        resume_checkpoint.checkpoint_id,
-        responses={request_id: approval_response},
-    ):
+    output_event: WorkflowOutputEvent | None = None
+    async for event in workflow2.send_responses_streaming({request_info_event.request_id: approval_response}):
         if isinstance(event, WorkflowOutputEvent):
-            final_event = event
+            output_event = event
 
-    if final_event is None:
-        print("Workflow did not complete after resume.")
-        return
+    if output_event is None:
+        raise RuntimeError("Workflow did not complete after resume.")
 
-    final = final_event.data
+    output = output_event.data
     print("\n=== Final Draft (from resumed run) ===")
-    print(final)
-
-    if coordinator2.final_result is None:
-        print("Coordinator did not capture final result via handler.")
-    else:
-        print("Coordinator stored final draft successfully.")
+    print(output)
 
     """"
     Sample Output:

@@ -65,6 +65,7 @@ class CommonEvents(Enum):
     EXIT_REQUESTED = "ExitRequested"
     START_PROCESS = "StartProcess"
 
+
 ######################################################################
 # region Semantic Kernel Process Framework path
 ######################################################################
@@ -143,7 +144,7 @@ async def run_semantic_kernel_process_example() -> None:
         kernel=kernel,
         initial_event=KernelProcessEvent(id=CommonEvents.START_PROCESS.value, data="Initial"),
     ) as process_context:
-        process_state = await process_context.get_state()
+        process_state = await process_context.get_executor_state()
         c_step_state: KernelProcessStepState[CStepState] | None = next(
             (s.state for s in process_state.steps if s.state.name == "CStep"),
             None,
@@ -152,6 +153,7 @@ async def run_semantic_kernel_process_example() -> None:
             raise RuntimeError("CStep state unavailable")
         assert c_step_state.state.current_cycle == 3  # nosec
         print(f"Final State Check: CStepState current cycle: {c_step_state.state.current_cycle}")
+
 
 ######################################################################
 # region Agent Framework workflow path
