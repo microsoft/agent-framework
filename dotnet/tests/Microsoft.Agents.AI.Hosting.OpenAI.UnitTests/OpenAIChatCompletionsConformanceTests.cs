@@ -462,7 +462,6 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         // Arrange
         string requestJson = LoadChatCompletionsTraceFile("tools/request.json");
         using var expectedResponseDoc = LoadChatCompletionsTraceDocument("tools/response.json");
-        var expectedResponse = expectedResponseDoc.RootElement;
 
         HttpClient client = await this.CreateTestServerAsync(
             "tools-agent",
