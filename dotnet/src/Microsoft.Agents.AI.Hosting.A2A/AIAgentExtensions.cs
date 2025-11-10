@@ -85,7 +85,7 @@ public static class AIAgentExtensions
             // we can help user if they did not set Url explicitly.
             if (string.IsNullOrEmpty(agentCard.Url))
             {
-                var agentCardUrl = context;
+                var agentCardUrl = context.TrimEnd('/');
                 if (!context.EndsWith("/v1/card", StringComparison.Ordinal))
                 {
                     agentCardUrl += "/v1/card";
