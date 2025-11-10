@@ -67,7 +67,7 @@ math_agent = chat_client.create_agent(
 
 
 # 2. Register both agents with AgentFunctionApp to expose their HTTP routes and health check.
-app = AgentFunctionApp(agents=[weather_agent, math_agent], enable_health_check=True)
+app = AgentFunctionApp(agents=[weather_agent, math_agent], enable_health_check=True, max_poll_retries=30)
 
 # Option 2: Add agents after initialization (commented out as we're using Option 1)
 # app = AgentFunctionApp(enable_health_check=True)

@@ -14,7 +14,7 @@ Content-Type: application/json
 {
   "message": "Add a security element to it.",
   "sessionId": "session-003",
-  "waitForCompletion": false
+  "waitForCompletion": true
 }
 
 ### Ask for a joke (plain text payload)
