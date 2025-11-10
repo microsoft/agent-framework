@@ -92,6 +92,7 @@ def create_test_azure_ai_chat_client(
     client._agent_created = False
     client._should_close_client = False
     client._agent_definition = None
+    client._azure_search_tool_calls = []  # Add the new instance variable
     client.additional_properties = {}
     client.middleware = None
 
@@ -1804,3 +1805,50 @@ async def test_azure_ai_chat_client_no_cleanup_when_agent_not_created_by_client(
     # Verify agent was NOT deleted
     mock_agents_client.delete_agent.assert_not_called()
     assert chat_client.agent_id == "existing-agent-id"
+
+
+def test_azure_ai_chat_client_capture_azure_search_tool_calls(mock_agents_client: MagicMock) -> None:
+    """Test _capture_azure_search_tool_calls method."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Mock Azure AI Search tool call
+    mock_tool_call = MagicMock()
+    mock_tool_call.type = "azure_ai_search"
+    mock_tool_call.id = "call_123"
+    mock_tool_call.azure_ai_search = {"input": "test query", "output": "test output"}
+
+    # Mock step data
+    mock_step_data = MagicMock()
+    mock_step_data.step_details.tool_calls = [mock_tool_call]
+
+    # Call the method
+    chat_client._capture_azure_search_tool_calls(mock_step_data)  # type: ignore
+
+    # Verify tool call was captured
+    assert len(chat_client._azure_search_tool_calls) == 1
+    captured_tool_call = chat_client._azure_search_tool_calls[0]
+    assert captured_tool_call["type"] == "azure_ai_search"
+    assert captured_tool_call["id"] == "call_123"
+    assert captured_tool_call["azure_ai_search"] == {"input": "test query", "output": "test output"}
+
+
+def test_azure_ai_chat_client_enhance_raw_representation_with_azure_search_no_dict(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _enhance_raw_representation_with_azure_search with annotation that has no __dict__."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Add some Azure Search tool calls
+    chat_client._azure_search_tool_calls = [
+        {"id": "call_123", "type": "azure_ai_search", "azure_ai_search": {"input": "test"}}
+    ]
+
+    # Mock annotation without __dict__
+    mock_annotation = "string_annotation"
+
+    # Call the method
+    result = chat_client._enhance_raw_representation_with_azure_search(mock_annotation)  # type: ignore
+
+    # Verify result contains Azure Search data
+    assert "azure_ai_search_tool_calls" in result
+    assert len(result["azure_ai_search_tool_calls"]) == 1

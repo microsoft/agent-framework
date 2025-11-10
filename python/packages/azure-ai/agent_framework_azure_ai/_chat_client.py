@@ -446,23 +446,41 @@ class AzureAIAgentClient(BaseChatClient):
                                 )
                             ]
 
+                        # Enhance raw_representation with Azure AI Search tool call data
+                        enhanced_raw_representation = self._enhance_raw_representation_with_azure_search(annotation)
+
                         # Create CitationAnnotation from AzureAI annotation
                         citation = CitationAnnotation(
                             title=getattr(annotation.url_citation, "title", None),
                             url=annotation.url_citation.url,
                             snippet=None,
                             annotated_regions=annotated_regions,
-                            raw_representation=annotation,
+                            raw_representation=enhanced_raw_representation,
                         )
                         url_citations.append(citation)
 
         return url_citations
+
+    def _enhance_raw_representation_with_azure_search(self, annotation) -> dict[str, Any]:
+        """Enhance raw_representation with Azure AI Search tool call data."""
+        # Start with the original annotation as a dict
+        enhanced_repr = annotation.__dict__.copy() if hasattr(annotation, "__dict__") else {}
+
+        # Add Azure AI Search tool calls if available
+        azure_search_tool_calls = getattr(self, "_azure_search_tool_calls", [])
+        if azure_search_tool_calls:
+            enhanced_repr["azure_ai_search_tool_calls"] = azure_search_tool_calls
+
+        return enhanced_repr
 
     async def _process_stream(
         self, stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], thread_id: str
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
+        # Clear Azure Search tool calls for this new stream
+        azure_search_tool_calls = getattr(self, "_azure_search_tool_calls", [])
+        azure_search_tool_calls.clear()
         response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
             async for event_type, event_data, _ in response_stream:  # type: ignore
@@ -545,6 +563,10 @@ class AzureAIAgentClient(BaseChatClient):
                             case AgentStreamEvent.THREAD_RUN_STEP_CREATED:
                                 response_id = event_data.run_id
                             case AgentStreamEvent.THREAD_RUN_COMPLETED | AgentStreamEvent.THREAD_RUN_STEP_COMPLETED:
+                                # Capture Azure AI Search tool calls when steps complete
+                                if event_type == AgentStreamEvent.THREAD_RUN_STEP_COMPLETED:
+                                    self._capture_azure_search_tool_calls(event_data)
+
                                 if event_data.usage:
                                     usage_content = UsageContent(
                                         UsageDetails(
@@ -622,6 +644,30 @@ class AzureAIAgentClient(BaseChatClient):
         finally:
             if isinstance(stream, AsyncAgentRunStream):
                 await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
+
+    def _capture_azure_search_tool_calls(self, step_data) -> None:
+        """Capture Azure AI Search tool call data from completed steps."""
+        try:
+            if (
+                hasattr(step_data, "step_details")
+                and hasattr(step_data.step_details, "tool_calls")
+                and step_data.step_details.tool_calls
+            ):
+                for tool_call in step_data.step_details.tool_calls:
+                    if hasattr(tool_call, "type") and tool_call.type == "azure_ai_search":
+                        # Create the list if it doesn't exist
+                        if not hasattr(self, "_azure_search_tool_calls"):
+                            self._azure_search_tool_calls = []
+                        # Store the complete tool call as a dictionary
+                        tool_call_dict = {
+                            "id": getattr(tool_call, "id", None),
+                            "type": tool_call.type,
+                            "azure_ai_search": getattr(tool_call, "azure_ai_search", None),
+                        }
+                        self._azure_search_tool_calls.append(tool_call_dict)
+                        logger.debug(f"Captured Azure AI Search tool call: {tool_call_dict['id']}")
+        except Exception as ex:
+            logger.debug(f"Failed to capture Azure AI Search tool call: {ex}")
 
     def _create_function_call_contents(self, event_data: ThreadRun, response_id: str | None) -> list[Contents]:
         """Create function call contents from a tool action event."""
