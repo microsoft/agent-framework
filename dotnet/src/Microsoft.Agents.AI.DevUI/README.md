@@ -24,13 +24,15 @@ var builder = WebApplication.CreateBuilder(args);
 // Register your agents
 builder.AddAIAgent("assistant", "You are a helpful assistant.");
 
-if (builder.Environment.IsDevelopment())
-{
-    // Add DevUI services
-    builder.AddDevUI();
-}
+// Register services for OpenAI responses and conversations (also required for DevUI)
+builder.Services.AddOpenAIResponses();
+builder.Services.AddOpenAIConversations();
 
 var app = builder.Build();
+
+// Map endpoints for OpenAI responses and conversations (also required for DevUI)
+app.MapOpenAIResponses();
+app.MapOpenAIConversations();
 
 if (builder.Environment.IsDevelopment())
 {

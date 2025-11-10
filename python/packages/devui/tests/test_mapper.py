@@ -55,9 +55,9 @@ def mapper() -> MessageMapper:
 
 @pytest.fixture
 def test_request() -> AgentFrameworkRequest:
-    # Use simplified routing: model = entity_id
+    # Use metadata.entity_id for routing
     return AgentFrameworkRequest(
-        model="test_agent",  # Model IS the entity_id
+        metadata={"entity_id": "test_agent"},
         input="Test input",
         stream=True,
     )
@@ -292,7 +292,7 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
     assert len(events) == 2  # Should emit response.created and response.in_progress
     assert events[0].type == "response.created"
     assert events[1].type == "response.in_progress"
-    assert events[0].response.model == "test_agent"  # Should use model from request
+    assert events[0].response.model == "devui"  # Should use 'devui' when model not specified in request
     assert events[0].response.status == "in_progress"
 
     # Test AgentCompletedEvent
@@ -415,12 +415,62 @@ async def test_executor_action_events(mapper: MessageMapper, test_request: Agent
     assert "Executor failed" in str(events[0].item["error"]["message"])
 
 
+async def test_magentic_agent_delta_creates_message_container(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test that MagenticAgentDeltaEvent creates message containers (Option A implementation)."""
+
+    # Create mock MagenticAgentDeltaEvent that mimics the real class
+    from dataclasses import dataclass
+
+    try:
+        from agent_framework import WorkflowEvent
+
+        @dataclass
+        class MagenticAgentDeltaEvent(WorkflowEvent):  # Inherit from WorkflowEvent
+            agent_id: str
+            text: str | None = None
+
+    except ImportError:
+        # Fallback if WorkflowEvent is not available
+        @dataclass
+        class MagenticAgentDeltaEvent:  # Use the expected name directly
+            agent_id: str
+            text: str | None = None
+
+    # First delta should create message container
+    first_delta = MagenticAgentDeltaEvent(agent_id="test_agent", text="Hello ")
+    events = await mapper.convert_event(first_delta, test_request)
+
+    # Should emit 3 events: message container, content part, and text delta
+    assert len(events) == 3
+    assert events[0].type == "response.output_item.added"
+    assert events[0].item.type == "message"  # Message, not executor_action!
+    assert events[0].item.metadata["agent_id"] == "test_agent"
+    assert events[0].item.metadata["source"] == "magentic"
+    message_id = events[0].item.id
+
+    # Check text delta references the message ID
+    assert events[2].type == "response.output_text.delta"
+    assert events[2].item_id == message_id
+    assert events[2].delta == "Hello "
+
+    # Second delta should NOT create new container
+    second_delta = MagenticAgentDeltaEvent(agent_id="test_agent", text="world!")
+    events = await mapper.convert_event(second_delta, test_request)
+
+    # Only text delta, no new container
+    assert len(events) == 1
+    assert events[0].type == "response.output_text.delta"
+    assert events[0].item_id == message_id
+
+
 if __name__ == "__main__":
     # Simple test runner
     async def run_all_tests() -> None:
         mapper = MessageMapper()
         test_request = AgentFrameworkRequest(
-            model="test",
+            metadata={"entity_id": "test"},
             input="Test",
             stream=True,
         )

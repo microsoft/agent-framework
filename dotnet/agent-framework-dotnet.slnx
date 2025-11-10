@@ -20,6 +20,7 @@
   </Folder>
   <Folder Name="/Samples/AGUIClientServer/">
     <Project Path="samples/AGUIClientServer/AGUIClient/AGUIClient.csproj" />
+    <Project Path="samples/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
     <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
@@ -47,8 +48,7 @@
     <File Path="samples/GettingStarted/Agents/README.md" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step01_Running/Agent_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step03.1_UsingFunctionTools/Agent_Step03.1_UsingFunctionTools.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step03.2_UsingFunctionTools_FromOpenAPI/Agent_Step03.2_UsingFunctionTools_FromOpenAPI.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step03_UsingFunctionTools/Agent_Step03_UsingFunctionTools.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step06_PersistedConversations/Agent_Step06_PersistedConversations.csproj" />
@@ -58,19 +58,21 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step10_AsMcpTool/Agent_Step10_AsMcpTool.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step11_UsingImages/Agent_Step11_UsingImages.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step12_AsFunctionTool/Agent_Step12_AsFunctionTool.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step13_Memory/Agent_Step13_Memory.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step13_BackgroundResponsesWithToolsAndPersistence/Agent_Step13_BackgroundResponsesWithToolsAndPersistence.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step14_Middleware/Agent_Step14_Middleware.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step18_TextSearchRag/Agent_Step18_TextSearchRag.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Mem0Provider/Agent_Step19_Mem0Provider.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step20_BackgroundResponsesWithToolsAndPersistence/Agent_Step20_BackgroundResponsesWithToolsAndPersistence.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step21_ChatHistoryMemoryProvider/Agent_Step21_ChatHistoryMemoryProvider.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
     <Project Path="samples/GettingStarted/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentWithMemory/">
+    <File Path="samples/GettingStarted/AgentWithMemory/README.md" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithMemory/AgentWithMemory_Step03_CustomMemory/AgentWithMemory_Step03_CustomMemory.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithOpenAI/">
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
@@ -80,7 +82,8 @@
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
     <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
-    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_ExternalDataSourceRAG/AgentWithRAG_Step02_ExternalDataSourceRAG.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <File Path="samples/GettingStarted/ModelContextProtocol/README.md" />

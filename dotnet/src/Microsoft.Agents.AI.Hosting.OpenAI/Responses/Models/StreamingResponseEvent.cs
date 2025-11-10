@@ -565,7 +565,7 @@ internal sealed class StreamingWorkflowEventComplete : StreamingResponseEvent
     /// <summary>
     /// The constant event type identifier for workflow event events.
     /// </summary>
-    public const string EventType = "response.workflow_event.complete";
+    public const string EventType = "response.workflow_event.completed";
 
     /// <inheritdoc/>
     [JsonIgnore]
