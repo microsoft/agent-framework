@@ -321,7 +321,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             for (int i = 0; i < lastMessage.Contents.Count; i++)
             {
                 if (lastMessage.Contents[i] is DataContent dataContent &&
-                    System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(dataContent.MediaType, out var mediaType) &&
+                    MediaTypeHeaderValue.TryParse(dataContent.MediaType, out var mediaType) &&
                     mediaType.Equals(s_json))
                 {
                     // Deserialize the state JSON directly from UTF-8 bytes
