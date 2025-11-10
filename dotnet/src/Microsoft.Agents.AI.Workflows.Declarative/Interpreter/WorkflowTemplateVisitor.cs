@@ -429,10 +429,6 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
 
     protected override void Visit(SearchAndSummarizeContent item) => this.NotSupported(item);
 
-    protected override void Visit(InvokeAzureResponse item) => this.NotSupported(item);
-
-    protected override void Visit(RequestExternalInput item) => this.NotSupported(item);
-
     #endregion
 
     private void ContinueWith(
