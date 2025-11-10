@@ -1,6 +1,6 @@
 # Microsoft.Agents.AI.DurableTask
 
-The Microsoft Agent Framework provides a programming model for building agents and agent workflows in .NET. This package, the *Durable extensions for the Agent Framework*, extends the Agent Framework programming model with the following capabilities:
+The Microsoft Agent Framework provides a programming model for building agents and agent workflows in .NET. This package, the *Durable Task extension for the Agent Framework*, extends the Agent Framework programming model with the following capabilities:
 
 - Stateful, durable execution of agents in distributed environments
 - Automatic conversation history management
