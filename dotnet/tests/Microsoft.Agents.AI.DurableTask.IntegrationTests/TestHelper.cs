@@ -116,10 +116,14 @@ internal sealed class TestHelper : IDisposable
 
     internal static ChatClient GetAzureOpenAIChatClient(IConfiguration configuration)
     {
-        string azureOpenAiEndpoint = configuration["AZURE_OPENAI_ENDPOINT"]
-            ?? throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string azureOpenAiDeploymentName = configuration["AZURE_OPENAI_DEPLOYMENT"]
-            ?? throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT env variable is not set.");
+        string azureOpenAiEndpoint =
+            configuration["AZUREAI__ENDPOINT"] ?? // Defined in dotnet-build-and-test.yml
+            configuration["AZURE_OPENAI_ENDPOINT"] ?? // Legacy
+            throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT or AZUREAI__ENDPOINT env variable is not set.");
+        string azureOpenAiDeploymentName =
+            configuration["AZUREAI__DEPLOYMENTNAME"] ?? // Defined in dotnet-build-and-test.yml
+            configuration["AZURE_OPENAI_DEPLOYMENT"] ?? // Legacy
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT or AZUREAI__DEPLOYMENTNAME env variable is not set.");
 
         // Check if AZURE_OPENAI_KEY is provided for token-based authentication
         string? azureOpenAiKey = configuration["AZURE_OPENAI_KEY"];
