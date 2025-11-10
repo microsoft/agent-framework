@@ -35,7 +35,7 @@ internal static class PromptAgentExtensions
                 // OpenApi
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}"),
             };
-        }).ToList() ?? [];
+        }).ToList();
     }
 
     /// <summary>
@@ -53,11 +53,13 @@ internal static class PromptAgentExtensions
         {
             toolResources.CodeInterpreter = codeInterpreter;
         }
+
         var fileSearch = promptAgent.GetFileSearchToolResource();
         if (fileSearch is not null)
         {
             toolResources.FileSearch = fileSearch;
         }
+
         // TODO Handle MCP tool resources
 
         return toolResources;

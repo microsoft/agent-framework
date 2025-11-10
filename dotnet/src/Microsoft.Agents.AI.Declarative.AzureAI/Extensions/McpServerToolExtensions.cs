@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
 
@@ -22,9 +23,7 @@ internal static class McpServerToolExtensions
 
         // TODO: Add support for additional properties
 
-        var connection = tool.Connection as AnonymousConnection;
-        Throw.IfNull(connection);
-
+        var connection = tool.Connection as AnonymousConnection ?? throw new ArgumentException("Only AnonymousConnection is supported for MCP Server Tool connections.", nameof(tool));
         var serverUrl = connection.Endpoint?.LiteralValue;
         Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
 

@@ -45,7 +45,7 @@ public static class PromptAgentExtensions
             ModelId = promptAgent.Model?.ModelNameHint,
             StopSequences = modelOptions?.StopSequences,
             AllowMultipleToolCalls = modelOptions?.AllowMultipleToolCalls?.LiteralValue,
-            ToolMode = modelOptions?.GetChatToolMode(),
+            ToolMode = modelOptions?.AsChatToolMode(),
             Tools = tools,
             AdditionalProperties = modelOptions?.GetAdditionalProperties(s_chatOptionProperties),
         };
@@ -56,15 +56,15 @@ public static class PromptAgentExtensions
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    public static List<AITool>? GetAITools(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
+    internal static List<AITool>? GetAITools(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
     {
         return promptAgent.Tools.Select(tool =>
         {
             return tool switch
             {
-                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
-                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionTool(functions),
-                McpServerTool => ((McpServerTool)tool).CreateMcpTool(),
+                CodeInterpreterTool => ((CodeInterpreterTool)tool).AsCodeInterpreterTool(),
+                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateOrGetAITool(functions),
+                McpServerTool => ((McpServerTool)tool).CreateHostedMcpTool(),
                 FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
                 WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
                 _ => throw new NotSupportedException($"Unable to create tool definition because of unsupported tool type: {tool.Kind}, supported tool types are: {string.Join(",", s_validToolKinds)}"),

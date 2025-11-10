@@ -7,13 +7,13 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="McpServerToolApprovalMode"/>.
 /// </summary>
-public static class McpServerToolApprovalModeExtensions
+internal static class McpServerToolApprovalModeExtensions
 {
     /// <summary>
     /// Converts a <see cref="McpServerToolApprovalMode"/> to a <see cref="HostedMcpServerToolApprovalMode"/>.
     /// </summary>
     /// <param name="mode">Instance of <see cref="McpServerToolApprovalMode"/></param>
-    public static HostedMcpServerToolApprovalMode ToHostedMcpServerToolApprovalMode(this McpServerToolApprovalMode mode)
+    internal static HostedMcpServerToolApprovalMode AsHostedMcpServerToolApprovalMode(this McpServerToolApprovalMode mode)
     {
         return mode switch
         {

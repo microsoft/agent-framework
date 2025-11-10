@@ -17,10 +17,8 @@ internal static class RecordDataValueExtensions
     /// </summary>
     internal static List<VectorStoreDataSource>? GetDataSources(this RecordDataValue value)
     {
-        var dataSources = value?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.data_sources"));
-        return dataSources is not null
-            ? dataSources.Values.Select(dataSource => dataSource.CreateDataSource()).ToList()
-            : null;
+        var dataSources = value.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("options.data_sources"));
+        return dataSources?.Values.Select(dataSource => dataSource.CreateDataSource()).ToList();
     }
 
     /// <summary>

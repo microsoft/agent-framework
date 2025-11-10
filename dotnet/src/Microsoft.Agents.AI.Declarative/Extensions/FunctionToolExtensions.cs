@@ -11,14 +11,18 @@ namespace Microsoft.Bot.ObjectModel;
 /// <summary>
 /// Extension methods for <see cref="InvokeClientTaskAction"/>.
 /// </summary>
-public static class FunctionToolExtensions
+internal static class FunctionToolExtensions
 {
     /// <summary>
     /// Creates a <see cref="AIFunctionDeclaration"/> from a <see cref="InvokeClientTaskAction"/>.
     /// </summary>
+    /// <remarks>
+    /// If a matching function already exists in the provided list, it will be returned.
+    /// Otherwise, a new function declaration will be created.
+    /// </remarks>
     /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    internal static AITool CreateFunctionTool(this InvokeClientTaskAction tool, IList<AIFunction>? functions)
+    internal static AITool CreateOrGetAITool(this InvokeClientTaskAction tool, IList<AIFunction>? functions)
     {
         Throw.IfNull(tool);
         Throw.IfNull(tool.Name);
@@ -26,9 +30,7 @@ public static class FunctionToolExtensions
         // use the tool from the provided list if it exists
         if (functions is not null)
         {
-            var function = functions
-                .OfType<AIFunction>()
-                .FirstOrDefault(f => tool.Matches(f));
+            var function = functions.FirstOrDefault(f => tool.Matches(f));
 
             if (function is not null)
             {

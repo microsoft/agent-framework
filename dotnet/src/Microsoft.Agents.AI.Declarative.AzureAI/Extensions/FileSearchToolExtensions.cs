@@ -44,7 +44,7 @@ internal static class FileSearchToolExtensions
     {
         Throw.IfNull(value);
 
-        var storeName = value.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("store_name"))?.Value;
+        var storeName = value.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("storeName"))?.Value;
         Throw.IfNullOrEmpty(storeName);
 
         var dataSources = value.GetDataSources();

@@ -14,6 +14,9 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 public sealed class FoundryPersistentAgentFactory : AgentFactory
 {
+    private readonly PersistentAgentsClient? _agentClient;
+    private readonly TokenCredential? _tokenCredential;
+
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
@@ -47,7 +50,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             throw new InvalidOperationException("The model id must be specified in the agent definition model to create a foundry agent.");
         }
 
-        //var outputSchema = promptAgent.OutputType;
+        //var outputSchema = promptAgent.OutputType; TODO: Fix converting RecordDataType to BinaryData
         var modelOptions = promptAgent.Model?.Options;
 
         return await agentClient.CreateAIAgentAsync(
@@ -62,10 +65,6 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
             metadata: promptAgent.Metadata?.ToDictionary(),
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
-
-    #region private
-    private readonly PersistentAgentsClient? _agentClient;
-    private readonly TokenCredential? _tokenCredential;
 
     private PersistentAgentsClient CreatePersistentAgentClient(GptComponentMetadata promptAgent)
     {
@@ -87,6 +86,4 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
 
         throw new InvalidOperationException("A PersistentAgentsClient must be registered in the service provider or a FoundryConnection must be specified in the agent definition model connection to create an PersistentAgentsClient.");
     }
-
-    #endregion
 }
