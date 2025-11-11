@@ -75,7 +75,7 @@ internal sealed class Program
         await agentClient.CreateAgentAsync(
             agentName: "TicketEscalationAgent",
             agentDefinition: TicketEscalationAgent(configuration),
-            agentDescription: "Esclate agent for human support");
+            agentDescription: "Escalate agent for human support");
     }
 
     private static PromptAgentDefinition DefineServiceAgent(IConfiguration configuration) =>
