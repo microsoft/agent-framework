@@ -144,7 +144,7 @@
         },
         "createdAt": { "type": "string", "format": "date-time", "description": "When this message was created (RFC 3339)." }
       },
-      "required": ["role", "createdAt"]
+      "required": ["role"]
     },
     "chatMessages": {
       "type": "array",
@@ -157,8 +157,7 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "When this exchange was created (RFC 3339)." },
         "correlationId": { "type": "string", "description": "An optional correlation ID to group related exchanges." },
         "messages": { "$ref": "#/$defs/chatMessages" }
-      },
-      "required": ["createdAt"]
+      }
     },
     "agentRequest": {
       "allOf": [

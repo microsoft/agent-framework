@@ -1,0 +1,79 @@
+# Copyright (c) Microsoft. All rights reserved.
+"""
+Integration Tests for Callbacks Sample
+
+Tests the callbacks sample for event tracking and management.
+
+The function app is automatically started by the test fixture.
+
+Prerequisites:
+- Azure OpenAI credentials configured (see packages/azurefunctions/tests/integration_tests/.env.example)
+- Azurite or Azure Storage account configured
+
+Usage:
+    uv run pytest packages/azurefunctions/tests/integration_tests/test_03_callbacks.py -v
+"""
+
+import pytest
+import requests
+
+from .testutils import (
+    TIMEOUT,
+    SampleTestHelper,
+    skip_if_azure_functions_integration_tests_disabled,
+)
+
+# Module-level markers - applied to all tests in this file
+pytestmark = [
+    pytest.mark.sample("03_callbacks"),
+    pytest.mark.usefixtures("function_app_for_test"),
+    skip_if_azure_functions_integration_tests_disabled,
+]
+
+
+class TestSampleCallbacks:
+    """Tests for 03_callbacks sample."""
+
+    @pytest.fixture(autouse=True)
+    def _set_base_url(self, base_url: str) -> None:
+        """Provide the callback agent base URL for each test."""
+        self.base_url = f"{base_url}/api/agents/CallbackAgent"
+
+    def test_agent_with_callbacks(self) -> None:
+        """Test agent execution with callback tracking."""
+        conversation_id = "test-callback"
+
+        response = SampleTestHelper.post_json(
+            f"{self.base_url}/run", {"message": "Tell me about Python", "conversationId": conversation_id}
+        )
+        assert response.status_code == 202
+        data = response.json()
+        assert data["status"] == "accepted"
+
+    def test_get_callbacks(self) -> None:
+        """Test retrieving callback events."""
+        conversation_id = "test-callback-retrieve"
+
+        # Send a message first
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Hello", "conversationId": conversation_id})
+
+        # Get callbacks
+        response = SampleTestHelper.get(f"{self.base_url}/callbacks/{conversation_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+
+    def test_delete_callbacks(self) -> None:
+        """Test clearing callback events."""
+        conversation_id = "test-callback-delete"
+
+        # Send a message first
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Test", "conversationId": conversation_id})
+
+        # Delete callbacks
+        response = requests.delete(f"{self.base_url}/callbacks/{conversation_id}", timeout=TIMEOUT)
+        assert response.status_code == 204
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

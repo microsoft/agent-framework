@@ -5,11 +5,12 @@ A single writer agent iterates on content until a human reviewer approves the
 output or a maximum number of attempts is reached.
 
 ## Prerequisites
-- Python 3.11 environment with the packages from `requirements.txt` installed.
-- Azure Functions Core Tools (`func`) available on the PATH.
-- Environment variables `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
-   `AZURE_OPENAI_API_KEY` or an active Azure CLI session.
-- Copy `local.settings.json.template` to `local.settings.json` and configure those keys (plus storage settings) before starting the Functions host.
+- Python 3.10+ environment with the packages from `requirements.txt` installed.
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) available on the PATH.
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`.
+- Environment variables `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`.
+- Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+- Copy `local.settings.json.template` to `local.settings.json` and configure those keys—including `AZURE_OPENAI_API_KEY`—plus storage settings before starting the Functions host.
 
 ## What It Shows
 - Identical environment variable usage (`AZURE_OPENAI_ENDPOINT`,
