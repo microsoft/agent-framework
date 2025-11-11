@@ -460,6 +460,32 @@ class Executor(RequestInfoMixin, DictConvertible):
                 return self._handlers[message_type]
         raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
 
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Hook called when the workflow is being saved to a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        return state to be saved in the checkpoint.
+
+        The returned state dictionary will be passed to `on_checkpoint_restore`
+        when the workflow is restored from the checkpoint. The dictionary should
+        only contain JSON-serializable data.
+
+        Returns:
+            A state dictionary to be saved during checkpointing.
+        """
+        return {}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Hook called when the workflow is restored from a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        run when the workflow is restored from a checkpoint.
+
+        Args:
+            state: The state dictionary that was saved during checkpointing.
+        """
+        ...
+
 
 # endregion: Executor
 

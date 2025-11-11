@@ -183,8 +183,8 @@ class Runner:
             return None
 
         try:
-            # Auto-snapshot executor states
-            await self._auto_snapshot_executor_states()
+            # Snapshot executor states
+            await self._save_executor_states()
             checkpoint_category = "initial" if checkpoint_type == "after_initial_execution" else "superstep"
             metadata = {
                 "superstep": self._iteration,
@@ -202,41 +202,6 @@ class Runner:
         except Exception as e:
             logger.warning(f"Failed to create {checkpoint_type} checkpoint: {e}")
             return None
-
-    async def _auto_snapshot_executor_states(self) -> None:
-        """Populate executor state by calling snapshot hooks on executors if available.
-
-        TODO(@taochen#1614): this method is potentially problematic if executors also call
-        set_executor_state on the context directly. We should clarify the intended usage
-        pattern for executor state management.
-
-        Convention:
-          - If an executor defines an async or sync method `snapshot_state(self) -> dict`, use it.
-          - Else if it has a plain attribute `state` that is a dict, use that.
-        Only JSON-serializable dicts should be provided by executors.
-        """
-        for exec_id, executor in self._executors.items():
-            state_dict: dict[str, Any] | None = None
-            snapshot = getattr(executor, "snapshot_state", None)
-            try:
-                if callable(snapshot):
-                    maybe = snapshot()
-                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
-                        maybe = await maybe  # type: ignore[assignment]
-                    if isinstance(maybe, dict):
-                        state_dict = maybe  # type: ignore[assignment]
-                else:
-                    state_attr = getattr(executor, "state", None)
-                    if isinstance(state_attr, dict):
-                        state_dict = state_attr  # type: ignore[assignment]
-            except Exception as ex:  # pragma: no cover
-                logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
-
-            if state_dict is not None:
-                try:
-                    await self._set_executor_state(exec_id, state_dict)
-                except Exception as ex:  # pragma: no cover
-                    logger.debug(f"Failed to persist state for executor {exec_id}: {ex}")
 
     async def restore_from_checkpoint(
         self,
@@ -300,7 +265,59 @@ class Runner:
             logger.error(f"Failed to restore from checkpoint {checkpoint_id}: {e}")
             return False
 
+    async def _save_executor_states(self) -> None:
+        """Populate executor state by calling checkpoint hooks on executors.
+
+        TODO(@taochen#1614): this method is potentially problematic if executors also call
+        set_executor_state on the context directly. We should clarify the intended usage
+        pattern for executor state management.
+
+        Backward compatibility behavior:
+          - If an executor defines an async or sync method `snapshot_state(self) -> dict`, use it.
+          - Else if it has a plain attribute `state` that is a dict, use that.
+
+        Updated behavior:
+          - Executors should implement `on_checkpoint_save(self) -> dict` to provide state.
+
+        Only JSON-serializable dicts should be provided by executors.
+        """
+        for exec_id, executor in self._executors.items():
+            # TODO(@taochen) Remove backward compatibility
+            state_dict: dict[str, Any] | None = None
+            snapshot = getattr(executor, "snapshot_state", None)
+            try:
+                if callable(snapshot):
+                    maybe = snapshot()
+                    if asyncio.iscoroutine(maybe):  # type: ignore[arg-type]
+                        maybe = await maybe  # type: ignore[assignment]
+                    if isinstance(maybe, dict):
+                        state_dict = maybe  # type: ignore[assignment]
+                else:
+                    state_attr = getattr(executor, "state", None)
+                    if isinstance(state_attr, dict):
+                        state_dict = state_attr  # type: ignore[assignment]
+            except Exception as ex:  # pragma: no cover
+                logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
+
+            # Updated behavior: use on_checkpoint_save() method
+            state_dict = state_dict or {}
+            state_dict |= await executor.on_checkpoint_save()
+
+            try:
+                await self._set_executor_state(exec_id, state_dict)
+            except Exception as ex:  # pragma: no cover
+                logger.debug(f"Failed to persist state for executor {exec_id}: {ex}")
+
     async def _restore_executor_states(self) -> None:
+        """Restore executor state by calling restore hooks on executors.
+
+        Backward compatibility behavior:
+            - If an executor defines an async or sync method `restore_state(self, state: dict)`, use it.
+            - Else, skip restoration for that executor.
+
+        Updated behavior:
+            - Executors should implement `on_checkpoint_restore(self, state: dict)` to restore state.
+        """
         has_executor_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
         if not has_executor_states:
             return
@@ -309,16 +326,17 @@ class Runner:
         if not isinstance(executor_states, dict):
             raise ValueError("Executor states in shared state is not a dictionary. Unable to restore.")
 
-        for executor_id, state in executor_states.items():
+        for executor_id, state in executor_states.items():  # pyright: ignore[reportUnknownVariableType]
             if not isinstance(executor_id, str):
                 raise ValueError("Executor ID in executor states is not a string. Unable to restore.")
-            if not isinstance(state, dict):
-                raise ValueError(f"Executor state for {executor_id} is not a dictionary. Unable to restore.")
+            if not isinstance(state, dict) or not all(isinstance(k, str) for k in state):  # pyright: ignore[reportUnknownVariableType]
+                raise ValueError(f"Executor state for {executor_id} is not a dict[str, Any]. Unable to restore.")
 
             executor = self._executors.get(executor_id)
             if not executor:
                 raise ValueError(f"Executor {executor_id} not found during state restoration.")
 
+            # TODO(@taochen) Remove backward compatibility
             restored = False
             restore_method = getattr(executor, "restore_state", None)
             try:
@@ -329,6 +347,13 @@ class Runner:
                     restored = True
             except Exception as ex:  # pragma: no cover - defensive
                 raise ValueError(f"Executor {executor_id} restore_state failed: {ex}") from ex
+
+            # Updated behavior: use on_checkpoint_restore() method
+            try:
+                await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
+                restored = True
+            except Exception as ex:  # pragma: no cover - defensive
+                raise ValueError(f"Executor {executor_id} on_checkpoint_restore failed: {ex}") from ex
 
             if not restored:
                 logger.debug(f"Executor {executor_id} does not support state restoration; skipping.")

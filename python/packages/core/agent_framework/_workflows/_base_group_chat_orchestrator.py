@@ -6,7 +6,7 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from typing import Any, override
 
 from .._types import ChatMessage
 from ._executor import Executor
@@ -210,11 +210,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
     # State persistence (shared across all patterns)
 
-    def snapshot_state(self) -> dict[str, Any]:
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing.
 
         Default implementation uses OrchestrationState to serialize common state.
-        Subclasses should override _snapshot_pattern_metadata() to add pattern-specific data.
+        Subclasses should override `on_checkpoint_save()` to add pattern-specific data.
 
         Returns:
             Serialized state dict
@@ -238,7 +239,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """
         return {}
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore orchestrator state from checkpoint.
 
         Default implementation uses OrchestrationState to deserialize common state.

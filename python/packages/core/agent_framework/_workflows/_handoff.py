@@ -343,7 +343,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             # Update current agent when handoff occurs
             self._current_agent_id = target
             logger.info(f"Handoff detected: {source} -> {target}. Routing control to specialist '{target}'.")
-            await self._persist_state(ctx)
+
             # Clean tool-related content before sending to next agent
             cleaned = clean_conversation_for_handoff(conversation)
             request = AgentExecutorRequest(messages=cleaned, should_respond=True)
@@ -360,7 +360,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             f"Agent '{source}' responded without handoff. "
             f"Requesting user input. Return-to-previous: {self._return_to_previous}"
         )
-        await self._persist_state(ctx)
 
         if await self._check_termination():
             # Clean the output conversation for display
@@ -388,7 +387,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """Receive full conversation with new user input from gateway, update history, trim for agent."""
         # Update authoritative conversation
         self._conversation = list(message.full_conversation)
-        await self._persist_state(ctx)
 
         # Check termination before sending to agent
         if await self._check_termination():
@@ -472,11 +470,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
                 "AgentExecutorResponse.full_conversation missing; AgentExecutor must populate it in handoff workflows."
             )
         return list(conversation)
-
-    async def _persist_state(self, ctx: WorkflowContext[Any, Any]) -> None:
-        """Store authoritative conversation snapshot without losing rich metadata."""
-        state_payload = self.snapshot_state()
-        await ctx.set_executor_state(state_payload)
 
     def _snapshot_pattern_metadata(self) -> dict[str, Any]:
         """Serialize pattern-specific state.
