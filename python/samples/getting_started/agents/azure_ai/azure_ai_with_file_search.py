@@ -85,7 +85,6 @@ async def main() -> None:
                 # Ignore cleanup errors to avoid masking issues
                 pass
             finally:
-                await client.close()
 
 
 if __name__ == "__main__":
