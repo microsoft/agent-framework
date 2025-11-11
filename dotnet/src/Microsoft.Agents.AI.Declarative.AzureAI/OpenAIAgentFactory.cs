@@ -171,7 +171,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
         Throw.IfNullOrEmpty(apiKey, "The connection key must be specified in the agent definition to create an OpenAI client.");
 
         var clientOptions = new OpenAIClientOptions();
-        var endpoint = keyConnection.Endpoint?.LiteralValue;
+        var endpoint = keyConnection.Endpoint?.Eval(this.Engine);
         if (!string.IsNullOrEmpty(endpoint))
         {
             clientOptions.Endpoint = new Uri(endpoint);

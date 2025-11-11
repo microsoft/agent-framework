@@ -236,8 +236,8 @@ public sealed class AgentBotElementYamlTests
         Assert.IsType<ApiKeyConnection>(model.Connection);
         ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
         Assert.NotNull(connection);
-        Assert.Equal("endpoint", this.Eval(connection.Endpoint!, configuration));
-        Assert.Equal("apiKey", this.Eval(connection.Key!, configuration));
+        Assert.Equal("endpoint", Eval(connection.Endpoint!, configuration));
+        Assert.Equal("apiKey", Eval(connection.Key!, configuration));
     }
 
     /// <summary>
@@ -256,7 +256,7 @@ public sealed class AgentBotElementYamlTests
         public string? Occupation { get; set; }
     }
 
-    private string? Eval(StringExpression expression, IConfiguration configuration)
+    private static string? Eval(StringExpression expression, IConfiguration configuration)
     {
         RecalcEngine engine = new();
         foreach (var kvp in configuration.AsEnumerable())
@@ -264,19 +264,6 @@ public sealed class AgentBotElementYamlTests
             engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
         }
 
-        if (expression.IsLiteral)
-        {
-            return expression.LiteralValue?.ToString();
-        }
-        else if (expression.IsExpression)
-        {
-            return engine.Eval(expression.ExpressionText!).ToString();
-        }
-        else if (expression.IsVariableReference)
-        {
-            var stringValue = engine.Eval(expression.VariableReference!.VariableName) as StringValue;
-            return stringValue?.Value;
-        }
-        return null;
+        return expression.Eval(engine);
     }
 }
