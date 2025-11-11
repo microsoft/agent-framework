@@ -314,7 +314,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         if tool.allowed_tools:
             mcp["allowed_tools"] = list(tool.allowed_tools)
 
-        # TODO (dmytrostruk): Check "always" approval mode
         if tool.approval_mode:
             match tool.approval_mode:
                 case str():
