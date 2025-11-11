@@ -1,0 +1,33 @@
+﻿name: AgentsInWorkflows
+displayName: "Translation Chain Workflow Agent"
+description: |
+  This sample demonstrates how to integrate AI agents into a workflow pipeline and 
+  convert the entire workflow into a hosted AI agent.
+  
+  Three translation agents are connected sequentially to create a translation chain:
+  English → French → Spanish → English. This showcases how AI-powered agents can be 
+  seamlessly integrated into workflow pipelines and composed as workflow executors.
+metadata:
+    authors:
+        - Agent Framework Team
+    tags:
+        - example
+        - Agent Framework
+        - workflows
+template:
+    kind: hosted
+    name: AgentsInWorkflows
+    protocols:
+        - protocol: responses
+          version: "v1"
+    environment_variables:
+        - name: AZURE_OPENAI_ENDPOINT
+          value: ${AZURE_OPENAI_ENDPOINT}
+        - name: AZURE_OPENAI_DEPLOYMENT_NAME
+          value: gpt-4o-mini
+parameters:
+    properties: []
+resources:
+    - name: "gpt-4o-mini"
+      kind: model
+      id: gpt-4o-mini
