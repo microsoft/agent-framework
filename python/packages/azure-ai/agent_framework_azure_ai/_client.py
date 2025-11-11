@@ -199,7 +199,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             # Try to use latest version if requested and agent exists
             if self.use_latest_version:
                 try:
-                    existing_agent = await self.project_client.agents.retrieve(agent_name)
+                    existing_agent = await self.project_client.agents.get(agent_name)
                     self.agent_name = existing_agent.name
                     self.agent_version = existing_agent.versions.latest.version
                     return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}

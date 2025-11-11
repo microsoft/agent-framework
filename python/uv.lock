@@ -252,7 +252,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0a20251105001", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0a20251110001", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" },
 ]
 
 [[package]]
@@ -883,7 +883,7 @@ wheels = [
 
 [[package]]
 name = "azure-ai-projects"
-version = "2.0.0a20251105001"
+version = "2.0.0a20251110001"
 source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -891,9 +891,9 @@ dependencies = [
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2a20251105001/azure_ai_projects-2.0.0a20251105001.tar.gz", hash = "sha256:045740a4f9154b2aae5ae76a074a243ea29b26086e00948539b6725249535430" }
+sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2a20251110001/azure_ai_projects-2.0.0a20251110001.tar.gz", hash = "sha256:d241d41507517ec9f438830f116e67539d7e762a9b9f9cff40f0245f1ff13f5b" }
 wheels = [
-    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2a20251105001/azure_ai_projects-2.0.0a20251105001-py3-none-any.whl", hash = "sha256:4fd25f169137533723ea41d40d08a226f10df63e091829a8d4a30e46f968574b" },
+    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2a20251110001/azure_ai_projects-2.0.0a20251110001-py3-none-any.whl", hash = "sha256:1d5e16affceb7beecfffeb2e77044b5358e8b6d3a8dfbe0a3caa34e0eaafd5a9" },
 ]
 
 [[package]]
