@@ -98,16 +98,24 @@ internal sealed class Program
                                 {
                                   "type": "object",
                                   "properties": {
-                                    "IsResolved": {
-                                      "type": "boolean",
-                                      "description": "True if the user issue/ask has been resolved."
+                                    "place": {
+                                      "type": "string",
+                                      "description": "Captures only your understanding of the location specified by the user without explanation, or 'unknown' if not yet defined."
                                     },
-                                    "NeedsTicket": {
+                                    "action": {
+                                      "type": "string",
+                                      "description": "The instruction for the next action to take regarding the need for additional detail or confirmation."
+                                    },
+                                    "is_location_defined": {
                                       "type": "boolean",
-                                      "description": "True if the user issue/ask requires that a ticket be filed."
+                                      "description": "True if the user location is understood."
+                                    },
+                                    "is_location_confirmed": {
+                                      "type": "boolean",
+                                      "description": "True if the user location is confirmed.  An unambiguous location may be implicitly confirmed without explicit user confirmation."
                                     }
                                   },
-                                  "required": ["IsResolved", "NeedsTicket"],
+                                  "required": ["place", "action", "is_location_defined", "is_location_confirmed"],
                                   "additionalProperties": false
                                 }
                                 """),
