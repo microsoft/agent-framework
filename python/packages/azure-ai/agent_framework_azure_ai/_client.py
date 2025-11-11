@@ -26,11 +26,7 @@ from azure.ai.projects.models import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from openai.types.responses.parsed_response import (
-    ParsedResponse,
-)
-from openai.types.responses.response import Response as OpenAIResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from ._shared import AzureAISettings
 
@@ -249,18 +245,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         return {"name": agent_name, "version": self.agent_version, "type": "agent_reference"}
 
-    async def _get_conversation_id_or_create(self, run_options: dict[str, Any]) -> str:
-        # Since "conversation" property is used, remove "previous_response_id" from options
-        # Use global conversation_id as fallback
-        conversation_id = run_options.pop("previous_response_id", self.conversation_id)
-
-        if conversation_id:
-            return conversation_id
-
-        # Create a new conversation with messages
-        created_conversation = await self.client.conversations.create()
-        return created_conversation.id
-
     async def _close_client_if_needed(self) -> None:
         """Close project_client session if we created it."""
         if self._should_close_client:
@@ -288,15 +272,10 @@ class AzureAIClient(OpenAIBaseResponsesClient):
     async def prepare_options(
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
+        chat_options.store = bool(chat_options.store or chat_options.store is None)
         prepared_messages, instructions = self._prepare_input(messages)
         run_options = await super().prepare_options(prepared_messages, chat_options)
         agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
-
-        store = run_options.get("store", False)
-
-        if store:
-            conversation_id = await self._get_conversation_id_or_create(run_options)
-            run_options["conversation"] = conversation_id
 
         run_options["extra_body"] = {"agent": agent_reference}
 
@@ -312,10 +291,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
     async def initialize_client(self):
         """Initialize OpenAI client asynchronously."""
         self.client = await self.project_client.get_openai_client()  # type: ignore
-
-    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
-        """Get the conversation ID from the response if store is True."""
-        return response.conversation.id if response.conversation and store else None
 
     def _update_agent_name(self, agent_name: str | None) -> None:
         """Update the agent name in the chat client.
