@@ -888,3 +888,47 @@ internal sealed class MCPCallItemResource : ItemResource
     [JsonPropertyName("error")]
     public string? Error { get; init; }
 }
+
+/// <summary>
+/// An executor action item resource for workflow execution visualization.
+/// </summary>
+internal sealed class ExecutorActionItemResource : ItemResource
+{
+    /// <summary>
+    /// The constant item type identifier for executor action items.
+    /// </summary>
+    public const string ItemType = "executor_action";
+
+    /// <inheritdoc/>
+    public override string Type => ItemType;
+
+    /// <summary>
+    /// The executor identifier.
+    /// </summary>
+    [JsonPropertyName("executor_id")]
+    public required string ExecutorId { get; init; }
+
+    /// <summary>
+    /// The execution status: "in_progress", "completed", "failed", or "cancelled".
+    /// </summary>
+    [JsonPropertyName("status")]
+    public required string Status { get; init; }
+
+    /// <summary>
+    /// The executor result data (for completed status).
+    /// </summary>
+    [JsonPropertyName("result")]
+    public JsonElement? Result { get; init; }
+
+    /// <summary>
+    /// The error message (for failed status).
+    /// </summary>
+    [JsonPropertyName("error")]
+    public string? Error { get; init; }
+
+    /// <summary>
+    /// The creation timestamp.
+    /// </summary>
+    [JsonPropertyName("created_at")]
+    public long CreatedAt { get; init; }
+}

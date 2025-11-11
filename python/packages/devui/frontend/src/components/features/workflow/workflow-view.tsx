@@ -433,6 +433,7 @@ export function WorkflowView({
   const addSession = useDevUIStore((state) => state.addSession);
   const removeSession = useDevUIStore((state) => state.removeSession);
   const addToast = useDevUIStore((state) => state.addToast);
+  const runtime = useDevUIStore((state) => state.runtime);
 
   // Selected checkpoint for resume (local state)
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<
@@ -595,14 +596,23 @@ export function WorkflowView({
         }
       } catch (error) {
         console.error("Failed to load sessions:", error);
-        addToast({ message: "Failed to load sessions", type: "error" });
+
+        // Silently handle for .NET backend (doesn't support conversations yet)
+        // Only show error for Python backend where this is unexpected
+        if (runtime !== "dotnet") {
+          addToast({
+            message: "Failed to load sessions",
+            type: "error"
+          });
+        }
       } finally {
         setLoadingSessions(false);
       }
     };
 
     loadSessions();
-  }, [workflowInfo?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowInfo?.id, runtime]);
 
   // Handle session change - just clear checkpoint selection
   const handleSessionChange = useCallback(
