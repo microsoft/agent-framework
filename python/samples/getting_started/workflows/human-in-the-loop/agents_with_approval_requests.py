@@ -259,12 +259,7 @@ async def main() -> None:
                 raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
 
             # Pretty print the function call details
-            arguments = json.dumps(
-                json.loads(request_info_event.data.function_call.arguments)
-                if isinstance(request_info_event.data.function_call.arguments, str)
-                else request_info_event.data.function_call.arguments,
-                indent=2,
-            )
+            arguments = json.dumps(request_info_event.data.function_call.parse_arguments(), indent=2)
             print(
                 f"Received approval request for function: {request_info_event.data.function_call.name} "
                 f"with args:\n{arguments}"
