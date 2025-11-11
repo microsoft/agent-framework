@@ -100,7 +100,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         if (inputArguments is not null)
         {
-            JsonNode jsonNode = inputArguments.ToFormula().ToJson();
+            JsonNode jsonNode = ConvertDictionaryToJson(inputArguments);
             ResponseCreationOptions responseCreationOptions = new();
             responseCreationOptions.SetStructuredInputs(BinaryData.FromString(jsonNode.ToJsonString()));
             chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;

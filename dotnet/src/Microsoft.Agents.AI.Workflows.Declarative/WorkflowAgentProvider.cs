@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -115,4 +117,14 @@ public abstract class WorkflowAgentProvider
         string? before = null,
         bool newestFirst = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Utility method to convert a dictionary of input arguments to a JsonNode.
+    /// </summary>
+    /// <param name="inputArguments">The dictionary of input arguments.</param>
+    /// <returns>A JsonNode representing the input arguments.</returns>
+    protected static JsonNode ConvertDictionaryToJson(IDictionary<string, object?> inputArguments)
+    {
+        return inputArguments.ToFormula().ToJson();
+    }
 }
