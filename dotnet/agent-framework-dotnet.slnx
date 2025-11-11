@@ -158,10 +158,10 @@
     <Project Path="samples/GettingStarted/Workflows/_Foundational/07_MixedWorkflowAgentsAndExecutors/07_MixedWorkflowAgentsAndExecutors.csproj" />
     <Project Path="samples/GettingStarted/Workflows/_Foundational/08_WriterCriticWorkflow/08_WriterCriticWorkflow.csproj" />
   </Folder>
-  <Folder Name="/Samples/Catalog/">
-    <Project Path="samples/Catalog/AgentsInWorkflows/AgentsInWorkflows.csproj" />
-    <Project Path="samples/Catalog/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-    <Project Path="samples/Catalog/DeepResearchAgent/DeepResearchAgent.csproj" />
+  <Folder Name="/Samples/HostedAgents/">
+    <Project Path="samples/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
+    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+    <Project Path="samples/HostedAgents/DeepResearchAgent/DeepResearchAgent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
