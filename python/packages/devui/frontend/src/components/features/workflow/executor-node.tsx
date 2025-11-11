@@ -6,6 +6,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { truncateText } from "@/utils/workflow-utils";
 
 export type ExecutorState =
   | "pending"
@@ -82,11 +83,13 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
     const details = [];
 
     if (nodeData.error && typeof nodeData.error === "string") {
+      // Truncate error to first 150 characters for node display
+      const truncatedError = truncateText(nodeData.error, 150);
       details.push(
         <div key="error" className="mb-2">
           <div className="text-xs font-medium text-red-600 dark:text-red-400 mb-1">Error:</div>
-          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800">
-            {nodeData.error}
+          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800 break-words">
+            {truncatedError}
           </div>
         </div>
       );

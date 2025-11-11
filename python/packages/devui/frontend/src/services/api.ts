@@ -274,7 +274,7 @@ class ApiClient {
 
   async getAgentInfo(agentId: string): Promise<AgentInfo> {
     // Get detailed entity info from unified endpoint
-    return this.request<AgentInfo>(`/v1/entities/${agentId}/info`);
+    return this.request<AgentInfo>(`/v1/entities/${agentId}/info?type=agent`);
   }
 
   async getWorkflowInfo(
@@ -282,7 +282,7 @@ class ApiClient {
   ): Promise<import("@/types").WorkflowInfo> {
     // Get detailed entity info from unified endpoint
     return this.request<import("@/types").WorkflowInfo>(
-      `/v1/entities/${workflowId}/info`
+      `/v1/entities/${workflowId}/info?type=workflow`
     );
   }
 
