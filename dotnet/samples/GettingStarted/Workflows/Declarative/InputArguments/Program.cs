@@ -3,17 +3,18 @@
 using Azure.AI.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
+using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 
 namespace Demo.Workflows.Declarative.FunctionTools;
 
 /// <summary>
-/// Demonstrate a workflow that responds to user input using an agent who
-/// with function tools assigned.  Exits the loop when the user enters "exit".
+/// Demonstrate a workflow that consumes input arguments to dynamically enhance the agent
+/// instructions.  Exits the loop when the user enters "exit".
 /// </summary>
 /// <remarks>
-/// See the README.md file in the parent folder (../Declarative/README.md) for detailed
+/// See the README.md file in the parent folder (../README.md) for detailed
 /// information the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program
@@ -49,18 +50,89 @@ internal sealed class Program
         AgentClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
 
         await agentsClient.CreateAgentAsync(
-            agentName: "LocationAgent",
-            agentDefinition: DefineLocationAgent(configuration),
+            agentName: "LocationTriageAgent",
+            agentDefinition: DefineLocationTriageAgent(configuration),
+            agentDescription: "Chats with the user to solicit a location of interest.");
+
+        await agentsClient.CreateAgentAsync(
+            agentName: "LocationCaptureAgent",
+            agentDefinition: DefineLocationCaptureAgent(configuration),
+            agentDescription: "Evaluate the .");
+
+        await agentsClient.CreateAgentAsync(
+            agentName: "LocationAwareAgent",
+            agentDefinition: DefineLocationAwareAgent(configuration),
             agentDescription: "Chats with the user with location awareness.");
     }
 
-    private static PromptAgentDefinition DefineLocationAgent(IConfiguration configuration) =>
-        new(configuration.GetValue(Application.Settings.FoundryModelFull))
+    private static PromptAgentDefinition DefineLocationTriageAgent(IConfiguration configuration) =>
+        new(configuration.GetValue(Application.Settings.FoundryModelMini))
         {
             Instructions =
                 """
-                Talk to the user.
-                Their location is {{location}}.
+                You only job is to solicit a location from the user.
+
+                Always repeat back the location when addressing the user, except when it is not known.
+                """
+        };
+
+    private static PromptAgentDefinition DefineLocationCaptureAgent(IConfiguration configuration) =>
+        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        {
+            Instructions =
+                """
+                Request a location from the user.  This location could be their own location
+                or perhaps a location they are interested in.
+
+                City level precision is sufficient.
+
+                If extrapolating region and country, confirm you have it right.
+                """,
+            TextOptions =
+                new ResponseTextOptions
+                {
+                    TextFormat =
+                        ResponseTextFormat.CreateJsonSchemaFormat(
+                            "TaskEvaluation",
+                            BinaryData.FromString(
+                                """
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "place": {
+                                      "type": "string",
+                                      "description": "Captures only your understanding of the location specified by the user without explanation, or 'unknown' if not yet defined."
+                                    },
+                                    "action": {
+                                      "type": "string",
+                                      "description": "The instruction for the next action to take regarding the need for additional detail or confirmation."
+                                    },
+                                    "is_location_defined": {
+                                      "type": "boolean",
+                                      "description": "True if the user location is understood."
+                                    },
+                                    "is_location_confirmed": {
+                                      "type": "boolean",
+                                      "description": "True if the user location is confirmed.  An unambiguous location may be implicitly confirmed without explicit user confirmation."
+                                    }
+                                  },
+                                  "required": ["place", "action", "is_location_defined", "is_location_confirmed"],
+                                  "additionalProperties": false
+                                }
+                                """),
+                            jsonSchemaFormatDescription: null,
+                            jsonSchemaIsStrict: true),
+                }
+        };
+
+    private static PromptAgentDefinition DefineLocationAwareAgent(IConfiguration configuration) =>
+        new(configuration.GetValue(Application.Settings.FoundryModelMini))
+        {
+            // Parameterized instructions reference the "location" input argument.
+            Instructions =
+                """
+                Talk to the user about their request.
+                Their request is realted to a specific location: {{location}}.
                 """,
             StructuredInputs =
             {

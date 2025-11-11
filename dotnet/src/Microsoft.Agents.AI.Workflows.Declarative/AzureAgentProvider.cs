@@ -7,11 +7,12 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
 using Azure.Core;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -84,7 +85,6 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         AgentVersion agentDefinition = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
         AIAgent agent = await this.GetAgentAsync(agentDefinition, cancellationToken).ConfigureAwait(false);
-
         ChatOptions chatOptions =
             new()
             {
@@ -94,18 +94,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         if (inputArguments is not null)
         {
-#pragma warning disable IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-#pragma warning disable IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-            JsonDocument json = JsonSerializer.SerializeToDocument(inputArguments); // %%% JSON CONTEXT
-#pragma warning restore IL3050 // Calling members annotated with 'RequiresDynamicCodeAttribute' may break functionality when AOT compiling.
-#pragma warning restore IL2026 // Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code
-            ResponseCreationOptions responseCreationOptions = new()
-            {
-                TruncationMode = ResponseTruncationMode.Auto, // %%% REMOVE
-            };
-            //responseCreationOptions.SetConversationReference(conversationId);
-            //responseCreationOptions.SetAgentReference(agentDefinition);
-            responseCreationOptions.SetStructuredInputs(BinaryData.FromString(json.RootElement.GetRawText()));
+            JsonNode jsonNode = inputArguments.ToFormula().ToJson();
+            ResponseCreationOptions responseCreationOptions = new();
+            responseCreationOptions.SetStructuredInputs(BinaryData.FromString(jsonNode.ToJsonString()));
             chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;
         }
 
@@ -174,7 +165,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                     .ToArray();
         }
 
-        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
+        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, requireInvocableTools: false, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
