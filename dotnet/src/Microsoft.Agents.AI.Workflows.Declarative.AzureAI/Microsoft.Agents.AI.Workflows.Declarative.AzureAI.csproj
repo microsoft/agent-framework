@@ -35,18 +35,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="CodeGen\*Template.tt">
-      <Generator>TextTemplatingFilePreprocessor</Generator>
-      <LastGenOutput>%(Filename).cs</LastGenOutput>
-    </None>
-    <Compile Update="CodeGen\*Template.cs">
-      <DependentUpon>%(Filename).tt</DependentUpon>
-      <DesignTime>True</DesignTime>
-      <AutoGen>True</AutoGen>
-    </Compile>
-  </ItemGroup>
-
-  <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests" />
   </ItemGroup>
