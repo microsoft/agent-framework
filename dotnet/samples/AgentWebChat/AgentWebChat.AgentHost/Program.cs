@@ -2,6 +2,7 @@
 
 using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
+using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
@@ -25,6 +26,8 @@ var pirateAgentBuilder = builder.AddAIAgent(
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
+    .WithAITool(new CustomAITool())
+    .WithAITool(new CustomFunctionTool())
     .WithInMemoryThreadStore();
 
 var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
@@ -104,8 +107,8 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 app.UseExceptionHandler();
 
 // attach a2a with simple message communication
-app.MapA2A(agentName: "pirate", path: "/a2a/pirate");
-app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
+app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",

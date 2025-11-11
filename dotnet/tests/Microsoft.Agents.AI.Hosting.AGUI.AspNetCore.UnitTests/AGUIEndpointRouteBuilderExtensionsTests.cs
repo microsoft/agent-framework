@@ -80,8 +80,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }],
-            Context = new Dictionary<string, string> { ["key1"] = "value1" }
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }],
+            Context = [new AGUIContextItem { Description = "key1", Value = "value1" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -109,7 +109,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -136,7 +136,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         {
             ThreadId = "thread1",
             RunId = "run1",
-            Messages = [new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "Test" }]
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
@@ -168,8 +168,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             RunId = "run1",
             Messages =
             [
-                new AGUIMessage { Id = "m1", Role = AGUIRoles.User, Content = "First" },
-                new AGUIMessage { Id = "m2", Role = AGUIRoles.Assistant, Content = "Second" }
+                new AGUIUserMessage { Id = "m1", Content = "First" },
+                new AGUIAssistantMessage { Id = "m2", Content = "Second" }
             ]
         };
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
@@ -188,6 +188,264 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         Assert.Equal("First", capturedMessages[0].Text);
         Assert.Equal(ChatRole.Assistant, capturedMessages[1].Role);
         Assert.Equal("Second", capturedMessages[1].Text);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_ProducesValidAGUIEventStream_WithRunStartAndFinishAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        MemoryStream responseStream = new();
+        httpContext.Response.Body = responseStream;
+
+        RequestDelegate handler = this.CreateRequestDelegate((messages, tools, context, props) => new TestAgent());
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        responseStream.Position = 0;
+        string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
+
+        List<JsonElement> events = ParseSseEvents(responseContent);
+
+        JsonElement runStarted = Assert.Single(events, static e => e.GetProperty("type").GetString() == AGUIEventTypes.RunStarted);
+        JsonElement runFinished = Assert.Single(events, static e => e.GetProperty("type").GetString() == AGUIEventTypes.RunFinished);
+
+        Assert.Equal("thread1", runStarted.GetProperty("threadId").GetString());
+        Assert.Equal("run1", runStarted.GetProperty("runId").GetString());
+        Assert.Equal("thread1", runFinished.GetProperty("threadId").GetString());
+        Assert.Equal("run1", runFinished.GetProperty("runId").GetString());
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_ProducesTextMessageEvents_InCorrectOrderAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Hello" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        MemoryStream responseStream = new();
+        httpContext.Response.Body = responseStream;
+
+        RequestDelegate handler = this.CreateRequestDelegate((messages, tools, context, props) => new TestAgent());
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        responseStream.Position = 0;
+        string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
+
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        List<string?> eventTypes = new(events.Count);
+        foreach (JsonElement evt in events)
+        {
+            eventTypes.Add(evt.GetProperty("type").GetString());
+        }
+
+        Assert.Contains(AGUIEventTypes.RunStarted, eventTypes);
+        Assert.Contains(AGUIEventTypes.TextMessageContent, eventTypes);
+        Assert.Contains(AGUIEventTypes.RunFinished, eventTypes);
+
+        int runStartIndex = eventTypes.IndexOf(AGUIEventTypes.RunStarted);
+        int firstContentIndex = eventTypes.IndexOf(AGUIEventTypes.TextMessageContent);
+        int runFinishIndex = eventTypes.LastIndexOf(AGUIEventTypes.RunFinished);
+
+        Assert.True(runStartIndex < firstContentIndex, "Run start should precede text content.");
+        Assert.True(firstContentIndex < runFinishIndex, "Text content should precede run finish.");
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_EmitsTextMessageContent_WithCorrectDeltaAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "thread1",
+            RunId = "run1",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        MemoryStream responseStream = new();
+        httpContext.Response.Body = responseStream;
+
+        RequestDelegate handler = this.CreateRequestDelegate((messages, tools, context, props) => new TestAgent());
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        responseStream.Position = 0;
+        string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
+
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        JsonElement textContentEvent = Assert.Single(events, static e => e.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent);
+
+        Assert.Equal("Test response", textContentEvent.GetProperty("delta").GetString());
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_WithCustomAgent_ProducesExpectedStreamStructureAsync()
+    {
+        // Arrange
+        AIAgent customAgentFactory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            return new MultiResponseAgent();
+        }
+
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "custom_thread",
+            RunId = "custom_run",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Multi" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        MemoryStream responseStream = new();
+        httpContext.Response.Body = responseStream;
+
+        RequestDelegate handler = this.CreateRequestDelegate(customAgentFactory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        responseStream.Position = 0;
+        string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
+
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        List<JsonElement> contentEvents = new();
+        foreach (JsonElement evt in events)
+        {
+            if (evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent)
+            {
+                contentEvents.Add(evt);
+            }
+        }
+
+        Assert.True(contentEvents.Count >= 3, $"Expected at least 3 text_message.content events, got {contentEvents.Count}");
+
+        List<string?> deltas = new(contentEvents.Count);
+        foreach (JsonElement contentEvent in contentEvents)
+        {
+            deltas.Add(contentEvent.GetProperty("delta").GetString());
+        }
+
+        Assert.Contains("First", deltas);
+        Assert.Contains(" part", deltas);
+        Assert.Contains(" of response", deltas);
+    }
+
+    [Fact]
+    public async Task MapAGUIAgent_ProducesCorrectThreadAndRunIds_InAllEventsAsync()
+    {
+        // Arrange
+        DefaultHttpContext httpContext = new();
+        RunAgentInput input = new()
+        {
+            ThreadId = "test_thread_123",
+            RunId = "test_run_456",
+            Messages = [new AGUIUserMessage { Id = "m1", Content = "Test" }]
+        };
+        string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        MemoryStream responseStream = new();
+        httpContext.Response.Body = responseStream;
+
+        RequestDelegate handler = this.CreateRequestDelegate((messages, tools, context, props) => new TestAgent());
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        responseStream.Position = 0;
+        string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
+
+        List<JsonElement> events = ParseSseEvents(responseContent);
+        JsonElement runStarted = Assert.Single(events, static e => e.GetProperty("type").GetString() == AGUIEventTypes.RunStarted);
+
+        Assert.Equal("test_thread_123", runStarted.GetProperty("threadId").GetString());
+        Assert.Equal("test_run_456", runStarted.GetProperty("runId").GetString());
+    }
+
+    private static List<JsonElement> ParseSseEvents(string responseContent)
+    {
+        List<JsonElement> events = [];
+        using StringReader reader = new(responseContent);
+        StringBuilder dataBuilder = new();
+        string? line;
+
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                string payload = line.Length > 5 && line[5] == ' '
+                    ? line.Substring(6)
+                    : line.Substring(5);
+                dataBuilder.Append(payload);
+            }
+            else if (line.Length == 0 && dataBuilder.Length > 0)
+            {
+                using JsonDocument document = JsonDocument.Parse(dataBuilder.ToString());
+                events.Add(document.RootElement.Clone());
+                dataBuilder.Clear();
+            }
+        }
+
+        if (dataBuilder.Length > 0)
+        {
+            using JsonDocument document = JsonDocument.Parse(dataBuilder.ToString());
+            events.Add(document.RootElement.Clone());
+        }
+
+        return events;
+    }
+
+    private sealed class MultiResponseAgent : AIAgent
+    {
+        public override string Id => "multi-response-agent";
+
+        public override string? Description => "Agent that produces multiple text chunks";
+
+        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
+            new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
+
+        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, "First"));
+            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " part"));
+            yield return new AgentRunResponseUpdate(new ChatResponseUpdate(ChatRole.Assistant, " of response"));
+        }
     }
 
     private RequestDelegate CreateRequestDelegate(
@@ -217,17 +475,19 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
                 return;
             }
 
-            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages();
-            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context;
+            IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(AGUIJsonSerializerContext.Default.Options);
+            IEnumerable<KeyValuePair<string, string>> contextValues = input.Context.Select(c => new KeyValuePair<string, string>(c.Description, c.Value));
             JsonElement forwardedProps = input.ForwardedProperties;
             AIAgent agent = factory(messages, [], contextValues, forwardedProps);
 
             IAsyncEnumerable<BaseEvent> events = agent.RunStreamingAsync(
                 messages,
                 cancellationToken: cancellationToken)
+                .AsChatResponseUpdatesAsync()
                 .AsAGUIEventStreamAsync(
                     input.ThreadId,
                     input.RunId,
+                    AGUIJsonSerializerContext.Default.Options,
                     cancellationToken);
 
             ILogger<AGUIServerSentEventsResult> logger = NullLogger<AGUIServerSentEventsResult>.Instance;

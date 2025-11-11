@@ -15,4 +15,6 @@ internal static class AGUIRoles
     public const string Assistant = "assistant";
 
     public const string Developer = "developer";
+
+    public const string Tool = "tool";
 }

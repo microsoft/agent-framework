@@ -324,6 +324,71 @@ def generate_schema_from_dataclass(cls: type[Any]) -> dict[str, Any]:
     return schema
 
 
+def extract_response_type_from_executor(executor: Any, request_type: type) -> type | None:
+    """Extract the expected response type from an executor's response handler.
+
+    Looks for methods decorated with @response_handler that have signature:
+       async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+
+    Args:
+        executor: Executor object that should have a handler for the request type
+        request_type: The request message type
+
+    Returns:
+        The response type class, or None if not found
+    """
+    try:
+        from typing import get_type_hints
+
+        # Introspect handler methods for @response_handler pattern
+        for attr_name in dir(executor):
+            if attr_name.startswith("_"):
+                continue
+            attr = getattr(executor, attr_name, None)
+            if not callable(attr):
+                continue
+
+            # Get type hints for this method
+            try:
+                type_hints = get_type_hints(attr)
+
+                # Check for @response_handler pattern:
+                # async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+                type_hint_params = {k: v for k, v in type_hints.items() if k not in ("self", "return")}
+
+                # Look for at least 2 parameters: original_request, response (ctx is optional)
+                if len(type_hint_params) >= 2:
+                    param_items = list(type_hint_params.items())
+                    # First param should be original_request matching request_type
+                    _, first_param_type = param_items[0]
+                    _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
+
+                    # Check if first param matches request_type
+                    first_matches_request = first_param_type == request_type or (
+                        hasattr(first_param_type, "__name__")
+                        and hasattr(request_type, "__name__")
+                        and first_param_type.__name__ == request_type.__name__
+                    )
+
+                    # Verify we have a matching request type and valid response type (must be a type class)
+                    if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
+                        response_type_class: type = second_param_type
+                        logger.debug(
+                            f"Found response type {response_type_class} for request {request_type} "
+                            f"via @response_handler"
+                        )
+                        return response_type_class
+
+            except Exception as e:
+                logger.debug(f"Failed to get type hints for {attr_name}: {e}")
+                continue
+
+    except Exception as e:
+        logger.debug(f"Failed to extract response type from executor: {e}")
+
+    return None
+
+
 def generate_input_schema(input_type: type) -> dict[str, Any]:
     """Generate JSON schema for workflow input type.
 

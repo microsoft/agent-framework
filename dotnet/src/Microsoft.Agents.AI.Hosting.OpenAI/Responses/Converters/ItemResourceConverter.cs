@@ -45,6 +45,7 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
             MCPApprovalRequestItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalRequestItemResource),
             MCPApprovalResponseItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalResponseItemResource),
             MCPCallItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPCallItemResource),
+            ExecutorActionItemResource.ItemType => doc.Deserialize(OpenAIHostingJsonContext.Default.ExecutorActionItemResource),
             _ => null
         };
     }
@@ -105,6 +106,9 @@ internal sealed class ItemResourceConverter : JsonConverter<ItemResource>
                 break;
             case MCPCallItemResource mcpCall:
                 JsonSerializer.Serialize(writer, mcpCall, OpenAIHostingJsonContext.Default.MCPCallItemResource);
+                break;
+            case ExecutorActionItemResource executorAction:
+                JsonSerializer.Serialize(writer, executorAction, OpenAIHostingJsonContext.Default.ExecutorActionItemResource);
                 break;
             default:
                 throw new JsonException($"Unknown item type: {value.GetType().Name}");
