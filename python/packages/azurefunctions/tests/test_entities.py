@@ -256,17 +256,17 @@ class TestAgentEntityRunAgent:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "conversation_id": "conv-1", "correlation_id": "corr-entity-3a"}
         )
-        assert entity.state.message_count == 1
+        assert len(entity.state.data.conversation_history) == 1
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "conversation_id": "conv-1", "correlation_id": "corr-entity-3b"}
         )
-        assert entity.state.message_count == 2
+        assert len(entity.state.data.conversation_history) == 2
 
         await entity.run_agent(
             mock_context, {"message": "Message 3", "conversation_id": "conv-1", "correlation_id": "corr-entity-3c"}
@@ -384,31 +384,31 @@ class TestAgentEntityReset:
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.conversation_history == []
+        assert entity.state.data.conversation_history == []
 
     def test_reset_clears_last_response(self) -> None:
         """Test that reset clears the last response."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        entity.state.last_response = "Some response"
+        entity.state.data = {"some_key": "some_value"}
 
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.last_response is None
+        assert entity.state.data is None
 
     def test_reset_clears_message_count(self) -> None:
         """Test that reset clears the message count."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        entity.state.message_count = 10
+        len(entity.state.data.conversation_history) = 10
 
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
     async def test_reset_after_conversation(self) -> None:
         """Test reset after a full conversation."""

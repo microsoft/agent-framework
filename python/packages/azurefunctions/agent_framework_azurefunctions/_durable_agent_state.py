@@ -180,7 +180,7 @@ class DurableAgentStateMessage:
 
     @staticmethod
     def from_chat_message(content):
-        return DurableAgentStateMessage(role=content.role, contents=content.contents, author_name=content.author_name, created_at=content.created_at, extension_data=content.extension_data)
+        return DurableAgentStateMessage(role=content.role, contents=content.message, author_name=content.author_name, created_at=content.created_at, extension_data=content.extension_data)
 
     def to_chat_message(self):
         from agent_framework import ChatMessage
