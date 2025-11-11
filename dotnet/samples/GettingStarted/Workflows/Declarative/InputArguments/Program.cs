@@ -132,7 +132,7 @@ internal sealed class Program
             Instructions =
                 """
                 Talk to the user about their request.
-                Their request is realted to a specific location: {{location}}.
+                Their request is related to a specific location: {{location}}.
                 """,
             StructuredInputs =
             {
