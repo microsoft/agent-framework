@@ -70,7 +70,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                You only job is to solicit a location from the user.
+                Your only job is to solicit a location from the user.
 
                 Always repeat back the location when addressing the user, except when it is not known.
                 """
