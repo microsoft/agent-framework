@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 from agent_framework_azurefunctions._models import ChatRole, RunRequest
-from agent_framework_azurefunctions._state import AgentState
+from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
@@ -573,7 +573,7 @@ class TestCreateAgentEntity:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(AgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "data") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)

@@ -19,7 +19,7 @@ from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpd
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._models import AgentResponse, ChatRole, RunRequest
-from .durable_agent_state import (
+from ._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
@@ -95,7 +95,7 @@ class AgentEntity:
 
         message = run_request.message
         conversation_id = run_request.conversation_id
-        correlation_id = run_request.correlation_id  or str(uuid.uuid4())
+        correlation_id = run_request.correlation_id or str(uuid.uuid4())
         if not conversation_id:
             raise ValueError("RunRequest must include a conversation_id")
         if not correlation_id:
@@ -352,7 +352,7 @@ class AgentEntity:
     def reset(self, context: df.DurableEntityContext) -> None:
         """Reset the entity state (clear conversation history)."""
         logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.reset()
+        self.state.data = {}
         logger.debug("[AgentEntity.reset] State reset complete")
 
 
