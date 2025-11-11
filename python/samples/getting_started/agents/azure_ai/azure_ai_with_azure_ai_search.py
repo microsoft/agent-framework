@@ -5,6 +5,7 @@ import os
 
 from agent_framework import ChatAgent, CitationAnnotation
 from agent_framework.azure import AzureAIAgentClient
+from azure.ai.agents.aio import AgentsClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import ConnectionType
 from azure.identity.aio import AzureCliCredential
@@ -38,16 +39,17 @@ async def main() -> None:
     # Create the client and manually create an agent with Azure AI Search tool
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as client,
+        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
+        AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
     ):
         ai_search_conn_id = ""
-        async for connection in client.connections.list():
+        async for connection in project_client.connections.list():
             if connection.type == ConnectionType.AZURE_AI_SEARCH:
                 ai_search_conn_id = connection.id
                 break
 
         # 1. Create Azure AI agent with the search tool
-        azure_ai_agent = await client.agents.create_agent(
+        azure_ai_agent = await project_client.agents.create_agent(
             model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             name="HotelSearchAgent",
             instructions=(
@@ -69,7 +71,7 @@ async def main() -> None:
         )
 
         # 2. Create chat client with the existing agent
-        chat_client = AzureAIAgentClient(project_client=client, agent_id=azure_ai_agent.id)
+        chat_client = AzureAIAgentClient(agents_client=agents_client, agent_id=azure_ai_agent.id)
 
         try:
             async with ChatAgent(
@@ -112,7 +114,7 @@ async def main() -> None:
 
         finally:
             # Clean up the agent manually
-            await client.agents.delete_agent(azure_ai_agent.id)
+            await project_client.agents.delete_agent(azure_ai_agent.id)
 
 
 if __name__ == "__main__":

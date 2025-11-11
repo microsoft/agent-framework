@@ -19,7 +19,7 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import ToolProtocol
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionInvocationConfiguration, ToolProtocol
 from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, ToolMode, prepare_messages
 
 if TYPE_CHECKING:
@@ -224,7 +224,7 @@ def _merge_chat_options(
     stop: str | Sequence[str] | None = None,
     store: bool | None = None,
     temperature: float | None = None,
-    tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+    tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
     tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] | None = None,
     top_p: float | None = None,
     user: str | None = None,
@@ -356,6 +356,10 @@ class BaseChatClient(SerializationMixin, ABC):
         self.additional_properties.update(kwargs)
 
         self.middleware = middleware
+
+        self.function_invocation_configuration = (
+            FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
+        )
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.
@@ -492,7 +496,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -591,7 +595,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -718,6 +722,8 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
+        allow_multiple_tool_calls: bool | None = None,
+        conversation_id: str | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -755,6 +761,8 @@ class BaseChatClient(SerializationMixin, ABC):
                 If not provided, the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls per agent turn.
+            conversation_id: The conversation ID to associate with the agent's messages.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -805,6 +813,8 @@ class BaseChatClient(SerializationMixin, ABC):
             chat_message_store_factory=chat_message_store_factory,
             context_providers=context_providers,
             middleware=middleware,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
+            conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
