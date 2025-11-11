@@ -7,7 +7,7 @@ using OpenAI.Responses;
 using Shared.Foundry;
 using Shared.Workflows;
 
-namespace Demo.Workflows.Declarative.FunctionTools;
+namespace Demo.Workflows.Declarative.InputArguments;
 
 /// <summary>
 /// Demonstrate a workflow that consumes input arguments to dynamically enhance the agent
