@@ -89,8 +89,22 @@ class AgentState:
         )
 
     def get_chat_messages(self) -> list[ChatMessage]:
-        """Return a copy of the full conversation history."""
-        return list(self.conversation_history)
+        """Return a copy of the full conversation history.
+
+        Note: additional_properties are stripped from the returned messages to avoid
+        sending metadata to the LLM API, which doesn't support it in the messages array.
+        The original messages in conversation_history retain their additional_properties.
+        """
+        # Return messages without additional_properties to avoid API errors
+        # Azure OpenAI doesn't support metadata in the messages array
+        return [
+            ChatMessage(
+                role=msg.role,
+                contents=msg.contents,
+                # Intentionally omit additional_properties
+            )
+            for msg in self.conversation_history
+        ]
 
     def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
         """Get an agent response by correlation ID.

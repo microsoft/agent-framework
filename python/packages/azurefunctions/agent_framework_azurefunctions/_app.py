@@ -437,7 +437,8 @@ class AgentFunctionApp(df.DFApp):
             agent_name: The agent name (used as the MCP tool name)
             agent_description: Optional description for the MCP tool (shown to clients)
         """
-        mcp_function_name = f"mcptool_{agent_name}"
+        # Match .NET naming convention: mcptool-{agentName}
+        mcp_function_name = f"mcptool-{agent_name}"
 
         # Define tool properties as JSON (MCP tool parameters)
         tool_properties = json.dumps(
@@ -468,7 +469,7 @@ class AgentFunctionApp(df.DFApp):
             data_type=func.DataType.UNDEFINED,
         )
         @self.durable_client_input(client_name="client")
-        async def mcp_tool_handler(context: Any, client: df.DurableOrchestrationClient) -> str:
+        async def mcp_tool_handler(context: str, client: df.DurableOrchestrationClient) -> str:
             """Handle MCP tool invocation for the agent."""
             return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
 
@@ -566,109 +567,6 @@ class AgentFunctionApp(df.DFApp):
             logger.error(f"[MCP Tool] Error invoking agent '{agent_name}': {str(exc)}", exc_info=True)
             raise
 
-    async def _get_response_from_entity(
-        self,
-        client: df.DurableOrchestrationClient,
-        entity_instance_id: df.EntityId,
-        correlation_id: str,
-        message: str,
-        session_key: str,
-    ) -> dict[str, Any]:
-        """Poll the entity state until a response is available or timeout occurs."""
-        import asyncio
-
-        max_retries = 120
-        retry_count = 0
-        result: dict[str, Any] | None = None
-
-        logger.debug(f"[Polling] Waiting for response with correlation ID: {correlation_id}")
-
-        while retry_count < max_retries:
-            await asyncio.sleep(0.5)
-
-            result = await self._poll_entity_for_response(
-                client=client,
-                entity_instance_id=entity_instance_id,
-                correlation_id=correlation_id,
-                message=message,
-                session_key=session_key,
-            )
-            if result is not None:
-                break
-
-            logger.debug(f"[Polling] Response not available yet (retry {retry_count})")
-            retry_count += 1
-
-        if result is not None:
-            return result
-
-        logger.warning(
-            f"[Polling] Response with correlation ID {correlation_id} "
-            f"not found in time (waited {max_retries * 0.5} seconds)"
-        )
-        return await self._build_timeout_result(message=message, session_key=session_key, correlation_id=correlation_id)
-
-    async def _poll_entity_for_response(
-        self,
-        client: df.DurableOrchestrationClient,
-        entity_instance_id: df.EntityId,
-        correlation_id: str,
-        message: str,
-        session_key: str,
-    ) -> dict[str, Any] | None:
-        """Poll entity once for a response matching the correlation ID."""
-        result: dict[str, Any] | None = None
-        try:
-            state = await self._read_cached_state(client, entity_instance_id)
-
-            if state is None:
-                return None
-
-            agent_response = state.try_get_agent_response(correlation_id)
-            if agent_response:
-                result = self._build_success_result(
-                    response_data=agent_response,
-                    message=message,
-                    session_key=session_key,
-                    correlation_id=correlation_id,
-                    state=state,
-                )
-                logger.debug(f"[Polling] Found response for correlation ID: {correlation_id}")
-
-        except Exception as exc:
-            logger.warning(f"[Polling] Error reading entity state: {exc}")
-
-        return result
-
-    async def _build_timeout_result(self, message: str, session_key: str, correlation_id: str) -> dict[str, Any]:
-        """Create the timeout response."""
-        return {
-            "response": "Agent is still processing or timed out...",
-            "message": message,
-            SESSION_ID_FIELD: session_key,
-            "status": "timeout",
-            "correlationId": correlation_id,
-        }
-
-    def _build_success_result(
-        self,
-        response_data: dict[str, Any],
-        message: str,
-        session_key: str,
-        correlation_id: str,
-        state: AgentState,
-    ) -> dict[str, Any]:
-        """Build the success result returned to the caller."""
-        return {
-            "response": response_data.get("response", ""),
-            "message": message,
-            SESSION_ID_FIELD: session_key,
-            "status": "success",
-            "correlationId": correlation_id,
-            "message_count": state.message_count,
-            "timestamp": response_data.get("timestamp"),
-        }
-
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
 
@@ -704,25 +602,6 @@ class AgentFunctionApp(df.DFApp):
             sanitized = f"agent_{sanitized}"
 
         return f"{sanitized}_{suffix}"
-
-    async def _read_cached_state(
-        self,
-        client: df.DurableOrchestrationClient,
-        entity_instance_id: df.EntityId,
-    ) -> AgentState | None:
-        state_response = await client.read_entity_state(entity_instance_id)
-        if not state_response or not state_response.entity_exists:
-            return None
-
-        state_payload = state_response.entity_state
-        if not isinstance(state_payload, dict):
-            return None
-
-        typed_state_payload = cast(dict[str, Any], state_payload)
-
-        agent_state = AgentState()
-        agent_state.restore_state(typed_state_payload)
-        return agent_state
 
     async def _get_response_from_entity(
         self,
@@ -819,6 +698,7 @@ class AgentFunctionApp(df.DFApp):
             "status": "success",
             "message_count": response_data.get("message_count", state.message_count),
             "correlationId": correlation_id,
+            "timestamp": response_data.get("timestamp"),
         }
 
     def _build_request_data(
