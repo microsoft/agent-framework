@@ -26,7 +26,11 @@ from azure.ai.projects.models import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from pydantic import ValidationError
+from openai.types.responses.parsed_response import (
+    ParsedResponse,
+)
+from openai.types.responses.response import Response as OpenAIResponse
+from pydantic import BaseModel, ValidationError
 
 from ._shared import AzureAISettings
 
@@ -279,6 +283,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         run_options["extra_body"] = {"agent": agent_reference}
 
+        conversation_id = chat_options.conversation_id or self.conversation_id
+
+        # Handle different conversation ID formats
+        if conversation_id:
+            if conversation_id.startswith("resp_"):
+                # For response IDs, set previous_response_id and remove conversation property
+                run_options.pop("conversation", None)
+                run_options["previous_response_id"] = conversation_id
+            elif conversation_id.startswith("conv_"):
+                # For conversation IDs, set conversation and remove previous_response_id property
+                run_options.pop("previous_response_id", None)
+                run_options["conversation"] = conversation_id
+
         # Remove properties that are not supported on request level
         # but were configured on agent level
         exclude = ["model", "tools", "response_format"]
@@ -325,3 +342,15 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
         return mcp
+
+    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
+        """Get the conversation ID from the response if store is True."""
+        if store:
+            # If conversation ID exists, it means that we operate with conversation
+            # so we use conversation ID as input and output.
+            if response.conversation and response.conversation.id:
+                return response.conversation.id
+            # If conversation ID doesn't exist, we operate with responses
+            # so we use response ID as input and output.
+            return response.id
+        return None
