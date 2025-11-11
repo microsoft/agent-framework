@@ -35,9 +35,6 @@ environments = [
     "sys_platform == 'win32'"
 ]
 
-[tool.uv.sources]
-anthropic = { path="/Users/edvan/Work/anthropic-0.72.0-py3-none-any.whl"}
-
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
 [tool.pytest.ini_options]
