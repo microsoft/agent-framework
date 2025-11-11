@@ -115,7 +115,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         {
             inputs = [];
 
-            foreach (var argument in this.AgentInput.Arguments)
+            foreach (KeyValuePair<string, ValueExpression> argument in this.AgentInput.Arguments)
             {
                 inputs[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
             }

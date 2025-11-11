@@ -26,7 +26,6 @@ internal sealed class Program
         Uri foundryEndpoint = new(configuration.GetValue(Application.Settings.FoundryEndpoint));
 
         // Ensure sample agents exist in Foundry.
-
         await CreateAgentAsync(foundryEndpoint, configuration);
 
         // Get input from command line or console
