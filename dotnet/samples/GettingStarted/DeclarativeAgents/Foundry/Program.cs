@@ -36,7 +36,7 @@ var text = await File.ReadAllTextAsync(yamlFilePath);
 IConfiguration configuration = new ConfigurationBuilder()
     .AddInMemoryCollection(new Dictionary<string, string?>
     {
-        ["AZURE_FOUNDRY_PROJECT_ENDPOINT"] = endpoint,
+        ["AZURE_FOUNDRY_PROJECT_ENDPOINT"] = endpoint
     })
     .Build();
 
