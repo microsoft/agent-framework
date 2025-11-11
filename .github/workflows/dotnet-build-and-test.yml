@@ -12,7 +12,7 @@ on:
   merge_group:
     branches: ["main", "feature-foundry-agents"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature-foundry-agents"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
