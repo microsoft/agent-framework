@@ -57,7 +57,7 @@ internal sealed class Program
         await agentsClient.CreateAgentAsync(
             agentName: "LocationCaptureAgent",
             agentDefinition: DefineLocationCaptureAgent(configuration),
-            agentDescription: "Evaluate the .");
+            agentDescription: "Evaluate the status of soliciting the location.");
 
         await agentsClient.CreateAgentAsync(
             agentName: "LocationAwareAgent",
