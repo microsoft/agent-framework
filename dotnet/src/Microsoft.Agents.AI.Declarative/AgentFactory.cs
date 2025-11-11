@@ -33,7 +33,8 @@ public abstract class AgentFactory
     }
 
     /// <summary>
-    /// Gets the Power Fx recalculation engine.
+    /// Gets the Power Fx recalculation engine used to evaluate expressions in agent definitions.
+    /// This engine is configured with variables from the <see cref="IConfiguration"/> provided during construction.
     /// </summary>
     protected RecalcEngine Engine { get; }
 
