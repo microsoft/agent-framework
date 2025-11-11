@@ -21,7 +21,7 @@ internal static class MessageText
         public static FormulaValue Execute(RecordValue input) => FormulaValue.New(GetTextFromRecord(input));
     }
 
-    public class TableInput() : ReflectionFunction(FunctionName, FormulaType.String, TableType.Empty())
+    public sealed class TableInput() : ReflectionFunction(FunctionName, FormulaType.String, TableType.Empty())
     {
         public static FormulaValue Execute(TableValue tableValue)
         {
