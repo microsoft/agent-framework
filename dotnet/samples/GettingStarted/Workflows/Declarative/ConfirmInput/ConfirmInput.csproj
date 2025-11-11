@@ -30,10 +30,6 @@
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
   </ItemGroup>
-  
-  <ItemGroup>
-    <None Remove="C:\Users\crickman\source\repos\af9\dotnet\samples\GettingStarted\Workflows\Declarative\ConfirmInput\..\..\..\..\..\..\workflow-samples\ConfirmInput.yaml" />
-  </ItemGroup>
 
   <ItemGroup>
     <None Include="ConfirmInput.yaml">
