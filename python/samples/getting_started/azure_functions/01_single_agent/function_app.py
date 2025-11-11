@@ -22,7 +22,7 @@ def _create_agent() -> Any:
 
 
 # 2. Register the agent with AgentFunctionApp so Azure Functions exposes the required triggers.
-app = AgentFunctionApp(agents=[_create_agent()], enable_health_check=True)
+app = AgentFunctionApp(agents=[_create_agent()], enable_health_check=True, max_poll_retries=50)
 
 """
 Expected output when invoking `POST /api/agents/Joker/run` with plain-text input:

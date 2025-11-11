@@ -66,6 +66,11 @@ jobs:
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      # For Azure Functions integration tests
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+
     defaults:
       run:
         working-directory: python
@@ -87,6 +92,9 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Set up Azure Functions Integration Test Emulators
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
       - name: Test with pytest
         timeout-minutes: 10
         run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10

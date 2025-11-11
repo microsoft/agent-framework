@@ -1,0 +1,26 @@
+name: Azure Functions Integration Test Setup
+description: Prepare local emulators and tools for Azure Functions integration tests
+
+runs:
+    using: "composite"
+    steps:
+      - name: Start Durable Task Scheduler Emulator
+        shell: bash
+        run: |
+          if [ "$(docker ps -aq -f name=dts-emulator)" ]; then
+            docker rm -f dts-emulator
+          fi
+          docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+          timeout 30 bash -c 'until curl --silent --fail http://localhost:8080/healthz; do sleep 1; done'
+      - name: Start Azurite (Azure Storage emulator)
+        shell: bash
+        run: |
+          if [ "$(docker ps -aq -f name=azurite)" ]; then
+            docker rm -f azurite
+          fi
+          docker run -d --name azurite -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
+      - name: Install Azure Functions Core Tools
+        shell: bash
+        run: |
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
+          func --version

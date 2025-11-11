@@ -1,2 +1,3 @@
 agent-framework-azurefunctions
+packaging
 azure-identity
