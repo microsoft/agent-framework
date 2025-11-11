@@ -155,6 +155,11 @@ class Executor(RequestInfoMixin, DictConvertible):
     that parent workflows can intercept. See WorkflowExecutor documentation for details on
     workflow composition patterns and request/response handling.
 
+    ## State Management
+    Executors can contain states that persist across workflow runs and checkpoints. Override the
+    `on_checkpoint_save` and `on_checkpoint_restore` methods to implement custom state
+    serialization and restoration logic.
+
     ## Implementation Notes
     - Do not call `execute()` directly - it's invoked by the workflow engine
     - Do not override `execute()` - define handlers using decorators instead
