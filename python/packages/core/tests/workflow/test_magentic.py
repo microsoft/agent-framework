@@ -185,7 +185,6 @@ async def test_standard_manager_progress_ledger_and_fallback():
     assert ledger2.is_request_satisfied.answer is False
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_workflow_plan_review_approval_to_completion():
     manager = FakeManager(max_round_count=10)
     wf = (
@@ -204,7 +203,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     completed = False
     output: ChatMessage | None = None
-    async for ev in wf.run_stream(
+    async for ev in wf.send_responses_streaming(
         responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
     ):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -218,7 +217,6 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(output, ChatMessage)
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
     class CountingManager(FakeManager):
         # Declare as a model field so assignment is allowed under Pydantic
@@ -250,7 +248,7 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
     completed = False
-    async for ev in wf.run_stream(
+    async for ev in wf.send_responses_streaming(
         responses={
             req_event.request_id: MagenticPlanReviewReply(
                 decision=MagenticPlanReviewDecision.APPROVE,
@@ -298,7 +296,6 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert data.role == Role.ASSISTANT
 
 
-@pytest.mark.skip(reason="Response handling refactored - send_responses_streaming no longer exists")
 async def test_magentic_checkpoint_resume_round_trip():
     storage = InMemoryCheckpointStorage()
 
@@ -369,7 +366,7 @@ class _DummyExec(Executor):
         pass
 
 
-def test_magentic_agent_executor_snapshot_roundtrip():
+async def test_magentic_agent_executor_on_checkpoint_save_and_restore_roundtrip():
     backing_executor = _DummyExec("backing")
     agent_exec = MagenticAgentExecutor(backing_executor, "agentA")
     agent_exec._chat_history.extend([  # type: ignore[reportPrivateUsage]
@@ -377,10 +374,10 @@ def test_magentic_agent_executor_snapshot_roundtrip():
         ChatMessage(role=Role.ASSISTANT, text="world", author_name="agentA"),
     ])
 
-    state = agent_exec.snapshot_state()
+    state = await agent_exec.on_checkpoint_save()
 
     restored_executor = MagenticAgentExecutor(_DummyExec("backing2"), "agentA")
-    restored_executor.restore_state(state)
+    await restored_executor.on_checkpoint_restore(state)
 
     assert len(restored_executor._chat_history) == 2  # type: ignore[reportPrivateUsage]
     assert restored_executor._chat_history[0].text == "hello"  # type: ignore[reportPrivateUsage]

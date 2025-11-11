@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origi
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never, TypeVar, deprecated
 
 from ..observability import OtelAttr, create_workflow_span
 from ._const import EXECUTOR_STATE_KEY
@@ -410,6 +410,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Get the shared state."""
         return self._shared_state
 
+    @deprecated(
+        "Use executor member properties directly instead. For state sharing between executors, use `set_shared_state`."
+    )
     async def set_executor_state(self, state: dict[str, Any]) -> None:
         """Store executor state in shared state under a reserved key.
 
@@ -428,6 +431,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         existing_states[self._executor_id] = state
         await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
 
+    @deprecated(
+        "Use executor member properties directly instead. For state sharing between executors, use `get_shared_state`."
+    )
     async def get_executor_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""
         has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)

@@ -282,7 +282,7 @@ class Runner:
         Only JSON-serializable dicts should be provided by executors.
         """
         for exec_id, executor in self._executors.items():
-            # TODO(@taochen) Remove backward compatibility
+            # TODO(@taochen): Remove backward compatibility
             state_dict: dict[str, Any] | None = None
             snapshot = getattr(executor, "snapshot_state", None)
             try:
@@ -336,7 +336,7 @@ class Runner:
             if not executor:
                 raise ValueError(f"Executor {executor_id} not found during state restoration.")
 
-            # TODO(@taochen) Remove backward compatibility
+            # TODO(@taochen): Remove backward compatibility
             restored = False
             restore_method = getattr(executor, "restore_state", None)
             try:

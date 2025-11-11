@@ -29,20 +29,19 @@ if TYPE_CHECKING:
 Sample: Checkpointing and Resuming a Workflow (with an Agent stage)
 
 Purpose:
-This sample shows how to enable checkpointing at superstep boundaries, persist both
-executor-local state and shared workflow state, and then resume execution from a specific
-checkpoint. The workflow demonstrates a simple text-processing pipeline that includes
-an LLM-backed AgentExecutor stage.
+This sample shows how to enable checkpointing at superstep boundaries, persist shared
+workflow state, and then resume execution from a specific checkpoint. The workflow
+demonstrates a simple text-processing pipeline that includes an LLM-backed AgentExecutor
+stage.
 
 Pipeline:
-1) UpperCaseExecutor converts input to uppercase and records state.
+1) UpperCaseExecutor converts input to uppercase.
 2) ReverseTextExecutor reverses the string.
 3) SubmitToLowerAgent prepares an AgentExecutorRequest for the lowercasing agent.
 4) lower_agent (AgentExecutor) converts text to lowercase via Azure OpenAI.
 5) FinalizeFromAgent yields the final result.
 
 What you learn:
-- How to persist executor state using ctx.get_executor_state and ctx.set_executor_state.
 - How to persist shared workflow state using ctx.set_shared_state for cross-executor visibility.
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
@@ -66,20 +65,13 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 class UpperCaseExecutor(Executor):
     """Uppercases the input text and persists both local and shared state."""
 
+    def __init__(self, id: str):
+        super().__init__(id=id)
+
     @handler
     async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text.upper()
         print(f"UpperCaseExecutor: '{text}' -> '{result}'")
-
-        # Persist executor-local state so it is captured in checkpoints
-        # and available after resume for observability or logic.
-        prev = await ctx.get_executor_state() or {}
-        count = int(prev.get("count", 0)) + 1
-        await ctx.set_executor_state({
-            "count": count,
-            "last_input": text,
-            "last_output": result,
-        })
 
         # Write to shared_state so downstream executors and any resumed runs can read it.
         await ctx.set_shared_state("original_input", text)
@@ -119,19 +111,8 @@ class FinalizeFromAgent(Executor):
 
     @handler
     async def finalize(self, response: AgentExecutorResponse, ctx: WorkflowContext[Any, str]) -> None:
-        result = response.agent_run_response.text or ""
-
-        # Persist executor-local state for auditability when inspecting checkpoints.
-        prev = await ctx.get_executor_state() or {}
-        count = int(prev.get("count", 0)) + 1
-        await ctx.set_executor_state({
-            "count": count,
-            "last_output": result,
-            "final": True,
-        })
-
         # Yield the final result so external consumers see the final value.
-        await ctx.yield_output(result)
+        await ctx.yield_output(response.agent_run_response.text)
 
 
 class ReverseTextExecutor(Executor):
@@ -141,15 +122,6 @@ class ReverseTextExecutor(Executor):
     async def reverse_text(self, text: str, ctx: WorkflowContext[str]) -> None:
         result = text[::-1]
         print(f"ReverseTextExecutor: '{text}' -> '{result}'")
-
-        # Persist executor-local state so checkpoint inspection can reveal progress.
-        prev = await ctx.get_executor_state() or {}
-        count = int(prev.get("count", 0)) + 1
-        await ctx.set_executor_state({
-            "count": count,
-            "last_input": text,
-            "last_output": result,
-        })
 
         # Forward the reversed string to the next stage.
         await ctx.send_message(result)

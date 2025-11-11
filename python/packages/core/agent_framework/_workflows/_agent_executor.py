@@ -193,7 +193,7 @@ class AgentExecutor(Executor):
         await self._run_agent_and_emit(ctx)
 
     @override
-    async def on_checkpoint_save(self):
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
         NOTE: if the thread storage is on the server side, the full thread state

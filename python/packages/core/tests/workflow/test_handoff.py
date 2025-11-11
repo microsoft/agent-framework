@@ -585,7 +585,7 @@ async def test_return_to_previous_state_serialization():
     coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
 
     # Snapshot the state
-    state = coordinator.snapshot_state()
+    state = await coordinator.on_checkpoint_save()
 
     # Verify pattern metadata includes current_agent_id
     assert "metadata" in state
@@ -603,7 +603,7 @@ async def test_return_to_previous_state_serialization():
     )
 
     # Restore state
-    coordinator2.restore_state(state)
+    await coordinator2.on_checkpoint_restore(state)
 
     # Verify current_agent_id was restored
     assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]
