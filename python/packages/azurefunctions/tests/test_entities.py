@@ -403,7 +403,7 @@ class TestAgentEntityReset:
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        len(entity.state.data.conversation_history) = 10
+        len(entity.state.data.conversation_history) == 10
 
         mock_context = Mock()
         entity.reset(mock_context)

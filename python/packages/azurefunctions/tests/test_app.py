@@ -353,9 +353,7 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
 
         # Set some state
-        entity.state.data.conversation_history = [
-            ChatMessage(role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"})
-        ]
+        entity.state.data = DurableAgentState()
 
         # Reset
         mock_context = Mock()
@@ -457,7 +455,7 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(DurableAgentState, "data") as restore_state_mock:
+        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)

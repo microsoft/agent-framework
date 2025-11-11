@@ -176,8 +176,16 @@ class DurableAgentStateMessage:
     contents: List[DurableAgentStateContent]
     author_name: Optional[str] = None
     created_at: Optional[datetime] = None
-    extension_data: Optional[Dict]
+    extension_data: Optional[Dict] = None
 
+    def __init__(self, role, contents, author_name=None, created_at=None, extension_data=None):
+        self.role = role
+        self.contents = contents
+        self.author_name = author_name
+        self.created_at = created_at
+        self.extension_data = extension_data
+        
+    
     @staticmethod
     def from_chat_message(content):
         return DurableAgentStateMessage(role=content.role, contents=content.message, author_name=content.author_name, created_at=content.created_at, extension_data=content.extension_data)
