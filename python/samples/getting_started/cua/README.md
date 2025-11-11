@@ -7,14 +7,9 @@ Samples demonstrating how to use Cua with Microsoft Agent Framework for desktop 
 
 ## Prerequisites
 
-```bash
-# Install Cua integration (includes agent-framework-core)
-pip install agent-framework-cua
-
-# Set API keys
-export ANTHROPIC_API_KEY="your-key"           # For Cua execution (all samples)
-export OPENAI_API_KEY="your-key"              # Only for workflow_orchestration sample
-```
+- Install the samples (`uv sync --dev` from the `python/` folder)
+- Set required API keys in your shell (at minimum `ANTHROPIC_API_KEY`; `OPENAI_API_KEY` is only needed for `workflow_orchestration`)
+- Pull the desktop image once: `docker pull trycua/cua-xfce:latest`
 
 ## Samples
 
@@ -66,28 +61,16 @@ python main.py
 
 ### Linux on Docker (Recommended - Cross-platform)
 
-```bash
-docker pull --platform=linux/amd64 trycua/cua-xfce:latest
-```
+See the platform-specific quickstarts in `setup/` for full environment instructions:
 
-### macOS VM (macOS hosts only)
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/trycua/cua/main/libs/lume/scripts/install.sh)"
-lume run macos-sequoia-cua:latest
-```
-
-### Windows Sandbox (Windows hosts only)
-
-```bash
-# Enable Windows Sandbox in Windows Features
-pip install -U git+git://github.com/karkason/pywinsandbox.git
-```
+- [`setup/windows.md`](./setup/windows.md)
+- [`setup/macos.md`](./setup/macos.md)
+- [`setup/linux.md`](./setup/linux.md)
 
 ## Resources
 
 - [Cua Documentation](https://docs.cua.ai)
-  - [Computers](https://docs.cua.ai/docs/computer-sdk/computers) - Platform setup guides (Docker, macOS, Windows)
-  - [Agent Loops](https://docs.cua.ai/docs/agent-sdk/agent-loops) - How Cua's ComputerAgent works
+  - [Computers](https://docs.cua.ai/docs/computer-sdk/computers)
+  - [Agent Loops](https://docs.cua.ai/docs/agent-sdk/agent-loops)
 - [Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)
 - [Package README](../../../packages/cua/README.md)
