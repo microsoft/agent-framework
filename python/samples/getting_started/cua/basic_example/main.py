@@ -16,11 +16,14 @@ logger = logging.getLogger(__name__)
 async def main():
     """Run a basic computer use example with Claude."""
     # Initialize Cua computer (Linux Docker container)
-    async with Computer(os_type="linux", provider_type="docker") as computer:
-        # Create Cua chat client with model and instructions
+    async with Computer(
+        os_type="linux",
+        provider_type="docker",
+        image="trycua/cua-xfce:latest",
+    ) as computer:
+        # Create Cua chat client with model only (Anthropic rejects extra fields)
         chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
-            instructions="You are a desktop automation assistant. Be precise and careful.",
         )
 
         # Create middleware
@@ -38,7 +41,8 @@ async def main():
 
         # Run agent
         logger.info("🤖 Starting agent...")
-        response = await agent.run("Open Firefox and search for 'Python tutorials'")
+
+        response = await agent.run("Open Firefox and open the website 'cua.ai'")
 
         logger.info("📥 Response: %s", response)
 
