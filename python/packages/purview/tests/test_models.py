@@ -237,10 +237,7 @@ class TestModelDeserialization:
 
         dumped = request.model_dump(by_alias=True, exclude_none=True, mode="json")
 
-        # Check that excluded fields are not present
-        assert "user_id" not in dumped
-        assert "tenant_id" not in dumped
+        assert "user_id" in dumped
+        assert "tenant_id" in dumped
         assert "correlation_id" not in dumped
-
-        # Check that content is present
         assert "contentToProcess" in dumped

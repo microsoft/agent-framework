@@ -218,9 +218,14 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/tools/ai_tool_with_approval.py`](./getting_started/tools/ai_tool_with_approval.py) | Demonstration of a tool with approvals |
-| [`getting_started/tools/ai_tool_with_approval_and_threads.py`](./getting_started/tools/ai_tool_with_approval_and_threads.py) | Tool Approvals with Threads |
-| [`getting_started/tools/failing_tools.py`](./getting_started/tools/failing_tools.py) | Tool exceptions handled by returning the error for the agent to recover from |
+| [`getting_started/tools/ai_function_declaration_only.py`](./getting_started/tools/ai_function_declaration_only.py) | Function declarations without implementations for testing agent reasoning |
+| [`getting_started/tools/ai_function_from_dict_with_dependency_injection.py`](./getting_started/tools/ai_function_from_dict_with_dependency_injection.py) | Creating AI functions from dictionary definitions using dependency injection |
+| [`getting_started/tools/ai_function_recover_from_failures.py`](./getting_started/tools/ai_function_recover_from_failures.py) | Graceful error handling when tools raise exceptions |
+| [`getting_started/tools/ai_function_with_approval.py`](./getting_started/tools/ai_function_with_approval.py) | User approval workflows for function calls without threads |
+| [`getting_started/tools/ai_function_with_approval_and_threads.py`](./getting_started/tools/ai_function_with_approval_and_threads.py) | Tool approval workflows using threads for conversation history management |
+| [`getting_started/tools/ai_function_with_max_exceptions.py`](./getting_started/tools/ai_function_with_max_exceptions.py) | Limiting tool failure exceptions using max_invocation_exceptions |
+| [`getting_started/tools/ai_function_with_max_invocations.py`](./getting_started/tools/ai_function_with_max_invocations.py) | Limiting total tool invocations using max_invocations |
+| [`getting_started/tools/ai_functions_in_class.py`](./getting_started/tools/ai_functions_in_class.py) | Using ai_function decorator with class methods for stateful tools |
 
 ## Workflows
 
@@ -294,6 +299,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/workflows/orchestration/group_chat_simple_selector.py`](./getting_started/workflows/orchestration/group_chat_simple_selector.py) | Sample: Group Chat Orchestration with function-based speaker selector |
 | [`getting_started/workflows/orchestration/handoff_simple.py`](./getting_started/workflows/orchestration/handoff_simple.py) | Sample: Handoff Orchestration with simple agent handoff pattern |
 | [`getting_started/workflows/orchestration/handoff_specialist_to_specialist.py`](./getting_started/workflows/orchestration/handoff_specialist_to_specialist.py) | Sample: Handoff Orchestration with specialist-to-specialist routing |
+| [`getting_started/workflows/orchestration/handoff_return_to_previous`](./getting_started/workflows/orchestration/handoff_return_to_previous.py) | Return-to-previous routing: after user input, routes back to the previous specialist instead of coordinator using `.enable_return_to_previous()` |
 | [`getting_started/workflows/orchestration/magentic.py`](./getting_started/workflows/orchestration/magentic.py) | Sample: Magentic Orchestration (agentic task planning with multi-agent execution) |
 | [`getting_started/workflows/orchestration/magentic_checkpoint.py`](./getting_started/workflows/orchestration/magentic_checkpoint.py) | Sample: Magentic Orchestration with Checkpointing |
 | [`getting_started/workflows/orchestration/magentic_human_plan_update.py`](./getting_started/workflows/orchestration/magentic_human_plan_update.py) | Sample: Magentic Orchestration with Human Plan Review |

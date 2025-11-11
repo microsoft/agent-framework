@@ -16,6 +16,9 @@ Note: The number of partial images received depends on generation speed:
 - High quality/complex images: More partials (generation takes longer)
 - Low quality/simple images: Fewer partials (generation completes quickly)
 - You may receive fewer partial images than requested if generation is fast
+
+Important: The final partial image IS the complete, full-quality image. Each partial
+represents a progressive refinement, with the last one being the finished result.
 """
 
 
@@ -66,6 +69,8 @@ async def main():
     async for update in agent.run_stream(query):
         for content in update.contents:
             # Handle partial images
+            # The final partial image IS the complete, full-quality image. Each partial
+            # represents a progressive refinement, with the last one being the finished result.
             if isinstance(content, DataContent) and content.additional_properties.get("is_partial_image"):
                 print(f"     Image {image_count} received")
 

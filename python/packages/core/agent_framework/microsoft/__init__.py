@@ -14,9 +14,11 @@ _IMPORTS: dict[str, tuple[str, list[str]]] = {
     "PurviewAppLocation": ("agent_framework_purview", ["microsoft-purview", "purview"]),
     "PurviewLocationType": ("agent_framework_purview", ["microsoft-purview", "purview"]),
     "PurviewAuthenticationError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "PurviewPaymentRequiredError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
     "PurviewRateLimitError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
     "PurviewRequestError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
     "PurviewServiceError": ("agent_framework_purview", ["microsoft-purview", "purview"]),
+    "CacheProvider": ("agent_framework_purview", ["microsoft-purview", "purview"]),
 }
 
 
