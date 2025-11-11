@@ -642,6 +642,7 @@ class ChatAgent(BaseAgent):
             max_tokens: The maximum number of tokens to generate.
             metadata: Additional metadata to include in the request.
             model_id: The model_id to use for the agent.
+                This overrides the model_id set in the chat client if it contains one.
             presence_penalty: The presence penalty to use.
             response_format: The format of the response.
             seed: The random seed to use.
@@ -690,7 +691,7 @@ class ChatAgent(BaseAgent):
         self._local_mcp_tools = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
         self.chat_options = ChatOptions(
-            model_id=model_id,
+            model_id=model_id or (str(chat_client.model_id) if hasattr(chat_client, "model_id") else None),
             allow_multiple_tool_calls=allow_multiple_tool_calls,
             conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
