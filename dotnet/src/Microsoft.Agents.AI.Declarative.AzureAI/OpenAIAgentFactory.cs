@@ -167,7 +167,7 @@ public abstract class OpenAIAgentFactory : AgentFactory
         var keyConnection = model?.Connection as ApiKeyConnection;
         Throw.IfNull(keyConnection, "A key connection must be specified when create an OpenAI client");
 
-        var apiKey = keyConnection.Key?.Eval(this.Engine);
+        var apiKey = keyConnection.Key!.Eval(this.Engine);
         Throw.IfNullOrEmpty(apiKey, "The connection key must be specified in the agent definition to create an OpenAI client.");
 
         var clientOptions = new OpenAIClientOptions();
