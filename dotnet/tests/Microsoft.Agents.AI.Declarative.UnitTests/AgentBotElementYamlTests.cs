@@ -80,7 +80,7 @@ public sealed class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.OutputType);
-        var responseFormat = agent.OutputType.AsChatResponseFormat() as ChatResponseFormatJson;
+        ChatResponseFormatJson responseFormat = (agent.OutputType.AsChatResponseFormat() as ChatResponseFormatJson)!;
         Assert.NotNull(responseFormat);
         Assert.NotNull(responseFormat.Schema);
     }
@@ -96,7 +96,7 @@ public sealed class AgentBotElementYamlTests
         var tools = agent.Tools;
         var codeInterpreterTools = tools.Where(t => t is CodeInterpreterTool).ToArray();
         Assert.Single(codeInterpreterTools);
-        var codeInterpreterTool = codeInterpreterTools[0] as CodeInterpreterTool;
+        CodeInterpreterTool codeInterpreterTool = (codeInterpreterTools[0] as CodeInterpreterTool)!;
         Assert.NotNull(codeInterpreterTool);
     }
 
@@ -111,7 +111,7 @@ public sealed class AgentBotElementYamlTests
         var tools = agent.Tools;
         var functionTools = tools.Where(t => t is InvokeClientTaskAction).ToArray();
         Assert.Single(functionTools);
-        var functionTool = functionTools[0] as InvokeClientTaskAction;
+        InvokeClientTaskAction functionTool = (functionTools[0] as InvokeClientTaskAction)!;
         Assert.NotNull(functionTool);
         Assert.Equal("GetWeather", functionTool.Name);
         Assert.Equal("Get the weather for a given location.", functionTool.Description);
@@ -129,10 +129,10 @@ public sealed class AgentBotElementYamlTests
         var tools = agent.Tools;
         var mcpTools = tools.Where(t => t is McpServerTool).ToArray();
         Assert.Single(mcpTools);
-        var mcpTool = mcpTools[0] as McpServerTool;
+        McpServerTool mcpTool = (mcpTools[0] as McpServerTool)!;
         Assert.NotNull(mcpTool);
         Assert.Equal("PersonInfoTool", mcpTool.ServerName?.LiteralValue);
-        var connection = mcpTool.Connection as AnonymousConnection;
+        AnonymousConnection connection = (mcpTool.Connection as AnonymousConnection)!;
         Assert.NotNull(connection);
         Assert.Equal("https://my-mcp-endpoint.com/api", connection.Endpoint?.LiteralValue);
     }
@@ -162,7 +162,7 @@ public sealed class AgentBotElementYamlTests
         var tools = agent.Tools;
         var fileSearchTools = tools.Where(t => t is FileSearchTool).ToArray();
         Assert.Single(fileSearchTools);
-        var fileSearchTool = fileSearchTools[0] as FileSearchTool;
+        FileSearchTool fileSearchTool = (fileSearchTools[0] as FileSearchTool)!;
         Assert.NotNull(fileSearchTool);
 
         // Verify vector store content property exists and has correct values
@@ -182,11 +182,11 @@ public sealed class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as CurrentModels;
+        CurrentModels model = (agent.Model as CurrentModels)!;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
-        var connection = model.Connection as ApiKeyConnection;
+        ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
         Assert.NotNull(connection);
         Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
         Assert.Equal("my-api-key", connection.Key?.LiteralValue);
@@ -201,11 +201,11 @@ public sealed class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as CurrentModels;
+        CurrentModels model = (agent.Model as CurrentModels)!;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<RemoteConnection>(model.Connection);
-        var connection = model.Connection as RemoteConnection;
+        RemoteConnection connection = (model.Connection as RemoteConnection)!;
         Assert.NotNull(connection);
         Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", connection.Endpoint?.LiteralValue);
     }
@@ -229,7 +229,7 @@ public sealed class AgentBotElementYamlTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
-        var model = agent.Model as CurrentModels;
+        CurrentModels model = (agent.Model as CurrentModels)!;
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
