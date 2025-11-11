@@ -157,9 +157,11 @@ export interface MetaResponse {
   ui_mode: "developer" | "user";
   version: string;
   framework: string;
+  runtime: "python" | "dotnet";
   capabilities: {
     tracing: boolean;
     openai_proxy: boolean;
+    deployment: boolean;
   };
   auth_required: boolean;
 }

@@ -41,8 +41,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
-  // OpenAI proxy mode, Azure deployment, and auth status from store
-  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired } = useDevUIStore();
+  // OpenAI proxy mode, Azure deployment, auth status, and server capabilities from store
+  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -128,19 +128,21 @@ export function SettingsModal({
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
             )}
           </button>
-          <button
-            onClick={() => setActiveTab("proxy")}
-            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-              activeTab === "proxy"
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            OpenAI Proxy
-            {activeTab === "proxy" && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-            )}
-          </button>
+          {serverCapabilities.openai_proxy && (
+            <button
+              onClick={() => setActiveTab("proxy")}
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                activeTab === "proxy"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              OpenAI Proxy
+              {activeTab === "proxy" && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+              )}
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("about")}
             className={`px-4 py-2 text-sm font-medium transition-colors relative ${
@@ -281,7 +283,8 @@ export function SettingsModal({
                 </div>
               )}
 
-              {/* Deployment Setting */}
+              {/* Deployment Setting - Only show if backend supports deployment */}
+              {serverCapabilities.deployment && (
               <div className="space-y-3 border-t pt-6">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
@@ -331,10 +334,11 @@ export function SettingsModal({
                   </div>
                 </details>
               </div>
+              )}
             </div>
           )}
 
-          {activeTab === "proxy" && (
+          {activeTab === "proxy" && serverCapabilities.openai_proxy && (
             <div className="space-y-6 pt-4">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
