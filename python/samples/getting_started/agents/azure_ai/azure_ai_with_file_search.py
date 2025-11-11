@@ -64,19 +64,12 @@ async def main() -> None:
                     print(f"# User: '{user_input}'")
                     response = await agent.run(user_input)
                     print(f"# Agent: {response.text}")
-
-                # 5. Conversation complete. Cleanup will be handled in the outer finally block.
         finally:
-            # 6. Cleanup: Delete the vector store and file in case of earlier failure to prevent orphaned resources.
-            try:
-                if vector_store:
-                    await agents_client.vector_stores.delete(vector_store.id)
-                if file:
-                    await agents_client.files.delete(file.id)
-            except Exception:
-                # Ignore cleanup errors to avoid masking issues
-                pass
-            finally:
+            # 5. Cleanup: Delete the vector store and file in case of earlier failure to prevent orphaned resources.
+            if vector_store:
+                await agents_client.vector_stores.delete(vector_store.id)
+            if file:
+                await agents_client.files.delete(file.id)
 
 
 if __name__ == "__main__":
