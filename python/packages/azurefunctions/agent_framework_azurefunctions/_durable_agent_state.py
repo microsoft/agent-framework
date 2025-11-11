@@ -132,7 +132,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
     def from_run_request(content):
         from agent_framework import TextContent
         return DurableAgentStateRequest(correlation_id=content.correlation_id,
-                                        messages=[DurableAgentStateMessage.from_chat_message(content.message)],
+                                        messages=[DurableAgentStateMessage.from_chat_message(content)],
                                         created_at=datetime.now(tz=timezone.utc),
                                         extension_data=content.extension_data if hasattr(content, 'extension_data') else None,
                                         response_type="text" if isinstance(content.response_format, TextContent) else "json",
