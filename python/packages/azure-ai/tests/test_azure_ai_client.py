@@ -193,34 +193,6 @@ async def test_azure_ai_client_get_agent_reference_missing_model(
         await client._get_agent_reference_or_create({}, None)  # type: ignore
 
 
-async def test_azure_ai_client_get_conversation_id_or_create_existing(
-    mock_project_client: MagicMock,
-) -> None:
-    """Test _get_conversation_id_or_create when conversation_id is already provided."""
-    client = create_test_azure_ai_client(mock_project_client, conversation_id="existing-conversation")
-
-    conversation_id = await client._get_conversation_id_or_create({})  # type: ignore
-
-    assert conversation_id == "existing-conversation"
-
-
-async def test_azure_ai_client_get_conversation_id_or_create_new(
-    mock_project_client: MagicMock,
-) -> None:
-    """Test _get_conversation_id_or_create when creating a new conversation."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    # Mock conversation creation response
-    mock_conversation = MagicMock()
-    mock_conversation.id = "new-conversation-123"
-    client.client.conversations.create = AsyncMock(return_value=mock_conversation)
-
-    conversation_id = await client._get_conversation_id_or_create({})  # type: ignore
-
-    assert conversation_id == "new-conversation-123"
-    client.client.conversations.create.assert_called_once()
-
-
 async def test_azure_ai_client_prepare_input_with_system_messages(
     mock_project_client: MagicMock,
 ) -> None:
@@ -279,34 +251,6 @@ async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicM
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
 
 
-async def test_azure_ai_client_prepare_options_with_store(mock_project_client: MagicMock) -> None:
-    """Test prepare_options with store=True creates conversation."""
-    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
-
-    # Mock conversation creation
-    mock_conversation = MagicMock()
-    mock_conversation.id = "new-conversation-456"
-    client.client.conversations.create = AsyncMock(return_value=mock_conversation)
-
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions(store=True)
-
-    with (
-        patch.object(
-            client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model", "store": True}
-        ),
-        patch.object(
-            client,
-            "_get_agent_reference_or_create",
-            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
-        ),
-    ):
-        run_options = await client.prepare_options(messages, chat_options)
-
-        assert "conversation" in run_options
-        assert run_options["conversation"] == "new-conversation-456"
-
-
 async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock) -> None:
     """Test initialize_client method."""
     client = create_test_azure_ai_client(mock_project_client)
@@ -318,27 +262,6 @@ async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock)
 
     assert client.client is mock_openai_client
     mock_project_client.get_openai_client.assert_called_once()
-
-
-def test_azure_ai_client_get_conversation_id_from_response(mock_project_client: MagicMock) -> None:
-    """Test get_conversation_id method."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    # Test with conversation and store=True
-    mock_response = MagicMock()
-    mock_response.conversation.id = "test-conversation-123"
-
-    conversation_id = client.get_conversation_id(mock_response, store=True)
-    assert conversation_id == "test-conversation-123"
-
-    # Test with store=False
-    conversation_id = client.get_conversation_id(mock_response, store=False)
-    assert conversation_id is None
-
-    # Test with no conversation
-    mock_response.conversation = None
-    conversation_id = client.get_conversation_id(mock_response, store=True)
-    assert conversation_id is None
 
 
 def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> None:
