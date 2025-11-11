@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import json
 
-from dataclasses import dataclass
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, cast
 from datetime import datetime, timezone
 
 # Base content type
@@ -95,6 +94,27 @@ class DurableAgentState:
 
         return cls.from_dict(obj)
 
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore state from a dictionary, reconstructing ChatMessage objects.
+
+        Args:
+            state: Dictionary containing conversation_history, last_response, and message_count
+        """
+        from agent_framework import ChatMessage
+        # Restore conversation history as ChatMessage objects
+        history_data = state.get("conversation_history", [])
+        restored_history: list[ChatMessage] = []
+        for raw_message in history_data:
+            if isinstance(raw_message, dict):
+                restored_history.append(ChatMessage.from_dict(cast(dict[str, Any], raw_message)))
+            else:
+                restored_history.append(cast(ChatMessage, raw_message))
+
+        self.conversation_history = restored_history
+
+        self.last_response = state.get("last_response")
+        self.message_count = state.get("message_count", 0)
+
 # Entry classes
 
 class DurableAgentStateEntry:
@@ -112,11 +132,11 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
     def from_run_request(content):
         from agent_framework import TextContent
         return DurableAgentStateRequest(correlation_id=content.correlation_id,
-                                        messages=[DurableAgentStateMessage.from_chat_message(msg) for msg in content.message],
-                                        created_at=min((m.created_at for m in content.message), default=datetime.now(tz=timezone.utc)),
+                                        messages=[DurableAgentStateMessage.from_chat_message(content.message)],
+                                        created_at=datetime.now(tz=timezone.utc),
                                         extension_data=content.extension_data if hasattr(content, 'extension_data') else None,
                                         response_type="text" if isinstance(content.response_format, TextContent) else "json",
-                                        response_schema=content.response_schema)
+                                        response_schema=content.response_format)
 
 
 class DurableAgentStateResponse(DurableAgentStateEntry):

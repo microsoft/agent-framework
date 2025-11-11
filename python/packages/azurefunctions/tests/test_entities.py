@@ -547,8 +547,8 @@ class TestCreateAgentEntity:
         assert result["status"] == "reset"
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["message_count"] == 0
-        assert state["conversation_history"] == []
+        assert state["data"] == {}
+        assert state["schema"] == "1.0.0"
 
     def test_entity_function_restores_existing_state(self) -> None:
         """Test that the entity function restores existing state."""
@@ -573,7 +573,7 @@ class TestCreateAgentEntity:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(DurableAgentState, "data") as restore_state_mock:
+        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)
