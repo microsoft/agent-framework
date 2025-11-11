@@ -8,11 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature-azure-functions"]
   merge_group:
-    branches: ["main"]
+    branches: ["main", "feature-azure-functions"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature-azure-functions"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -149,6 +149,27 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Start Durable Task Scheduler Emulator - Required for both Durable Task and Azure Functions integration tests
+      - name: Start Durable Task Scheduler Emulator
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
+        run: |
+          docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+          # Wait for emulator to be ready
+          timeout 30 bash -c 'until curl http://localhost:8080/healthz; do sleep 1; done'
+
+      # Install and start Azurite (Azure Storage emulator) - Required for Azure Functions integration tests
+      - name: Start Azurite (Azure Storage emulator)
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
+        run: |
+          docker run -d --name azurite -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
+
+      # Install Azure Functions Core Tools - Required for Azure Functions integration tests
+      - name: Download and setup Azure Functions Core Tools
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
+        run: |
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
+          func --version
 
       - name: Run Integration Tests
         shell: bash
