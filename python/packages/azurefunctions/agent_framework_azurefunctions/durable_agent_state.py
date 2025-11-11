@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
+from __future__ import annotations
+
 import json
 
-from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Base content type
-@dataclass
+
 class DurableAgentStateContent:
     extension_data: Optional[Dict]
 
@@ -47,12 +48,12 @@ class DurableAgentStateContent:
             return DurableAgentStateUnknownContent.from_unknown_content(content)
 
 # Core state classes
-@dataclass
+
 class DurableAgentStateData:
     conversation_history: List['DurableAgentStateEntry']
     extension_data: Optional[Dict]
 
-@dataclass
+
 class DurableAgentState:
     data: DurableAgentStateData
     schema_version: str = "1.0.0"
@@ -95,27 +96,29 @@ class DurableAgentState:
         return cls.from_dict(obj)
 
 # Entry classes
-@dataclass
+
 class DurableAgentStateEntry:
     correlation_id: str
     created_at: datetime
     messages: List['DurableAgentStateMessage']
     extension_data: Optional[Dict]
 
-@dataclass
+
 class DurableAgentStateRequest(DurableAgentStateEntry):
     response_type: Optional[str] = None
     response_schema: Optional[Dict] = None
 
     @staticmethod
     def from_run_request(content):
+        from agent_framework import TextContent
         return DurableAgentStateRequest(correlation_id=content.correlation_id,
                                         messages=[DurableAgentStateMessage.from_chat_message(msg) for msg in content.messages],
-                                        created_at=min((m.CreatedAt for m in content.Messages), default=datetime.datetime.now(tz=datetime.timezone.utc)),
-                                        response_type="json" if isinstance(content.ResponseFormat, ChatResponseFormatJson) else "text",
+                                        created_at=min((m.created_at for m in content.messages), default=datetime.now(tz=timezone.utc)),
+                                        extension_data=content.extension_data if hasattr(content, 'extension_data') else None,
+                                        response_type="text" if isinstance(content.response_format, TextContent) else "json",
                                         response_schema=content.response_schema)
 
-@dataclass
+
 class DurableAgentStateResponse(DurableAgentStateEntry):
     usage: Optional['DurableAgentStateUsage'] = None
 
@@ -125,7 +128,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         Creates a DurableAgentStateResponse from an AgentRunResponse.
         """
         # Determine the earliest created_at timestamp among messages
-        created_at = min((m.created_at for m in response.messages), default=datetime.utcnow())
+        created_at = min((m.created_at for m in response.messages), default=datetime.now(tz=timezone.utc))
 
         return DurableAgentStateResponse(
             correlation_id=correlation_id,
@@ -147,7 +150,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
 # Message class
-@dataclass
+
 class DurableAgentStateMessage:
     role: str
     contents: List[DurableAgentStateContent]
@@ -164,7 +167,7 @@ class DurableAgentStateMessage:
         return ChatMessage(role=self.role, contents=self.contents, author_name=self.author_name, created_at=self.created_at, extension_data=self.extension_data)
 
 # Content subclasses
-@dataclass
+
 class DurableAgentStateDataContent(DurableAgentStateContent):
     uri: str = ""
     media_type: Optional[str] = None
@@ -177,7 +180,7 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
         from agent_framework import DataContent
         return DataContent(uri=self.uri, media_type=self.media_type)
 
-@dataclass
+
 class DurableAgentStateErrorContent(DurableAgentStateContent):
     message: Optional[str] = None
     error_code: Optional[str] = None
@@ -191,7 +194,7 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
         from agent_framework import ErrorContent
         return ErrorContent(message=self.message, error_code=self.error_code, details=self.details)
 
-@dataclass
+
 class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
     call_id: str
     name: str
@@ -209,7 +212,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         from agent_framework import FunctionCallContent
         return FunctionCallContent(call_id=self.call_id, name=self.name, arguments=self.arguments)
 
-@dataclass
+
 class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
     call_id: str
     result: Optional[object] = None
@@ -222,7 +225,7 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
         from agent_framework import FunctionResultContent
         return FunctionResultContent(call_id=self.call_id, result=self.result)
 
-@dataclass
+
 class DurableAgentStateHostedFileContent(DurableAgentStateContent):
     file_id: str
 
@@ -234,7 +237,7 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
         from agent_framework import HostedFileContent
         return HostedFileContent(file_id=self.file_id)
 
-@dataclass
+
 class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
     vector_store_id: str
 
@@ -246,7 +249,7 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
         from agent_framework import HostedVectorStoreContent
         return HostedVectorStoreContent(vector_store_id=self.vector_store_id)
 
-@dataclass
+
 class DurableAgentStateTextContent(DurableAgentStateContent):
     text: Optional[str] = None
 
@@ -258,7 +261,7 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
         from agent_framework import TextContent
         return TextContent(text=self.text)
 
-@dataclass
+
 class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
     text: Optional[str] = None
 
@@ -270,7 +273,7 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
         from agent_framework import TextReasoningContent
         return TextReasoningContent(text=self.text)
 
-@dataclass
+
 class DurableAgentStateUriContent(DurableAgentStateContent):
     uri: str
     media_type: str
@@ -283,7 +286,7 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
         from agent_framework import UriContent
         return UriContent(uri=self.uri, media_type=self.media_type)
 
-@dataclass
+
 class DurableAgentStateUsage:
     input_token_count: Optional[int] = None
     output_token_count: Optional[int] = None
@@ -309,7 +312,7 @@ class DurableAgentStateUsage:
             total_token_count=self.total_token_count
         )
 
-@dataclass
+
 class DurableAgentStateUsageContent(DurableAgentStateContent):
     usage: DurableAgentStateUsage = DurableAgentStateUsage()
 
@@ -321,18 +324,16 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
         from agent_framework import UsageContent
         return UsageContent(details=self.usage.to_usage_details())
 
-@dataclass
+
 class DurableAgentStateUnknownContent(DurableAgentStateContent):
     content: dict
 
     @staticmethod
     def from_unknown_content(content):
-        import json
         return DurableAgentStateUnknownContent(content=json.loads(content))
 
     def to_ai_content(self):
         from agent_framework import BaseContent
-        import json
         if not self.content:
-            raise Exception(f"The content '{self.content}' is not valid AI content.")
+            raise Exception(f"The content is missing and cannot be converted to valid AI content.")
         return BaseContent(content=json.loads(self.content))

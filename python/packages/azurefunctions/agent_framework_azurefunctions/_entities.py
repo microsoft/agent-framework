@@ -21,10 +21,8 @@ from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._models import AgentResponse, ChatRole, RunRequest
 from .durable_agent_state import (
     DurableAgentState,
-    DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
-    DurableAgentStateUsage,
 )
 
 logger = get_logger("agent_framework.azurefunctions.entities")
