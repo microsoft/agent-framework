@@ -9,12 +9,12 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx.Functions;
 
-public class UserMessageTests
+public sealed class AgentMessageTests
 {
     [Fact]
     public void Construct_Function()
     {
-        UserMessage function = new();
+        AgentMessage function = new();
         Assert.NotNull(function);
     }
 
@@ -25,7 +25,7 @@ public class UserMessageTests
         StringValue sourceValue = FormulaValue.New(string.Empty);
 
         // Act
-        FormulaValue result = UserMessage.Execute(sourceValue);
+        FormulaValue result = AgentMessage.Execute(sourceValue);
 
         // Assert
         Assert.IsType<BlankValue>(result);
@@ -38,7 +38,7 @@ public class UserMessageTests
         FormulaValue sourceValue = FormulaValue.New(Text);
         StringValue stringValue = Assert.IsType<StringValue>(sourceValue);
 
-        FormulaValue result = UserMessage.Execute(stringValue);
+        FormulaValue result = AgentMessage.Execute(stringValue);
 
         RecordValue recordResult = Assert.IsType<RecordValue>(result, exactMatch: false);
 
@@ -50,7 +50,7 @@ public class UserMessageTests
         // Role
         FormulaValue role = recordResult.GetField(TypeSchema.Message.Fields.Role);
         StringValue roleValue = Assert.IsType<StringValue>(role);
-        Assert.Equal(ChatRole.User.Value, roleValue.Value);
+        Assert.Equal(ChatRole.Assistant.Value, roleValue.Value);
 
         // Content table
         FormulaValue content = recordResult.GetField(TypeSchema.Message.Fields.Content);

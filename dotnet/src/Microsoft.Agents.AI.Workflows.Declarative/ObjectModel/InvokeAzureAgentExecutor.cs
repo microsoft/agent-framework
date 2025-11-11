@@ -60,8 +60,8 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
-
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, cancellationToken).ConfigureAwait(false);
+        Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
+        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
         ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
         if (actionableMessages.Length > 0)
@@ -105,6 +105,23 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         }
 
         await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Dictionary<string, object?>? GetStructuredInputs()
+    {
+        Dictionary<string, object?>? inputs = null;
+
+        if (this.AgentInput?.Arguments is not null)
+        {
+            inputs = [];
+
+            foreach (KeyValuePair<string, ValueExpression> argument in this.AgentInput.Arguments)
+            {
+                inputs[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+            }
+        }
+
+        return inputs;
     }
 
     private IEnumerable<ChatMessage>? GetInputMessages()

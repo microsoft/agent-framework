@@ -10,7 +10,7 @@ namespace Demo.Workflows.Declarative.ConfirmInput;
 /// and confirm it matches the original input.
 /// </summary>
 /// <remarks>
-/// See the README.md file in the parent folder (../Declarative/README.md) for detailed
+/// See the README.md file in the parent folder (../README.md) for detailed
 /// information the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program

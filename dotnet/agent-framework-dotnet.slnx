@@ -116,6 +116,7 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/FunctionTools/FunctionTools.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
