@@ -18,14 +18,14 @@ async def main():
     # Use Docker (cross-platform), or change to:
     # - Computer(os_type="macos", provider_type="lume") for macOS
     # - Computer(os_type="windows", provider_type="winsandbox") for Windows
-    async with Computer(os_type="linux", provider_type="docker") as computer:
+    async with Computer(
+        os_type="linux",
+        provider_type="docker",
+        image="trycua/cua-xfce:latest",
+    ) as computer:
         # Create Cua chat client with composite model
         chat_client = CuaChatClient(
             model="huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B+openai/gpt-4o",
-            instructions=(
-                "You are a desktop automation assistant. "
-                "Use UI-Tars for precise UI element detection and GPT-4o for planning."
-            ),
         )
 
         # Create middleware

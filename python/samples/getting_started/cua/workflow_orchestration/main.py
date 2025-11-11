@@ -34,11 +34,14 @@ async def main():
 
     # Step 2: Cua Automation Agent (Agent Framework Orchestration + Cua Execution)
     logger.info("\n🤖 Step 2: Cua Automation Agent")
-    async with Computer(os_type="linux", provider_type="docker") as computer:
+    async with Computer(
+        os_type="linux",
+        provider_type="docker",
+        image="trycua/cua-xfce:latest",
+    ) as computer:
         # Create Cua chat client
         cua_chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
-            instructions="You are an automation assistant. Execute the plan carefully.",
         )
 
         # Create middleware
