@@ -197,6 +197,20 @@ class SampleTestHelper:
 # Function App Lifecycle Management Helpers
 
 
+def _resolve_repo_root() -> Path:
+    """Resolve the repository root, preferring GITHUB_WORKSPACE when available."""
+    workspace = os.getenv("GITHUB_WORKSPACE")
+    if workspace:
+        candidate = Path(workspace).expanduser()
+        if not (candidate / "samples").exists() and (candidate / "python" / "samples").exists():
+            return (candidate / "python").resolve()
+        return candidate.resolve()
+
+    # If `GITHUB_WORKSPACE` is not set,
+    # go up from testutils.py -> integration_tests -> tests -> azurefunctions -> packages -> python
+    return Path(__file__).resolve().parents[4]
+
+
 def get_sample_path_from_marker(request) -> tuple[Path | None, str | None]:
     """
     Get sample path from @pytest.mark.sample() marker.
@@ -223,8 +237,7 @@ def get_sample_path_from_marker(request) -> tuple[Path | None, str | None]:
         )
 
     sample_name = marker.args[0]
-    # Go up from testutils.py -> integration_tests -> tests -> azurefunctions -> packages -> python
-    repo_root = Path(__file__).parent.parent.parent.parent.parent
+    repo_root = _resolve_repo_root()
     sample_path = repo_root / "samples" / "getting_started" / "azure_functions" / sample_name
 
     if not sample_path.exists():
@@ -269,7 +282,6 @@ def load_and_validate_env() -> None:
     required_env_vars = [
         "AZURE_OPENAI_ENDPOINT",
         "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
-        "AZURE_OPENAI_API_KEY",
         "AzureWebJobsStorage",
         "DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
         "FUNCTIONS_WORKER_RUNTIME",

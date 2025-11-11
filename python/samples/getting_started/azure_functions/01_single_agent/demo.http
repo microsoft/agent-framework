@@ -19,5 +19,6 @@ Content-Type: application/json
 
 ### Ask for a joke (plain text payload)
 POST {{agentRoute}}/run
+x-wait-for-completion: true
 
 Give me a programming joke about race conditions.

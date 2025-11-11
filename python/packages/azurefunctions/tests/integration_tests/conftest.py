@@ -68,9 +68,9 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
 
     Usage:
     @pytest.mark.sample("01_single_agent")
-        @pytest.mark.usefixtures("function_app_for_test")
-        class TestSample01SingleAgent:
-            ...
+    @pytest.mark.usefixtures("function_app_for_test")
+    class TestSample01SingleAgent:
+        ...
     """
     # Get sample path from marker
     sample_path, error_message = get_sample_path_from_marker(request)
