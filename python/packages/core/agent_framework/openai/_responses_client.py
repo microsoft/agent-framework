@@ -302,6 +302,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if never_require_approvals := tool.approval_mode.get("never_require_approval"):
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
+        return mcp
+
     async def prepare_options(
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
