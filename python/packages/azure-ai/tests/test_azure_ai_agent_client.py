@@ -1832,23 +1832,138 @@ def test_azure_ai_chat_client_capture_azure_search_tool_calls(mock_agents_client
     assert captured_tool_call["azure_ai_search"] == {"input": "test query", "output": "test output"}
 
 
-def test_azure_ai_chat_client_enhance_raw_representation_with_azure_search_no_dict(
+def test_azure_ai_chat_client_get_real_url_from_citation_reference_no_tool_calls(
     mock_agents_client: MagicMock,
 ) -> None:
-    """Test _enhance_raw_representation_with_azure_search with annotation that has no __dict__."""
+    """Test _get_real_url_from_citation_reference with no tool calls."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # Add some Azure Search tool calls
-    chat_client._azure_search_tool_calls = [
-        {"id": "call_123", "type": "azure_ai_search", "azure_ai_search": {"input": "test"}}
+    # No tool calls
+    result = chat_client._get_real_url_from_citation_reference("doc_1")  # type: ignore
+    assert result == "doc_1"
+
+
+def test_azure_ai_chat_client_get_real_url_from_citation_reference_invalid_output(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _get_real_url_from_citation_reference with invalid output format."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Tool call with invalid output format
+    chat_client._azure_search_tool_calls = [  # type: ignore[attr-defined]
+        {"id": "call_123", "type": "azure_ai_search", "azure_ai_search": {"output": "invalid_json_format"}}
     ]
 
-    # Mock annotation without __dict__
-    mock_annotation = "string_annotation"
+    result = chat_client._get_real_url_from_citation_reference("doc_1")  # type: ignore
+    assert result == "doc_1"
 
-    # Call the method
-    result = chat_client._enhance_raw_representation_with_azure_search(mock_annotation)  # type: ignore
 
-    # Verify result contains Azure Search data
-    assert "azure_ai_search_tool_calls" in result
-    assert len(result["azure_ai_search_tool_calls"]) == 1
+async def test_azure_ai_chat_client_context_manager(mock_agents_client: MagicMock) -> None:
+    """Test AzureAIAgentClient as async context manager."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Mock close method to avoid actual cleanup
+    chat_client.close = AsyncMock()
+
+    async with chat_client as client:
+        assert client is chat_client
+
+    # Verify close was called on exit
+    chat_client.close.assert_called_once()
+
+
+async def test_azure_ai_chat_client_close_method(mock_agents_client: MagicMock) -> None:
+    """Test AzureAIAgentClient close method."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Mock cleanup methods
+    chat_client._cleanup_agent_if_needed = AsyncMock()
+    chat_client._close_client_if_needed = AsyncMock()
+
+    await chat_client.close()
+
+    # Verify cleanup methods were called
+    chat_client._cleanup_agent_if_needed.assert_called_once()
+    chat_client._close_client_if_needed.assert_called_once()
+
+
+def test_azure_ai_chat_client_extract_url_citations_with_azure_search_enhanced_url(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _extract_url_citations with Azure AI Search URL enhancement."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    # Add Azure Search tool calls for URL enhancement
+    chat_client._azure_search_tool_calls = [  # type: ignore[attr-defined]
+        {
+            "id": "call_123",
+            "type": "azure_ai_search",
+            "azure_ai_search": {
+                "output": str({
+                    "metadata": {"get_urls": ["https://real-example.com/doc1", "https://real-example.com/doc2"]}
+                })
+            },
+        }
+    ]
+
+    # Create mock URL citation with doc reference
+    mock_url_citation = MagicMock()
+    mock_url_citation.url = "doc_1"
+    mock_url_citation.title = "Test Title"
+
+    mock_annotation = MagicMock(spec=MessageDeltaTextUrlCitationAnnotation)
+    mock_annotation.url_citation = mock_url_citation
+    mock_annotation.start_index = 10
+    mock_annotation.end_index = 20
+
+    mock_text = MagicMock()
+    mock_text.annotations = [mock_annotation]
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+
+    # Verify real URL was used
+    assert len(citations) == 1
+    citation = citations[0]
+    assert citation.url == "https://real-example.com/doc2"  # doc_1 maps to index 1
+
+
+def test_azure_ai_chat_client_init_with_auto_created_agents_client(
+    azure_ai_unit_test_env: dict[str, str], mock_azure_credential: MagicMock
+) -> None:
+    """Test AzureAIAgentClient initialization when it creates its own AgentsClient."""
+
+    # Mock the AgentsClient constructor
+    with patch("agent_framework_azure_ai._chat_client.AgentsClient") as mock_agents_client_class:
+        mock_agents_client_instance = MagicMock()
+        mock_agents_client_class.return_value = mock_agents_client_instance
+
+        # Create client without providing agents_client - should create its own
+        client = AzureAIAgentClient(
+            agents_client=None,  # This will trigger creation of AgentsClient
+            agent_id="test-agent",
+            project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            async_credential=mock_azure_credential,
+        )
+
+        # Verify AgentsClient was created with correct parameters
+        mock_agents_client_class.assert_called_once_with(
+            endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
+            credential=mock_azure_credential,
+            user_agent="agent-framework-python/0.0.0",
+        )
+
+        # Verify client properties are set correctly
+        assert client.agents_client is mock_agents_client_instance
+        assert client.agent_id == "test-agent"
+        assert client.credential is mock_azure_credential
+        assert client._should_close_client is True  # Should close since we created it  # type: ignore[attr-defined]

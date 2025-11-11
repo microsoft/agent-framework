@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import ast
 import json
 import os
+import re
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, TypeVar
@@ -446,32 +448,58 @@ class AzureAIAgentClient(BaseChatClient):
                                 )
                             ]
 
-                        # Enhance raw_representation with Azure AI Search tool call data
-                        enhanced_raw_representation = self._enhance_raw_representation_with_azure_search(annotation)
+                        # Extract real URL from Azure AI Search tool calls
+                        real_url = self._get_real_url_from_citation_reference(annotation.url_citation.url)
 
-                        # Create CitationAnnotation from AzureAI annotation
+                        # Create CitationAnnotation with real URL
                         citation = CitationAnnotation(
                             title=getattr(annotation.url_citation, "title", None),
-                            url=annotation.url_citation.url,
+                            url=real_url,
                             snippet=None,
                             annotated_regions=annotated_regions,
-                            raw_representation=enhanced_raw_representation,
+                            raw_representation=annotation,
                         )
                         url_citations.append(citation)
 
         return url_citations
 
-    def _enhance_raw_representation_with_azure_search(self, annotation: Any) -> dict[str, Any]:
-        """Enhance raw_representation with Azure AI Search tool call data."""
-        # Start with the original annotation as a dict
-        enhanced_repr = annotation.__dict__.copy() if hasattr(annotation, "__dict__") else {}
+    def _get_real_url_from_citation_reference(self, citation_url: str) -> str:
+        """Extract real URL from Azure AI Search tool calls based on citation reference.
 
-        # Add Azure AI Search tool calls if available
-        azure_search_tool_calls = getattr(self, "_azure_search_tool_calls", [])
-        if azure_search_tool_calls:
-            enhanced_repr["azure_ai_search_tool_calls"] = azure_search_tool_calls
+        Args:
+            citation_url: Citation reference URL (e.g., "doc_0", "#doc_1", or full URL with doc_N)
 
-        return enhanced_repr
+        Returns:
+            Real document URL if found, otherwise original citation_url
+        """
+        # Extract document index from citation URL (e.g., "doc_0" -> 0)
+        match = re.search(r"doc_(\d+)", citation_url)
+        if not match:
+            return citation_url
+
+        doc_index = int(match.group(1))
+
+        # Get Azure AI Search tool calls
+        if not hasattr(self, "_azure_search_tool_calls") or not self._azure_search_tool_calls:
+            return citation_url
+
+        try:
+            # Extract URLs from the most recent Azure AI Search tool call
+            tool_call = self._azure_search_tool_calls[-1]  # Most recent call
+            output_str = tool_call["azure_ai_search"]["output"]
+
+            # Parse the tool call output to get URLs
+            output_data = ast.literal_eval(output_str)
+            all_urls = output_data["metadata"]["get_urls"]
+
+            # Return the URL at the specified index, if it exists
+            if 0 <= doc_index < len(all_urls):
+                return all_urls[doc_index]
+
+        except (KeyError, IndexError, TypeError, ValueError, SyntaxError) as ex:
+            logger.debug(f"Failed to extract real URL for {citation_url}: {ex}")
+
+        return citation_url
 
     async def _process_stream(
         self, stream: AsyncAgentRunStream[AsyncAgentEventHandler[Any]] | AsyncAgentEventHandler[Any], thread_id: str
@@ -644,7 +672,7 @@ class AzureAIAgentClient(BaseChatClient):
             if isinstance(stream, AsyncAgentRunStream):
                 await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
 
-    def _capture_azure_search_tool_calls(self, step_data: Any) -> None:
+    def _capture_azure_search_tool_calls(self, step_data: RunStep) -> None:
         """Capture Azure AI Search tool call data from completed steps."""
         try:
             if (

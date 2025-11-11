@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import ast
 import asyncio
 import os
 
@@ -104,29 +103,11 @@ async def main() -> None:
 
                 print()
 
-                # Display collected citations
+                # Display collected citation
                 if citations:
-                    print("\n\nCitations:")
+                    print("\n\nCitation:")
                     for i, citation in enumerate(citations, 1):
-                        print(f"[{i}] Citation URL: {citation.url}")
-
-                    # Show absolute path URLs from the Azure AI Search response
-                    if (
-                        citations
-                        and citations[0].raw_representation
-                        and "azure_ai_search_tool_calls" in citations[0].raw_representation
-                    ):
-                        tool_calls = citations[0].raw_representation["azure_ai_search_tool_calls"]
-                        if tool_calls:
-                            try:
-                                output_str = tool_calls[0]["azure_ai_search"]["output"]
-                                output_data = ast.literal_eval(output_str)
-                                all_urls = output_data["metadata"]["get_urls"]
-                                print("\nAll URLs from Azure AI Search:")
-                                for j, url in enumerate(all_urls):
-                                    print(f"  doc_{j}: {url}")
-                            except (KeyError, IndexError, TypeError, ValueError) as e:
-                                print(f"\n[Warning] Could not extract URLs from Azure AI Search response: {e}")
+                        print(f"[{i}] {citation.url}")
 
                 print("\n" + "=" * 50 + "\n")
                 print("Hotel search conversation completed!")
