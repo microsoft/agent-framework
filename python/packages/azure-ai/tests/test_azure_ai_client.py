@@ -375,13 +375,13 @@ async def test_azure_ai_client_use_latest_version_existing_agent(
     mock_existing_agent = MagicMock()
     mock_existing_agent.name = "existing-agent"
     mock_existing_agent.versions.latest.version = "2.5"
-    mock_project_client.agents.retrieve = AsyncMock(return_value=mock_existing_agent)
+    mock_project_client.agents.get = AsyncMock(return_value=mock_existing_agent)
 
     run_options = {"model": "test-model"}
     agent_ref = await client._get_agent_reference_or_create(run_options, None)  # type: ignore
 
     # Verify existing agent was retrieved and used
-    mock_project_client.agents.retrieve.assert_called_once_with("existing-agent")
+    mock_project_client.agents.get.assert_called_once_with("existing-agent")
     mock_project_client.agents.create_version.assert_not_called()
 
     assert agent_ref == {"name": "existing-agent", "version": "2.5", "type": "agent_reference"}
@@ -398,7 +398,7 @@ async def test_azure_ai_client_use_latest_version_agent_not_found(
     client = create_test_azure_ai_client(mock_project_client, agent_name="non-existing-agent", use_latest_version=True)
 
     # Mock ResourceNotFoundError when trying to retrieve agent
-    mock_project_client.agents.retrieve = AsyncMock(side_effect=ResourceNotFoundError("Agent not found"))
+    mock_project_client.agents.get = AsyncMock(side_effect=ResourceNotFoundError("Agent not found"))
 
     # Mock agent creation response for fallback
     mock_created_agent = MagicMock()
@@ -410,7 +410,7 @@ async def test_azure_ai_client_use_latest_version_agent_not_found(
     agent_ref = await client._get_agent_reference_or_create(run_options, None)  # type: ignore
 
     # Verify retrieval was attempted and creation was used as fallback
-    mock_project_client.agents.retrieve.assert_called_once_with("non-existing-agent")
+    mock_project_client.agents.get.assert_called_once_with("non-existing-agent")
     mock_project_client.agents.create_version.assert_called_once()
 
     assert agent_ref == {"name": "non-existing-agent", "version": "1.0", "type": "agent_reference"}
@@ -434,7 +434,7 @@ async def test_azure_ai_client_use_latest_version_false(
     agent_ref = await client._get_agent_reference_or_create(run_options, None)  # type: ignore
 
     # Verify retrieval was not attempted and creation was used directly
-    mock_project_client.agents.retrieve.assert_not_called()
+    mock_project_client.agents.get.assert_not_called()
     mock_project_client.agents.create_version.assert_called_once()
 
     assert agent_ref == {"name": "test-agent", "version": "1.0", "type": "agent_reference"}
@@ -451,7 +451,7 @@ async def test_azure_ai_client_use_latest_version_with_existing_agent_version(
     agent_ref = await client._get_agent_reference_or_create({}, None)  # type: ignore
 
     # Verify neither retrieval nor creation was attempted since version is already set
-    mock_project_client.agents.retrieve.assert_not_called()
+    mock_project_client.agents.get.assert_not_called()
     mock_project_client.agents.create_version.assert_not_called()
 
     assert agent_ref == {"name": "test-agent", "version": "3.0", "type": "agent_reference"}
