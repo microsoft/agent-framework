@@ -15,6 +15,7 @@ public static class StringExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
+    /// <returns>The evaluated string value, or null if the expression is null or cannot be evaluated.</returns>
     public static string? Eval(this StringExpression? expression, RecalcEngine engine)
     {
         if (expression is null)
