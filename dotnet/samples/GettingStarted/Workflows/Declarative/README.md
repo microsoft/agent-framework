@@ -86,12 +86,14 @@ To run the sampes from the command line:
 1. From the root of the repository, navigate the console to the project folder:
 
     ```sh
-    cd dotnet/samples/GettingStarted/Workflows/Declarative/StudentTeacher
+    cd dotnet/samples/GettingStarted/Workflows/Declarative/Marketing
+    dotnet run Marketing
     ```
 
 2. Run the demo and optionally provided input:
 
     ```sh
-    dotnet run "How would you compute the value of PI?"
+    dotnet run "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours."
+    dotnet run c:/myworkflows/Marketing.yaml
     ```
    >  The sample will allow for interactive input in the absence of an input argument.

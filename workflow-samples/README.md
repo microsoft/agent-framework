@@ -6,7 +6,7 @@ may be executed locally no different from any regular `Workflow` that is defined
 The difference is that the workflow definition is loaded from a YAML file instead of being defined in code:
 
 ```c#
-Workflow workflow = DeclarativeWorkflowBuilder.Build<string>("HelloWorld.yaml", options);
+Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("Marketing.yaml", options);
 ```
 
 These example workflows may be executed by the workflow

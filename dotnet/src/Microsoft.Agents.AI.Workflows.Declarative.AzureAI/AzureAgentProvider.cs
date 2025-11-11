@@ -80,8 +80,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         IEnumerable<ChatMessage>? messages,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentVersion agentDefinition = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
-        AIAgent agent = await this.GetAgentAsync(agentDefinition, cancellationToken).ConfigureAwait(false);
+        AgentVersion agentVersionResult = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
+        AIAgent agent = await this.GetAgentAsync(agentVersionResult, cancellationToken).ConfigureAwait(false);
 
         ChatOptions chatOptions =
             new()
@@ -99,7 +99,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
         {
-            update.AuthorName = agentDefinition.Name;
+            update.AuthorName = agentVersionResult.Name;
             yield return update;
         }
     }
@@ -146,16 +146,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AgentClient client = this.GetAgentClient();
 
-        IList<AITool>? tools = null;
-        if (agentVersion.Definition is PromptAgentDefinition promptAgent)
-        {
-            tools =
-                promptAgent.Tools
-                    .Select(tool => tool.AsAITool())
-                    .ToArray();
-        }
-
-        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
+        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
