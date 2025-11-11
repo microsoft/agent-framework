@@ -461,7 +461,7 @@ class AzureAIAgentClient(BaseChatClient):
 
         return url_citations
 
-    def _enhance_raw_representation_with_azure_search(self, annotation) -> dict[str, Any]:
+    def _enhance_raw_representation_with_azure_search(self, annotation: Any) -> dict[str, Any]:
         """Enhance raw_representation with Azure AI Search tool call data."""
         # Start with the original annotation as a dict
         enhanced_repr = annotation.__dict__.copy() if hasattr(annotation, "__dict__") else {}
@@ -479,8 +479,7 @@ class AzureAIAgentClient(BaseChatClient):
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
         # Clear Azure Search tool calls for this new stream
-        azure_search_tool_calls = getattr(self, "_azure_search_tool_calls", [])
-        azure_search_tool_calls.clear()
+        self._azure_search_tool_calls = []
         response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
             async for event_type, event_data, _ in response_stream:  # type: ignore
@@ -645,7 +644,7 @@ class AzureAIAgentClient(BaseChatClient):
             if isinstance(stream, AsyncAgentRunStream):
                 await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
 
-    def _capture_azure_search_tool_calls(self, step_data) -> None:
+    def _capture_azure_search_tool_calls(self, step_data: Any) -> None:
         """Capture Azure AI Search tool call data from completed steps."""
         try:
             if (
