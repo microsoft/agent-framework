@@ -335,17 +335,17 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "conversation_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
         )
-        assert entity.state.message_count == 1
+        assert len(entity.state.data.conversation_history) == 1
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "conversation_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
         )
-        assert entity.state.message_count == 2
+        assert len(entity.state.data.conversation_history) == 2
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -353,9 +353,7 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
 
         # Set some state
-        entity.state.message_count = 10
-        entity.state.last_response = "Some response"
-        entity.state.conversation_history = [
+        entity.state.data.conversation_history = [
             ChatMessage(role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"})
         ]
 
@@ -363,9 +361,7 @@ class TestAgentEntityOperations:
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.message_count == 0
-        assert entity.state.last_response is None
-        assert len(entity.state.conversation_history) == 0
+        assert len(entity.state.data.conversation_history) == 0
 
 
 class TestAgentEntityFactory:

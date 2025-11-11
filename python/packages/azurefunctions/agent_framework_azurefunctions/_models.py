@@ -297,6 +297,9 @@ class RunRequest:
     enable_tool_calls: bool = True
     conversation_id: str | None = None
     correlation_id: str | None = None
+    author_name: str | None = None
+    created_at: str | None = None
+    extension_data: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -311,6 +314,12 @@ class RunRequest:
             result["conversation_id"] = self.conversation_id
         if self.correlation_id:
             result["correlation_id"] = self.correlation_id
+        if self.author_name:
+            result["author_name"] = self.author_name
+        if self.created_at:
+            result["created_at"] = self.created_at
+        if self.extension_data:
+            result["extension_data"] = self.extension_data
         return result
 
     @classmethod
