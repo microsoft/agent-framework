@@ -1110,7 +1110,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.Services.AddOpenAIResponses();
+        builder.AddOpenAIResponses();
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
 
         this._app = builder.Build();

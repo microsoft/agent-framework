@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 /// <summary>
 /// Configuration options for a text response from the model.
 /// </summary>
-internal sealed record TextConfiguration
+internal sealed class TextConfiguration
 {
     /// <summary>
     /// The format configuration for the text response.
@@ -34,7 +34,7 @@ internal sealed record TextConfiguration
 [JsonDerivedType(typeof(ResponseTextFormatConfigurationText), "text")]
 [JsonDerivedType(typeof(ResponseTextFormatConfigurationJsonObject), "json_object")]
 [JsonDerivedType(typeof(ResponseTextFormatConfigurationJsonSchema), "json_schema")]
-internal abstract record ResponseTextFormatConfiguration
+internal abstract class ResponseTextFormatConfiguration
 {
     /// <summary>
     /// The type of response format.
@@ -46,7 +46,7 @@ internal abstract record ResponseTextFormatConfiguration
 /// <summary>
 /// Plain text response format configuration.
 /// </summary>
-internal sealed record ResponseTextFormatConfigurationText : ResponseTextFormatConfiguration
+internal sealed class ResponseTextFormatConfigurationText : ResponseTextFormatConfiguration
 {
     /// <summary>
     /// Gets the type of response format. Always "text".
@@ -59,7 +59,7 @@ internal sealed record ResponseTextFormatConfigurationText : ResponseTextFormatC
 /// JSON object response format configuration.
 /// Ensures the message the model generates is valid JSON.
 /// </summary>
-internal sealed record ResponseTextFormatConfigurationJsonObject : ResponseTextFormatConfiguration
+internal sealed class ResponseTextFormatConfigurationJsonObject : ResponseTextFormatConfiguration
 {
     /// <summary>
     /// Gets the type of response format. Always "json_object".
@@ -71,7 +71,7 @@ internal sealed record ResponseTextFormatConfigurationJsonObject : ResponseTextF
 /// <summary>
 /// JSON schema response format configuration with structured output schema.
 /// </summary>
-internal sealed record ResponseTextFormatConfigurationJsonSchema : ResponseTextFormatConfiguration
+internal sealed class ResponseTextFormatConfigurationJsonSchema : ResponseTextFormatConfiguration
 {
     /// <summary>
     /// Gets the type of response format. Always "json_schema".
@@ -97,7 +97,7 @@ internal sealed record ResponseTextFormatConfigurationJsonSchema : ResponseTextF
     /// The JSON schema for structured outputs.
     /// </summary>
     [JsonPropertyName("schema")]
-    public required Dictionary<string, object> Schema { get; init; }
+    public required JsonElement Schema { get; init; }
 
     /// <summary>
     /// Whether to enable strict schema adherence when generating the output.

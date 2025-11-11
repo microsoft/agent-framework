@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -26,8 +25,12 @@ internal sealed class RunAgentInput
     [JsonPropertyName("messages")]
     public IEnumerable<AGUIMessage> Messages { get; set; } = [];
 
+    [JsonPropertyName("tools")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IEnumerable<AGUITool>? Tools { get; set; }
+
     [JsonPropertyName("context")]
-    public Dictionary<string, string> Context { get; set; } = new(StringComparer.Ordinal);
+    public AGUIContextItem[] Context { get; set; } = [];
 
     [JsonPropertyName("forwardedProperties")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]

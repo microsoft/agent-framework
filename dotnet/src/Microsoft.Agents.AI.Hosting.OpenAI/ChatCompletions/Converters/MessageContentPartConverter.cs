@@ -8,6 +8,14 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 
 internal static class MessageContentPartConverter
 {
+    private static string AudioFormatToMediaType(string format) =>
+        format.Equals("mp3", StringComparison.OrdinalIgnoreCase) ? "audio/mpeg" :
+        format.Equals("wav", StringComparison.OrdinalIgnoreCase) ? "audio/wav" :
+        format.Equals("opus", StringComparison.OrdinalIgnoreCase) ? "audio/opus" :
+        format.Equals("aac", StringComparison.OrdinalIgnoreCase) ? "audio/aac" :
+        format.Equals("flac", StringComparison.OrdinalIgnoreCase) ? "audio/flac" :
+        format.Equals("pcm16", StringComparison.OrdinalIgnoreCase) ? "audio/pcm" :
+        "audio/*";
     public static AIContent? ToAIContent(MessageContentPart part)
     {
         return part switch
@@ -23,16 +31,7 @@ internal static class MessageContentPartConverter
 
             // audio
             AudioContentPart audioPart =>
-                new DataContent(audioPart.InputAudio.Data, audioPart.InputAudio.Format.ToUpperInvariant() switch
-                {
-                    "MP3" => "audio/mpeg",
-                    "WAV" => "audio/wav",
-                    "OPUS" => "audio/opus",
-                    "AAC" => "audio/aac",
-                    "FLAC" => "audio/flac",
-                    "PCM16" => "audio/pcm",
-                    _ => "audio/*"
-                }),
+                new DataContent(audioPart.InputAudio.Data, AudioFormatToMediaType(audioPart.InputAudio.Format)),
 
             // file
             FileContentPart filePart when !string.IsNullOrEmpty(filePart.File.FileId)

@@ -8,7 +8,9 @@ from agent_framework._logging import get_logger
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
+from ._cache import CacheProvider
 from ._client import PurviewClient
+from ._exceptions import PurviewPaymentRequiredError
 from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
@@ -38,9 +40,10 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         self,
         credential: TokenCredential | AsyncTokenCredential,
         settings: PurviewSettings,
+        cache_provider: CacheProvider | None = None,
     ) -> None:
         self._client = PurviewClient(credential, settings)
-        self._processor = ScopedContentProcessor(self._client, settings)
+        self._processor = ScopedContentProcessor(self._client, settings, cache_provider)
         self._settings = settings
 
     async def process(
@@ -62,9 +65,14 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 )
                 context.terminate = True
                 return
+        except PurviewPaymentRequiredError as ex:
+            logger.error(f"Purview payment required error in policy pre-check: {ex}")
+            if not self._settings.ignore_payment_required:
+                raise
         except Exception as ex:
-            # Log and continue if there's an error in the pre-check
             logger.error(f"Error in Purview policy pre-check: {ex}")
+            if not self._settings.ignore_exceptions:
+                raise
 
         await next(context)
 
@@ -86,9 +94,14 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             else:
                 # Streaming responses are not supported for post-checks
                 logger.debug("Streaming responses are not supported for Purview policy post-checks")
+        except PurviewPaymentRequiredError as ex:
+            logger.error(f"Purview payment required error in policy post-check: {ex}")
+            if not self._settings.ignore_payment_required:
+                raise
         except Exception as ex:
-            # Log and continue if there's an error in the post-check
             logger.error(f"Error in Purview policy post-check: {ex}")
+            if not self._settings.ignore_exceptions:
+                raise
 
 
 class PurviewChatPolicyMiddleware(ChatMiddleware):
@@ -118,9 +131,10 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         self,
         credential: TokenCredential | AsyncTokenCredential,
         settings: PurviewSettings,
+        cache_provider: CacheProvider | None = None,
     ) -> None:
         self._client = PurviewClient(credential, settings)
-        self._processor = ScopedContentProcessor(self._client, settings)
+        self._processor = ScopedContentProcessor(self._client, settings, cache_provider)
         self._settings = settings
 
     async def process(
@@ -134,15 +148,20 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 context.messages, Activity.UPLOAD_TEXT
             )
             if should_block_prompt:
-                from agent_framework import ChatMessage
+                from agent_framework import ChatMessage, ChatResponse
 
-                context.result = [  # type: ignore[assignment]
-                    ChatMessage(role="system", text=self._settings.blocked_prompt_message)
-                ]
+                blocked_message = ChatMessage(role="system", text=self._settings.blocked_prompt_message)
+                context.result = ChatResponse(messages=[blocked_message])
                 context.terminate = True
                 return
+        except PurviewPaymentRequiredError as ex:
+            logger.error(f"Purview payment required error in policy pre-check: {ex}")
+            if not self._settings.ignore_payment_required:
+                raise
         except Exception as ex:
             logger.error(f"Error in Purview policy pre-check: {ex}")
+            if not self._settings.ignore_exceptions:
+                raise
 
         await next(context)
 
@@ -157,12 +176,17 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                         messages, Activity.UPLOAD_TEXT, user_id=resolved_user_id
                     )
                     if should_block_response:
-                        from agent_framework import ChatMessage
+                        from agent_framework import ChatMessage, ChatResponse
 
-                        context.result = [  # type: ignore[assignment]
-                            ChatMessage(role="system", text=self._settings.blocked_response_message)
-                        ]
+                        blocked_message = ChatMessage(role="system", text=self._settings.blocked_response_message)
+                        context.result = ChatResponse(messages=[blocked_message])
             else:
                 logger.debug("Streaming responses are not supported for Purview policy post-checks")
+        except PurviewPaymentRequiredError as ex:
+            logger.error(f"Purview payment required error in policy post-check: {ex}")
+            if not self._settings.ignore_payment_required:
+                raise
         except Exception as ex:
             logger.error(f"Error in Purview policy post-check: {ex}")
+            if not self._settings.ignore_exceptions:
+                raise

@@ -15,17 +15,10 @@ internal sealed class FunctionResultEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) => content is FunctionResultContent;
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
         if (content is not FunctionResultContent functionResultContent)
         {
             throw new InvalidOperationException("FunctionResultEventGenerator only supports FunctionResultContent.");
@@ -45,13 +38,7 @@ internal sealed class FunctionResultEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }

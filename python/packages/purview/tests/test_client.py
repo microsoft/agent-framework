@@ -12,6 +12,7 @@ from agent_framework_purview import PurviewSettings
 from agent_framework_purview._client import PurviewClient
 from agent_framework_purview._exceptions import (
     PurviewAuthenticationError,
+    PurviewPaymentRequiredError,
     PurviewRateLimitError,
     PurviewRequestError,
     PurviewServiceError,
@@ -157,6 +158,7 @@ class TestPurviewClient:
 
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
+        mock_response.headers = {}
         mock_response.json.return_value = {"id": "response-123", "protectionScopeState": "notModified"}
 
         with patch.object(client._client, "post", return_value=mock_response):
@@ -174,6 +176,7 @@ class TestPurviewClient:
 
         mock_response = MagicMock(spec=httpx.Response)
         mock_response.status_code = 200
+        mock_response.headers = {}  # Add headers attribute
         mock_response.json.return_value = {"scopeIdentifier": "scope-123", "value": []}
 
         with patch.object(client._client, "post", return_value=mock_response):
@@ -236,3 +239,157 @@ class TestPurviewClient:
             pytest.raises(PurviewRequestError, match="Purview request failed"),
         ):
             await client.process_content(request)
+
+    async def test_prefer_header_sent_when_process_inline_true(
+        self, client: PurviewClient, content_to_process_factory
+    ) -> None:
+        """Test that Prefer: evaluateInline header is sent when process_inline is True."""
+        content = content_to_process_factory()
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
+            process_inline=True,
+        )
+
+        posted_headers = {}
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {}
+
+        async def capture_post(url, json, headers):
+            posted_headers.update(headers)
+            return mock_response
+
+        with patch.object(client._client, "post", side_effect=capture_post):
+            await client.process_content(request)
+
+            assert "Prefer" in posted_headers
+            assert posted_headers["Prefer"] == "evaluateInline"
+
+    async def test_prefer_header_not_sent_when_process_inline_false(
+        self, client: PurviewClient, content_to_process_factory
+    ) -> None:
+        """Test that Prefer header is not sent when process_inline is False."""
+        content = content_to_process_factory()
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
+            process_inline=False,
+        )
+
+        posted_headers = {}
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {}
+
+        async def capture_post(url, json, headers):
+            posted_headers.update(headers)
+            return mock_response
+
+        with patch.object(client._client, "post", side_effect=capture_post):
+            await client.process_content(request)
+
+            assert "Prefer" not in posted_headers
+
+    async def test_prefer_header_not_sent_when_process_inline_none(
+        self, client: PurviewClient, content_to_process_factory
+    ) -> None:
+        """Test that Prefer header is not sent when process_inline is None."""
+        content = content_to_process_factory()
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
+            process_inline=None,
+        )
+
+        posted_headers = {}
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {}
+
+        async def capture_post(url, json, headers):
+            posted_headers.update(headers)
+            return mock_response
+
+        with patch.object(client._client, "post", side_effect=capture_post):
+            await client.process_content(request)
+
+            assert "Prefer" not in posted_headers
+
+    async def test_scope_identifier_extraction_from_etag(self, client: PurviewClient) -> None:
+        """Test that scope_identifier is extracted from ETag header."""
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {"etag": '"test-scope-id"'}
+        mock_response.json.return_value = {"value": []}
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            req = ProtectionScopesRequest(user_id="user1", tenant_id="tenant1")
+            response = await client.get_protection_scopes(req)
+
+            assert response.scope_identifier == "test-scope-id"
+
+    async def test_scope_identifier_sent_as_if_none_match_header(
+        self, client: PurviewClient, content_to_process_factory
+    ) -> None:
+        """Test that scope_identifier is sent as If-None-Match header."""
+        content = content_to_process_factory()
+        request = ProcessContentRequest(
+            content_to_process=content,
+            user_id="user-123",
+            tenant_id="tenant-456",
+            scope_identifier="test-scope-id",
+        )
+
+        posted_headers = {}
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.json.return_value = {}
+
+        async def capture_post(url, json, headers):
+            posted_headers.update(headers)
+            return mock_response
+
+        with patch.object(client._client, "post", side_effect=capture_post):
+            await client.process_content(request)
+
+            assert "If-None-Match" in posted_headers
+            assert posted_headers["If-None-Match"] == "test-scope-id"
+
+    async def test_402_payment_required_raises_exception_by_default(self, client: PurviewClient) -> None:
+        """Test that 402 raises exception when ignore_payment_required is False."""
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 402
+        mock_response.text = "Payment required"
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            req = ProtectionScopesRequest(user_id="user1", tenant_id="tenant1")
+
+            with pytest.raises(PurviewPaymentRequiredError):
+                await client.get_protection_scopes(req)
+
+    async def test_402_payment_required_returns_empty_when_ignored(self, mock_credential: MagicMock) -> None:
+        """Test that 402 returns empty response when ignore_payment_required is True."""
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
+        client = PurviewClient(mock_credential, settings)
+
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 402
+        mock_response.text = "Payment required"
+
+        with patch.object(client._client, "post", return_value=mock_response):
+            req = ProtectionScopesRequest(user_id="user1", tenant_id="tenant1")
+            response = await client.get_protection_scopes(req)
+
+            # Should return empty response without raising
+            assert response is not None
+            assert response.scopes is None or response.scopes == []
+
+        await client.close()

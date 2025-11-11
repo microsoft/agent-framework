@@ -279,6 +279,45 @@ async def test_chat_client_streaming_observability(
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
 
+async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
+    """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
+    client = use_observability(mock_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    span_exporter.clear()
+    response = await client.get_response(messages=messages)
+
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+
+    assert span.name == "chat unknown"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+
+
+async def test_chat_client_streaming_without_model_id_observability(
+    mock_chat_client, span_exporter: InMemorySpanExporter
+):
+    """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
+    client = use_observability(mock_chat_client)()
+    messages = [ChatMessage(role=Role.USER, text="Test")]
+    span_exporter.clear()
+    # Collect all yielded updates
+    updates = []
+    async for update in client.get_streaming_response(messages=messages):
+        updates.append(update)
+
+    # Verify we got the expected updates, this shouldn't be dependent on otel
+    assert len(updates) == 2
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "chat unknown"
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.CHAT_COMPLETION_OPERATION
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+
+
 def test_prepend_user_agent_with_none_value():
     """Test prepend user agent with None value in headers."""
     headers = {"User-Agent": None}
@@ -368,6 +407,7 @@ def mock_chat_agent():
             self.name = "test_agent"
             self.display_name = "Test Agent"
             self.description = "Test agent description"
+            self.chat_options = ChatOptions(model_id="TestModel")
 
         async def run(self, messages=None, *, thread=None, **kwargs):
             return AgentRunResponse(
@@ -405,7 +445,7 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
@@ -433,7 +473,7 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     assert span.attributes[OtelAttr.AGENT_ID] == "test_agent_id"
     assert span.attributes[OtelAttr.AGENT_NAME] == "Test Agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
-    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "unknown"
+    assert span.attributes[SpanAttributes.LLM_REQUEST_MODEL] == "TestModel"
     if enable_sensitive_data:
         assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
 

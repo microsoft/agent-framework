@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="Agent">The AI agent.</param>
 /// <param name="EmitEvents">Specifies whether the agent should emit events. If null, the default behavior is applied.</param>
 public record AIAgentBinding(AIAgent Agent, bool EmitEvents = false)
-    : ExecutorBinding(Throw.IfNull(Agent).Name ?? Throw.IfNull(Agent.Id),
+    : ExecutorBinding(Throw.IfNull(Agent).GetDescriptiveId(),
                            (_) => new(new AIAgentHostExecutor(Agent, EmitEvents)),
                            typeof(AIAgentHostExecutor),
                            Agent)

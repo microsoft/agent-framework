@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Microsoft.Agents.AI.DevUI</RootNamespace>
+    <OutputType>Library</OutputType>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <VersionSuffix>preview</VersionSuffix>
+    <!-- Suppress warnings for internal DevUI implementation -->
+    <NoWarn>$(NoWarn);CS1591;CA1852;CA1050;RCS1037;RCS1036;RCS1124;RCS1021;RCS1146;RCS1211;CA2007;CA1308;IL2026;IL3050;CA1812</NoWarn>
+  </PropertyGroup>
+
+  <!-- Import nuget packaging properties -->
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- Import frontend web assets build targets -->
+  <Import Project="Microsoft.Agents.AI.DevUI.Frontend.targets" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Hosting.OpenAI\Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Developer UI</Title>
+    <Description>Provides Microsoft Agent Framework support for developer UI.</Description>
+  </PropertyGroup>
+
+</Project>

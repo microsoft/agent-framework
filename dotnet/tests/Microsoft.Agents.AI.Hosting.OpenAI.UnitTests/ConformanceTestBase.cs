@@ -226,6 +226,37 @@ public abstract class ConformanceTestBase : IAsyncDisposable
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIResponses();
+
+        this._app = builder.Build();
+        AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIChatCompletions(agent);
+
+        await this._app.StartAsync();
+
+        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found");
+
+        this._httpClient = testServer.CreateClient();
+        return this._httpClient;
+    }
+
+    /// <summary>
+    /// Creates a test server with a mock chat client that returns function call content.
+    /// </summary>
+    protected async Task<HttpClient> CreateTestServerWithToolCallAsync(
+        string agentName,
+        string instructions,
+        string functionName,
+        string arguments)
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+
+        IChatClient mockChatClient = new TestHelpers.ToolCallMockChatClient(functionName, arguments);
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.AddOpenAIResponses();
         builder.AddOpenAIChatCompletions();
 
         this._app = builder.Build();

@@ -17,17 +17,10 @@ internal sealed class FunctionCallEventGenerator(
         int outputIndex,
         JsonSerializerOptions jsonSerializerOptions) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) => content is FunctionCallContent;
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
         if (content is not FunctionCallContent functionCallContent)
         {
             throw new InvalidOperationException("FunctionCallEventGenerator only supports FunctionCallContent.");
@@ -63,13 +56,7 @@ internal sealed class FunctionCallEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }

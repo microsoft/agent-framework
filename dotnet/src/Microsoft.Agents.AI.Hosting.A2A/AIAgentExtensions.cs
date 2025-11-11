@@ -83,7 +83,16 @@ public static class AIAgentExtensions
         {
             // A2A SDK assigns the url on its own
             // we can help user if they did not set Url explicitly.
-            agentCard.Url ??= context;
+            if (string.IsNullOrEmpty(agentCard.Url))
+            {
+                var agentCardUrl = context.TrimEnd('/');
+                if (!context.EndsWith("/v1/card", StringComparison.Ordinal))
+                {
+                    agentCardUrl += "/v1/card";
+                }
+
+                agentCard.Url = agentCardUrl;
+            }
 
             return Task.FromResult(agentCard);
         };

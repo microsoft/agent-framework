@@ -62,10 +62,10 @@ public static class Program
 
         // Step 4: Build the concurrent workflow with fan-out/fan-in pattern
         return new WorkflowBuilder(splitter)
-            .AddFanOutEdge(splitter, targets: [.. mappers])         // Split -> many mappers
-            .AddFanInEdge(shuffler, sources: [.. mappers])          // All mappers -> shuffle
-            .AddFanOutEdge(shuffler, targets: [.. reducers])        // Shuffle -> many reducers
-            .AddFanInEdge(completion, sources: [.. reducers])       // All reducers -> completion
+            .AddFanOutEdge(splitter, [.. mappers])         // Split -> many mappers
+            .AddFanInEdge([.. mappers], shuffler)          // All mappers -> shuffle
+            .AddFanOutEdge(shuffler, [.. reducers])        // Shuffle -> many reducers
+            .AddFanInEdge([.. reducers], completion)       // All reducers -> completion
             .WithOutputFrom(completion)
             .Build();
     }

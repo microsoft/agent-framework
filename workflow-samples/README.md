@@ -10,7 +10,7 @@ A _Declarative Workflow_ may be executed locally no different from any `Workflow
 The difference is that the workflow definition is loaded from a YAML file instead of being defined in code.
 
 ```c#
-Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("HelloWorld.yaml", options);
+Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("Marketing.yaml", options);
 ```
 
 Workflows may also be hosted in your _Azure Foundry Project_.

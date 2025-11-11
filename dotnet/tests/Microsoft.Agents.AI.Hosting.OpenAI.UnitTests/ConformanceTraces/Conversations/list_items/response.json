@@ -1,0 +1,86 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "msg_04cbf451511948220068fb976a9fc481959fecc62ac9644e8d",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the capital of France?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "id": "msg_04cbf451511948220068fb976c70208195a34d776fd6ad006e",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "The capital of France is Paris."
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "id": "msg_04cbf451511948220068fb97beeab481958d648357d28cb113",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the capital of France?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "id": "msg_04cbf451511948220068fb97c0162881958d80862a0d253a14",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "The capital of France is Paris."
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "id": "msg_04cbf451511948220068fb97cf6cd88195b7758dd1346bb080",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is its population?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "id": "msg_04cbf451511948220068fb97d064408195ac54b7750a781a2e",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "As of 2023, the population of Paris is approximately 2.1 million people within the city proper. However, the larger metropolitan area has a population of around 12 million. These numbers can vary, so it's always a good idea to check for the most recent statistics."
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "first_id": "msg_04cbf451511948220068fb976a9fc481959fecc62ac9644e8d",
+  "has_more": false,
+  "last_id": "msg_04cbf451511948220068fb97d064408195ac54b7750a781a2e"
+}

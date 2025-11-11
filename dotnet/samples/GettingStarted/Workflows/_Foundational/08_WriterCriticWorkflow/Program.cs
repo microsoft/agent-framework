@@ -89,7 +89,7 @@ public static class Program
     private static async Task ExecuteWorkflowAsync(Workflow workflow, string input)
     {
         // Execute in streaming mode to see real-time progress
-        await using StreamingRun run = await InProcessExecution.StreamAsync<string>(workflow, input);
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input);
 
         // Watch the workflow events
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())

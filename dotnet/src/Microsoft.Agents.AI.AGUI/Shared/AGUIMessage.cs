@@ -8,7 +8,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 namespace Microsoft.Agents.AI.AGUI.Shared;
 #endif
 
-internal sealed class AGUIMessage
+[JsonConverter(typeof(AGUIMessageJsonConverter))]
+internal abstract class AGUIMessage
 {
     [JsonPropertyName("id")]
     public string? Id { get; set; }

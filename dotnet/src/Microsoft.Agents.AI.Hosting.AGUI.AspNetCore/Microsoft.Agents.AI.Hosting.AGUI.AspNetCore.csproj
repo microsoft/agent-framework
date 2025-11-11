@@ -6,7 +6,6 @@
     <RootNamespace>Microsoft.Agents.AI.Hosting.AGUI.AspNetCore</RootNamespace>
     <VersionSuffix>preview</VersionSuffix>
     <DefineConstants>$(DefineConstants);ASPNETCORE</DefineConstants>
-    <IsPackable>false</IsPackable>
     <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.Http.Generated</InterceptorsNamespaces>
     <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
   </PropertyGroup>

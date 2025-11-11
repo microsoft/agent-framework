@@ -1,121 +1,71 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""AG-UI client example."""
+"""AG-UI client example using AGUIChatClient.
+
+This example demonstrates how to use the AGUIChatClient to connect to
+a remote AG-UI server and interact with it using the Agent Framework's
+standard chat interface.
+"""
 
 import asyncio
-import json
 import os
-from collections.abc import AsyncIterator
 
-import httpx
-
-
-class AGUIClient:
-    """Simple AG-UI protocol client."""
-
-    def __init__(self, server_url: str):
-        """Initialize the client.
-
-        Args:
-            server_url: The AG-UI server endpoint URL
-        """
-        self.server_url = server_url
-        self.thread_id: str | None = None
-
-    async def send_message(self, message: str) -> AsyncIterator[dict]:
-        """Send a message and stream the response.
-
-        Args:
-            message: The user message to send
-
-        Yields:
-            AG-UI events from the server
-        """
-        # Prepare the request
-        request_data: dict[str, object] = {
-            "messages": [
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": message},
-            ]
-        }
-
-        # Include thread_id if we have one (for conversation continuity)
-        if self.thread_id:
-            request_data["thread_id"] = self.thread_id
-
-        # Stream the response
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "POST",
-                self.server_url,
-                json=request_data,
-                headers={"Accept": "text/event-stream"},
-            ) as response:
-                response.raise_for_status()
-
-                async for line in response.aiter_lines():
-                    # Parse Server-Sent Events format
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove "data: " prefix
-                        try:
-                            event = json.loads(data)
-                            yield event
-
-                            # Capture thread_id from RUN_STARTED event
-                            if event.get("type") == "RUN_STARTED" and not self.thread_id:
-                                self.thread_id = event.get("threadId")
-                        except json.JSONDecodeError:
-                            continue
+from agent_framework_ag_ui import AGUIChatClient
 
 
 async def main():
-    """Main client loop."""
+    """Main client loop demonstrating AGUIChatClient usage."""
     # Get server URL from environment or use default
     server_url = os.environ.get("AGUI_SERVER_URL", "http://127.0.0.1:5100/")
     print(f"Connecting to AG-UI server at: {server_url}\n")
+    print("Using AGUIChatClient with automatic thread management and Agent Framework integration.\n")
 
-    client = AGUIClient(server_url)
+    # Create client with context manager for automatic cleanup
+    async with AGUIChatClient(endpoint=server_url) as client:
+        thread_id: str | None = None
 
-    try:
-        while True:
-            # Get user input
-            message = input("\nUser (:q or quit to exit): ")
-            if not message.strip():
-                print("Request cannot be empty.")
-                continue
+        try:
+            while True:
+                # Get user input
+                message = input("\nUser (:q or quit to exit): ")
+                if not message.strip():
+                    print("Request cannot be empty.")
+                    continue
 
-            if message.lower() in (":q", "quit"):
-                break
+                if message.lower() in (":q", "quit"):
+                    break
 
-            # Send message and display streaming response
-            print("\n", end="")
-            async for event in client.send_message(message):
-                event_type = event.get("type", "")
+                # Send message and stream the response
+                print("\nAssistant: ", end="", flush=True)
 
-                if event_type == "RUN_STARTED":
-                    thread_id = event.get("threadId", "")
-                    run_id = event.get("runId", "")
-                    print(f"\033[93m[Run Started - Thread: {thread_id}, Run: {run_id}]\033[0m")
+                # Use metadata to maintain conversation continuity
+                metadata = {"thread_id": thread_id} if thread_id else None
 
-                elif event_type == "TEXT_MESSAGE_CONTENT":
-                    # Stream text content in cyan
-                    print(f"\033[96m{event.get('delta', '')}\033[0m", end="", flush=True)
+                async for update in client.get_streaming_response(message, metadata=metadata):
+                    # Extract and display thread ID from first update
+                    if not thread_id and update.additional_properties:
+                        thread_id = update.additional_properties.get("thread_id")
+                        if thread_id:
+                            print(f"\n\033[93m[Thread: {thread_id}]\033[0m", end="", flush=True)
+                            print("\nAssistant: ", end="", flush=True)
 
-                elif event_type == "RUN_FINISHED":
-                    thread_id = event.get("threadId", "")
-                    run_id = event.get("runId", "")
-                    print(f"\n\033[92m[Run Finished - Thread: {thread_id}, Run: {run_id}]\033[0m")
+                    # Display text content as it streams
+                    from agent_framework import TextContent
 
-                elif event_type == "RUN_ERROR":
-                    error_message = event.get("message", "Unknown error")
-                    print(f"\n\033[91m[Run Error - Message: {error_message}]\033[0m")
+                    for content in update.contents:
+                        if isinstance(content, TextContent) and content.text:
+                            print(f"\033[96m{content.text}\033[0m", end="", flush=True)
 
-            print()
+                    # Display finish reason if present
+                    if update.finish_reason:
+                        print(f"\n\033[92m[Finished: {update.finish_reason}]\033[0m", end="", flush=True)
 
-    except KeyboardInterrupt:
-        print("\n\nExiting...")
-    except Exception as e:
-        print(f"\n\033[91mAn error occurred: {e}\033[0m")
+                print()  # New line after response
+
+        except KeyboardInterrupt:
+            print("\n\nExiting...")
+        except Exception as e:
+            print(f"\n\033[91mAn error occurred: {e}\033[0m")
 
 
 if __name__ == "__main__":

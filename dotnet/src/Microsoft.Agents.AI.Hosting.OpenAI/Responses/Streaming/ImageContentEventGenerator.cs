@@ -16,22 +16,13 @@ internal sealed class ImageContentEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) =>
-        content is UriContent uriContent && uriContent.HasTopLevelMediaType("image") ||
-        content is DataContent dataContent && dataContent.HasTopLevelMediaType("image");
+        (content is UriContent uriContent && uriContent.HasTopLevelMediaType("image")) ||
+        (content is DataContent dataContent && dataContent.HasTopLevelMediaType("image"));
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
-        ItemContentInputImage? itemContent = ItemContentConverter.ToItemContent(content) as ItemContentInputImage;
-
-        if (itemContent == null)
+        if (ItemContentConverter.ToItemContent(content) is not ItemContentInputImage itemContent)
         {
             throw new InvalidOperationException("ImageContentEventGenerator only supports image UriContent and DataContent.");
         }
@@ -76,13 +67,7 @@ internal sealed class ImageContentEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }

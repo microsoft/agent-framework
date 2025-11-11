@@ -31,8 +31,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
+
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests"/>
   </ItemGroup>
 
 </Project>

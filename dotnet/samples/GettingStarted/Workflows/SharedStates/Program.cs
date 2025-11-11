@@ -26,8 +26,8 @@ public static class Program
 
         // Build the workflow by connecting executors sequentially
         var workflow = new WorkflowBuilder(fileRead)
-            .AddFanOutEdge(fileRead, targets: [wordCount, paragraphCount])
-            .AddFanInEdge(aggregate, sources: [wordCount, paragraphCount])
+            .AddFanOutEdge(fileRead, [wordCount, paragraphCount])
+            .AddFanInEdge([wordCount, paragraphCount], aggregate)
             .WithOutputFrom(aggregate)
             .Build();
 

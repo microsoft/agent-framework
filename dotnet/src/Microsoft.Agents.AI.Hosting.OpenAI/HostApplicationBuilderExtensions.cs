@@ -39,4 +39,18 @@ public static class MicrosoftAgentAIHostingOpenAIHostApplicationBuilderExtension
 
         return builder;
     }
+
+    /// <summary>
+    /// Adds support for exposing <see cref="AIAgent"/> instances via OpenAI Responses.
+    /// </summary>
+    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
+    /// <returns>The <see cref="IHostApplicationBuilder"/> for method chaining.</returns>
+    public static IHostApplicationBuilder AddOpenAIConversations(this IHostApplicationBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        builder.Services.AddOpenAIConversations();
+
+        return builder;
+    }
 }

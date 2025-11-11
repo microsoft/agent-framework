@@ -52,7 +52,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.Build(builder);
 
         // Build final workflow
-        return builder.WorkflowBuilder.Build();
+        return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
 
     protected override void Visit(ActionScope item)

@@ -127,7 +127,7 @@ public static partial class AgentWorkflowBuilder
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorBinding[] agentExecutors = (from agent in agents select (ExecutorBinding)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
         ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
-        builder.AddFanOutEdge(start, targets: agentExecutors);
+        builder.AddFanOutEdge(start, agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
             builder.AddEdge(agentExecutors[i], accumulators[i]);
@@ -143,7 +143,7 @@ public static partial class AgentWorkflowBuilder
 
         ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
 
-        builder.AddFanInEdge(end, sources: accumulators);
+        builder.AddFanInEdge(accumulators, end);
 
         builder = builder.WithOutputFrom(end);
         if (workflowName is not null)

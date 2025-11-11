@@ -153,7 +153,7 @@ public sealed class Mem0Provider : AIContextProvider
             if (this._logger is not null)
             {
                 this._logger.LogInformation(
-                    "Mem0AIContextProvider: Retrieved {Count} memories. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                    "Mem0AIContextProvider: Retrieved {Count} memories. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                     memories.Count,
                     this._searchScope.ApplicationId,
                     this._searchScope.AgentId,
@@ -162,7 +162,7 @@ public sealed class Mem0Provider : AIContextProvider
                 if (outputMessageText is not null)
                 {
                     this._logger.LogTrace(
-                        "Mem0AIContextProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\nApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                        "Mem0AIContextProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\nApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                         queryText,
                         outputMessageText,
                         this._searchScope.ApplicationId,
@@ -185,7 +185,7 @@ public sealed class Mem0Provider : AIContextProvider
         {
             this._logger?.LogError(
                 ex,
-                "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                 this._searchScope.ApplicationId,
                 this._searchScope.AgentId,
                 this._searchScope.ThreadId,
@@ -211,7 +211,7 @@ public sealed class Mem0Provider : AIContextProvider
         {
             this._logger?.LogError(
                 ex,
-                "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'",
+                "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
                 this._storageScope.ApplicationId,
                 this._storageScope.AgentId,
                 this._storageScope.ThreadId,

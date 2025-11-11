@@ -18,7 +18,7 @@ internal abstract record Tool
     /// <summary>
     /// The type of the tool.
     /// </summary>
-    [JsonPropertyName("type")]
+    [JsonIgnore]
     public abstract string Type { get; }
 }
 
@@ -30,7 +30,7 @@ internal sealed record FunctionTool : Tool
     /// <summary>
     /// The type of the tool. Always "function".
     /// </summary>
-    [JsonPropertyName("type")]
+    [JsonIgnore]
     public override string Type => "function";
 
     /// <summary>
@@ -88,7 +88,7 @@ internal sealed record CustomTool : Tool
     /// <summary>
     /// The type of the tool. Always "custom".
     /// </summary>
-    [JsonPropertyName("type")]
+    [JsonIgnore]
     public override string Type => "custom";
 
     /// <summary>

@@ -16,9 +16,9 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
 )
-from agent_framework import AgentProtocol, AgentThread, TextContent
+from agent_framework import AgentProtocol, AgentThread, ChatAgent, TextContent
 
-from ._utils import generate_event_id
+from ._utils import convert_agui_tools_to_agent_framework, generate_event_id
 
 if TYPE_CHECKING:
     from ._agent import AgentConfig
@@ -142,14 +142,10 @@ class HumanInTheLoopOrchestrator(Orchestrator):
             True if last message is a tool result
         """
         msg = context.last_message
-        if not msg or not hasattr(msg, "metadata"):
+        if not msg:
             return False
 
-        metadata = getattr(msg, "metadata", None)
-        if not metadata:
-            return False
-
-        return bool(metadata.get("is_tool_result", False))
+        return bool(msg.additional_properties.get("is_tool_result", False))
 
     async def run(
         self,
@@ -274,8 +270,10 @@ class DefaultOrchestrator(Orchestrator):
         current_state: dict[str, Any] = initial_state.copy() if initial_state else {}
 
         # Check if agent uses structured outputs (response_format)
-        chat_options = getattr(context.agent, "chat_options", None)
-        response_format = getattr(chat_options, "response_format", None) if chat_options else None
+        # Use isinstance to narrow type for proper attribute access
+        response_format = None
+        if isinstance(context.agent, ChatAgent):
+            response_format = context.agent.chat_options.response_format
         skip_text_content = response_format is not None
 
         # Create event bridge
@@ -334,9 +332,8 @@ class DefaultOrchestrator(Orchestrator):
         if context.messages:
             await thread.on_new_messages(context.messages)
 
-        # Get the last message as the new input
-        new_message = context.last_message
-        if not new_message:
+        # Use the full incoming message batch to preserve tool-call adjacency
+        if not context.messages:
             logger.warning("No messages provided in AG-UI input")
             yield event_bridge.create_run_finished_event()
             return
@@ -362,11 +359,68 @@ Never replace existing data - always append or merge."""
             )
             messages_to_run.append(state_context_msg)
 
-        messages_to_run.append(new_message)
+        # Preserve order from client to satisfy provider constraints (assistant tool_calls must
+        # immediately precede tool result messages). Using the full batch avoids reordering.
+        messages_to_run.extend(context.messages)
+
+        # Handle client tools for hybrid execution
+        # Client sends tool metadata, server merges with its own tools.
+        # Client tools have func=None (declaration-only), so @use_function_invocation
+        # will return the function call without executing (passes back to client).
+        from agent_framework import BaseChatClient
+
+        client_tools = convert_agui_tools_to_agent_framework(context.input_data.get("tools"))
+
+        # Extract server tools - use type narrowing when possible
+        server_tools: list[Any] = []
+        if isinstance(context.agent, ChatAgent):
+            server_tools = context.agent.chat_options.tools or []
+        else:
+            # AgentProtocol allows duck-typed implementations - fallback to attribute access
+            # This supports test mocks and custom agent implementations
+            try:
+                chat_options_attr = getattr(context.agent, "chat_options", None)
+                if chat_options_attr is not None:
+                    server_tools = getattr(chat_options_attr, "tools", None) or []
+            except AttributeError:
+                pass
+
+        # Register client tools as additional (declaration-only) so they are not executed on server
+        if client_tools:
+            if isinstance(context.agent, ChatAgent):
+                # Type-safe path for ChatAgent
+                chat_client = context.agent.chat_client
+                if (
+                    isinstance(chat_client, BaseChatClient)
+                    and chat_client.function_invocation_configuration is not None
+                ):
+                    chat_client.function_invocation_configuration.additional_tools = client_tools
+                    logger.debug(
+                        f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)"
+                    )
+            else:
+                # Fallback for AgentProtocol implementations (test mocks, custom agents)
+                try:
+                    chat_client_attr = getattr(context.agent, "chat_client", None)
+                    if chat_client_attr is not None:
+                        fic = getattr(chat_client_attr, "function_invocation_configuration", None)
+                        if fic is not None:
+                            fic.additional_tools = client_tools  # type: ignore[attr-defined]
+                            logger.debug(
+                                f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)"
+                            )
+                except AttributeError:
+                    pass
+
+        combined_tools: list[Any] = []
+        if server_tools:
+            combined_tools.extend(server_tools)
+        if client_tools:
+            combined_tools.extend(client_tools)
 
         # Collect all updates to get the final structured output
         all_updates: list[Any] = []
-        async for update in context.agent.run_stream(messages_to_run, thread=thread):
+        async for update in context.agent.run_stream(messages_to_run, thread=thread, tools=combined_tools or None):
             all_updates.append(update)
             events = await event_bridge.from_agent_run_update(update)
             for event in events:
@@ -374,7 +428,7 @@ Never replace existing data - always append or merge."""
 
         # After agent completes, check if we should stop (waiting for user to confirm changes)
         if event_bridge.should_stop_after_confirm:
-            logger.info("  >>> Stopping run after confirm_changes - waiting for user response")
+            logger.info("Stopping run after confirm_changes - waiting for user response")
             yield event_bridge.create_run_finished_event()
             return
 

@@ -29,5 +29,5 @@ internal sealed class AgentInvocationContext(IdGenerator idGenerator, JsonSerial
     /// <summary>
     /// Gets the JSON serializer options.
     /// </summary>
-    public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions ?? ResponsesJsonSerializerOptions.Default;
+    public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions ?? OpenAIHostingJsonUtilities.DefaultOptions;
 }

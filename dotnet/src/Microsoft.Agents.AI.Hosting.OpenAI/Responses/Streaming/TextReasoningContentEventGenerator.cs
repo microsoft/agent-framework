@@ -18,7 +18,7 @@ internal sealed class TextReasoningContentEventGenerator(
         int outputIndex) : StreamingEventGenerator
 {
     private State _currentState = State.Initial;
-    private readonly string _itemId = idGenerator.GenerateMessageId();
+    private readonly string _itemId = idGenerator.GenerateReasoningId();
     private readonly StringBuilder _text = new();
     private const int SummaryIndex = 0; // Summary index for reasoning summary text
 

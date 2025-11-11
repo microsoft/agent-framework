@@ -1,0 +1,28 @@
+{
+  "model": "gpt-4o-mini",
+  "conversation": "conv_68fb99253dac8196b5a8e7912bcb052e07a4a6d400e64588",
+  "input": "What's the weather like in San Francisco today?",
+  "max_output_tokens": 100,
+  "stream": true,
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Get the current weather in a given location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city and state, e.g. San Francisco, CA"
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["celsius", "fahrenheit"]
+          }
+        },
+        "required": ["location"]
+      }
+    }
+  ]
+}

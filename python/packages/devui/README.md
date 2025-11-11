@@ -62,6 +62,27 @@ serve(entities=[agent])
 
 MCP tools use lazy initialization and connect automatically on first use. DevUI attempts to clean up connections on shutdown
 
+## Resource Cleanup
+
+Register cleanup hooks to properly close credentials and resources on shutdown:
+
+```python
+from azure.identity.aio import DefaultAzureCredential
+from agent_framework import ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_devui import register_cleanup, serve
+
+credential = DefaultAzureCredential()
+client = AzureOpenAIChatClient()
+agent = ChatAgent(name="MyAgent", chat_client=client)
+
+# Register cleanup hook - credential will be closed on shutdown
+register_cleanup(agent, credential.close)
+serve(entities=[agent])
+```
+
+Works with multiple resources and file-based discovery. See tests for more examples.
+
 ## Directory Structure
 
 For your agents to be discovered by the DevUI, they must be organized in a directory structure like below. Each agent/workflow must have an `__init__.py` that exports the required variable (`agent` or `workflow`).
@@ -91,15 +112,15 @@ devui ./agents --tracing framework
 
 ## OpenAI-Compatible API
 
-For convenience, DevUI provides an OpenAI Responses backend API. This means you can run the backend and also use the OpenAI client sdk to connect to it. Use **agent/workflow name as the model**, and set streaming to `True` as needed.
+For convenience, DevUI provides an OpenAI Responses backend API. This means you can run the backend and also use the OpenAI client sdk to connect to it. Use **agent/workflow name as the entity_id in metadata**, and set streaming to `True` as needed.
 
 ```bash
-# Simple - use your entity name as the model
+# Simple - use your entity name as the entity_id in metadata
 curl -X POST http://localhost:8080/v1/responses \
   -H "Content-Type: application/json" \
   -d @- << 'EOF'
 {
-  "model": "weather_agent",
+  "metadata": {"entity_id": "weather_agent"},
   "input": "Hello world"
 }
 ```
@@ -115,7 +136,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="weather_agent",  # Your agent/workflow name
+    metadata={"entity_id": "weather_agent"},  # Your agent/workflow name
     input="What's the weather in Seattle?"
 )
 
@@ -136,19 +157,35 @@ conversation = client.conversations.create(
 
 # Use it across multiple turns
 response1 = client.responses.create(
-    model="weather_agent",
+    metadata={"entity_id": "weather_agent"},
     input="What's the weather in Seattle?",
     conversation=conversation.id
 )
 
 response2 = client.responses.create(
-    model="weather_agent",
+    metadata={"entity_id": "weather_agent"},
     input="How about tomorrow?",
     conversation=conversation.id  # Continues the conversation!
 )
 ```
 
 **How it works:** DevUI automatically retrieves the conversation's message history from the stored thread and passes it to the agent. You don't need to manually manage message history - just provide the same `conversation` ID for follow-up requests.
+
+### OpenAI Proxy Mode
+
+DevUI provides an **OpenAI Proxy** feature for testing OpenAI models directly through the interface without creating custom agents. Enable via Settings → OpenAI Proxy tab.
+
+**How it works:** The UI sends requests to the DevUI backend (with `X-Proxy-Backend: openai` header), which then proxies them to OpenAI's Responses API (and Conversations API for multi-turn chats). This proxy approach keeps your `OPENAI_API_KEY` secure on the server—never exposed in the browser or client-side code.
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8080/v1/responses \
+  -H "X-Proxy-Backend: openai" \
+  -d '{"model": "gpt-4.1-mini", "input": "Hello"}'
+```
+
+**Note:** Requires `OPENAI_API_KEY` environment variable configured on the backend.
 
 ## CLI Options
 
@@ -162,6 +199,21 @@ Options:
   --config        YAML config file
   --tracing       none|framework|workflow|all
   --reload        Enable auto-reload
+  --mode          developer|user (default: developer)
+  --auth          Enable Bearer token authentication
+```
+
+### UI Modes
+
+- **developer** (default): Full access - debug panel, entity details, hot reload, deployment
+- **user**: Simplified UI with restricted APIs - only chat and conversation management
+
+```bash
+# Development
+devui ./agents
+
+# Production (user-facing)
+devui ./agents --mode user --auth
 ```
 
 ## Key Endpoints
@@ -187,18 +239,23 @@ Given that DevUI offers an OpenAI Responses API, it internally maps messages and
 | `response.function_result.complete`                          | `FunctionResultContent`           | DevUI    |
 | `response.function_approval.requested`                       | `FunctionApprovalRequestContent`  | DevUI    |
 | `response.function_approval.responded`                       | `FunctionApprovalResponseContent` | DevUI    |
+| `response.output_item.added` (ResponseOutputImage)           | `DataContent` (images)            | DevUI    |
+| `response.output_item.added` (ResponseOutputFile)            | `DataContent` (files)             | DevUI    |
+| `response.output_item.added` (ResponseOutputData)            | `DataContent` (other)             | DevUI    |
+| `response.output_item.added` (ResponseOutputImage/File)      | `UriContent` (images/files)       | DevUI    |
 | `error`                                                      | `ErrorContent`                    | OpenAI   |
 | Final `Response.usage` field (not streamed)                  | `UsageContent`                    | OpenAI   |
 |                                                              | **Workflow Events**               |          |
 | `response.output_item.added` (ExecutorActionItem)*           | `ExecutorInvokedEvent`            | OpenAI   |
 | `response.output_item.done` (ExecutorActionItem)*            | `ExecutorCompletedEvent`          | OpenAI   |
 | `response.output_item.done` (ExecutorActionItem with error)* | `ExecutorFailedEvent`             | OpenAI   |
+| `response.output_item.added` (ResponseOutputMessage)         | `WorkflowOutputEvent`             | OpenAI   |
 | `response.workflow_event.complete`                           | `WorkflowEvent` (other)           | DevUI    |
 | `response.trace.complete`                                    | `WorkflowStatusEvent`             | DevUI    |
 | `response.trace.complete`                                    | `WorkflowWarningEvent`            | DevUI    |
 |                                                              | **Trace Content**                 |          |
-| `response.trace.complete`                                    | `DataContent`                     | DevUI    |
-| `response.trace.complete`                                    | `UriContent`                      | DevUI    |
+| `response.trace.complete`                                    | `DataContent` (no data/errors)    | DevUI    |
+| `response.trace.complete`                                    | `UriContent` (unsupported MIME)   | DevUI    |
 | `response.trace.complete`                                    | `HostedFileContent`               | DevUI    |
 | `response.trace.complete`                                    | `HostedVectorStoreContent`        | DevUI    |
 
@@ -213,15 +270,19 @@ DevUI follows the OpenAI Responses API specification for maximum compatibility:
 
 **OpenAI Standard Event Types Used:**
 
-- `ResponseOutputItemAddedEvent` - Output item notifications (function calls and results)
+- `ResponseOutputItemAddedEvent` - Output item notifications (function calls, images, files, data)
 - `ResponseOutputItemDoneEvent` - Output item completion notifications
 - `Response.usage` - Token usage (in final response, not streamed)
-- All standard text, reasoning, and function call events
 
 **Custom DevUI Extensions:**
 
+- `response.output_item.added` with custom item types:
+  - `ResponseOutputImage` - Agent-generated images (inline display)
+  - `ResponseOutputFile` - Agent-generated files (inline display)
+  - `ResponseOutputData` - Agent-generated structured data (inline display)
 - `response.function_approval.requested` - Function approval requests (for interactive approval workflows)
 - `response.function_approval.responded` - Function approval responses (user approval/rejection)
+- `response.function_result.complete` - Server-side function execution results
 - `response.workflow_event.complete` - Agent Framework workflow events
 - `response.trace.complete` - Execution traces and internal content (DataContent, UriContent, hosted files/stores)
 
@@ -254,18 +315,28 @@ These custom extensions are clearly namespaced and can be safely ignored by stan
 
 ## Security
 
-DevUI is designed as a **sample application for local development** and should not be exposed to untrusted networks or used in production environments.
+DevUI is designed as a **sample application for local development** and should not be exposed to untrusted networks without proper authentication.
+
+**For production deployments:**
+
+```bash
+# User mode with authentication (recommended)
+devui ./agents --mode user --auth --host 0.0.0.0
+```
+
+This restricts developer APIs (reload, deployment, entity details) and requires Bearer token authentication.
 
 **Security features:**
 
+- User mode restricts developer-facing APIs
+- Optional Bearer token authentication via `--auth`
 - Only loads entities from local directories or in-memory registration
 - No remote code execution capabilities
 - Binds to localhost (127.0.0.1) by default
-- All samples must be manually downloaded and reviewed before running
 
 **Best practices:**
 
-- Never expose DevUI to the internet
+- Use `--mode user --auth` for any deployment exposed to end users
 - Review all agent/workflow code before running
 - Only load entities from trusted sources
 - Use `.env` files for sensitive credentials (never commit them)

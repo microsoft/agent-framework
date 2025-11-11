@@ -17,7 +17,13 @@ internal static class ChatCompletionsJsonSerializerOptions
     private static JsonSerializerOptions Create()
     {
         JsonSerializerOptions options = new(ChatCompletionsJsonContext.Default.Options);
+
+        // Chain in the resolvers from both AgentAbstractionsJsonUtilities and our source generated context.
+        // We want AgentAbstractionsJsonUtilities first to ensure any M.E.AI types are handled via its resolver.
+        options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(ChatCompletionsJsonContext.Default.Options.TypeInfoResolver!);
+
         options.MakeReadOnly();
         return options;
     }

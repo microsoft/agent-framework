@@ -80,9 +80,16 @@ class CustomResponseOutputItemDoneEvent(BaseModel):
 
 
 class ResponseWorkflowEventComplete(BaseModel):
-    """Complete workflow event data."""
+    """Complete workflow event data.
 
-    type: Literal["response.workflow_event.complete"] = "response.workflow_event.complete"
+    DevUI extension for workflow execution events (debugging/observability).
+    Uses past-tense 'completed' to follow OpenAI's event naming pattern.
+
+    Workflow events are shown in the debug panel for monitoring execution flow,
+    not in main chat. Use response.output_item.added for user-facing content.
+    """
+
+    type: Literal["response.workflow_event.completed"] = "response.workflow_event.completed"
     data: dict[str, Any]  # Complete event data, not delta
     executor_id: str | None = None
     item_id: str
@@ -91,9 +98,17 @@ class ResponseWorkflowEventComplete(BaseModel):
 
 
 class ResponseTraceEventComplete(BaseModel):
-    """Complete trace event data."""
+    """Complete trace event data.
 
-    type: Literal["response.trace.complete"] = "response.trace.complete"
+    DevUI extension for non-displayable debugging/metadata events.
+    Uses past-tense 'completed' to follow OpenAI's event naming pattern
+    (e.g., response.completed, response.output_item.added).
+
+    Trace events are shown in the Traces debug panel, not in main chat.
+    Use response.output_item.added for user-facing content.
+    """
+
+    type: Literal["response.trace.completed"] = "response.trace.completed"
     data: dict[str, Any]  # Complete trace data, not delta
     span_id: str | None = None
     item_id: str
@@ -124,6 +139,139 @@ class ResponseFunctionResultComplete(BaseModel):
     timestamp: str | None = None  # Optional timestamp for UI display
 
 
+class ResponseRequestInfoEvent(BaseModel):
+    """DevUI extension: Workflow requests human input.
+
+    This is a DevUI extension because:
+    - OpenAI Responses API doesn't have a concept of workflow human-in-the-loop pausing
+    - Agent Framework workflows can pause via RequestInfoExecutor to collect external information
+    - Clients need to render forms and submit responses to continue workflow execution
+
+    When a workflow emits this event, it enters IDLE_WITH_PENDING_REQUESTS state.
+    Client should render a form based on request_schema and submit responses via
+    a new request with workflow_hil_response content type.
+    """
+
+    type: Literal["response.request_info.requested"] = "response.request_info.requested"
+    request_id: str
+    """Unique identifier for correlating this request with the response."""
+
+    source_executor_id: str
+    """ID of the executor that is waiting for this response."""
+
+    request_type: str
+    """Fully qualified type name of the request (e.g., 'module.path:ClassName')."""
+
+    request_data: dict[str, Any]
+    """Current data from the RequestInfoMessage (may contain defaults/context)."""
+
+    request_schema: dict[str, Any]
+    """JSON schema describing the request data structure (what the workflow is asking about)."""
+
+    response_schema: dict[str, Any] | None = None
+    """JSON schema describing the expected response structure for form rendering (what user should provide)."""
+
+    item_id: str
+    """OpenAI item ID for correlation."""
+
+    output_index: int = 0
+    """Output index for OpenAI compatibility."""
+
+    sequence_number: int
+    """Sequence number for ordering events."""
+
+    timestamp: str
+    """ISO timestamp when the request was made."""
+
+
+# DevUI Output Content Types - for agent-generated media/data
+# These extend ResponseOutputItem to support rich content outputs that OpenAI's API doesn't natively support
+
+
+class ResponseOutputImage(BaseModel):
+    """DevUI extension: Agent-generated image output.
+
+    This is a DevUI extension because:
+    - OpenAI Responses API only supports text output in ResponseOutputMessage.content
+    - ImageGenerationCall exists but is for tool calls (generating images), not returning existing images
+    - Agent Framework agents can return images via DataContent/UriContent that need proper display
+
+    This type allows images to be displayed inline in chat rather than hidden in trace logs.
+    """
+
+    id: str
+    """The unique ID of the image output."""
+
+    image_url: str
+    """The URL or data URI of the image (e.g., data:image/png;base64,...)"""
+
+    type: Literal["output_image"] = "output_image"
+    """The type of the output. Always `output_image`."""
+
+    alt_text: str | None = None
+    """Optional alt text for accessibility."""
+
+    mime_type: str = "image/png"
+    """The MIME type of the image (e.g., image/png, image/jpeg)."""
+
+
+class ResponseOutputFile(BaseModel):
+    """DevUI extension: Agent-generated file output.
+
+    This is a DevUI extension because:
+    - OpenAI Responses API only supports text output in ResponseOutputMessage.content
+    - Agent Framework agents can return files via DataContent/UriContent that need proper display
+    - Supports PDFs, audio files, and other media types
+
+    This type allows files to be displayed inline in chat with appropriate renderers.
+    """
+
+    id: str
+    """The unique ID of the file output."""
+
+    filename: str
+    """The filename (used to determine rendering and download)."""
+
+    type: Literal["output_file"] = "output_file"
+    """The type of the output. Always `output_file`."""
+
+    file_url: str | None = None
+    """Optional URL to the file."""
+
+    file_data: str | None = None
+    """Optional base64-encoded file data."""
+
+    mime_type: str = "application/octet-stream"
+    """The MIME type of the file (e.g., application/pdf, audio/mp3)."""
+
+
+class ResponseOutputData(BaseModel):
+    """DevUI extension: Agent-generated generic data output.
+
+    This is a DevUI extension because:
+    - OpenAI Responses API only supports text output in ResponseOutputMessage.content
+    - Agent Framework agents can return arbitrary structured data that needs display
+    - Useful for debugging and displaying non-text content
+
+    This type allows generic data to be displayed inline in chat.
+    """
+
+    id: str
+    """The unique ID of the data output."""
+
+    data: str
+    """The data payload (string representation)."""
+
+    type: Literal["output_data"] = "output_data"
+    """The type of the output. Always `output_data`."""
+
+    mime_type: str
+    """The MIME type of the data."""
+
+    description: str | None = None
+    """Optional description of the data."""
+
+
 # Agent Framework extension fields
 class AgentFrameworkExtraBody(BaseModel):
     """Agent Framework specific routing fields for OpenAI requests."""
@@ -144,7 +292,7 @@ class AgentFrameworkRequest(BaseModel):
     """
 
     # All OpenAI fields from ResponseCreateParams
-    model: str  # Used as entity_id in DevUI!
+    model: str | None = None
     input: str | list[Any] | dict[str, Any]  # ResponseInputParam + dict for workflow structured input
     stream: bool | None = False
 
@@ -156,20 +304,25 @@ class AgentFrameworkRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
+    top_p: float | None = None
     tools: list[dict[str, Any]] | None = None
+
+    # Reasoning parameters (for o-series models)
+    reasoning: dict[str, Any] | None = None  # {"effort": "low" | "medium" | "high" | "minimal"}
 
     # Optional extra_body for advanced use cases
     extra_body: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="allow")
 
-    def get_entity_id(self) -> str:
-        """Get entity_id from model field.
+    def get_entity_id(self) -> str | None:
+        """Get entity_id from metadata.entity_id.
 
-        In DevUI, model IS the entity_id (agent/workflow name).
-        Simple and clean!
+        In DevUI, entity_id is specified in metadata for routing.
         """
-        return self.model
+        if self.metadata:
+            return self.metadata.get("entity_id")
+        return None
 
     def get_conversation_id(self) -> str | None:
         """Extract conversation_id from conversation parameter.
@@ -218,11 +371,40 @@ class OpenAIError(BaseModel):
         return self.model_dump_json()
 
 
+class MetaResponse(BaseModel):
+    """Server metadata response for /meta endpoint.
+
+    Provides information about the DevUI server configuration and capabilities.
+    """
+
+    ui_mode: Literal["developer", "user"] = "developer"
+    """UI interface mode - 'developer' shows debug tools, 'user' shows simplified interface."""
+
+    version: str
+    """DevUI version string."""
+
+    framework: str = "agent_framework"
+    """Backend framework identifier."""
+
+    runtime: Literal["python", "dotnet"] = "python"
+    """Backend runtime/language - 'python' or 'dotnet' for deployment guides and feature availability."""
+
+    capabilities: dict[str, bool] = {}
+    """Server capabilities (e.g., tracing, openai_proxy)."""
+
+    auth_required: bool = False
+    """Whether the server requires Bearer token authentication."""
+
+
 # Export all custom types
 __all__ = [
     "AgentFrameworkRequest",
+    "MetaResponse",
     "OpenAIError",
     "ResponseFunctionResultComplete",
+    "ResponseOutputData",
+    "ResponseOutputFile",
+    "ResponseOutputImage",
     "ResponseTraceEvent",
     "ResponseTraceEventComplete",
     "ResponseWorkflowEventComplete",

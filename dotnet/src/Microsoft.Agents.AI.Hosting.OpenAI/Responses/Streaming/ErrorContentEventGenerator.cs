@@ -16,26 +16,17 @@ internal sealed class ErrorContentEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) => content is ErrorContent;
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
         if (content is not ErrorContent)
         {
             throw new InvalidOperationException("ErrorContentEventGenerator only supports ErrorContent.");
         }
 
         var itemId = idGenerator.GenerateMessageId();
-        var itemContent = ItemContentConverter.ToItemContent(content) as ItemContentRefusal;
-
-        if (itemContent == null)
+        if (ItemContentConverter.ToItemContent(content) is not ItemContentRefusal itemContent)
         {
             throw new InvalidOperationException("Failed to convert error content to ItemContentRefusal.");
         }
@@ -78,13 +69,7 @@ internal sealed class ErrorContentEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }

@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 /// The status of a response generation.
 /// </summary>
 [JsonConverter(typeof(SnakeCaseEnumConverter<ResponseStatus>))]
-public enum ResponseStatus
+internal enum ResponseStatus
 {
     /// <summary>
     /// The response has been completed.
@@ -111,7 +111,7 @@ internal sealed record Response
     /// The output items (messages) generated in the response.
     /// </summary>
     [JsonPropertyName("output")]
-    public required IList<ItemResource> Output { get; init; }
+    public required List<ItemResource> Output { get; init; }
 
     /// <summary>
     /// A system (or developer) message inserted into the model's context.
@@ -135,7 +135,7 @@ internal sealed record Response
     /// An array of tools the model may call while generating a response.
     /// </summary>
     [JsonPropertyName("tools")]
-    public required IList<JsonElement> Tools { get; init; }
+    public required List<JsonElement> Tools { get; init; }
 
     /// <summary>
     /// How the model should select which tool (or tools) to use when generating a response.
@@ -288,6 +288,9 @@ internal sealed record IncompleteDetails
 /// </summary>
 internal sealed record ResponseUsage
 {
+    /// <summary>
+    /// Gets a zero usage instance.
+    /// </summary>
     public static ResponseUsage Zero { get; } = new()
     {
         InputTokens = 0,

@@ -17,7 +17,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
-from packaging import version
+from packaging.version import parse
 from pydantic import SecretStr
 
 from .._logging import get_logger
@@ -58,8 +58,8 @@ def _check_openai_version_for_callable_api_key() -> None:
     If the version is too old, raise a ServiceInitializationError with helpful message.
     """
     try:
-        current_version = version.parse(openai.__version__)
-        min_required_version = version.parse("1.106.0")
+        current_version = parse(openai.__version__)
+        min_required_version = parse("1.106.0")
 
         if current_version < min_required_version:
             raise ServiceInitializationError(

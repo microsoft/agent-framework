@@ -642,7 +642,9 @@ class ContentToProcess(_AliasSerializable):
 
 class ProcessContentRequest(_AliasSerializable):
     _ALIASES: ClassVar[dict[str, str]] = {"content_to_process": "contentToProcess"}
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"user_id", "tenant_id", "correlation_id", "process_inline"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {
+        "correlation_id",
+    }
 
     def __init__(
         self,
@@ -651,6 +653,7 @@ class ProcessContentRequest(_AliasSerializable):
         tenant_id: str,
         correlation_id: str | None = None,
         process_inline: bool | None = None,
+        scope_identifier: str | None = None,
         **kwargs: Any,
     ) -> None:
         # Extract aliased values from kwargs
@@ -668,10 +671,11 @@ class ProcessContentRequest(_AliasSerializable):
         self.tenant_id = tenant_id
         self.correlation_id = correlation_id
         self.process_inline = process_inline
+        self.scope_identifier = scope_identifier
 
 
 class ProtectionScopesRequest(_AliasSerializable):
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"user_id", "tenant_id", "correlation_id", "scope_identifier"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
     _ALIASES: ClassVar[dict[str, str]] = {
         "pivot_on": "pivotOn",
         "device_metadata": "deviceMetadata",
@@ -743,7 +747,7 @@ class ContentActivitiesRequest(_AliasSerializable):
         "scope_identifier": "scopeIdentifier",
         "content_to_process": "contentMetadata",
     }
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"tenant_id", "correlation_id"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
 
     def __init__(
         self,
@@ -800,12 +804,15 @@ class ProcessContentResponse(_AliasSerializable):
         "protection_scope_state": "protectionScopeState",
         "policy_actions": "policyActions",
         "processing_errors": "processingErrors",
+        "correlation_id": "correlationId",
     }
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
 
     id: str | None
     protection_scope_state: ProtectionScopeState | None
     policy_actions: list[DlpActionInfo] | None
     processing_errors: list[ProcessingError] | None
+    correlation_id: str | None
 
     def __init__(
         self,
@@ -813,6 +820,7 @@ class ProcessContentResponse(_AliasSerializable):
         protection_scope_state: ProtectionScopeState | None = None,
         policy_actions: list[DlpActionInfo | MutableMapping[str, Any]] | None = None,
         processing_errors: list[ProcessingError | MutableMapping[str, Any]] | None = None,
+        correlation_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         # Extract aliased values from kwargs
@@ -822,6 +830,8 @@ class ProcessContentResponse(_AliasSerializable):
             policy_actions = kwargs["policyActions"]
         if "processingErrors" in kwargs:
             processing_errors = kwargs["processingErrors"]
+        if "correlationId" in kwargs:
+            correlation_id = kwargs["correlationId"]
 
         # Convert to objects
         converted_policy_actions: list[DlpActionInfo] | None = None
@@ -838,12 +848,12 @@ class ProcessContentResponse(_AliasSerializable):
                 [pe if isinstance(pe, ProcessingError) else ProcessingError(**pe) for pe in processing_errors],
             )
 
-        # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.id = id
         self.protection_scope_state = protection_scope_state
         self.policy_actions = converted_policy_actions
         self.processing_errors = converted_processing_errors
+        self.correlation_id = correlation_id
 
 
 class PolicyScope(_AliasSerializable):
@@ -909,15 +919,22 @@ class PolicyScope(_AliasSerializable):
 
 
 class ProtectionScopesResponse(_AliasSerializable):
-    _ALIASES: ClassVar[dict[str, str]] = {"scope_identifier": "scopeIdentifier", "scopes": "value"}
+    _ALIASES: ClassVar[dict[str, str]] = {
+        "scope_identifier": "scopeIdentifier",
+        "scopes": "value",
+        "correlation_id": "correlationId",
+    }
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
 
     scope_identifier: str | None
     scopes: list[PolicyScope] | None
+    correlation_id: str | None
 
     def __init__(
         self,
         scope_identifier: str | None = None,
         scopes: list[PolicyScope | MutableMapping[str, Any]] | None = None,
+        correlation_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         # Extract aliased values from kwargs before they're normalized by parent
@@ -925,6 +942,8 @@ class ProtectionScopesResponse(_AliasSerializable):
             scope_identifier = kwargs["scopeIdentifier"]
         if "value" in kwargs:
             scopes = kwargs["value"]
+        if "correlationId" in kwargs:
+            correlation_id = kwargs["correlationId"]
 
         converted_scopes: list[PolicyScope] | None = None
         if scopes is not None:
@@ -936,22 +955,32 @@ class ProtectionScopesResponse(_AliasSerializable):
         super().__init__(**kwargs)
         self.scope_identifier = scope_identifier
         self.scopes = converted_scopes
+        self.correlation_id = correlation_id
 
 
 class ContentActivitiesResponse(_AliasSerializable):
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"status_code"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"correlation_id"}
+    _ALIASES: ClassVar[dict[str, str]] = {"correlation_id": "correlationId"}
+
+    status_code: int | None
+    error: ErrorDetails | None
+    correlation_id: str | None
 
     def __init__(
         self,
         status_code: int | None = None,
         error: ErrorDetails | MutableMapping[str, Any] | None = None,
+        correlation_id: str | None = None,
         **kwargs: Any,
     ) -> None:
+        if "correlationId" in kwargs:
+            correlation_id = kwargs["correlationId"]
         if isinstance(error, MutableMapping):
             error = ErrorDetails(**error)
-        super().__init__(status_code=status_code, error=error, **kwargs)
+        super().__init__(status_code=status_code, error=error, correlation_id=correlation_id, **kwargs)
         self.status_code = status_code
         self.error = error  # type: ignore[assignment]
+        self.correlation_id = correlation_id
 
 
 __all__ = [

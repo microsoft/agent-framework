@@ -456,6 +456,136 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         Assert.Equal(JsonValueKind.String, jsonRoot.GetProperty("occupation").ValueKind);
     }
 
+    [Fact]
+    public async Task ToolsSerializationDeserializationAsync()
+    {
+        // Arrange
+        string requestJson = LoadChatCompletionsTraceFile("tools/request.json");
+        using var expectedResponseDoc = LoadChatCompletionsTraceDocument("tools/response.json");
+
+        HttpClient client = await this.CreateTestServerAsync(
+            "tools-agent",
+            "You are a helpful assistant with access to weather and time tools.",
+            "tool-call",
+            (msg) => [new FunctionCallContent("call_abc123", "get_weather", new Dictionary<string, object?>() {
+                { "location", "San Francisco, CA" },
+                { "unit", "fahrenheit" }
+            })]
+        );
+
+        // Act
+        HttpResponseMessage httpResponse = await this.SendChatCompletionRequestAsync(client, "tools-agent", requestJson);
+        using var responseDoc = await ParseResponseAsync(httpResponse);
+        var response = responseDoc.RootElement;
+
+        // Parse the request
+        using var requestDoc = JsonDocument.Parse(requestJson);
+        var request = requestDoc.RootElement;
+
+        // Assert - Request has tools array with proper structure
+        AssertJsonPropertyExists(request, "tools");
+        var tools = request.GetProperty("tools");
+        Assert.Equal(JsonValueKind.Array, tools.ValueKind);
+        Assert.Equal(2, tools.GetArrayLength());
+
+        // Assert - First tool (get_weather)
+        var weatherTool = tools[0];
+        AssertJsonPropertyEquals(weatherTool, "type", "function");
+        AssertJsonPropertyExists(weatherTool, "function");
+
+        var weatherFunction = weatherTool.GetProperty("function");
+        AssertJsonPropertyEquals(weatherFunction, "name", "get_weather");
+        AssertJsonPropertyExists(weatherFunction, "description");
+        AssertJsonPropertyExists(weatherFunction, "parameters");
+
+        var weatherParams = weatherFunction.GetProperty("parameters");
+        AssertJsonPropertyEquals(weatherParams, "type", "object");
+        AssertJsonPropertyExists(weatherParams, "properties");
+        AssertJsonPropertyExists(weatherParams, "required");
+
+        // Verify location property exists
+        var properties = weatherParams.GetProperty("properties");
+        AssertJsonPropertyExists(properties, "location");
+        AssertJsonPropertyExists(properties, "unit");
+
+        // Assert - Second tool (get_time)
+        var timeTool = tools[1];
+        AssertJsonPropertyEquals(timeTool, "type", "function");
+
+        var timeFunction = timeTool.GetProperty("function");
+        AssertJsonPropertyEquals(timeFunction, "name", "get_time");
+        AssertJsonPropertyExists(timeFunction, "description");
+        AssertJsonPropertyExists(timeFunction, "parameters");
+
+        // Assert - Response structure
+        AssertJsonPropertyExists(response, "id");
+        AssertJsonPropertyEquals(response, "object", "chat.completion");
+        AssertJsonPropertyExists(response, "created");
+        AssertJsonPropertyExists(response, "model");
+
+        // Assert - Response has tool_calls in choices
+        var choices = response.GetProperty("choices");
+        Assert.Equal(JsonValueKind.Array, choices.ValueKind);
+        Assert.True(choices.GetArrayLength() > 0);
+
+        var choice = choices[0];
+        AssertJsonPropertyExists(choice, "finish_reason");
+        AssertJsonPropertyEquals(choice, "finish_reason", anyOfValues: ["tool_calls", "stop"]);
+        AssertJsonPropertyExists(choice, "message");
+
+        var message = choice.GetProperty("message");
+        AssertJsonPropertyEquals(message, "role", "assistant");
+        AssertJsonPropertyExists(message, "tool_calls");
+
+        // Assert - Tool calls array structure
+        var toolCalls = message.GetProperty("tool_calls");
+        Assert.Equal(JsonValueKind.Array, toolCalls.ValueKind);
+        Assert.True(toolCalls.GetArrayLength() > 0);
+
+        var toolCall = toolCalls[0];
+        AssertJsonPropertyExists(toolCall, "id");
+        AssertJsonPropertyEquals(toolCall, "type", "function");
+        AssertJsonPropertyExists(toolCall, "function");
+
+        var callFunction = toolCall.GetProperty("function");
+        AssertJsonPropertyEquals(callFunction, "name", "get_weather");
+        AssertJsonPropertyExists(callFunction, "arguments");
+
+        // Assert - Tool call arguments are valid JSON
+        string arguments = callFunction.GetProperty("arguments").GetString()!;
+        using var argsDoc = JsonDocument.Parse(arguments);
+        var argsRoot = argsDoc.RootElement;
+        AssertJsonPropertyExists(argsRoot, "location");
+        AssertJsonPropertyEquals(argsRoot, "location", "San Francisco, CA");
+        AssertJsonPropertyEquals(argsRoot, "unit", "fahrenheit");
+
+        // Assert - Message content is null when tool_calls present
+        if (message.TryGetProperty("content", out var contentProp))
+        {
+            Assert.Equal(JsonValueKind.Null, contentProp.ValueKind);
+        }
+
+        // Assert - Usage statistics
+        AssertJsonPropertyExists(response, "usage");
+        var usage = response.GetProperty("usage");
+        AssertJsonPropertyExists(usage, "prompt_tokens");
+        AssertJsonPropertyExists(usage, "completion_tokens");
+        AssertJsonPropertyExists(usage, "total_tokens");
+
+        var promptTokens = usage.GetProperty("prompt_tokens").GetInt32();
+        var completionTokens = usage.GetProperty("completion_tokens").GetInt32();
+        var totalTokens = usage.GetProperty("total_tokens").GetInt32();
+
+        Assert.True(promptTokens > 0);
+        Assert.True(completionTokens > 0);
+        Assert.Equal(promptTokens + completionTokens, totalTokens);
+
+        // Assert - Service tier
+        AssertJsonPropertyExists(response, "service_tier");
+        var serviceTier = response.GetProperty("service_tier").GetString();
+        Assert.NotNull(serviceTier);
+    }
+
     /// <summary>
     /// Helper to parse chat completion chunks from SSE response.
     /// </summary>
