@@ -17,10 +17,10 @@ an HTTP API that can be polled by a web client or dashboard.
 
 ## Prerequisites
 
-- Python 3.11+
-- Azure Functions Core Tools v4
-- Access to an Azure OpenAI deployment (configure the environment variables listed in
-  `local.settings.json` or export them in your shell)
+- Python 3.10+
+- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)
+- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`
+- Access to an Azure OpenAI deployment with `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY` configured (either in `local.settings.json` or exported in your shell)
 - Dependencies from `requirements.txt` installed in your environment
 
 > **Note:** The sample stores callback events in memory for simplicity. For production scenarios you
@@ -48,7 +48,7 @@ an HTTP API that can be polled by a web client or dashboard.
    pip install -r requirements.txt
    ```
 
-3. Copy `local.settings.json.template` to `local.settings.json` and update the values (or export them as environment variables) with your Azure resources.
+3. Copy `local.settings.json.template` to `local.settings.json` and update `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY` (or export them as environment variables) for your Azure resources, making sure `TASKHUB_NAME` remains `default` unless you have changed the durable task hub name.
 
 4. Start the Functions host:
 

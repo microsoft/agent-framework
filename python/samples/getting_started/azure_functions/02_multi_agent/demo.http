@@ -51,7 +51,8 @@ Content-Type: application/json
 
 {
   "message": "Calculate a 20% tip on a $50 bill",
-  "sessionId": "math-user-001"
+  "sessionId": "math-user-001",
+  "waitForCompletion": true
 }
 
 ###

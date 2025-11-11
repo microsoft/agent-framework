@@ -6,11 +6,11 @@ from typing import Any
 PACKAGE_NAME = "agent_framework_azurefunctions"
 PACKAGE_EXTRA = "azurefunctions"
 _IMPORTS = [
+    "AgentCallbackContext",
     "AgentFunctionApp",
+    "AgentResponseCallbackProtocol",
     "DurableAIAgent",
     "get_agent",
-    "AgentCallbackContext",
-    "AgentResponseCallbackProtocol",
 ]
 
 
