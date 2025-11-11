@@ -275,6 +275,7 @@ class AgentExecutor(Executor):
 
         if response is None:
             # Agent did not complete (e.g., waiting for user input); do not emit response
+            logger.info("AgentExecutor %s: Agent did not complete, awaiting user input", self.id)
             return
 
         if self._output_response:

@@ -211,10 +211,12 @@ async def conclude_workflow(
 
 
 async def main() -> None:
+    # Create the agent and executors
     chat_client = OpenAIChatClient()
     email_writer = chat_client.create_agent(
         name="Email Writer",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
+        # tools with `approval_mode="always_require"` will trigger approval requests
         tools=[
             read_historical_email_data,
             send_email,
@@ -223,8 +225,9 @@ async def main() -> None:
             get_my_information,
         ],
     )
-
     email_preprocessor = EmailPreprocessor(special_email_addresses={"mike@contoso.com"})
+
+    # Build the workflow
     workflow = (
         WorkflowBuilder()
         .set_start_executor(email_preprocessor)
@@ -251,9 +254,11 @@ async def main() -> None:
 
         request_info_events = events.get_request_info_events()
         for request_info_event in request_info_events:
+            # We should only expect FunctionApprovalRequestContent in this sample
             if not isinstance(request_info_event.data, FunctionApprovalRequestContent):
                 raise ValueError(f"Unexpected request info content type: {type(request_info_event.data)}")
 
+            # Pretty print the function call details
             arguments = json.dumps(
                 json.loads(request_info_event.data.function_call.arguments)
                 if isinstance(request_info_event.data.function_call.arguments, str)
@@ -264,10 +269,17 @@ async def main() -> None:
                 f"Received approval request for function: {request_info_event.data.function_call.name} "
                 f"with args:\n{arguments}"
             )
+
+            # For demo purposes, we automatically approve the request
+            # The expected response type of the request is `FunctionApprovalResponseContent`,
+            # which can be created via `create_response` method on the request content
             print("Performing automatic approval for demo purposes...")
             responses[request_info_event.request_id] = request_info_event.data.create_response(approved=True)
 
+        # Once we get an output event, we can conclude the workflow
+        # Outputs can only be produced by the conclude_workflow_executor in this sample
         if outputs := events.get_outputs():
+            # We expect only one output from the conclude_workflow_executor
             output = outputs[0]
             break
 
