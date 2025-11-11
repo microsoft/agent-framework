@@ -12,7 +12,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
 using Azure.Core;
-using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
