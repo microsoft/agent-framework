@@ -18,7 +18,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, override
 
 from agent_framework import (
     AgentProtocol,
@@ -307,15 +307,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         ctx: WorkflowContext[AgentExecutorRequest | list[ChatMessage], list[ChatMessage] | _ConversationForUserInput],
     ) -> None:
         """Process an agent's response and determine whether to route, request input, or terminate."""
-        # Hydrate coordinator state (and detect new run) using checkpointable executor state
-        state = await ctx.get_executor_state()
-        if not state:
-            self._clear_conversation()
-        elif not self._get_conversation():
-            restored = self._restore_conversation_from_state(state)
-            if restored:
-                self._conversation = list(restored)
-
         source = ctx.get_source_executor_id()
         is_starting_agent = source == self._starting_agent_id
 
@@ -471,6 +462,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             )
         return list(conversation)
 
+    @override
     def _snapshot_pattern_metadata(self) -> dict[str, Any]:
         """Serialize pattern-specific state.
 
@@ -485,6 +477,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             }
         return {}
 
+    @override
     def _restore_pattern_metadata(self, metadata: dict[str, Any]) -> None:
         """Restore pattern-specific state.
 
@@ -495,17 +488,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """
         if self._return_to_previous and "current_agent_id" in metadata:
             self._current_agent_id = metadata["current_agent_id"]
-
-    def _restore_conversation_from_state(self, state: Mapping[str, Any]) -> list[ChatMessage]:
-        """Rehydrate the coordinator's conversation history from checkpointed state.
-
-        DEPRECATED: Use restore_state() instead. Kept for backward compatibility.
-        """
-        from ._orchestration_state import OrchestrationState
-
-        orch_state_dict = {"conversation": state.get("full_conversation", state.get("conversation", []))}
-        temp_state = OrchestrationState.from_dict(orch_state_dict)
-        return list(temp_state.conversation)
 
     def _apply_response_metadata(self, conversation: list[ChatMessage], agent_response: AgentRunResponse) -> None:
         """Merge top-level response metadata into the latest assistant message."""

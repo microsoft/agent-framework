@@ -268,10 +268,6 @@ class Runner:
     async def _save_executor_states(self) -> None:
         """Populate executor state by calling checkpoint hooks on executors.
 
-        TODO(@taochen#1614): this method is potentially problematic if executors also call
-        set_executor_state on the context directly. We should clarify the intended usage
-        pattern for executor state management.
-
         Backward compatibility behavior:
           - If an executor defines an async or sync method `snapshot_state(self) -> dict`, use it.
           - Else if it has a plain attribute `state` that is a dict, use that.

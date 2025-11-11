@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -101,8 +101,9 @@ class FakeManager(MagenticManagerBase):
     next_speaker_name: str = "agentA"
     instruction_text: str = "Proceed with step 1"
 
-    def snapshot_state(self) -> dict[str, Any]:
-        state = super().snapshot_state()
+    @override
+    def on_checkpoint_save(self) -> dict[str, Any]:
+        state = super().on_checkpoint_save()
         if self.task_ledger is not None:
             state = dict(state)
             state["task_ledger"] = {
@@ -111,8 +112,9 @@ class FakeManager(MagenticManagerBase):
             }
         return state
 
-    def restore_state(self, state: dict[str, Any]) -> None:
-        super().restore_state(state)
+    @override
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        super().on_checkpoint_restore(state)
         ledger_state = state.get("task_ledger")
         if isinstance(ledger_state, dict):
             ledger_dict = cast(dict[str, Any], ledger_state)

@@ -695,20 +695,6 @@ class StandardMagenticManager(MagenticManagerBase):
 
     task_ledger: _MagenticTaskLedger | None
 
-    def on_checkpoint_save(self) -> dict[str, Any]:
-        state: dict[str, Any] = {}
-        if self.task_ledger is not None:
-            state["task_ledger"] = self.task_ledger.to_dict()
-        return state
-
-    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
-        ledger = state.get("task_ledger")
-        if ledger is not None:
-            try:
-                self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
-            except Exception:  # pragma: no cover - defensive
-                logger.warning("Failed to restore manager task ledger from checkpoint state")
-
     def __init__(
         self,
         chat_client: ChatClientProtocol,
@@ -937,6 +923,22 @@ class StandardMagenticManager(MagenticManagerBase):
             text=response.text,
             author_name=response.author_name or MAGENTIC_MANAGER_NAME,
         )
+
+    @override
+    def on_checkpoint_save(self) -> dict[str, Any]:
+        state: dict[str, Any] = {}
+        if self.task_ledger is not None:
+            state["task_ledger"] = self.task_ledger.to_dict()
+        return state
+
+    @override
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        ledger = state.get("task_ledger")
+        if ledger is not None:
+            try:
+                self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore manager task ledger from checkpoint state")
 
 
 # endregion Magentic Manager

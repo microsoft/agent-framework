@@ -364,9 +364,7 @@ async def main() -> None:
     workflow2 = build_parent_workflow(storage)
 
     request_info_event: RequestInfoEvent | None = None
-    async for event in workflow2.run_stream(
-        checkpoint_id=resume_checkpoint.checkpoint_id,
-    ):
+    async for event in workflow2.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
         if isinstance(event, RequestInfoEvent):
             request_info_event = event
 
