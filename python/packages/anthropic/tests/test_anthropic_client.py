@@ -782,10 +782,10 @@ async def test_anthropic_client_integration_ordering() -> None:
 @pytest.mark.flaky
 @skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_images() -> None:
-    """Integration test with ordering."""
+    """Integration test with images."""
     client = AnthropicClient()
-    # Mock image generation output item with raw base64 (PNG format)
 
+    # get a image from the assets folder
     image_path = Path(__file__).parent / "assets" / "sample_image.jpg"
     with open(image_path, "rb") as img_file:  # noqa [ASYNC230]
         image_bytes = img_file.read()

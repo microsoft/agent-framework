@@ -1098,7 +1098,7 @@ class DataContent(BaseContent):
         return uri, media_type
 
     def get_data_bytes_as_str(self) -> str:
-        """Extracts and returns the binary data from the data URI.
+        """Extracts and returns the base64-encoded data from the data URI.
 
         Returns:
             The binary data as str.
