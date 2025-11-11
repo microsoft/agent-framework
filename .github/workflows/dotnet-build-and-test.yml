@@ -8,11 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   merge_group:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   push:
-    branches: ["main", "feature-azure-functions"]
+    branches: ["main"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -156,7 +156,7 @@ jobs:
         run: |
           docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
           # Wait for emulator to be ready
-          timeout 30 bash -c 'until curl http://localhost:8080/healthz; do sleep 1; done'
+          timeout 30 bash -c 'until curl --silent --fail http://localhost:8080/healthz; do sleep 1; done'
 
       # Install and start Azurite (Azure Storage emulator) - Required for Azure Functions integration tests
       - name: Start Azurite (Azure Storage emulator)
