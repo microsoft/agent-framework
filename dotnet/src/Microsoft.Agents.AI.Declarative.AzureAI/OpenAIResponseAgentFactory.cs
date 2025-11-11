@@ -39,7 +39,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="OpenAIResponseAgentFactory"/> class.
     /// </summary>
     public OpenAIResponseAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, configuration, loggerFactory)
     {
