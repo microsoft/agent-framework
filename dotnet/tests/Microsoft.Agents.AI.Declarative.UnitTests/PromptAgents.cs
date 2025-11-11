@@ -3,7 +3,7 @@
 using Microsoft.Bot.ObjectModel;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
-internal sealed class PromptAgents
+internal static class PromptAgents
 {
     internal const string AgentWithEverything =
     """
