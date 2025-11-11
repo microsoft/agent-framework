@@ -1,5 +1,5 @@
 These are common starting instructions for how to set up your environment for all the samples in this directory. 
-These  samples are for illustrating the use of the Durable extensibility to Agent Framework running in Azure Functions. 
+These samples are for illustrating the use of the Durable extensibility to Agent Framework running in Azure Functions. 
 
 All of these samples are set up to run in Azure Functions. Azure Functions has a local called [CoreTools](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) which we will set up to run these samples locally.
 
