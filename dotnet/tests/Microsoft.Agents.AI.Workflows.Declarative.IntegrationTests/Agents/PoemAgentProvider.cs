@@ -27,7 +27,7 @@ internal sealed class PoemAgentProvider(IConfiguration configuration) : AgentPro
         {
             Instructions =
                 """
-                Write a one verse poem on the requested topic in the style of: {{style}}.                
+                Write a one verse poem on the requested topic in the style of: {{style}}.            
                 """,
             StructuredInputs =
             {
