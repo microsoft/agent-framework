@@ -34,6 +34,11 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     private AgentClient? _agentClient;
     private ConversationClient? _conversationClient;
 
+    /// <summary>
+    /// Optional options used when creating the <see cref="AgentClient"/>.
+    /// </summary>
+    public AgentClientOptions? ClientOptions { get; init; }
+
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
@@ -225,7 +230,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         if (this._agentClient is null)
         {
-            AgentClientOptions clientOptions = new();
+            AgentClientOptions clientOptions = this.ClientOptions ?? new();
 
             if (httpClient is not null)
             {
