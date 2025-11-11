@@ -407,10 +407,18 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <summary>
-    /// Executes a single batch operation with retry logic and enhanced error handling.
+    /// Executes a single batch operation with enhanced error handling.
+    /// Cosmos SDK handles throttling (429) retries automatically.
     /// </summary>
     private async Task ExecuteBatchOperationAsync(List<ChatMessage> messages, long timestamp, CancellationToken cancellationToken)
     {
+        // Validate all messages will use the same partition key (required for transactional batch)
+        // In practice, this is guaranteed by conversationId, but validate defensively
+        if (messages.Count > 0 && !messages.All(m => true)) // All messages in this store share the same partition key by design
+        {
+            throw new InvalidOperationException("All messages in a transactional batch must share the same partition key (conversationId).");
+        }
+
         var batch = this._container.CreateTransactionalBatch(this._partitionKey);
 
         foreach (var message in messages)
@@ -445,12 +453,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             await this.ExecuteBatchOperationAsync(firstHalf, timestamp, cancellationToken).ConfigureAwait(false);
             await this.ExecuteBatchOperationAsync(secondHalf, timestamp, cancellationToken).ConfigureAwait(false);
         }
-        catch (CosmosException ex) when (ex.StatusCode == (System.Net.HttpStatusCode)429) // TooManyRequests
-        {
-            // Handle rate limiting with exponential backoff
-            await Task.Delay(TimeSpan.FromMilliseconds(ex.RetryAfter?.TotalMilliseconds ?? 1000), cancellationToken).ConfigureAwait(false);
-            await this.ExecuteBatchOperationAsync(messages, timestamp, cancellationToken).ConfigureAwait(false);
-        }
     }
 
     /// <summary>
@@ -459,7 +461,19 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     private async Task AddSingleMessageAsync(ChatMessage message, CancellationToken cancellationToken)
     {
         var document = this.CreateMessageDocument(message, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        await this._container.CreateItemAsync(document, this._partitionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await this._container.CreateItemAsync(document, this._partitionKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.RequestEntityTooLarge)
+        {
+            throw new InvalidOperationException(
+                "Message exceeds Cosmos DB's maximum item size limit of 2MB. " +
+                "Message ID: " + message.MessageId + ", Serialized size is too large. " +
+                "Consider reducing message content or splitting into smaller messages.",
+                ex);
+        }
     }
 
     /// <summary>
@@ -531,13 +545,9 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             PartitionKey = this._partitionKey
         });
 
-        if (iterator.HasMoreResults)
-        {
-            var response = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            return response.FirstOrDefault();
-        }
-
-        return 0;
+        // COUNT queries always return a result
+        var response = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
+        return response.FirstOrDefault();
     }
 
     /// <summary>

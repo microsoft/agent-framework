@@ -35,21 +35,6 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(connectionString));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
         options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(connectionString, databaseId, containerId);
         return options;
     }
@@ -77,21 +62,6 @@ public static class CosmosDBChatExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
-        if (string.IsNullOrWhiteSpace(accountEndpoint))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(accountEndpoint));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
-        }
-
         options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(accountEndpoint, new DefaultAzureCredential(), databaseId, containerId);
         return options;
     }
@@ -117,21 +87,6 @@ public static class CosmosDBChatExtensions
         if (options is null)
         {
             throw new ArgumentNullException(nameof(options));
-        }
-
-        if (cosmosClient is null)
-        {
-            throw new ArgumentNullException(nameof(cosmosClient));
-        }
-
-        if (string.IsNullOrWhiteSpace(databaseId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(databaseId));
-        }
-
-        if (string.IsNullOrWhiteSpace(containerId))
-        {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(containerId));
         }
 
         options.ChatMessageStoreFactory = context => new CosmosChatMessageStore(cosmosClient, databaseId, containerId);
