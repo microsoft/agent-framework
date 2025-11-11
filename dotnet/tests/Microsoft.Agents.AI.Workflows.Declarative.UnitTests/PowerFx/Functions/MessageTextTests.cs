@@ -8,7 +8,7 @@ using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx.Functions;
 
-public class MessageTextTests
+public sealed class MessageTextTests
 {
     [Fact]
     public void Construct_Function()
