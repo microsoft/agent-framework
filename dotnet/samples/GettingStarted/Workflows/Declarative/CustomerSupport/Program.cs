@@ -65,12 +65,12 @@ internal sealed class Program
         await agentClient.CreateAgentAsync(
             agentName: "WindowsSupportAgent",
             agentDefinition: DefineWindowsSupportAgent(configuration),
-            agentDescription: "// %%%");
+            agentDescription: "Windows support agent for CustomerSupport workflow");
 
         await agentClient.CreateAgentAsync(
             agentName: "TicketResolutionAgent",
             agentDefinition: DefineResolutionAgent(configuration),
-            agentDescription: "// %%%");
+            agentDescription: "Resolution agent for CustomerSupport workflow");
 
         await agentClient.CreateAgentAsync(
             agentName: "TicketEscalationAgent",
