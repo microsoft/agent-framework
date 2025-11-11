@@ -8,10 +8,10 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 /// <summary>
-/// Provides an executor that batches received chat messages that it then releases when
+/// Provides an executor that aggregates received chat messages that it then releases when
 /// receiving a <see cref="TurnToken"/>.
 /// </summary>
-internal sealed class CollectChatMessagesExecutor(string id) : ChatProtocolExecutor(id, declareCrossRunShareable: true), IResettableExecutor
+internal sealed class AggregateTurnMessagesEsdfasxecutor(string id) : ChatProtocolExecutor(id, declareCrossRunShareable: true), IResettableExecutor
 {
     /// <inheritdoc/>
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)

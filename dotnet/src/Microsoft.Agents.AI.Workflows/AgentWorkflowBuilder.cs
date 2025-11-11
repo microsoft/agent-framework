@@ -126,7 +126,7 @@ public static partial class AgentWorkflowBuilder
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
         ExecutorBinding[] agentExecutors = (from agent in agents select (ExecutorBinding)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
-        ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
+        ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new AggregateTurnMessagesExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
