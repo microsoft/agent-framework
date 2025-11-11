@@ -71,7 +71,7 @@ async def main() -> None:
                 # Ignore cleanup errors to avoid masking issues
                 pass
     finally:
-        # 6. Cleanup: Delete the vector store and file in case of eariler failure to prevent orphaned resources.
+        # 6. Cleanup: Delete the vector store and file in case of earlier failure to prevent orphaned resources.
 
         # Refreshing the client is required since chat agent closes it
         client = AzureAIAgentClient(async_credential=AzureCliCredential())

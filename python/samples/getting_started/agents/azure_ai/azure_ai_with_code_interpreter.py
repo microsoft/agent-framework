@@ -35,11 +35,20 @@ async def main() -> None:
             isinstance(result.raw_representation, ChatResponse)
             and isinstance(result.raw_representation.raw_representation, OpenAIResponse)
             and len(result.raw_representation.raw_representation.output) > 0
-            and isinstance(result.raw_representation.raw_representation.output[0], ResponseCodeInterpreterToolCall)
         ):
-            generated_code = result.raw_representation.raw_representation.output[0].code
+            # Find the first ResponseCodeInterpreterToolCall item
+            code_interpreter_item = next(
+                (
+                    item
+                    for item in result.raw_representation.raw_representation.output
+                    if isinstance(item, ResponseCodeInterpreterToolCall)
+                ),
+                None,
+            )
 
-            print(f"Generated code:\n{generated_code}")
+            if code_interpreter_item is not None:
+                generated_code = code_interpreter_item.code
+                print(f"Generated code:\n{generated_code}")
 
 
 if __name__ == "__main__":
