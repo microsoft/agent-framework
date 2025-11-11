@@ -44,7 +44,7 @@
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.13.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.13.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.13.0" />
     <!-- Microsoft.AspNetCore.* -->
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.10" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="9.0.4" />
@@ -68,15 +68,15 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.10" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="9.7.0" />
-    <!-- Semantic Kernel -->
-    <PackageVersion Include="Microsoft.SemanticKernel" Version="1.66.0" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Core" Version="1.66.0" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.OpenAI" Version="1.66.0-preview" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.66.0-preview" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Plugins.OpenApi" Version="1.66.0" />
     <!-- Vector Stores -->
-    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.66.0-preview" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.Qdrant" Version="1.66.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.67.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Connectors.Qdrant" Version="1.67.0-preview" />
+    <!-- Semantic Kernel -->
+    <PackageVersion Include="Microsoft.SemanticKernel" Version="1.67.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Core" Version="1.67.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.OpenAI" Version="1.67.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.67.0-preview" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Plugins.OpenApi" Version="1.67.0" />
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.2.41" />
     <!-- A2A -->
@@ -104,8 +104,8 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="9.0.10" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.66.0" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.66.0-beta" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.67.0" />
+    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.67.0-beta" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />
@@ -135,7 +135,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Roslynator.Analyzers" Version="[4.14.0]" />
+    <PackageVersion Include="Roslynator.Analyzers" Version="[4.14.1]" />
     <PackageReference Include="Roslynator.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -128,7 +128,7 @@ class TaskStepsAgentWithExecution:
         import uuid
 
         logger = logging.getLogger(__name__)
-        logger.info(">>> TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
+        logger.info("TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
 
         # First, run the base agent to generate the plan - buffer text messages
         final_state: dict[str, Any] | None = None
@@ -138,41 +138,41 @@ class TaskStepsAgentWithExecution:
 
         async for event in self._base_agent.run_agent(input_data):
             event_type_str = str(event.type) if hasattr(event, "type") else type(event).__name__
-            logger.info(f">>> Processing event: {event_type_str}")
+            logger.info(f"Processing event: {event_type_str}")
 
             match event:
                 case StateSnapshotEvent(snapshot=snapshot):
                     final_state = snapshot
-                    logger.info(f">>> Captured STATE_SNAPSHOT event with state: {final_state}")
+                    logger.info(f"Captured STATE_SNAPSHOT event with state: {final_state}")
                     yield event
                 case RunFinishedEvent():
                     run_finished_event = event
-                    logger.info(">>> Captured RUN_FINISHED event - will send after step execution and summary")
+                    logger.info("Captured RUN_FINISHED event - will send after step execution and summary")
                 case ToolCallStartEvent(tool_call_id=call_id):
                     tool_call_id = call_id
-                    logger.info(f">>> Captured tool_call_id: {tool_call_id}")
+                    logger.info(f"Captured tool_call_id: {tool_call_id}")
                     yield event
                 case TextMessageStartEvent() | TextMessageContentEvent() | TextMessageEndEvent():
                     buffered_text_events.append(event)
-                    logger.info(f">>> Buffered {event_type_str} from first LLM call")
+                    logger.info(f"Buffered {event_type_str} from first LLM call")
                 case _:
-                    logger.info(f">>> Yielding event immediately: {event_type_str}")
+                    logger.info(f"Yielding event immediately: {event_type_str}")
                     yield event
 
-        logger.info(f">>> Base agent completed. Final state: {final_state}")
+        logger.info(f"Base agent completed. Final state: {final_state}")
 
         # Now simulate executing the steps
         if final_state and "steps" in final_state:
             steps = final_state["steps"]
-            logger.info(f">>> Starting step execution simulation for {len(steps)} steps")
+            logger.info(f"Starting step execution simulation for {len(steps)} steps")
 
             for i in range(len(steps)):
-                logger.info(f">>> Simulating execution of step {i + 1}/{len(steps)}: {steps[i].get('description')}")
+                logger.info(f"Simulating execution of step {i + 1}/{len(steps)}: {steps[i].get('description')}")
                 await asyncio.sleep(1.0)  # Simulate work
 
                 # Update step to completed
                 steps[i]["status"] = "completed"
-                logger.info(f">>> Step {i + 1} marked as completed")
+                logger.info(f"Step {i + 1} marked as completed")
 
                 # Send delta event with manual JSON patch format
                 delta_event = StateDeltaEvent(
@@ -185,7 +185,7 @@ class TaskStepsAgentWithExecution:
                         }
                     ],
                 )
-                logger.info(f">>> Yielding StateDeltaEvent for step {i + 1}")
+                logger.info(f"Yielding StateDeltaEvent for step {i + 1}")
                 yield delta_event
 
             # Send final snapshot
@@ -193,11 +193,11 @@ class TaskStepsAgentWithExecution:
                 type=EventType.STATE_SNAPSHOT,
                 snapshot={"steps": steps},
             )
-            logger.info(">>> Yielding final StateSnapshotEvent with all steps completed")
+            logger.info("Yielding final StateSnapshotEvent with all steps completed")
             yield final_snapshot
 
             # SECOND LLM call: Stream summary from chat client directly
-            logger.info(">>> Making SECOND LLM call to generate summary after step execution")
+            logger.info("Making SECOND LLM call to generate summary after step execution")
 
             # Get the underlying chat agent and client
             chat_agent = self._base_agent.agent  # type: ignore
@@ -236,7 +236,7 @@ class TaskStepsAgentWithExecution:
             )
 
             # Stream the LLM response and manually emit text events
-            logger.info(">>> Calling chat client for summary")
+            logger.info("Calling chat client for summary")
 
             message_id = str(uuid.uuid4())
 
@@ -268,7 +268,7 @@ class TaskStepsAgentWithExecution:
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=message_id,
                 )
-                logger.info(f">>> Summary complete: {accumulated_text}")
+                logger.info(f"Summary complete: {accumulated_text}")
 
                 # Build complete message for persistence
                 summary_message = {
@@ -285,7 +285,7 @@ class TaskStepsAgentWithExecution:
                     messages=final_messages,
                 )
             except Exception as e:
-                logger.error(f">>> Error generating summary: {e}")
+                logger.error(f"Error generating summary: {e}")
                 # Generate a new message ID for the error
                 error_message_id = str(uuid.uuid4())
                 # Yield TEXT_MESSAGE_START for error
@@ -306,11 +306,11 @@ class TaskStepsAgentWithExecution:
                     message_id=error_message_id,
                 )
         else:
-            logger.warning(f">>> No steps found in final_state to execute. final_state={final_state}")
+            logger.warning(f"No steps found in final_state to execute. final_state={final_state}")
 
         # Finally send the original RUN_FINISHED event
         if run_finished_event:
-            logger.info(">>> Yielding original RUN_FINISHED event")
+            logger.info("Yielding original RUN_FINISHED event")
             yield run_finished_event
 
 
