@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 #if NET9_0_OR_GREATER
 using Azure.AI.Agents.Persistent;
+using AzureRunStatus = Azure.AI.Agents.Persistent.RunStatus;
 #endif
 using Microsoft.Extensions.AI;
 
@@ -14,12 +15,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 internal static class AgentProviderExtensions
 {
 #if NET9_0_OR_GREATER
-    private static readonly HashSet<global::Azure.AI.Agents.Persistent.RunStatus> s_failureStatus =
+    private static readonly HashSet<AzureRunStatus> s_failureStatus =
         [
-            global::Azure.AI.Agents.Persistent.RunStatus.Failed,
-            global::Azure.AI.Agents.Persistent.RunStatus.Cancelled,
-            global::Azure.AI.Agents.Persistent.RunStatus.Cancelling,
-            global::Azure.AI.Agents.Persistent.RunStatus.Expired,
+            AzureRunStatus.Failed,
+            AzureRunStatus.Cancelled,
+            AzureRunStatus.Cancelling,
+            AzureRunStatus.Expired,
         ];
 #endif
 
