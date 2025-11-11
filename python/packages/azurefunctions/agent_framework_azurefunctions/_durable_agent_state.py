@@ -52,6 +52,10 @@ class DurableAgentStateData:
     conversation_history: List['DurableAgentStateEntry']
     extension_data: Optional[Dict]
 
+    def __init__(self, conversation_history=None, extension_data=None):
+        self.conversation_history = conversation_history or []
+        self.extension_data = extension_data
+
 
 class DurableAgentState:
     data: DurableAgentStateData
@@ -123,10 +127,24 @@ class DurableAgentStateEntry:
     messages: List['DurableAgentStateMessage']
     extension_data: Optional[Dict]
 
+    def __init__(self, correlation_id, created_at, messages, extension_data=None):
+        self.correlation_id = correlation_id
+        self.created_at = created_at
+        self.messages = messages
+        self.extension_data = extension_data
+
 
 class DurableAgentStateRequest(DurableAgentStateEntry):
     response_type: Optional[str] = None
     response_schema: Optional[Dict] = None
+
+    def __init__(self, correlation_id, created_at, messages, extension_data=None, response_type=None, response_schema=None):
+        self.correlation_id = correlation_id
+        self.created_at = created_at
+        self.messages = messages
+        self.extension_data = extension_data
+        self.response_type = response_type
+        self.response_schema = response_schema
 
     @staticmethod
     def from_run_request(content):
@@ -141,6 +159,13 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
 class DurableAgentStateResponse(DurableAgentStateEntry):
     usage: Optional['DurableAgentStateUsage'] = None
+
+    def __init__(self, correlation_id, created_at, messages, extension_data=None, usage=None):
+        self.correlation_id = correlation_id
+        self.created_at = created_at
+        self.messages = messages
+        self.extension_data = extension_data
+        self.usage = usage
 
     @staticmethod
     def from_run_response(correlation_id: str, response) -> DurableAgentStateResponse:
@@ -200,6 +225,10 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
     uri: str = ""
     media_type: Optional[str] = None
 
+    def __init__(self, uri, media_type=None):
+        self.uri = uri
+        self.media_type = media_type
+
     @staticmethod
     def from_data_content(content):
         return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)
@@ -214,6 +243,11 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
     error_code: Optional[str] = None
     details: Optional[str] = None
 
+    def __init__(self, message=None, error_code=None, details=None):
+        self.message = message
+        self.error_code = error_code
+        self.details = details
+
     @staticmethod
     def from_error_content(content):
         return DurableAgentStateErrorContent(message=content.message, error_code=content.error_code, details=content.details)
@@ -227,6 +261,11 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
     call_id: str
     name: str
     arguments: Dict[str, object]
+
+    def __init__(self, call_id, name, arguments):
+        self.call_id = call_id
+        self.name = name
+        self.arguments = arguments
 
     @staticmethod
     def from_function_call_content(content):
@@ -245,6 +284,10 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
     call_id: str
     result: Optional[object] = None
 
+    def __init__(self, call_id, result=None):
+        self.call_id = call_id
+        self.result = result
+
     @staticmethod
     def from_function_result_content(content):
         return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)
@@ -256,6 +299,9 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
 
 class DurableAgentStateHostedFileContent(DurableAgentStateContent):
     file_id: str
+
+    def __init__(self, file_id):
+        self.file_id = file_id
 
     @staticmethod
     def from_hosted_file_content(content):
@@ -269,6 +315,9 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
     vector_store_id: str
 
+    def __init__(self, vector_store_id):
+        self.vector_store_id = vector_store_id
+
     @staticmethod
     def from_hosted_vector_store_content(content):
         return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)
@@ -281,6 +330,9 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
 class DurableAgentStateTextContent(DurableAgentStateContent):
     text: Optional[str] = None
 
+    def __init__(self, text):
+        self.text = text
+
     @staticmethod
     def from_text_content(content):
         return DurableAgentStateTextContent(text=content.text)
@@ -292,6 +344,9 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
 
 class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
     text: Optional[str] = None
+
+    def __init__(self, text):
+        self.text = text
 
     @staticmethod
     def from_text_reasoning_content(content):
@@ -306,6 +361,10 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
     uri: str
     media_type: str
 
+    def __init__(self, uri, media_type):
+        self.uri = uri
+        self.media_type = media_type
+
     @staticmethod
     def from_uri_content(content):
         return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)
@@ -319,7 +378,13 @@ class DurableAgentStateUsage:
     input_token_count: Optional[int] = None
     output_token_count: Optional[int] = None
     total_token_count: Optional[int] = None
-    extension_data: Optional[Dict]
+    extension_data: Optional[Dict] = None
+
+    def __init__(self, input_token_count=None, output_token_count=None, total_token_count=None, extension_data=None):
+        self.input_token_count = input_token_count
+        self.output_token_count = output_token_count
+        self.total_token_count = total_token_count
+        self.extension_data = extension_data
 
     @staticmethod
     def from_usage(usage):
@@ -343,6 +408,9 @@ class DurableAgentStateUsage:
 
 class DurableAgentStateUsageContent(DurableAgentStateContent):
     usage: DurableAgentStateUsage = DurableAgentStateUsage()
+
+    def __init__(self, usage):
+        self.usage = usage
 
     @staticmethod
     def from_usage_content(content):

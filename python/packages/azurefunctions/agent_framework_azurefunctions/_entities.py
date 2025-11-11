@@ -21,6 +21,7 @@ from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._models import AgentResponse, ChatRole, RunRequest
 from ._durable_agent_state import (
     DurableAgentState,
+    DurableAgentStateData,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
 )
@@ -352,7 +353,7 @@ class AgentEntity:
     def reset(self, context: df.DurableEntityContext) -> None:
         """Reset the entity state (clear conversation history)."""
         logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.data = {}
+        self.state.data = DurableAgentStateData(conversation_history=[])
         logger.debug("[AgentEntity.reset] State reset complete")
 
 
