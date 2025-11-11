@@ -42,13 +42,14 @@ dependencies = [
 [project.optional-dependencies]
 all = [
     "agent-framework-a2a",
+    "agent-framework-ag-ui",
+    "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
-    "agent-framework-mem0",
-    "agent-framework-redis",
     "agent-framework-devui",
+    "agent-framework-mem0",
     "agent-framework-purview",
-    "agent-framework-anthropic",
+    "agent-framework-redis",
 ]
 
 [tool.uv]
