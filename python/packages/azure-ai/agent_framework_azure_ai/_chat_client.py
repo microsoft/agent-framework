@@ -221,6 +221,7 @@ class AzureAIAgentClient(BaseChatClient):
         self._agent_created = False  # Track whether agent was created inside this class
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
+        self._azure_search_tool_calls: list[dict[str, Any]] = []  # Track Azure AI Search tool calls
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -494,7 +495,7 @@ class AzureAIAgentClient(BaseChatClient):
 
             # Return the URL at the specified index, if it exists
             if 0 <= doc_index < len(all_urls):
-                return all_urls[doc_index]
+                return str(all_urls[doc_index])
 
         except (KeyError, IndexError, TypeError, ValueError, SyntaxError) as ex:
             logger.debug(f"Failed to extract real URL for {citation_url}: {ex}")
