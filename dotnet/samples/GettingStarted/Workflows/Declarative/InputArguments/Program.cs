@@ -98,24 +98,16 @@ internal sealed class Program
                                 {
                                   "type": "object",
                                   "properties": {
-                                    "place": {
-                                      "type": "string",
-                                      "description": "Captures only your understanding of the location specified by the user without explanation, or 'unknown' if not yet defined."
-                                    },
-                                    "action": {
-                                      "type": "string",
-                                      "description": "The instruction for the next action to take regarding the need for additional detail or confirmation."
-                                    },
-                                    "is_location_defined": {
+                                    "IsResolved": {
                                       "type": "boolean",
-                                      "description": "True if the user location is understood."
+                                      "description": "True if the user issue/ask has been resolved."
                                     },
-                                    "is_location_confirmed": {
+                                    "NeedsTicket": {
                                       "type": "boolean",
-                                      "description": "True if the user location is confirmed.  An unambiguous location may be implicitly confirmed without explicit user confirmation."
+                                      "description": "True if the user issue/ask requires that a ticket be filed."
                                     }
                                   },
-                                  "required": ["place", "action", "is_location_defined", "is_location_confirmed"],
+                                  "required": ["IsResolved", "NeedsTicket"],
                                   "additionalProperties": false
                                 }
                                 """),

@@ -15,7 +15,7 @@
     <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
     <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
@@ -25,19 +25,15 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
   </ItemGroup>
-  
+
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
   </ItemGroup>
-  
-  <ItemGroup>
-    <None Remove="C:\Users\crickman\source\repos\af9\dotnet\samples\GettingStarted\Workflows\Declarative\ConfirmInput\..\..\..\..\..\..\workflow-samples\ConfirmInput.yaml" />
-  </ItemGroup>
 
   <ItemGroup>
-    <None Include="ConfirmInput.yaml">
+    <None Include="$(MSBuildThisFileDirectory)..\..\..\..\..\..\workflow-samples\CustomerSupport.yaml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-  
+
 </Project>

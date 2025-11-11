@@ -1,0 +1,159 @@
+#
+# This workflow demonstrates using structured inputs & outputs along with human-in-the-loop
+# patterns for a customer support case.
+#
+# Example input: 
+# My PC keeps rebooting and I can't use it.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    # Interact with user until the issue has been resolved or 
+    # a determination is made that a ticket is required.
+    - kind: InvokeAzureAgent
+      id: service_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: ServiceAgent
+      input:
+        externalLoop:
+          when: |-
+            =Not(Local.ServiceParameters.IsResolved)
+             And 
+             Not(Local.ServiceParameters.NeedsTicket)
+      output:
+        responseObject: Local.ServiceParameters
+
+    # All done if issue is resolved.
+    - kind: ConditionGroup
+      id: check_if_resolved
+      conditions:
+        - condition: =Local.ServiceParameters.IsResolved
+          id: test_if_resolved
+          actions:
+            - kind: sendactivity
+              id: log_mark
+              activity: WTF???
+            - kind: GotoAction
+              id: end_when_resolved
+              actionId: all_done
+      elseActions: # // %%% BUG
+        - kind: sendactivity
+          id: log_continue
+          activity: ELSE CONTINUE...
+
+    # - kind: SetVariable
+    #   id: set_condition
+    #   variable: Local.LoggedServiceParamters
+    #   value: |-
+    #     =Not(Local.ServiceParameters.IsResolved)
+    #      And 
+    #      Not(Local.ServiceParameters.NeedsTicket)
+
+    # - kind: SendActivity
+    #   id: log_condition1
+    #   activity: ISSUE - {Local.ServiceParameters.IssueDescription}
+
+    # - kind: SendActivity
+    #   id: log_condition2
+    #   activity: STEPS - {Local.ServiceParameters.AttemptedResolutionSteps}
+
+    # - kind: SendActivity
+    #   id: log_condition3
+    #   activity: MESSAGE - {UserMessage(Local.ServiceParameters.IssueDescription)}
+    
+    # Create the ticket.
+    - kind: InvokeAzureAgent
+      id: ticket_agent
+      agent:
+        name: TicketingAgent
+      input:
+        arguments:
+          IssueDescription: =Local.ServiceParameters.IssueDescription,
+          AttemptedResolutionSteps: =Local.ServiceParameters.AttemptedResolutionSteps
+      output:
+        responseObject: Local.TicketParameters
+
+    - kind: SendActivity
+      id: log_condition4
+      activity: TICKET - {Local.TicketParameters}
+
+    # Determine which team for which route the ticket.
+    - kind: InvokeAzureAgent
+      id: routing_agent
+      agent:
+        name: TicketRoutingAgent
+      input:
+        messages: =UserMessage(Local.ServiceParameters.IssueDescription)
+      output:
+        responseObject: Local.RoutingParameters
+
+    - kind: SendActivity
+      id: log_condition5
+      activity: ROUTING - {Local.RoutingParameters}
+
+    - kind: ConditionGroup
+      id: check_routing
+      conditions:
+
+        - condition: =Local.RoutingParameters.TeamName = "Windows Support"
+          id: route_to_support
+          actions:
+
+            - kind: InvokeAzureAgent
+              id: support_agent
+              conversationId: =System.ConversationId # Inner
+              agent:
+                name: WindowsSupportAgent
+              input:
+                arguments:
+                  IssueDescription: =Local.ServiceParameters.IssueDescription
+                #externalLoop: 
+              output:
+                autoSend: true
+                responseObject: Local.SupportParameters
+
+            - kind: ConditionGroup
+              id: check_resolved
+              conditions:
+
+                - condition: =Local.SupportParameters.IsResolved
+                  id: handle_if_resolved
+                  actions:
+        
+                    - kind: InvokeAzureAgent
+                      id: resolution_agent
+                      agent:
+                        name: TicketResolutionAgent
+                      input:
+                        arguments:
+                          TicketId: =Local.TicketParameters.TicketId
+                          ResolutionSummary: =Local.SupportParameters.AttemptedResolutionSteps
+
+                    - kind: GotoAction
+                      id: end_when_solved
+                      actionId: all_done
+      elseActions: # // %%% BUG
+        - kind: sendactivity
+          id: log_escalate
+          activity: ELSE ESCALATE...
+
+    - kind: InvokeAzureAgent
+      id: escalate_agent
+      agent:
+        name: TicketEscalationAgent
+      input:
+        arguments:
+          TicketId: =Local.TicketParameters.TicketId
+          ResolutionSummary: =Local.SupportParameters.AttemptedResolutionSteps
+
+    - kind: sendactivity
+      id: log_assign_ticket
+      activity: ESCALATE!!!
+
+    - kind: EndWorkflow
+      id: all_done

@@ -111,6 +111,7 @@
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
     <File Path="samples/GettingStarted/Workflows/Declarative/README.md" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/DeepResearch/DeepResearch.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
