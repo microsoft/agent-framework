@@ -13,8 +13,6 @@ model:
         kind: ApiKey
         key: =Env.OPENAI_APIKEY
 outputSchema:
-    name: AssistantResponse
-    description: The response from the assistant.
     properties:
         language:
             type: string
