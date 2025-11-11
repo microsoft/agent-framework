@@ -150,6 +150,10 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Set up Durable Task and Azure Functions Integration Test Emulators
+        if: github.event_name != 'pull_request' && matrix.integration-tests
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
       - name: Run Integration Tests
         shell: bash
         if: github.event_name != 'pull_request' && matrix.integration-tests
