@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 import yaml
 from agent_framework import (
@@ -23,6 +23,8 @@ from agent_framework.exceptions import AgentFrameworkException
 from dotenv import load_dotenv
 
 from ._models import (
+    AnonymousConnection,
+    ApiKeyConnection,
     CodeInterpreterTool,
     FileSearchTool,
     FunctionTool,
@@ -30,6 +32,8 @@ from ._models import (
     McpTool,
     ModelOptions,
     PromptAgent,
+    ReferenceConnection,
+    RemoteConnection,
     WebSearchTool,
     agent_schema_dispatch,
 )
@@ -199,24 +203,25 @@ class AgentFactory:
         # resolve connections:
         client: ChatClientProtocol | None = None
         if prompt_agent.model and prompt_agent.model.connection:
-            if prompt_agent.model.connection.kind == "key":
-                setup_dict["api_key"] = prompt_agent.model.connection.apiKey
-                if prompt_agent.model.connection.endpoint:
+            match prompt_agent.model.connection:
+                case ApiKeyConnection():
+                    setup_dict["api_key"] = prompt_agent.model.connection.apiKey
+                    if prompt_agent.model.connection.endpoint:
+                        setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
+                case RemoteConnection():
                     setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
-            elif prompt_agent.model.connection.kind == "remote":
-                setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
-            elif prompt_agent.model.connection.kind == "reference":
-                # find the referenced connection
-                if not self.connections:
-                    raise ValueError("Connections must be provided to resolve ReferenceConnection")
-                for name, value in self.connections.items():
-                    if name == prompt_agent.model.connection.name:
-                        setup_dict[name] = value
-                        break
-                else:
+                case ReferenceConnection():
+                    # find the referenced connection
+                    if not self.connections:
+                        raise ValueError("Connections must be provided to resolve ReferenceConnection")
+                    for name, value in self.connections.items():
+                        if name == prompt_agent.model.connection.name:
+                            setup_dict[name] = value
+                            break
+                case AnonymousConnection():
+                    setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
+                case _:
                     raise ValueError(f"Referenced connection '{prompt_agent.model.connection.referenceName}' not found")
-            elif prompt_agent.model.connection.kind == "Anonymous":
-                setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
         # check if there is a model.provider and model.apiType defined
         if prompt_agent.model and prompt_agent.model.provider and prompt_agent.model.apiType:
             # lookup the provider type in the mapping
@@ -278,14 +283,16 @@ class AgentFactory:
                         func: Callable[..., Any] | None = None
                         if self.bindings and tool_resource.bindings:
                             for binding in tool_resource.bindings:
-                                if binding.name in self.bindings:
+                                if binding.name and binding.name in self.bindings:
                                     func = self.bindings[binding.name]
                                     break
                         tools.append(
                             AIFunction(  # type: ignore
-                                name=tool_resource.name,
-                                description=tool_resource.description,
-                                input_model=tool_resource.parameters.to_json_schema(),
+                                name=tool_resource.name,  # type: ignore
+                                description=tool_resource.description,  # type: ignore
+                                input_model=tool_resource.parameters.to_json_schema()
+                                if tool_resource.parameters
+                                else None,
                                 func=func,
                             )
                         )
@@ -319,7 +326,9 @@ class AgentFactory:
                             )
                         )
                     case McpTool():
-                        approval_mode: HostedMCPSpecificApproval | str | None = None
+                        approval_mode: HostedMCPSpecificApproval | Literal["always_require", "never_require"] | None = (
+                            None
+                        )
                         if tool_resource.approvalMode is not None:
                             if tool_resource.approvalMode.kind == "always":
                                 approval_mode = "always_require"
@@ -336,9 +345,9 @@ class AgentFactory:
                                     }
                         tools.append(
                             HostedMCPTool(
-                                name=tool_resource.name,
+                                name=tool_resource.name,  # type: ignore
                                 description=tool_resource.description,
-                                url=tool_resource.url,
+                                url=tool_resource.url,  # type: ignore
                                 allowed_tools=tool_resource.allowedTools,
                                 approval_mode=approval_mode,
                             )

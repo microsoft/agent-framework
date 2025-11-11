@@ -25,7 +25,10 @@ dependencies = [
     "agent-framework-core",
     "powerfx>=0.0.31; python_version < '3.14'",
     "pyyaml>=6.0,<7.0",
-    "AgentSchema; python_version >= '3.11'",
+]
+[dependency-groups]
+dev = [
+    "types-PyYaml"
 ]
 
 [tool.uv]
@@ -35,8 +38,6 @@ environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
 ]
-[tool.uv.sources]
-AgentSchema = { git = "https://github.com/microsoft/AgentSchema.git", subdirectory = "runtime/python/agentschema" }
 
 
 [tool.uv-dynamic-versioning]
@@ -76,6 +77,9 @@ show_error_codes = true
 warn_unused_ignores = false
 disallow_incomplete_defs = true
 disallow_untyped_decorators = true
+exclude = [
+    '_models.py$',
+]
 
 [tool.bandit]
 targets = ["agent_framework_declarative"]
