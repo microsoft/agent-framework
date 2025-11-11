@@ -242,7 +242,7 @@ public sealed class AgentBotElementYamlTests
     /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.
     /// </summary>
     [Description("Information about a person including their name, age, and occupation")]
-    public class PersonInfo
+    public sealed class PersonInfo
     {
         [JsonPropertyName("name")]
         public string? Name { get; set; }
