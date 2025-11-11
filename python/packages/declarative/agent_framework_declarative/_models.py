@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
+import sys
 from collections.abc import MutableMapping
-from typing import Any, TypeVar, Union
+from typing import Any, Literal, TypeVar, Union
 
 from agent_framework import get_logger
 from agent_framework._serialization import SerializationMixin
@@ -13,13 +14,23 @@ try:
 except ImportError:
     engine = None
 
+if sys.version_info >= (3, 11):
+    from typing import overload  # pragma: no cover
+else:
+    from typing_extensions import overload  # pragma: no cover
 
 logger = get_logger("agent_framework.declarative")
 
-TEvalInput = TypeVar("TEvalInput", (str | None))
+
+@overload
+def _try_powerfx_eval(value: None) -> None: ...
 
 
-def _try_powerfx_eval(value: TEvalInput) -> TEvalInput:
+@overload
+def _try_powerfx_eval(value: str) -> str: ...
+
+
+def _try_powerfx_eval(value: str | None) -> str | None:
     """Check if a value refers to a environment variable and parse it if so."""
     if value is None:
         return value
@@ -207,23 +218,30 @@ class PropertySchema(SerializationMixin):
         return json_schema
 
 
+TConnection = TypeVar("TConnection", bound="Connection")
+
+
 class Connection(SerializationMixin):
     """Object representing a connection specification."""
 
     def __init__(
         self,
-        kind: str | None = None,
+        kind: Literal["reference", "remote", "key", "anonymous"],
         authenticationMode: str | None = None,
         usageDescription: str | None = None,
     ) -> None:
-        self.kind = _try_powerfx_eval(kind)
+        self.kind = kind
         self.authenticationMode = _try_powerfx_eval(authenticationMode)
         self.usageDescription = _try_powerfx_eval(usageDescription)
 
     @classmethod
     def from_dict(
-        cls, value: MutableMapping[str, Any], /, *, dependencies: MutableMapping[str, Any] | None = None
-    ) -> "Connection":
+        cls: type[TConnection],
+        value: MutableMapping[str, Any],
+        /,
+        *,
+        dependencies: MutableMapping[str, Any] | None = None,
+    ) -> TConnection:
         """Create a Connection instance from a dictionary, dispatching to the appropriate subclass."""
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
@@ -255,7 +273,7 @@ class ReferenceConnection(Connection):
 
     def __init__(
         self,
-        kind: str = "reference",
+        kind: Literal["reference"] = "reference",
         authenticationMode: str | None = None,
         usageDescription: str | None = None,
         name: str | None = None,
@@ -275,7 +293,7 @@ class RemoteConnection(Connection):
 
     def __init__(
         self,
-        kind: str = "remote",
+        kind: Literal["remote"] = "remote",
         authenticationMode: str | None = None,
         usageDescription: str | None = None,
         name: str | None = None,
@@ -295,7 +313,7 @@ class ApiKeyConnection(Connection):
 
     def __init__(
         self,
-        kind: str = "key",
+        kind: Literal["key"] = "key",
         authenticationMode: str | None = None,
         usageDescription: str | None = None,
         endpoint: str | None = None,
@@ -317,7 +335,7 @@ class AnonymousConnection(Connection):
 
     def __init__(
         self,
-        kind: str = "anonymous",
+        kind: Literal["anonymous"] = "anonymous",
         authenticationMode: str | None = None,
         usageDescription: str | None = None,
         endpoint: str | None = None,
@@ -328,6 +346,14 @@ class AnonymousConnection(Connection):
             usageDescription=usageDescription,
         )
         self.endpoint = _try_powerfx_eval(endpoint)
+
+
+Connections = Union[
+    ReferenceConnection,
+    RemoteConnection,
+    ApiKeyConnection,
+    AnonymousConnection,
+]
 
 
 class ModelOptions(SerializationMixin):
@@ -369,7 +395,7 @@ class Model(SerializationMixin):
         id: str | None = None,
         provider: str | None = None,
         apiType: str | None = None,
-        connection: Connection | None = None,
+        connection: Connections | None = None,
         options: ModelOptions | None = None,
     ) -> None:
         self.id = _try_powerfx_eval(id)
