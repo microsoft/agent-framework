@@ -5,9 +5,9 @@
 using System.ComponentModel;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 // Read command-line arguments
 if (args.Length < 2)
@@ -31,20 +31,16 @@ if (!File.Exists(yamlFilePath))
 // Read the YAML content from the file
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
-// Set up configuration with the OpenAI API key
-IConfiguration configuration = new ConfigurationBuilder()
-    .AddInMemoryCollection(new Dictionary<string, string?>
-    {
-        ["OPENAI_APIKEY"] = apiKey
-    })
-    .Build();
+// TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
+text = text.Replace("=Env.OPENAI_APIKEY", apiKey, StringComparison.OrdinalIgnoreCase);
+text = text.Replace("=Env.OPENAI_MODEL", model, StringComparison.OrdinalIgnoreCase);
 
 // Create the agent from the YAML definition.
 var agentFactory = new AggregatorAgentFactory(
     [
-        new OpenAIChatAgentFactory(configuration: configuration),
-        new OpenAIResponseAgentFactory(configuration: configuration),
-        new OpenAIAssistantAgentFactory(configuration: configuration)
+        new OpenAIChatAgentFactory(),
+        new OpenAIResponseAgentFactory(),
+        new OpenAIAssistantAgentFactory()
     ]);
 var agent = await agentFactory.CreateFromYamlAsync(text);
 

@@ -8,6 +8,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Read command-line arguments
 if (args.Length < 2)
@@ -30,6 +31,9 @@ if (!File.Exists(yamlFilePath))
 
 // Read the YAML content from the file
 var text = await File.ReadAllTextAsync(yamlFilePath);
+
+// TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
+text = text.Replace("=Env.AZURE_OPENAI_DEPLOYMENT_NAME", deploymentName, StringComparison.OrdinalIgnoreCase);
 
 var endpointUri = new Uri(endpoint);
 var tokenCredential = new AzureCliCredential();

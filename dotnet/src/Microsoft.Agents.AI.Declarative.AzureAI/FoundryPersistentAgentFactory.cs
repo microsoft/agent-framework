@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Microsoft.Bot.ObjectModel;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -21,7 +20,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
-    public FoundryPersistentAgentFactory(PersistentAgentsClient agentClient, IConfiguration? configuration = null) : base(configuration)
+    public FoundryPersistentAgentFactory(PersistentAgentsClient agentClient)
     {
         Throw.IfNull(agentClient);
 
@@ -31,7 +30,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
-    public FoundryPersistentAgentFactory(TokenCredential tokenCredential, IConfiguration? configuration = null) : base(configuration)
+    public FoundryPersistentAgentFactory(TokenCredential tokenCredential)
     {
         Throw.IfNull(tokenCredential);
 
@@ -73,7 +72,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
         var connection = externalModel?.Connection as RemoteConnection;
         if (connection is not null)
         {
-            var endpoint = connection.Endpoint?.Eval(this.Engine);
+            var endpoint = connection.Endpoint?.LiteralValue;
             if (string.IsNullOrEmpty(endpoint))
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");

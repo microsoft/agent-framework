@@ -146,7 +146,7 @@ internal static class PromptAgents
         description: Agent description
         instructions: You are a helpful assistant.
         model:
-          id: gpt-4o
+          id: =Env.OpenAIModelId
           connection:
             kind: apiKey
             endpoint: =Env.OpenAIEndpoint

@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
@@ -19,7 +18,7 @@ public sealed class ChatClientAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
     /// </summary>
-    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration)
+    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(chatClient);
 

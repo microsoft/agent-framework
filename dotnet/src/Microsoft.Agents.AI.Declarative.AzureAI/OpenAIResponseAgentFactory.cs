@@ -7,7 +7,6 @@ using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
@@ -22,7 +21,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIResponseAgentFactory"/> class.
     /// </summary>
-    public OpenAIResponseAgentFactory(IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
+    public OpenAIResponseAgentFactory(IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
         this._functions = functions;
     }
@@ -30,7 +29,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIResponseAgentFactory"/> class.
     /// </summary>
-    public OpenAIResponseAgentFactory(OpenAIResponseClient responseClient, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
+    public OpenAIResponseAgentFactory(OpenAIResponseClient responseClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
     {
         Throw.IfNull(responseClient);
 
@@ -41,7 +40,7 @@ public sealed class OpenAIResponseAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIResponseAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, configuration, loggerFactory)
+    public OpenAIResponseAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, loggerFactory)
     {
         this._functions = functions;
     }

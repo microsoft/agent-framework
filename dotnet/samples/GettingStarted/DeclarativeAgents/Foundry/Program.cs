@@ -6,9 +6,9 @@ using System.ComponentModel;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Configuration;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+var model = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_MODEL_ID") ?? "gpt-4.1-mini";
 
 // Read command-line arguments
 if (args.Length < 2)
@@ -32,13 +32,9 @@ if (!File.Exists(yamlFilePath))
 // Read the YAML content from the file
 var text = await File.ReadAllTextAsync(yamlFilePath);
 
-// Set up configuration with the Azure Foundry project endpoint
-IConfiguration configuration = new ConfigurationBuilder()
-    .AddInMemoryCollection(new Dictionary<string, string?>
-    {
-        ["AZURE_FOUNDRY_PROJECT_ENDPOINT"] = endpoint,
-    })
-    .Build();
+// TODO: Remove this workaround when the agent framework supports environment variable substitution in YAML files.
+text = text.Replace("=Env.AZURE_FOUNDRY_PROJECT_ENDPOINT", endpoint, StringComparison.OrdinalIgnoreCase);
+text = text.Replace("=Env.AZURE_FOUNDRY_PROJECT_MODEL_ID", model, StringComparison.OrdinalIgnoreCase);
 
 // Example function tool that can be used by the agent.
 [Description("Get the weather for a given location.")]
@@ -48,7 +44,7 @@ static string GetWeather(
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
 // Create the agent from the YAML definition.
-var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential(), configuration);
+var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential());
 var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Create agent run options

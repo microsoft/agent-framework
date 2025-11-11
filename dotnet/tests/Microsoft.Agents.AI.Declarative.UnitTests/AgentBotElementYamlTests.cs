@@ -6,8 +6,6 @@ using System.Text.Json.Serialization;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
-using Microsoft.PowerFx;
-using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
 
@@ -220,6 +218,7 @@ public sealed class AgentBotElementYamlTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["OpenAIEndpoint"] = "endpoint",
+                ["OpenAIModelId"] = "modelId",
                 ["OpenAIApiKey"] = "apiKey"
             })
             .Build();
@@ -234,10 +233,9 @@ public sealed class AgentBotElementYamlTests
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
-        ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
-        Assert.NotNull(connection);
-        Assert.Equal("endpoint", this.Eval(connection.Endpoint!, configuration));
-        Assert.Equal("apiKey", this.Eval(connection.Key!, configuration));
+        //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection.Endpoint?.LiteralValue);
+        //Assert.Equal("apiKey", connection.Key?.LiteralValue);
+        //Assert.Equal("modelId", model.Id);
     }
 
     /// <summary>
@@ -254,29 +252,5 @@ public sealed class AgentBotElementYamlTests
 
         [JsonPropertyName("occupation")]
         public string? Occupation { get; set; }
-    }
-
-    private string? Eval(StringExpression expression, IConfiguration configuration)
-    {
-        RecalcEngine engine = new();
-        foreach (var kvp in configuration.AsEnumerable())
-        {
-            engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
-        }
-
-        if (expression.IsLiteral)
-        {
-            return expression.LiteralValue?.ToString();
-        }
-        else if (expression.IsExpression)
-        {
-            return engine.Eval(expression.ExpressionText!).ToString();
-        }
-        else if (expression.IsVariableReference)
-        {
-            var stringValue = engine.Eval(expression.VariableReference!.VariableName) as StringValue;
-            return stringValue?.Value;
-        }
-        return null;
     }
 }

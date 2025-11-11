@@ -3,7 +3,7 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format. You must include Responses as the type in your response.
 model:
-    id: gpt-4o-mini
+    id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
     provider: AzureOpenAI
     apiType: Responses
     options:
