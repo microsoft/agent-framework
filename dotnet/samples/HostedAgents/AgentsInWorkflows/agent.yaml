@@ -6,11 +6,10 @@ description: >
   to English, leveraging AI-powered translation capabilities in a pipeline workflow.
 metadata:
   authors:
-    - Agent Framework Team
-  tags:
-    - example
     - Microsoft Agent Framework Team
-    - workflows
+  tags:
+    - Microsoft Agent Framework
+    - Workflows
 template:
   kind: hosted
   name: AgentsInWorkflows
