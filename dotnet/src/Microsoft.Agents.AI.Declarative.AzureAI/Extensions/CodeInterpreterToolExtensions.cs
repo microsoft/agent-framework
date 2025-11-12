@@ -32,7 +32,7 @@ internal static class CodeInterpreterToolExtensions
         Throw.IfNull(tool);
 
         var containerId = tool.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("containerId"))?.Value;
-        Throw.IfNull(containerId, "The containerId must be specified in the extension data to create a code interpreter tool.");
+        Throw.IfNull(containerId, "The 'containerId' property must be specified in the CodeInterpreterTool's extension data to create a code interpreter tool.");
 
         return new OpenAI.Responses.CodeInterpreterTool(new OpenAI.Responses.CodeInterpreterToolContainer(containerId));
     }
