@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using Microsoft.PowerFx;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
 
@@ -218,7 +220,6 @@ public sealed class AgentBotElementYamlTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["OpenAIEndpoint"] = "endpoint",
-                ["OpenAIModelId"] = "modelId",
                 ["OpenAIApiKey"] = "apiKey"
             })
             .Build();
@@ -233,9 +234,10 @@ public sealed class AgentBotElementYamlTests
         Assert.NotNull(model);
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
-        //Assert.Equal("https://my-azure-openai-endpoint.openai.azure.com/", agent.Model.Connection.Endpoint?.LiteralValue);
-        //Assert.Equal("apiKey", connection.Key?.LiteralValue);
-        //Assert.Equal("modelId", model.Id);
+        ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
+        Assert.NotNull(connection);
+        Assert.Equal("endpoint", Eval(connection.Endpoint!, configuration));
+        Assert.Equal("apiKey", Eval(connection.Key!, configuration));
     }
 
     /// <summary>
@@ -252,5 +254,16 @@ public sealed class AgentBotElementYamlTests
 
         [JsonPropertyName("occupation")]
         public string? Occupation { get; set; }
+    }
+
+    private static string? Eval(StringExpression expression, IConfiguration configuration)
+    {
+        RecalcEngine engine = new();
+        foreach (var kvp in configuration.AsEnumerable())
+        {
+            engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
+        }
+
+        return expression.Eval(engine);
     }
 }
