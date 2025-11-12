@@ -44,10 +44,7 @@ Microsoft Agent Framework relies on existing LLMs. Using the framework retains c
 
 - **Platform Requirements**: Python 3.10+ required, specific .NET versions (.NET 8.0, 9.0, netstandard2.0, net472)
 - **API Dependencies**: Requires proper configuration of LLM provider keys and endpoints
-- **Orchestration Features**: Advanced orchestration patterns including GroupChat, Sequential, and Concurrent workflows are available today. See:
-  - [python/samples/getting_started/workflows/orchestration/](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflows/orchestration)
-  - [group_chat_simple_selector.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_simple_selector.py)
-  - [group_chat_prompt_based_manager.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_prompt_based_manager.py)
+- **Orchestration Features**: Advanced orchestration patterns including GroupChat, Sequential, and Concurrent workflows are now available in both Python and .NET implementations. See the respective language documentation for examples.
 - **Privacy and Data Protection**: The framework allows for human participation in conversations between agents. It is important to ensure that user data and conversations are protected and that developers use appropriate measures to safeguard privacy.
 - **Accountability and Transparency**: The framework involves multiple agents conversing and collaborating, it is important to establish clear accountability and transparency mechanisms. Users should be able to understand and trace the decision-making process of the agents involved in order to ensure accountability and address any potential issues or biases.
 - **Security & unintended consequences**: The use of multi-agent conversations and automation in complex tasks may have unintended consequences. Especially, allowing agents to make changes in external environments through tool calls or function execution could pose significant risks. Developers should carefully consider the potential risks and ensure that appropriate safeguards are in place to prevent harm or negative outcomes, including keeping a human in the loop for decision making.
