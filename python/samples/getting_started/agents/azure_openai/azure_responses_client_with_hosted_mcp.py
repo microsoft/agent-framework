@@ -98,7 +98,7 @@ async def run_hosted_mcp_without_thread_and_specific_approval() -> None:
     # The agent can use these tools for any query during its lifetime
     async with ChatAgent(
         chat_client=AzureOpenAIResponsesClient(
-            credential=credential,            
+            credential=credential,
         ),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
