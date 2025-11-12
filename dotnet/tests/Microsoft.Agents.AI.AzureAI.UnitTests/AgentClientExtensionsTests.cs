@@ -992,7 +992,7 @@ public sealed class AgentClientExtensionsTests
                 Assert.Contains("required_tool", requestBody);
             }
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentVersionTestJsonObject, Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentVersionResponseJson(), Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -1034,7 +1034,7 @@ public sealed class AgentClientExtensionsTests
                 Assert.Contains("required_tool", requestBody);
             }
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentVersionTestJsonObject, Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentVersionResponseJson(), Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -1788,7 +1788,7 @@ public sealed class AgentClientExtensionsTests
         mockAgentClient
             .Setup(x => x.GetAgent(It.IsAny<string>(), It.IsAny<RequestOptions>()))
             .Callback<string, RequestOptions>((name, options) => capturedRequestOptions = options)
-            .Returns(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(AgentTestJsonObject))));
+            .Returns(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(TestDataUtil.GetAgentResponseJson()))));
 
         mockAgentClient.Setup(x => x.GetOpenAIClient(It.IsAny<OpenAIClientOptions?>()))
             .Returns(new OpenAIClient(new ApiKeyCredential("test-key")));
@@ -1813,7 +1813,7 @@ public sealed class AgentClientExtensionsTests
         mockAgentClient
             .Setup(x => x.GetAgentAsync(It.IsAny<string>(), It.IsAny<RequestOptions>()))
             .Callback<string, RequestOptions>((name, options) => capturedRequestOptions = options)
-            .Returns(Task.FromResult(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(AgentTestJsonObject)))));
+            .Returns(Task.FromResult(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(TestDataUtil.GetAgentResponseJson())))));
 
         mockAgentClient.Setup(x => x.GetOpenAIClient(It.IsAny<OpenAIClientOptions?>()))
             .Returns(new OpenAIClient(new ApiKeyCredential("test-key")));
@@ -1838,7 +1838,7 @@ public sealed class AgentClientExtensionsTests
         mockAgentClient
             .Setup(x => x.CreateAgentVersion(It.IsAny<string>(), It.IsAny<BinaryContent>(), It.IsAny<RequestOptions>()))
             .Callback<string, BinaryContent, RequestOptions>((name, content, options) => capturedRequestOptions = options)
-            .Returns(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(AgentVersionTestJsonObject))));
+            .Returns(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))));
 
         mockAgentClient.Setup(x => x.GetOpenAIClient(It.IsAny<OpenAIClientOptions?>()))
             .Returns(new OpenAIClient(new ApiKeyCredential("test-key")));
@@ -1865,7 +1865,7 @@ public sealed class AgentClientExtensionsTests
         mockAgentClient
             .Setup(x => x.CreateAgentVersionAsync(It.IsAny<string>(), It.IsAny<BinaryContent>(), It.IsAny<RequestOptions>()))
             .Callback<string, BinaryContent, RequestOptions>((name, content, options) => capturedRequestOptions = options)
-            .Returns(Task.FromResult(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(AgentVersionTestJsonObject)))));
+            .Returns(Task.FromResult(ClientResult.FromResponse(new MockPipelineResponse(200, BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson())))));
 
         mockAgentClient.Setup(x => x.GetOpenAIClient(It.IsAny<OpenAIClientOptions?>()))
             .Returns(new OpenAIClient(new ApiKeyCredential("test-key")));
@@ -1891,7 +1891,7 @@ public sealed class AgentClientExtensionsTests
             Assert.Equal("POST", request.Method.Method);
             Assert.Contains("MEAI", request.Headers.UserAgent.ToString());
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentTestJsonObject, Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentResponseJson(), Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -1923,7 +1923,7 @@ public sealed class AgentClientExtensionsTests
             Assert.Equal("GET", request.Method.Method);
             Assert.Contains("MEAI", request.Headers.UserAgent.ToString());
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentTestJsonObject, Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentResponseJson(), Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -1959,49 +1959,8 @@ public sealed class AgentClientExtensionsTests
     /// </summary>
     private AgentRecord CreateTestAgentRecord()
     {
-        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(AgentTestJsonObject))!;
+        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJson()))!;
     }
-
-    private const string AgentDefinitionPlaceholder = """
-        {
-            "kind": "prompt",
-            "model": "gpt-5-mini",
-            "instructions": "You are a storytelling agent. You craft engaging one-line stories based on user prompts and context.",
-            "tools": []
-        }
-        """;
-
-    private const string AgentTestJsonObject = $$"""
-            {
-              "object": "agent",
-              "id": "agent_abc123",
-              "name": "agent_abc123",
-              "versions": {
-                "latest": {
-                  "metadata": {},
-                  "object": "agent.version",
-                  "id": "agent_abc123:1",
-                  "name": "agent_abc123",
-                  "version": "1",
-                  "description": "",
-                  "created_at": 1761771936,
-                  "definition": {{AgentDefinitionPlaceholder}}
-                }
-              }
-            }
-            """;
-
-    private const string AgentVersionTestJsonObject = $$"""
-            {
-              "object": "agent.version",
-              "id": "agent_abc123:1",
-              "name": "agent_abc123",
-              "version": "1",
-              "description": "",
-              "created_at": 1761771936,
-              "definition": {{AgentDefinitionPlaceholder}}
-            }
-            """;
 
     private const string OpenAPISpec = """
         {
@@ -2038,7 +1997,7 @@ public sealed class AgentClientExtensionsTests
     /// </summary>
     private AgentVersion CreateTestAgentVersion()
     {
-        return ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(AgentVersionTestJsonObject))!;
+        return ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))!;
     }
 
     /// <summary>
@@ -2066,88 +2025,50 @@ public sealed class AgentClientExtensionsTests
 
         public override ClientResult GetAgent(string agentName, RequestOptions options)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200, BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject))));
+            var responseJson = TestDataUtil.GetAgentResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson)));
         }
 
         public override ClientResult<AgentRecord> GetAgent(string agentName, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200));
+            var responseJson = TestDataUtil.GetAgentResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
         }
 
         public override Task<ClientResult> GetAgentAsync(string agentName, RequestOptions options)
         {
-            return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200, BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))));
+            var responseJson = TestDataUtil.GetAgentResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson))));
         }
 
         public override Task<ClientResult<AgentRecord>> GetAgentAsync(string agentName, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(this.ApplyResponseChanges(AgentTestJsonObject)))!, new MockPipelineResponse(200)));
+            var responseJson = TestDataUtil.GetAgentResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
         }
 
         public override ClientResult CreateAgentVersion(string agentName, BinaryContent content, RequestOptions? options = null)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200, BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject))));
+            var responseJson = TestDataUtil.GetAgentVersionResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson)));
         }
 
         public override ClientResult<AgentVersion> CreateAgentVersion(string agentName, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200));
+            var responseJson = TestDataUtil.GetAgentVersionResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
         }
 
         public override Task<ClientResult> CreateAgentVersionAsync(string agentName, BinaryContent content, RequestOptions? options = null)
         {
-            return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200, BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))));
+            var responseJson = TestDataUtil.GetAgentVersionResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson))));
         }
 
         public override Task<ClientResult<AgentVersion>> CreateAgentVersionAsync(string agentName, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(this.ApplyResponseChanges(AgentVersionTestJsonObject)))!, new MockPipelineResponse(200)));
-        }
-
-        private static string TryApplyAgentDefinition(string json, AgentDefinition? definition)
-        {
-            if (definition is not null)
-            {
-                json = json.Replace(AgentDefinitionPlaceholder, ModelReaderWriter.Write(definition).ToString());
-            }
-            return json;
-        }
-
-        private static string TryApplyAgentName(string json, string? agentName)
-        {
-            if (!string.IsNullOrEmpty(agentName))
-            {
-                return json.Replace("\"agent_abc123\"", $"\"{agentName}\"");
-            }
-            return json;
-        }
-
-        private static string TryApplyInstructions(string json, string? instructions)
-        {
-            if (!string.IsNullOrEmpty(instructions))
-            {
-                return json.Replace("You are a storytelling agent. You craft engaging one-line stories based on user prompts and context.", instructions);
-            }
-            return json;
-        }
-
-        private static string TryApplyDescription(string json, string? description)
-        {
-            if (!string.IsNullOrEmpty(description))
-            {
-                return json.Replace("\"description\": \"\"", $"\"description\": \"{description}\"");
-            }
-            return json;
-        }
-
-        private string ApplyResponseChanges(string json)
-        {
-            var modifiedJson = TryApplyAgentName(json, this._agentName);
-            modifiedJson = TryApplyAgentDefinition(modifiedJson, this._agentDefinition);
-            modifiedJson = TryApplyInstructions(modifiedJson, this._instructions);
-            modifiedJson = TryApplyDescription(modifiedJson, this._description);
-
-            return modifiedJson;
+            var responseJson = TestDataUtil.GetAgentVersionResponseJson(this._agentName, this._agentDefinition, this._instructions, this._description);
+            return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
         }
     }
 
@@ -2247,57 +2168,7 @@ public sealed class AgentClientExtensionsTests
         }
     }
 
-    private sealed class FakeAuthenticationTokenProvider : AuthenticationTokenProvider
-    {
-        public override GetTokenOptions? CreateTokenOptions(IReadOnlyDictionary<string, object> properties)
-        {
-            return new GetTokenOptions(new Dictionary<string, object>());
-        }
-
-        public override AuthenticationToken GetToken(GetTokenOptions options, CancellationToken cancellationToken)
-        {
-            return new AuthenticationToken("token-value", "token-type", DateTimeOffset.UtcNow.AddHours(1));
-        }
-
-        public override ValueTask<AuthenticationToken> GetTokenAsync(GetTokenOptions options, CancellationToken cancellationToken)
-        {
-            return new ValueTask<AuthenticationToken>(this.GetToken(options, cancellationToken));
-        }
-    }
-
     #endregion
-
-    private sealed class HttpHandlerAssert : HttpClientHandler
-    {
-        private readonly Func<HttpRequestMessage, HttpResponseMessage>? _assertion;
-        private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>>? _assertionAsync;
-
-        public HttpHandlerAssert(Func<HttpRequestMessage, HttpResponseMessage> assertion)
-        {
-            this._assertion = assertion;
-        }
-        public HttpHandlerAssert(Func<HttpRequestMessage, Task<HttpResponseMessage>> assertionAsync)
-        {
-            this._assertionAsync = assertionAsync;
-        }
-
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            if (this._assertionAsync is not null)
-            {
-                return await this._assertionAsync.Invoke(request);
-            }
-
-            return this._assertion!.Invoke(request);
-        }
-
-#if NET
-        protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            return this._assertion!(request);
-        }
-#endif
-    }
 
     /// <summary>
     /// Helper method to access internal ChatOptions property via reflection.
