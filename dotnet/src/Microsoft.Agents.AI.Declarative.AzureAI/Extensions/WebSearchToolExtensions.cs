@@ -28,6 +28,7 @@ internal static class WebSearchToolExtensions
     /// Creates a <see cref="OpenAI.Responses.WebSearchTool"/> from a <see cref="WebSearchTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="WebSearchTool"/></param>
+    /// <returns>A new <see cref="OpenAI.Responses.WebSearchTool"/> instance.</returns>
     internal static OpenAI.Responses.WebSearchTool CreateWebSearchTool(this WebSearchTool tool)
     {
         Throw.IfNull(tool);
