@@ -14,7 +14,7 @@ pip install agent-framework-ag-ui
 from fastapi import FastAPI
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
 agent = ChatAgent(
@@ -104,7 +104,7 @@ State is injected as system messages and updated via predictive state updates:
 ```python
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
 agent = ChatAgent(
@@ -141,7 +141,7 @@ Predictive state updates automatically stream tool arguments as optimistic state
 ```python
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Create your agent
 agent = ChatAgent(
@@ -170,7 +170,7 @@ Provide domain-specific confirmation messages:
 from typing import Any
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import AgentFrameworkAgent, ConfirmationStrategy
+from agent_framework.ag_ui import AgentFrameworkAgent, ConfirmationStrategy
 
 class CustomConfirmationStrategy(ConfirmationStrategy):
     def on_approval_accepted(self, steps: list[dict[str, Any]]) -> str:
@@ -216,7 +216,7 @@ def sensitive_action(param: str) -> str:
 Add custom execution flows by implementing the Orchestrator pattern:
 
 ```python
-from agent_framework_ag_ui._orchestrators import Orchestrator, ExecutionContext
+from agent_framework.ag_ui._orchestrators import Orchestrator, ExecutionContext
 
 class MyCustomOrchestrator(Orchestrator):
     def can_handle(self, context: ExecutionContext) -> bool:
