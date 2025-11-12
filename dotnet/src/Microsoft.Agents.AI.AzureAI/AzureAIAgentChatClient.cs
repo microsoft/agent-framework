@@ -103,6 +103,8 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
         // Ignore per-request all options that can't be overridden.
         conversationChatOptions.Instructions = null;
         conversationChatOptions.Tools = null;
+        conversationChatOptions.Temperature = null;
+        conversationChatOptions.TopP = null;
 
         // Preserve the original RawRepresentationFactory
         var originalFactory = chatOptions?.RawRepresentationFactory;

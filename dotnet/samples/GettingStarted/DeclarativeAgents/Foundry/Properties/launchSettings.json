@@ -2,7 +2,7 @@
   "profiles": {
     "FoundryAgent": {
       "commandName": "Project",
-      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\FoundryAgent.yaml \"What is the weather in Cambridge, MA in °C?\""
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\FoundryAgent.yaml \"Tell me a recipe for chocolate chip cookies?\""
     }
   }
 }

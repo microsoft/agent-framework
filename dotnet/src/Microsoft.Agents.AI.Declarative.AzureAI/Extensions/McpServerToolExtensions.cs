@@ -24,7 +24,7 @@ internal static class McpServerToolExtensions
 
         // TODO: Add support for additional properties
 
-        var connection = tool.Connection as AnonymousConnection ?? throw new ArgumentException("Only AnonymousConnection is supported for MCP Server Tool connections.", nameof(tool));
+        var connection = tool.Connection as AnonymousConnection ?? throw new ArgumentException($"Only AnonymousConnection is supported for MCP Server Tool connections. Actual connection type: {tool.Connection.GetType().Name}", nameof(tool));
         var serverUrl = connection.Endpoint?.LiteralValue;
         Throw.IfNullOrEmpty(serverUrl, nameof(connection.Endpoint));
 
