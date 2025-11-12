@@ -206,6 +206,7 @@ class LaunchCoordinator(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="launch_coordinator")
+        # Track pending requests to match responses
         self._pending_requests: dict[str, SubWorkflowRequestMessage] = {}
 
     @handler

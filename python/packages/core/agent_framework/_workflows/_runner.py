@@ -279,6 +279,9 @@ class Runner:
         Updated behavior:
           - Executors should implement `on_checkpoint_save(self) -> dict` to provide state.
 
+        Both behaviors can coexist; the updated behavior takes precedence, i.e., overrides
+        any state provided by the backward compatibility methods.
+
         Only JSON-serializable dicts should be provided by executors.
         """
         for exec_id, executor in self._executors.items():
@@ -317,6 +320,9 @@ class Runner:
 
         Updated behavior:
             - Executors should implement `on_checkpoint_restore(self, state: dict)` to restore state.
+
+        Both behaviors can coexist; the updated behavior takes precedence, i.e., overrides
+        any restoration performed by the backward compatibility methods.
         """
         has_executor_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
         if not has_executor_states:

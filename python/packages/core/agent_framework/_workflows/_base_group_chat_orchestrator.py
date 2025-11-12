@@ -217,7 +217,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """Capture current orchestrator state for checkpointing.
 
         Default implementation uses OrchestrationState to serialize common state.
-        Subclasses should override `on_checkpoint_save()` to add pattern-specific data.
+        Subclasses can override this method or _snapshot_pattern_metadata() to add pattern-specific data.
 
         Returns:
             Serialized state dict
@@ -246,7 +246,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """Restore orchestrator state from checkpoint.
 
         Default implementation uses OrchestrationState to deserialize common state.
-        Subclasses should override _restore_pattern_metadata() to restore pattern-specific data.
+        Subclasses can override this method or _restore_pattern_metadata() to restore pattern-specific data.
 
         Args:
             state: Serialized state dict

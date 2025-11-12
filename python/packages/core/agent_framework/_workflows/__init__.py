@@ -155,8 +155,6 @@ __all__ = [
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",
     "SuperStepCompletedEvent",
-    "SuperStepCompletedEvent",
-    "SuperStepStartedEvent",
     "SuperStepStartedEvent",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
