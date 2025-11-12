@@ -1,0 +1,30 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Simple string input
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": "Hi! I need help understanding the return policy."
+}
+
+### Explicit input
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "How long does standard shipping usually take?"
+                }
+            ]
+        }
+    ]
+}
