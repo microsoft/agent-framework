@@ -2,10 +2,8 @@
 
 // This sample shows how to load an AI agent from a YAML file and process a prompt using Foundry Agents as the backend.
 
-using System.ComponentModel;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");

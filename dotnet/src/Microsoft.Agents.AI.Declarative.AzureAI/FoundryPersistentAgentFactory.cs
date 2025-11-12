@@ -19,7 +19,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     private readonly TokenCredential? _tokenCredential;
 
     /// <summary>
-    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class with an associated <see cref="PersistentAgentsClient"/>.
     /// </summary>
     /// <param name="agentClient">The <see cref="PersistentAgentsClient"/> instance to use for creating agents.</param>
     /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>
@@ -31,7 +31,7 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     }
 
     /// <summary>
-    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class with an associated <see cref="TokenCredential"/>.
     /// </summary>
     /// <param name="tokenCredential">The <see cref="TokenCredential"/> to use for authenticating requests.</param>
     /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>

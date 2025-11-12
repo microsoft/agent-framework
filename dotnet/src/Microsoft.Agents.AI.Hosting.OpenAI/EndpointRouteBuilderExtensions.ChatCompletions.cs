@@ -49,6 +49,8 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
+    [RequiresUnreferencedCode()]
+    [RequiresDynamicCode()]
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
