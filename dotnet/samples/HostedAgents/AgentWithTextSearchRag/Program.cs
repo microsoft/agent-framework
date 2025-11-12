@@ -4,8 +4,7 @@
 // capabilities to an AI agent. The provider runs a search against an external knowledge base
 // before each model invocation and injects the results into the model context.
 
-// Also see the AgentWithRAG folder for more advanced RAG scenarios.
-
+using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -25,7 +24,7 @@ TextSearchProviderOptions textSearchOptions = new()
 
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {
@@ -33,16 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
         AIContextProviderFactory = ctx => new TextSearchProvider(MockSearchAsync, ctx.SerializedState, ctx.JsonSerializerOptions, textSearchOptions)
     });
 
-AgentThread thread = agent.GetNewThread();
-
-Console.WriteLine(">> Asking about returns\n");
-Console.WriteLine(await agent.RunAsync("Hi! I need help understanding the return policy.", thread));
-
-Console.WriteLine("\n>> Asking about shipping\n");
-Console.WriteLine(await agent.RunAsync("How long does standard shipping usually take?", thread));
-
-Console.WriteLine("\n>> Asking about product care\n");
-Console.WriteLine(await agent.RunAsync("What is the best way to maintain the TrailRunner tent fabric?", thread));
+await agent.RunAIAgentAsync();
 
 static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(string query, CancellationToken cancellationToken)
 {

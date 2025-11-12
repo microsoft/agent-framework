@@ -160,5 +160,5 @@ internal sealed record CustomToolFormat
     /// Additional format properties (schema definition).
     /// </summary>
     [JsonExtensionData]
-    public Dictionary<string, object?>? AdditionalProperties { get; init; }
+    public Dictionary<string, object?>? AdditionalProperties { get; set; }
 }

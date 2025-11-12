@@ -104,6 +104,7 @@ export default function App() {
 
         useDevUIStore.getState().setServerMeta({
           uiMode: meta.ui_mode,
+          runtime: meta.runtime,
           capabilities: meta.capabilities,
           authRequired: meta.auth_required,
         });

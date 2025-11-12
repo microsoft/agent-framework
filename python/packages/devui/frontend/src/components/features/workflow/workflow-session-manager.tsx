@@ -28,6 +28,7 @@ export const WorkflowSessionManager: React.FC<WorkflowSessionManagerProps> = ({
   const addSession = useDevUIStore((state) => state.addSession);
   const removeSession = useDevUIStore((state) => state.removeSession);
   const addToast = useDevUIStore((state) => state.addToast);
+  const runtime = useDevUIStore((state) => state.runtime);
 
   const [creatingSession, setCreatingSession] = useState(false);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
@@ -63,14 +64,19 @@ export const WorkflowSessionManager: React.FC<WorkflowSessionManagerProps> = ({
       }
     } catch (error) {
       console.error("Failed to load workflow conversations:", error);
-      addToast({
-        message: "Failed to load workflow conversations",
-        type: "error",
-      });
+
+      // Silently handle for .NET backend (doesn't support conversations yet)
+      // Only show error for Python backend where this is unexpected
+      if (runtime !== "dotnet") {
+        addToast({
+          message: "Failed to load workflow conversations",
+          type: "error",
+        });
+      }
     } finally {
       setLoadingSessions(false);
     }
-  }, [workflowId, currentSession, setLoadingSessions, setAvailableSessions, setCurrentSession, onSessionChange, addToast]);
+  }, [workflowId, currentSession, runtime, setLoadingSessions, setAvailableSessions, setCurrentSession, onSessionChange, addToast]);
 
   // Load sessions on mount
   useEffect(() => {
