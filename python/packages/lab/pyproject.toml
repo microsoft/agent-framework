@@ -56,7 +56,7 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv>=0.8.2,<0.9.0",
+    "uv",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
