@@ -15,7 +15,6 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 
-
 logger = logging.getLogger(__name__)
 
 
