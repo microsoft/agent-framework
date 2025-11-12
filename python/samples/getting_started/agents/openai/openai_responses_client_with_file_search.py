@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import HostedFileSearchTool, HostedVectorStoreContent
+from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.openai import OpenAIResponsesClient
 
 """
@@ -46,22 +46,21 @@ async def main() -> None:
     stream = False
     print(f"User: {message}")
     file_id, vector_store = await create_vector_store(client)
+
+    agent = ChatAgent(
+        chat_client=client,
+        instructions="You are a helpful assistant that can search through files to find information.",
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+    )
+
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(
-            message,
-            tools=[HostedFileSearchTool(inputs=vector_store)],
-            tool_choice="auto",
-        ):
+        async for chunk in agent.run_stream(message):
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
-        response = await client.get_response(
-            message,
-            tools=[HostedFileSearchTool(inputs=vector_store)],
-            tool_choice="auto",
-        )
+        response = await agent.run(message)
         print(f"Assistant: {response}")
     await delete_vector_store(client, file_id, vector_store.vector_store_id)
 
