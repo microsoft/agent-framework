@@ -22,8 +22,6 @@ from agent_framework.azure import AgentFunctionApp
 _app = AgentFunctionApp()
 ```
 
-This namespace now exposes the Azure Functions integration types.
-
 - Register agents with `AgentFunctionApp`
 - Post messages using the generated `/api/agents/{agent_name}/run` endpoint
 

@@ -59,13 +59,17 @@ class AgentFunctionApp(DFAppBase):
     """Main application class for creating durable agent function apps using Durable Entities.
 
     This class uses Durable Entities pattern for agent execution, providing:
+
     - Stateful agent conversations
     - Conversation history management
     - Signal-based operation invocation
     - Better state management than orchestrations
 
-    Usage:
-        ```python
+    Example:
+    -------
+
+    .. code-block:: python
+
         from agent_framework.azure import AgentFunctionApp
         from agent_framework.azure import AzureOpenAIAssistantsClient
 
@@ -98,9 +102,9 @@ class AgentFunctionApp(DFAppBase):
             forecast_task = writer.run("What's the forecast?", thread=thread)
             forecast = yield forecast_task
             return forecast
-        ```
 
     This creates:
+
     - HTTP trigger endpoint for each agent's requests (if enabled)
     - Durable entity for each agent's state management and execution
     - Full access to all Azure Functions capabilities

@@ -10,9 +10,9 @@ either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func sta
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
-from collections.abc import Mapping
 
 import azure.durable_functions as df
 import azure.functions as func

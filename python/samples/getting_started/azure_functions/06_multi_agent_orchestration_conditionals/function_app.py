@@ -11,8 +11,8 @@ Functions host."""
 
 import json
 import logging
-from typing import Any, cast
 from collections.abc import Mapping
+from typing import Any, cast
 
 import azure.durable_functions as df
 import azure.functions as func
