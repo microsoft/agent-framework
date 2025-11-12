@@ -35,8 +35,36 @@ Invoke-RestMethod -Method Post `
     -Body "Tell me a joke about a pirate."
 ```
 
-The response from the agent will be displayed in the terminal where you ran `func start`. The expected output will look something like:
+You can also send JSON requests:
+
+```bash
+curl -X POST http://localhost:7071/api/agents/Joker/run \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d '{"message": "Tell me a joke about a pirate."}'
+```
+
+To continue a conversation, include the `thread_id` in the query string or JSON body:
+
+```bash
+curl -X POST "http://localhost:7071/api/agents/Joker/run?thread_id=@dafx-joker@your-thread-id" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d '{"message": "Tell me another one."}'
+```
+
+The response from the agent will be displayed in the terminal where you ran `func start`. The expected `text/plain` output will look something like:
 
 ```text
 Why don't pirates ever learn the alphabet? Because they always get stuck at "C"!
+```
+
+The expected `application/json` output will look something like:
+
+```json
+{
+  "status": 200,
+  "thread_id": "@dafx-joker@your-thread-id",
+  "response": "Why don't pirates ever learn the alphabet? Because they always get stuck at 'C'!"
+}
 ```
