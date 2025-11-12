@@ -116,7 +116,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         AITool tool = Assert.Single(tools);
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(tool);
+        Assert.IsType<AIFunctionDeclaration>(tool, exactMatch: false);
         var declaration = (AIFunctionDeclaration)tool;
         Assert.Equal("TestTool", declaration.Name);
         Assert.Equal("Test description", declaration.Description);
@@ -138,7 +138,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         Assert.Equal(3, tools.Count);
-        Assert.All(tools, t => Assert.IsAssignableFrom<AIFunctionDeclaration>(t));
+        Assert.All(tools, t => Assert.IsType<AIFunctionDeclaration>(t, exactMatch: false));
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         // The tool should be a declaration, not an executable function
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(tool);
+        Assert.IsType<AIFunctionDeclaration>(tool, exactMatch: false);
         // AIFunctionDeclaration cannot be invoked (no implementation)
         // This is correct since the actual implementation exists on the client side
     }
@@ -206,7 +206,7 @@ public sealed class AIToolExtensionsTests
         AITool reconstructed = aguiToolsList.AsAITools().Single();
 
         // Assert
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(reconstructed);
+        Assert.IsType<AIFunctionDeclaration>(reconstructed, exactMatch: false);
         var declaration = (AIFunctionDeclaration)reconstructed;
         Assert.Equal("FormatPerson", declaration.Name);
         Assert.Equal("Formats person information", declaration.Description);

@@ -22,14 +22,14 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_SendsRequestAndParsesSSEStream_SuccessfullyAsync()
     {
         // Arrange
-        BaseEvent[] events = new BaseEvent[]
-        {
+        BaseEvent[] events =
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        };
+        ];
 
         HttpClient httpClient = this.CreateMockHttpClient(events, HttpStatusCode.OK);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");
@@ -83,12 +83,12 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_DeserializesMultipleEventTypes_CorrectlyAsync()
     {
         // Arrange
-        BaseEvent[] events = new BaseEvent[]
-        {
+        BaseEvent[] events =
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunErrorEvent { Message = "Error occurred", Code = "ERR001" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement.Clone() }
-        };
+        ];
 
         HttpClient httpClient = this.CreateMockHttpClient(events, HttpStatusCode.OK);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");

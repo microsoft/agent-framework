@@ -42,7 +42,7 @@ Microsoft Agent Framework relies on existing LLMs. Using the framework retains c
 
 **Framework-Specific Limitations**:
 
-- **Platform Requirements**: Python 3.10+ required, specific .NET versions (.NET 8.0, 9.0, netstandard2.0, net472)
+- **Platform Requirements**: Python 3.10+ required, specific .NET versions (.NET 8.0, 9.0, 10.0, netstandard2.0, net472)
 - **API Dependencies**: Requires proper configuration of LLM provider keys and endpoints
 - **Orchestration Features**: Advanced orchestration patterns like GroupChat, Sequential, and Concurrent orchestrations are "coming soon" for Python implementation
 - **Privacy and Data Protection**: The framework allows for human participation in conversations between agents. It is important to ensure that user data and conversations are protected and that developers use appropriate measures to safeguard privacy.

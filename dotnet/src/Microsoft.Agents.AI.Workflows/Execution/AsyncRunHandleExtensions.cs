@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.Execution;
 
 internal static class AsyncRunHandleExtensions
 {
-    public async static ValueTask<Checkpointed<TRunType>> WithCheckpointingAsync<TRunType>(this AsyncRunHandle runHandle, Func<ValueTask<TRunType>> prepareFunc)
+    public static async ValueTask<Checkpointed<TRunType>> WithCheckpointingAsync<TRunType>(this AsyncRunHandle runHandle, Func<ValueTask<TRunType>> prepareFunc)
     {
         TRunType run = await prepareFunc().ConfigureAwait(false);
         return new Checkpointed<TRunType>(run, runHandle);

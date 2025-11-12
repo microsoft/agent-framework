@@ -145,7 +145,7 @@ public class InProcessStateTests
     [Fact]
     public async Task InProcessRun_StateShouldError_TwoExecutorsAsync()
     {
-        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<TurnToken>));
+        ForwardMessageExecutor<TurnToken> forward = new(nameof(ForwardMessageExecutor<>));
         using StateTestExecutor<int?> testExecutor = new(
                 new ScopeKey("StateTestExecutor", "TestScope", "TestKey"),
                 loop: false,

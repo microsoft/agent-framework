@@ -20,18 +20,15 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 /// </summary>
 public abstract class IntegrationTest : IDisposable
 {
-    private IConfigurationRoot? _configuration;
-    private AzureAIConfiguration? _foundryConfiguration;
-
-    protected IConfigurationRoot Configuration => this._configuration ??= InitializeConfig();
+    protected IConfigurationRoot Configuration { get => field ??= InitializeConfig(); }
 
     internal AzureAIConfiguration FoundryConfiguration
     {
         get
         {
-            this._foundryConfiguration ??= this.Configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
-            Assert.NotNull(this._foundryConfiguration);
-            return this._foundryConfiguration;
+            field ??= this.Configuration.GetSection("AzureAI").Get<AzureAIConfiguration>();
+            Assert.NotNull(field);
+            return field;
         }
     }
 

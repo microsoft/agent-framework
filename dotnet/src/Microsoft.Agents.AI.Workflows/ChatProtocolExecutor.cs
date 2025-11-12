@@ -26,7 +26,7 @@ public class ChatProtocolExecutorOptions
 /// </summary>
 public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
 {
-    private readonly static Func<List<ChatMessage>> s_initFunction = () => [];
+    private static readonly Func<List<ChatMessage>> s_initFunction = () => [];
     private readonly ChatRole? _stringMessageChatRole;
 
     /// <summary>

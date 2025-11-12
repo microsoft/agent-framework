@@ -42,4 +42,4 @@ app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOption
 
 await app.RunAsync();
 
-public partial class Program { }
+public partial class Program;

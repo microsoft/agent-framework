@@ -38,7 +38,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         AIAgent agent = new TestAgent();
 
         // Act
-        IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUI(endpointsMock.Object, Pattern, agent);
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(Pattern, agent);
 
         // Assert
         Assert.NotNull(result);
@@ -332,7 +332,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
 
         List<JsonElement> events = ParseSseEvents(responseContent);
-        List<JsonElement> contentEvents = new();
+        List<JsonElement> contentEvents = [];
         foreach (JsonElement evt in events)
         {
             if (evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent)
