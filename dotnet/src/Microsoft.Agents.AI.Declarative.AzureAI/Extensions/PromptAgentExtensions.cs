@@ -66,6 +66,10 @@ internal static class PromptAgentExtensions
         return toolResources;
     }
 
+    /// <summary>
+    /// Returns the Foundry response tools which correspond with the provided <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/>.</param>
     internal static IEnumerable<ResponseTool> GetResponseTools(this GptComponentMetadata promptAgent)
     {
         Throw.IfNull(promptAgent);
