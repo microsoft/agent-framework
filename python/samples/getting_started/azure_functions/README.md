@@ -15,7 +15,7 @@ All of these samples are set up to run in Azure Functions. Azure Functions has a
 
 - Install a tool to execute HTTP calls, for example the [REST Client extension](https://marketplace.visualstudio.com/items?itemName=humao.rest-client)
 
-- [Optionally] Create an [Azure Function Python app](https://learn.microsoft.com/en-us/azure/azure-functions/functions-create-function-app-portal?tabs=core-tools&pivots=flex-consumption-plan) to later deploy your app to Azure if you so desire.  
+- [Optionally] Create an [Azure Function Python app](https://learn.microsoft.com/en-us/azure/azure-functions/functions-create-function-app-portal?tabs=core-tools&pivots=flex-consumption-plan) to later deploy your app to Azure if you so desire.
 
 ### 2. Create and activate a virtual environment
 
