@@ -209,7 +209,7 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
 
         // Assert - Response is in progress or queued
         string status = response.GetProperty("status").GetString()!;
-        Assert.True(status == "in_progress" || status == "queued" || status == "completed", $"Expected 'in_progress', 'queued', or 'completed', got '{status}'");
+        Assert.True(status is "in_progress" or "queued" or "completed", $"Expected 'in_progress', 'queued', or 'completed', got '{status}'");
         string responseId = response.GetProperty("id").GetString()!;
 
         // Wait for completion by polling

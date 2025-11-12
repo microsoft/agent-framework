@@ -25,7 +25,7 @@ internal sealed class A2AAgentClient : AgentClientBase
         this._uri = baseUri;
     }
 
-    public async override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -122,7 +122,7 @@ internal sealed class A2AAgentClient : AgentClientBase
         }
     }
 
-    public async override Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
+    public override async Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
     {
         this._logger.LogInformation("Retrieving agent card for {Agent}", agentName);
 

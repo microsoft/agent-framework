@@ -53,7 +53,7 @@ public sealed class GroupChatWorkflowBuilder
         Dictionary<AIAgent, ExecutorBinding> agentMap = agents.ToDictionary(a => a, a => (ExecutorBinding)new AgentRunStreamingExecutor(a, includeInputInOutput: true));
 
         Func<string, string, ValueTask<Executor>> groupChatHostFactory =
-            (string id, string runId) => new(new GroupChatHost(id, agents, agentMap, this._managerFactory));
+            (id, runId) => new(new GroupChatHost(id, agents, agentMap, this._managerFactory));
 
         ExecutorBinding host = groupChatHostFactory.BindExecutor(nameof(GroupChatHost));
         WorkflowBuilder builder = new(host);

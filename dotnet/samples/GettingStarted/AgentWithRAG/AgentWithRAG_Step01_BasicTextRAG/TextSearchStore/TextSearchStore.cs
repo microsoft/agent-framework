@@ -98,8 +98,8 @@ public sealed partial class TextSearchStore : IDisposable
         // Create a definition so that we can use the dimensions provided at runtime.
         VectorStoreCollectionDefinition ragDocumentDefinition = new()
         {
-            Properties = new List<VectorStoreProperty>()
-            {
+            Properties =
+            [
                 new VectorStoreKeyProperty("Key", this._options.KeyType ?? typeof(string)),
                 new VectorStoreDataProperty("Namespaces", typeof(List<string>)) { IsIndexed = true },
                 new VectorStoreDataProperty("SourceId", typeof(string)) { IsIndexed = true },
@@ -107,7 +107,7 @@ public sealed partial class TextSearchStore : IDisposable
                 new VectorStoreDataProperty("SourceName", typeof(string)),
                 new VectorStoreDataProperty("SourceLink", typeof(string)),
                 new VectorStoreVectorProperty("TextEmbedding", typeof(string), vectorDimensions),
-            }
+            ]
         };
 
         this._vectorStoreRecordCollection = this._vectorStore.GetDynamicCollection(collectionName, ragDocumentDefinition);
@@ -267,7 +267,7 @@ public sealed partial class TextSearchStore : IDisposable
                 cancellationToken: cancellationToken);
 
         // Retrieve the documents from the search results.
-        List<Dictionary<string, object?>> searchResponseDocs = new();
+        List<Dictionary<string, object?>> searchResponseDocs = [];
         await foreach (var searchResponseDoc in searchResult.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             searchResponseDocs.Add(searchResponseDoc.Record);
@@ -291,12 +291,8 @@ public sealed partial class TextSearchStore : IDisposable
         }
 
         // Retrieve the source text for the documents that need it.
-        var retrievalResponses = await this._options.SourceRetrievalCallback(sourceIdsToRetrieve).ConfigureAwait(false);
-
-        if (retrievalResponses is null)
-        {
+        var retrievalResponses = await this._options.SourceRetrievalCallback(sourceIdsToRetrieve).ConfigureAwait(false) ??
             throw new InvalidOperationException($"The {nameof(TextSearchStoreOptions.SourceRetrievalCallback)} must return a non-null value.");
-        }
 
         // Update the retrieved documents with the retrieved text.
         return searchResponseDocs.GroupJoin(

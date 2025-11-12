@@ -29,9 +29,7 @@ public sealed class WeatherResponse
 [JsonSerializable(typeof(WeatherRequest))]
 [JsonSerializable(typeof(WeatherResponse))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
-internal sealed partial class CustomTypesContext : JsonSerializerContext
-{
-}
+internal sealed partial class CustomTypesContext : JsonSerializerContext;
 
 /// <summary>
 /// Unit tests for the <see cref="AGUIChatMessageExtensions"/> class.

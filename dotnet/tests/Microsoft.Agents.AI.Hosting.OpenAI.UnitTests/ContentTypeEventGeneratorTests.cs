@@ -47,7 +47,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         var firstItemAddedEvent = events.First(e => e.GetProperty("type").GetString() == "response.output_item.added");
         var firstItem = firstItemAddedEvent.GetProperty("item");
         Assert.Equal("reasoning", firstItem.GetProperty("type").GetString());
-        Assert.True(firstItemAddedEvent.GetProperty("output_index").GetInt32() == 0);
+        Assert.Equal(0, firstItemAddedEvent.GetProperty("output_index").GetInt32());
 
         // Verify reasoning item done
         var firstItemDoneEvent = events.First(e =>
@@ -153,7 +153,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Verify item added event
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var item = itemAddedEvent.GetProperty("item");
         Assert.Equal("message", item.GetProperty("type").GetString());
@@ -166,7 +166,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         Assert.NotEmpty(contentArray);
 
         var refusalContent = contentArray.First(c => c.GetProperty("type").GetString() == "refusal");
-        Assert.True(refusalContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, refusalContent.ValueKind);
         Assert.Equal(ErrorMessage, refusalContent.GetProperty("refusal").GetString());
     }
 
@@ -246,12 +246,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var imageContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_image");
 
-        Assert.True(imageContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, imageContent.ValueKind);
         Assert.Equal(ImageUrl, imageContent.GetProperty("image_url").GetString());
     }
 
@@ -270,12 +270,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var imageContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_image");
 
-        Assert.True(imageContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, imageContent.ValueKind);
         Assert.Equal(DataUri, imageContent.GetProperty("image_url").GetString());
     }
 
@@ -295,12 +295,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var imageContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_image");
 
-        Assert.True(imageContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, imageContent.ValueKind);
         Assert.True(imageContent.TryGetProperty("detail", out var detailProp));
         Assert.Equal(Detail, detailProp.GetString());
     }
@@ -345,12 +345,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var audioContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_audio");
 
-        Assert.True(audioContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, audioContent.ValueKind);
         Assert.Equal(AudioDataUri, audioContent.GetProperty("data").GetString());
         Assert.Equal("mp3", audioContent.GetProperty("format").GetString());
     }
@@ -421,12 +421,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var fileContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_file");
 
-        Assert.True(fileContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, fileContent.ValueKind);
         Assert.Equal(FileId, fileContent.GetProperty("file_id").GetString());
     }
 
@@ -471,12 +471,12 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
 
         // Assert
         var itemAddedEvent = events.FirstOrDefault(e => e.GetProperty("type").GetString() == "response.output_item.added");
-        Assert.True(itemAddedEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, itemAddedEvent.ValueKind);
 
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var fileContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_file");
 
-        Assert.True(fileContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, fileContent.ValueKind);
         Assert.Equal(FileDataUri, fileContent.GetProperty("file_data").GetString());
         Assert.Equal(Filename, fileContent.GetProperty("filename").GetString());
     }
@@ -499,7 +499,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         var content = itemAddedEvent.GetProperty("item").GetProperty("content");
         var fileContent = content.EnumerateArray().First(c => c.GetProperty("type").GetString() == "input_file");
 
-        Assert.True(fileContent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, fileContent.ValueKind);
         Assert.Equal(FileDataUri, fileContent.GetProperty("file_data").GetString());
         // filename property might be null or absent
     }

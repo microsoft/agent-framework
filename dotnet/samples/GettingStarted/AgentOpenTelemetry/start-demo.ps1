@@ -65,7 +65,7 @@ $dockerResult = docker run -d `
     -p 4317:18889 `
     -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true `
     --restart unless-stopped `
-    mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+    mcr.microsoft.com/dotnet/aspire-dashboard:latest
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to start Aspire Dashboard container" -ForegroundColor Red

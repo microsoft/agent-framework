@@ -316,7 +316,7 @@ public sealed class Mem0ProviderTests : IDisposable
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses = new();
-        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = new();
+        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

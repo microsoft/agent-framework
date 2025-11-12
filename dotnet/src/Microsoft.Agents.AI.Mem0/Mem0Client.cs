@@ -94,14 +94,14 @@ internal sealed class Mem0Client
             AgentId = agentId,
             RunId = threadId,
             UserId = userId,
-            Messages = new[]
-            {
+            Messages =
+            [
                 new CreateMemoryMessage
                 {
                     Content = messageContent,
                     Role = messageRole.ToLowerInvariant()
                 }
-            }
+            ]
         };
 #pragma warning restore CA1308
 

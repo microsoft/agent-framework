@@ -385,7 +385,7 @@ internal sealed class FakeStateAgent : AIAgent
                     {
                         modifiedState[prop.Name] = prop.Value.GetString();
                     }
-                    else if (prop.Value.ValueKind == JsonValueKind.Object || prop.Value.ValueKind == JsonValueKind.Array)
+                    else if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
                     {
                         modifiedState[prop.Name] = prop.Value;
                     }

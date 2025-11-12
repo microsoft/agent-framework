@@ -4,9 +4,7 @@ using Microsoft.Extensions.AI;
 
 namespace AgentWebChat.AgentHost.Custom;
 
-public class CustomAITool : AITool
-{
-}
+public class CustomAITool : AITool;
 
 public class CustomFunctionTool : AIFunction
 {

@@ -225,7 +225,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         // subworkflow's input queue. In order to actually process the message and align the supersteps correctly,
         // we need to drive the superstep of the subworkflow here.
         // TODO: Investigate if we can fully pull in the subworkflow execution into the WorkflowHostExecutor itself.
-        List<Task> subworkflowTasks = new();
+        List<Task> subworkflowTasks = [];
         foreach (ISuperStepRunner subworkflowRunner in this.RunContext.JoinedSubworkflowRunners)
         {
             subworkflowTasks.Add(subworkflowRunner.RunSuperStepAsync(cancellationToken).AsTask());

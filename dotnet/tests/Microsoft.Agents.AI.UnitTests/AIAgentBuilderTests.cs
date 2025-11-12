@@ -257,11 +257,10 @@ public class AIAgentBuilderTests
     {
         // Arrange
         var mockInnerAgent = new Mock<AIAgent>();
-        var builder = new AIAgentBuilder(mockInnerAgent.Object);
-
-        builder.Use(next => new InnerAgentCapturingAgent("First", next));
-        builder.Use(next => new InnerAgentCapturingAgent("Second", next));
-        builder.Use(next => new InnerAgentCapturingAgent("Third", next));
+        var builder = new AIAgentBuilder(mockInnerAgent.Object)
+            .Use(next => new InnerAgentCapturingAgent("First", next))
+            .Use(next => new InnerAgentCapturingAgent("Second", next))
+            .Use(next => new InnerAgentCapturingAgent("Third", next));
 
         // Act
         var first = (InnerAgentCapturingAgent)builder.Build();
@@ -306,7 +305,7 @@ public class AIAgentBuilderTests
         {
             Assert.Null(serviceProvider.GetService(typeof(object)));
 
-            var keyedServiceProvider = Assert.IsAssignableFrom<IKeyedServiceProvider>(serviceProvider);
+            var keyedServiceProvider = Assert.IsType<IKeyedServiceProvider>(serviceProvider, exactMatch: false);
             Assert.Null(keyedServiceProvider.GetKeyedService(typeof(object), "key"));
             Assert.Throws<InvalidOperationException>(() => keyedServiceProvider.GetRequiredKeyedService(typeof(object), "key"));
 

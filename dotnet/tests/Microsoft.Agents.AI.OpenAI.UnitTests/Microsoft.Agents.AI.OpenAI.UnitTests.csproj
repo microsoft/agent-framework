@@ -1,9 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-  </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
   </ItemGroup>

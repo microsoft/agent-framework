@@ -441,7 +441,7 @@ public sealed class TextSearchProviderTests
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 4,
-            RecentMessageRolesIncluded = new List<ChatRole> { ChatRole.Assistant } // Only retain assistant messages.
+            RecentMessageRolesIncluded = [ChatRole.Assistant] // Only retain assistant messages.
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)

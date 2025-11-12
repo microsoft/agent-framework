@@ -35,7 +35,7 @@ public class DefaultHandler() : BaseTestExecutor<DefaultHandler>(nameof(DefaultH
     } = (message, context) => default;
 }
 
-public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nameof(TypedHandler<TInput>)), IMessageHandler<TInput>
+public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nameof(TypedHandler<>)), IMessageHandler<TInput>
 {
     public ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
@@ -50,7 +50,7 @@ public class TypedHandler<TInput>() : BaseTestExecutor<TypedHandler<TInput>>(nam
     } = (message, context) => default;
 }
 
-public class TypedHandlerWithOutput<TInput, TResult>() : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>(nameof(TypedHandlerWithOutput<TInput, TResult>)), IMessageHandler<TInput, TResult>
+public class TypedHandlerWithOutput<TInput, TResult>() : BaseTestExecutor<TypedHandlerWithOutput<TInput, TResult>>(nameof(TypedHandlerWithOutput<,>)), IMessageHandler<TInput, TResult>
 {
     public ValueTask<TResult> HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {

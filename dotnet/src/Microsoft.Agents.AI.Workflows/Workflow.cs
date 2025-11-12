@@ -120,7 +120,7 @@ public class Workflow
             throw new InvalidOperationException($"Existing ownership does not match check value. {Summarize(maybeOwned)} vs. {Summarize(existingOwnershipSignoff)}");
         }
 
-        string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
+        static string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
         {
             string s => $"'{s}'",
             null => "<null>",

@@ -506,7 +506,7 @@ public static class PersistentAgentsClientExtensions
                 {
                     case HostedCodeInterpreterTool codeTool:
 
-                        toolDefinitions ??= new();
+                        toolDefinitions ??= [];
                         toolDefinitions.Add(new CodeInterpreterToolDefinition());
 
                         if (codeTool.Inputs is { Count: > 0 })
@@ -527,7 +527,7 @@ public static class PersistentAgentsClientExtensions
                         break;
 
                     case HostedFileSearchTool fileSearchTool:
-                        toolDefinitions ??= new();
+                        toolDefinitions ??= [];
                         toolDefinitions.Add(new FileSearchToolDefinition
                         {
                             FileSearch = new() { MaxNumResults = fileSearchTool.MaximumResultCount }
@@ -550,12 +550,12 @@ public static class PersistentAgentsClientExtensions
                         break;
 
                     case HostedWebSearchTool webSearch when webSearch.AdditionalProperties?.TryGetValue("connectionId", out object? connectionId) is true:
-                        toolDefinitions ??= new();
+                        toolDefinitions ??= [];
                         toolDefinitions.Add(new BingGroundingToolDefinition(new BingGroundingSearchToolParameters([new BingGroundingSearchConfiguration(connectionId!.ToString())])));
                         break;
 
                     default:
-                        functionToolsAndOtherTools ??= new();
+                        functionToolsAndOtherTools ??= [];
                         functionToolsAndOtherTools.Add(tool);
                         break;
                 }

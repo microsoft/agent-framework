@@ -201,12 +201,12 @@ public static class Program
         {
             return "";
         }
-        var builder = new StringBuilder();
-        builder.AppendLine();
+        var builder = new StringBuilder().AppendLine();
         foreach (var kvp in arguments)
         {
-            builder.AppendLine($"   Name: {kvp.Key}");
-            builder.AppendLine($"   Value: {kvp.Value}");
+            builder
+                .AppendLine($"   Name: {kvp.Key}")
+                .AppendLine($"   Value: {kvp.Value}");
         }
         return builder.ToString();
     }

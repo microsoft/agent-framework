@@ -115,7 +115,5 @@ public class ServiceIdAgentThreadTests
     }
 
     // Helper class to represent empty objects
-    internal sealed class EmptyObject
-    {
-    }
+    internal sealed class EmptyObject;
 }

@@ -139,7 +139,7 @@ public static partial class AgentWorkflowBuilder
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
 
         Func<string, string, ValueTask<ConcurrentEndExecutor>> endFactory =
-            (string _, string __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
+            (_, __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
 
         ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
 

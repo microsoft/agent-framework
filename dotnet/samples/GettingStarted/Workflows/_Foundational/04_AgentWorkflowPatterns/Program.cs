@@ -64,7 +64,7 @@ public static class Program
                 while (true)
                 {
                     Console.Write("Q: ");
-                    messages.Add(new(ChatRole.User, Console.ReadLine()!));
+                    messages.Add(new(ChatRole.User, Console.ReadLine()));
                     messages.AddRange(await RunWorkflowAsync(workflow, messages));
                 }
 
