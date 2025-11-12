@@ -14,10 +14,10 @@ from collections.abc import AsyncIterable
 from typing import Any, cast
 
 import azure.durable_functions as df
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, get_logger
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
-from ._models import AgentResponse, ChatRole, RunRequest
+from ._models import AgentResponse, RunRequest
 from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions.entities")
@@ -81,33 +81,32 @@ class AgentEntity:
         """
         # Convert string or dict to RunRequest
         if isinstance(request, str):
-            run_request = RunRequest(message=request, role=ChatRole.USER)
+            run_request = RunRequest(message=request, role=Role.USER)
         elif isinstance(request, dict):
             run_request = RunRequest.from_dict(request)
         else:
             run_request = request
 
         message = run_request.message
-        conversation_id = run_request.conversation_id
+        thread_id = run_request.thread_id
         correlation_id = run_request.correlation_id
-        if not conversation_id:
-            raise ValueError("RunRequest must include a conversation_id")
+        if not thread_id:
+            raise ValueError("RunRequest must include a thread_id")
         if not correlation_id:
             raise ValueError("RunRequest must include a correlation_id")
-        role = run_request.role or ChatRole.USER
+        role = run_request.role or Role.USER
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
         logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
-        logger.debug(f"[AgentEntity.run_agent] Conversation ID: {conversation_id}")
+        logger.debug(f"[AgentEntity.run_agent] Thread ID: {thread_id}")
         logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlation_id}")
-        logger.debug(f"[AgentEntity.run_agent] Role: {role.value if isinstance(role, ChatRole) else role}")
+        logger.debug(f"[AgentEntity.run_agent] Role: {role.value}")
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
 
         # Store message in history with role
-        role_str = role.value if isinstance(role, ChatRole) else role
-        self.state.add_user_message(message, role=role_str, correlation_id=correlation_id)
+        self.state.add_user_message(message, role=role, correlation_id=correlation_id)
 
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 
@@ -123,7 +122,7 @@ class AgentEntity:
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
                 correlation_id=correlation_id,
-                conversation_id=conversation_id,
+                thread_id=thread_id,
                 request_message=message,
             )
 
@@ -160,7 +159,7 @@ class AgentEntity:
             agent_response = AgentResponse(
                 response=response_text,
                 message=str(message),
-                conversation_id=str(conversation_id),
+                thread_id=str(thread_id),
                 status="success",
                 message_count=self.state.message_count,
                 structured_response=structured_response,
@@ -185,7 +184,7 @@ class AgentEntity:
             error_response = AgentResponse(
                 response=f"Error: {exc!s}",
                 message=str(message),
-                conversation_id=str(conversation_id),
+                thread_id=str(thread_id),
                 status="error",
                 message_count=self.state.message_count,
                 error=str(exc),
@@ -197,7 +196,7 @@ class AgentEntity:
         self,
         run_kwargs: dict[str, Any],
         correlation_id: str,
-        conversation_id: str,
+        thread_id: str,
         request_message: str,
     ) -> AgentRunResponse:
         """Execute the agent, preferring streaming when available."""
@@ -205,7 +204,7 @@ class AgentEntity:
         if self.callback is not None:
             callback_context = self._build_callback_context(
                 correlation_id=correlation_id,
-                conversation_id=conversation_id,
+                thread_id=thread_id,
                 request_message=request_message,
             )
 
@@ -319,7 +318,7 @@ class AgentEntity:
     def _build_callback_context(
         self,
         correlation_id: str,
-        conversation_id: str,
+        thread_id: str,
         request_message: str,
     ) -> AgentCallbackContext:
         """Create the callback context provided to consumers."""
@@ -327,7 +326,7 @@ class AgentEntity:
         return AgentCallbackContext(
             agent_name=agent_name,
             correlation_id=correlation_id,
-            conversation_id=conversation_id,
+            thread_id=thread_id,
             request_message=request_message,
         )
 
@@ -375,11 +374,8 @@ def create_agent_entity(
             if operation == "run_agent":
                 input_data: Any = context.get_input()
 
-                # Support both old format (message + conversation_id) and new format (RunRequest dict)
-                # This provides backward compatibility
                 request: str | dict[str, Any]
                 if isinstance(input_data, dict) and "message" in input_data:
-                    # Input can be either old format or new RunRequest format
                     request = cast(dict[str, Any], input_data)
                 else:
                     # Fall back to treating input as message string

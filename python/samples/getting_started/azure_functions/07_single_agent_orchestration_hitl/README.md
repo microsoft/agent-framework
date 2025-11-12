@@ -39,6 +39,8 @@ curl -X POST http://localhost:7071/api/hitl/approve/<instanceId> \
   -d '{"approved": true, "feedback": "Looks good"}'
 ```
 
+> **Note:** Calls to the underlying agent run endpoint wait for responses by default. If you need an immediate HTTP 202 response, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body.
+
 ## Expected Responses
 - `POST /api/hitl/run` returns a 202 Accepted payload with the Durable Functions instance ID.
 - `POST /api/hitl/approve/{instanceId}` echoes the decision that the orchestration receives.

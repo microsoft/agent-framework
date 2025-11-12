@@ -7,7 +7,7 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Defining a simple agent with the Microsoft Agent Framework and wiring it into
   an Azure Functions app via the Durable Extension for Agent Framework.
 - Calling the agent through generated HTTP endpoints (`/api/agents/Joker/run`).
-- Managing conversation state with session identifiers, so multiple clients can
+- Managing conversation state with thread identifiers, so multiple clients can
   interact with the agent concurrently without sharing context.
 
 ## Prerequisites
@@ -24,6 +24,13 @@ curl -X POST http://localhost:7071/api/agents/Joker/run \
      -d "Tell me a short joke about cloud computing."
 ```
 
+The agent responds with a JSON payload that includes the generated joke.
+
+> **Note:** To return immediately with an HTTP 202 response instead of waiting for the agent output, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body. The default behavior waits for the response.
+
+## Expected Output
+
+When you send a POST request with plain-text input, the Functions host responds with an HTTP 202 and queues the request for the durable agent entity. A typical response body looks like the following:
 Expected HTTP 202 payload:
 
 ```json
@@ -31,7 +38,7 @@ Expected HTTP 202 payload:
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "Tell me a short joke about cloud computing.",
-  "conversation_id": "<guid>",
+  "thread_id": "<guid>",
   "correlation_id": "<guid>"
 }
 ```

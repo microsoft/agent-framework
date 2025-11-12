@@ -24,7 +24,7 @@ from agent_framework.azurefunctions import AgentFunctionApp, AgentCallbackContex
 logger = logging.getLogger(__name__)
 
 
-# 1. Maintain an in-memory store for callback events (replace with durable storage in production).
+# 1. Maintain an in-memory store for callback events keyed by thread ID (replace with durable storage in production).
 CallbackStore = DefaultDict[str, list[dict[str, Any]]]
 callback_events: CallbackStore = defaultdict(list)
 
@@ -65,8 +65,8 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
                 "text": getattr(update, "text", None),
             }
         )
-        conversation_id = context.conversation_id or ""
-        callback_events[conversation_id].append(event)
+        thread_id = context.thread_id or ""
+        callback_events[thread_id].append(event)
 
         preview = event.get("text") or event.get("update_kind")
         self._logger.info(
@@ -85,8 +85,8 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
                 "usage": _serialize_usage(getattr(response, "usage_details", None)),
             }
         )
-        conversation_id = context.conversation_id or ""
-        callback_events[conversation_id].append(event)
+        thread_id = context.thread_id or ""
+        callback_events[thread_id].append(event)
 
         self._logger.info(
             "[%s][%s] final response recorded",
@@ -96,10 +96,11 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
 
     @staticmethod
     def _build_base_event(context: AgentCallbackContext) -> dict[str, Any]:
+        thread_id = context.thread_id
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "agent_name": context.agent_name,
-            "conversation_id": context.conversation_id,
+            "thread_id": thread_id,
             "correlation_id": context.correlation_id,
             "request_message": context.request_message,
         }
@@ -122,12 +123,12 @@ app.add_agent(callback_agent)
 
 
 @app.function_name("get_callback_events")
-@app.route(route="agents/{agent_name}/callbacks/{conversationId}", methods=["GET"])
+@app.route(route="agents/{agent_name}/callbacks/{thread_id}", methods=["GET"])
 async def get_callback_events(req: func.HttpRequest) -> func.HttpResponse:
-    """Return all callback events collected for a conversation."""
+    """Return all callback events collected for a thread."""
 
-    conversation_id = req.route_params.get("conversationId", "")
-    events = callback_events.get(conversation_id, [])
+    thread_id = req.route_params.get("thread_id", "")
+    events = callback_events.get(thread_id, [])
     return func.HttpResponse(
         json.dumps(events, indent=2),
         status_code=200,
@@ -136,44 +137,44 @@ async def get_callback_events(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("reset_callback_events")
-@app.route(route="agents/{agent_name}/callbacks/{conversationId}", methods=["DELETE"])
+@app.route(route="agents/{agent_name}/callbacks/{thread_id}", methods=["DELETE"])
 async def reset_callback_events(req: func.HttpRequest) -> func.HttpResponse:
-    """Clear the stored callback events for a conversation."""
+    """Clear the stored callback events for a thread."""
 
-    conversation_id = req.route_params.get("conversationId", "")
-    callback_events.pop(conversation_id, None)
+    thread_id = req.route_params.get("thread_id", "")
+    callback_events.pop(thread_id, None)
     return func.HttpResponse(status_code=204)
 
 
 """
-Expected output when querying `GET /api/agents/CallbackAgent/callbacks/{conversationId}`:
+Expected output when querying `GET /api/agents/CallbackAgent/callbacks/{thread_id}`:
 
 HTTP/1.1 200 OK
 [
-  {
-    "timestamp": "2024-01-01T00:00:00Z",
-    "agent_name": "CallbackAgent",
-    "conversation_id": "<conversationId>",
-    "correlation_id": "<guid>",
-    "request_message": "Tell me a short joke",
-    "event_type": "stream",
-    "update_kind": "text",
-    "text": "Sure, here's a joke..."
-  },
-  {
-    "timestamp": "2024-01-01T00:00:01Z",
-    "agent_name": "CallbackAgent",
-    "conversation_id": "<conversationId>",
-    "correlation_id": "<guid>",
-    "request_message": "Tell me a short joke",
-    "event_type": "final",
-    "response_text": "Why did the cloud...",
-    "usage": {
-      "type": "usage_details",
-      "input_token_count": 159,
-      "output_token_count": 29,
-      "total_token_count": 188
+    {
+        "timestamp": "2024-01-01T00:00:00Z",
+        "agent_name": "CallbackAgent",
+        "thread_id": "<thread_id>",
+        "correlation_id": "<guid>",
+        "request_message": "Tell me a short joke",
+        "event_type": "stream",
+        "update_kind": "text",
+        "text": "Sure, here's a joke..."
+    },
+    {
+        "timestamp": "2024-01-01T00:00:01Z",
+        "agent_name": "CallbackAgent",
+        "thread_id": "<thread_id>",
+        "correlation_id": "<guid>",
+        "request_message": "Tell me a short joke",
+        "event_type": "final",
+        "response_text": "Why did the cloud...",
+        "usage": {
+            "type": "usage_details",
+            "input_token_count": 159,
+            "output_token_count": 29,
+            "total_token_count": 188
+        }
     }
-  }
 ]
 """

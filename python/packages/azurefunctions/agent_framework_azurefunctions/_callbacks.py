@@ -20,7 +20,7 @@ class AgentCallbackContext:
 
     agent_name: str
     correlation_id: str
-    conversation_id: str | None = None
+    thread_id: str | None = None
     request_message: str | None = None
 
 

@@ -129,8 +129,8 @@ class TestDurableAIAgent:
         assert request["enable_tool_calls"] is True
         assert "correlation_id" in request
         assert request["correlation_id"] == "correlation-guid"
-        assert "conversation_id" in request
-        assert request["conversation_id"] == "thread-guid"
+        assert "thread_id" in request
+        assert request["thread_id"] == "thread-guid"
 
     def test_run_without_thread(self) -> None:
         """Test that run() works without explicit thread (creates unique session key)."""
