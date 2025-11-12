@@ -44,8 +44,8 @@ internal static class BoolExpressionExtensions
             {
                 return booleanValue.Value;
             }
-            var stringValue = formulaValue as StringValue;
-            if (stringValue != null && bool.TryParse(stringValue.Value, out bool result))
+
+            if (formulaValue is StringValue stringValue && bool.TryParse(stringValue.Value, out bool result))
             {
                 return result;
             }

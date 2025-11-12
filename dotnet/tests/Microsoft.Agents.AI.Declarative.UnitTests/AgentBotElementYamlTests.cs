@@ -264,13 +264,13 @@ public sealed class AgentBotElementYamlTests
 
     private static string? Eval(StringExpression? expression, IConfiguration? configuration = null)
     {
-        if (expression == null)
+        if (expression is null)
         {
             return null;
         }
 
         RecalcEngine engine = new();
-        if (configuration != null)
+        if (configuration is not null)
         {
             foreach (var kvp in configuration.AsEnumerable())
             {

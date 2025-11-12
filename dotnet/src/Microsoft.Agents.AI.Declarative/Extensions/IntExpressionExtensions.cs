@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Globalization;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
@@ -44,8 +45,8 @@ internal static class IntExpressionExtensions
             {
                 return (long)numberValue.Value;
             }
-            var stringValue = formulaValue as StringValue;
-            if (stringValue != null && int.TryParse(stringValue.Value, out int result))
+
+            if (formulaValue is StringValue stringValue && int.TryParse(stringValue.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int result))
             {
                 return result;
             }
