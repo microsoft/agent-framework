@@ -147,16 +147,16 @@ export function WorkflowDetailsModal({
             icon={<Package className="h-4 w-4 text-muted-foreground" />}
           >
             {workflow.executors.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <ul className="space-y-1">
                 {workflow.executors.map((executor, index) => (
-                  <div
+                  <li
                     key={index}
-                    className="font-mono text-xs text-foreground bg-muted px-2 py-1 rounded"
+                    className="font-mono text-xs text-foreground break-all"
                   >
-                    {executor}
-                  </div>
+                    • {executor}
+                  </li>
                 ))}
-              </div>
+              </ul>
             ) : (
               <div className="text-muted-foreground">No executors configured</div>
             )}

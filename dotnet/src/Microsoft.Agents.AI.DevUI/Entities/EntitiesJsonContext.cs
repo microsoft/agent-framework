@@ -19,8 +19,12 @@ namespace Microsoft.Agents.AI.DevUI.Entities;
 [JsonSerializable(typeof(EnvVarRequirement))]
 [JsonSerializable(typeof(List<EntityInfo>))]
 [JsonSerializable(typeof(List<JsonElement>))]
+[JsonSerializable(typeof(List<Dictionary<string, string>>))]
 [JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 [JsonSerializable(typeof(Dictionary<string, bool>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(int))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class EntitiesJsonContext : JsonSerializerContext;
