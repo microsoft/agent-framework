@@ -15,7 +15,7 @@ internal static class IntExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
-    /// <returns>The evaluated number value, or null if the expression is null or cannot be evaluated.</returns>
+    /// <returns>The evaluated integer value, or null if the expression is null or cannot be evaluated.</returns>
     internal static long? Eval(this IntExpression? expression, RecalcEngine? engine)
     {
         if (expression is null)
@@ -42,7 +42,7 @@ internal static class IntExpressionExtensions
             var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
             if (formulaValue is NumberValue numberValue)
             {
-                return (long?)numberValue?.Value;
+                return (long)numberValue.Value;
             }
             var stringValue = formulaValue as StringValue;
             if (stringValue != null && int.TryParse(stringValue.Value, out int result))

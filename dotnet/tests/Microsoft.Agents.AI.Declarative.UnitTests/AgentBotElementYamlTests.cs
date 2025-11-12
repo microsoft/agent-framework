@@ -240,9 +240,10 @@ public sealed class AgentBotElementYamlTests
         Assert.IsType<ApiKeyConnection>(model.Connection);
         ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
         Assert.NotNull(connection);
+        Assert.NotNull(connection.Endpoint);
+        Assert.NotNull(connection.Key);
         Assert.Equal("endpoint", Eval(connection.Endpoint, configuration));
         Assert.Equal("apiKey", Eval(connection.Key, configuration));
-    }
 
     /// <summary>
     /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.

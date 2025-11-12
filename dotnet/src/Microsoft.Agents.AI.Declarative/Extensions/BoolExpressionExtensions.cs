@@ -15,7 +15,7 @@ internal static class BoolExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
-    /// <returns>The evaluated number value, or null if the expression is null or cannot be evaluated.</returns>
+    /// <returns>The evaluated boolean value, or null if the expression is null or cannot be evaluated.</returns>
     internal static bool? Eval(this BoolExpression? expression, RecalcEngine? engine)
     {
         if (expression is null)
@@ -42,7 +42,7 @@ internal static class BoolExpressionExtensions
             var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
             if (formulaValue is BooleanValue booleanValue)
             {
-                return booleanValue?.Value;
+                return booleanValue.Value;
             }
             var stringValue = formulaValue as StringValue;
             if (stringValue != null && bool.TryParse(stringValue.Value, out bool result))

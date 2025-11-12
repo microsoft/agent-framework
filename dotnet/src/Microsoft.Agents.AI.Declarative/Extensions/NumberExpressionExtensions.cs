@@ -42,7 +42,7 @@ internal static class NumberExpressionExtensions
             var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
             if (formulaValue is NumberValue numberValue)
             {
-                return numberValue?.Value;
+                return numberValue.Value;
             }
             var stringValue = formulaValue as StringValue;
             if (stringValue != null && double.TryParse(stringValue.Value, out double result))
