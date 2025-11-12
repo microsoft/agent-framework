@@ -173,7 +173,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 inner_exception=ex,
             ) from ex
 
-    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
+    def get_conversation_id(
+        self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
+    ) -> str | None:
         """Get the conversation ID from the response if store is True."""
         return response.id if store else None
 
@@ -289,7 +291,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     response_tools.append(tool_dict)
         return response_tools
 
-    def get_mcp_tool(self, tool: HostedMCPTool) -> MutableMapping[str, Any]:
+    def get_mcp_tool(self, tool: HostedMCPTool) -> Any:
         """Get MCP tool from HostedMCPTool."""
         mcp: Mcp = {
             "type": "mcp",
