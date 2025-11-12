@@ -897,6 +897,9 @@ class TextReasoningContent(BaseContent):
         return self
 
 
+TDataContent = TypeVar("TDataContent", bound="DataContent")
+
+
 class DataContent(BaseContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
 
@@ -1079,8 +1082,8 @@ class DataContent(BaseContent):
         except Exception:
             return "png"  # Fallback if decoding fails
 
-    @classmethod
-    def create_data_uri_from_base64(cls, image_base64: str) -> tuple[str, str]:
+    @staticmethod
+    def create_data_uri_from_base64(image_base64: str) -> tuple[str, str]:
         """Create a data URI and media type from base64 image data.
 
         Args:
@@ -1089,10 +1092,30 @@ class DataContent(BaseContent):
         Returns:
             Tuple of (data_uri, media_type)
         """
-        format_type = cls.detect_image_format_from_base64(image_base64)
+        format_type = DataContent.detect_image_format_from_base64(image_base64)
         uri = f"data:image/{format_type};base64,{image_base64}"
         media_type = f"image/{format_type}"
         return uri, media_type
+
+    def get_data_bytes_as_str(self) -> str:
+        """Extracts and returns the base64-encoded data from the data URI.
+
+        Returns:
+            The binary data as str.
+        """
+        match = URI_PATTERN.match(self.uri)
+        if not match:
+            raise ValueError(f"Invalid data URI format: {self.uri}")
+        return match.group("base64_data")
+
+    def get_data_bytes(self) -> bytes:
+        """Extracts and returns the binary data from the data URI.
+
+        Returns:
+            The binary data as bytes.
+        """
+        base64_data = self.get_data_bytes_as_str()
+        return base64.b64decode(base64_data)
 
 
 class UriContent(BaseContent):

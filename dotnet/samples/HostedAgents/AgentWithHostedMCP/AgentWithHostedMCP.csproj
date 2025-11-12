@@ -8,11 +8,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!-- 
-      Disable central package management for this project.
-      This project requires explicit package references with versions specified inline rather than 
-      inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
-      be created from this project, and the Docker build process only has access to this folder 
-      and cannot access parent folders where Directory.Packages.props resides.
+        Disable central package management for this project.
+        This project requires explicit package references with versions specified inline rather than 
+        inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
+        be created from this project, and the Docker build process only has access to this folder 
+        and cannot access parent folders where Directory.Packages.props resides.
     -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
@@ -46,7 +46,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="9.0.0">
       <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15">
       <PrivateAssets>all</PrivateAssets>

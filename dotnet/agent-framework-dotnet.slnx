@@ -63,6 +63,7 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
@@ -161,7 +162,7 @@
   <Folder Name="/Samples/HostedAgents/">
     <Project Path="samples/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
     <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-    <Project Path="samples/HostedAgents/DeepResearchAgent/DeepResearchAgent.csproj" />
+    <Project Path="samples/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />

@@ -1,0 +1,27 @@
+﻿name: AgentsInWorkflows
+displayName: "Translation Chain Workflow Agent"
+description: >
+  A workflow agent that performs sequential translation through multiple languages.
+  The agent translates text from English to French, then to Spanish, and finally back
+  to English, leveraging AI-powered translation capabilities in a pipeline workflow.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Microsoft Agent Framework
+    - Workflows
+template:
+  kind: hosted
+  name: AgentsInWorkflows
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini

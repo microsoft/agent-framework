@@ -330,11 +330,19 @@ class AnthropicClient(BaseChatClient):
                     if content.has_top_level_media_type("image"):
                         a_content.append({
                             "type": "image",
-                            "source": {"data": content.uri, "media_type": content.media_type},
+                            "source": {
+                                "data": content.get_data_bytes_as_str(),
+                                "media_type": content.media_type,
+                                "type": "base64",
+                            },
                         })
+                    else:
+                        logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "uri":
                     if content.has_top_level_media_type("image"):
                         a_content.append({"type": "image", "source": {"type": "url", "url": content.uri}})
+                    else:
+                        logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
                     a_content.append({
                         "type": "tool_use",

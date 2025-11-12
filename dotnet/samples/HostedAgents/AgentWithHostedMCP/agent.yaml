@@ -1,0 +1,29 @@
+name: AgentWithHostedMCP
+displayName: "Microsoft Learn Response Agent with MCP"
+description: >
+  An AI agent that uses Azure OpenAI Responses with a Hosted Model Context Protocol (MCP) server.
+  The agent answers questions by searching Microsoft Learn documentation using MCP tools.
+  This demonstrates how MCP tools can be integrated with Azure OpenAI Responses where the service
+  itself handles tool invocation.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Microsoft Agent Framework
+    - Model Context Protocol
+    - MCP
+template:
+  kind: hosted
+  name: AgentWithHostedMCP
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini
