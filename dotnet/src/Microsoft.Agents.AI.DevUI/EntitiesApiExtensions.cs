@@ -57,21 +57,21 @@ internal static class EntitiesApiExtensions
     {
         try
         {
-            var entities = new List<EntityInfo>();
+            var entities = new Dictionary<string, EntityInfo>();
 
             // Discover agents
             await foreach (var agentInfo in DiscoverAgentsAsync(agentCatalog, entityIdFilter: null, cancellationToken).ConfigureAwait(false))
             {
-                entities.Add(agentInfo);
+                entities[agentInfo.Id] = agentInfo;
             }
 
             // Discover workflows
             await foreach (var workflowInfo in DiscoverWorkflowsAsync(workflowCatalog, entityIdFilter: null, cancellationToken).ConfigureAwait(false))
             {
-                entities.Add(workflowInfo);
+                entities[workflowInfo.Id] = workflowInfo;
             }
 
-            return Results.Json(new DiscoveryResponse([.. entities]), EntitiesJsonContext.Default.DiscoveryResponse);
+            return Results.Json(new DiscoveryResponse([.. entities.Values.OrderBy(e => e.Id)]), EntitiesJsonContext.Default.DiscoveryResponse);
         }
         catch (Exception ex)
         {
@@ -91,19 +91,19 @@ internal static class EntitiesApiExtensions
     {
         try
         {
-            if (type is null || string.Equals(type, "agent", StringComparison.OrdinalIgnoreCase))
-            {
-                await foreach (var agentInfo in DiscoverAgentsAsync(agentCatalog, entityId, cancellationToken).ConfigureAwait(false))
-                {
-                    return Results.Json(agentInfo, EntitiesJsonContext.Default.EntityInfo);
-                }
-            }
-
             if (type is null || string.Equals(type, "workflow", StringComparison.OrdinalIgnoreCase))
             {
                 await foreach (var workflowInfo in DiscoverWorkflowsAsync(workflowCatalog, entityId, cancellationToken).ConfigureAwait(false))
                 {
                     return Results.Json(workflowInfo, EntitiesJsonContext.Default.EntityInfo);
+                }
+            }
+
+            if (type is null || string.Equals(type, "agent", StringComparison.OrdinalIgnoreCase))
+            {
+                await foreach (var agentInfo in DiscoverAgentsAsync(agentCatalog, entityId, cancellationToken).ConfigureAwait(false))
+                {
+                    return Results.Json(agentInfo, EntitiesJsonContext.Default.EntityInfo);
                 }
             }
 
