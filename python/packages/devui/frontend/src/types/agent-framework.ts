@@ -68,13 +68,12 @@ export type ResponseInputParam = ResponseInputItem[];
 // Agent Framework extension fields (matches backend AgentFrameworkExtraBody)
 export interface AgentFrameworkExtraBody {
   entity_id: string;
-  checkpoint_id?: string; // Optional checkpoint ID for workflow resume
   // input_data removed - now using standard input field for all data
 }
 
 // Agent Framework Request - OpenAI ResponseCreateParams with extensions
 export interface AgentFrameworkRequest {
-  model?: string;
+  model: string;
   input: string | ResponseInputParam | Record<string, unknown>; // Union type matching OpenAI + dict for workflows
   stream?: boolean;
 
@@ -86,14 +85,7 @@ export interface AgentFrameworkRequest {
   metadata?: Record<string, unknown>;
   temperature?: number;
   max_output_tokens?: number;
-  top_p?: number;
   tools?: Record<string, unknown>[];
-
-  // Reasoning parameters (for o-series models)
-  reasoning?: {
-    effort?: "minimal" | "low" | "medium" | "high";
-    summary?: "auto" | "concise" | "detailed";
-  };
 
   // Agent Framework extension - strongly typed
   extra_body?: AgentFrameworkExtraBody;

@@ -182,9 +182,7 @@ internal sealed class ResponseInputJsonConverter : JsonConverter<ResponseInput>
             return messages is not null ? ResponseInput.FromMessages(messages) : null;
         }
 
-        throw new JsonException(
-            "ResponseInput must be either a string or an array of messages. " +
-            $"Objects are not supported. Received token type: {reader.TokenType}");
+        throw new JsonException($"Unexpected token type for ResponseInput: {reader.TokenType}");
     }
 
     /// <inheritdoc/>

@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -19,9 +18,6 @@ namespace Microsoft.Agents.AI.AGUI.Shared;
 
 internal static class ChatResponseUpdateAGUIExtensions
 {
-    private static readonly MediaTypeHeaderValue? s_jsonPatchMediaType = new("application/json-patch+json");
-    private static readonly MediaTypeHeaderValue? s_json = new("application/json");
-
     public static async IAsyncEnumerable<ChatResponseUpdate> AsChatResponseUpdatesAsync(
         this IAsyncEnumerable<BaseEvent> events,
         JsonSerializerOptions jsonSerializerOptions,
@@ -74,73 +70,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                 case ToolCallResultEvent toolCallResult:
                     yield return toolCallAccumulator.EmitToolCallResult(toolCallResult, jsonSerializerOptions);
                     break;
-
-                // State snapshot events
-                case StateSnapshotEvent stateSnapshot:
-                    if (stateSnapshot.Snapshot.HasValue)
-                    {
-                        yield return CreateStateSnapshotUpdate(stateSnapshot, conversationId, responseId, jsonSerializerOptions);
-                    }
-                    break;
-                case StateDeltaEvent stateDelta:
-                    if (stateDelta.Delta.HasValue)
-                    {
-                        yield return CreateStateDeltaUpdate(stateDelta, conversationId, responseId, jsonSerializerOptions);
-                    }
-                    break;
             }
         }
     }
 
-    private static ChatResponseUpdate CreateStateSnapshotUpdate(
-        StateSnapshotEvent stateSnapshot,
-        string? conversationId,
-        string? responseId,
-        JsonSerializerOptions jsonSerializerOptions)
-    {
-        // Serialize JsonElement directly to UTF-8 bytes using AOT-safe overload
-        byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(
-            stateSnapshot.Snapshot!.Value,
-            jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-        DataContent dataContent = new(jsonBytes, "application/json");
-
-        return new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
-        {
-            ConversationId = conversationId,
-            ResponseId = responseId,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AdditionalProperties = new AdditionalPropertiesDictionary
-            {
-                ["is_state_snapshot"] = true
-            }
-        };
-    }
-
-    private static ChatResponseUpdate CreateStateDeltaUpdate(
-        StateDeltaEvent stateDelta,
-        string? conversationId,
-        string? responseId,
-        JsonSerializerOptions jsonSerializerOptions)
-    {
-        // Serialize JsonElement directly to UTF-8 bytes using AOT-safe overload
-        byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(
-            stateDelta.Delta!.Value,
-            jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-        DataContent dataContent = new(jsonBytes, "application/json-patch+json");
-
-        return new ChatResponseUpdate(ChatRole.Assistant, [dataContent])
-        {
-            ConversationId = conversationId,
-            ResponseId = responseId,
-            CreatedAt = DateTimeOffset.UtcNow,
-            AdditionalProperties = new AdditionalPropertiesDictionary
-            {
-                ["is_state_delta"] = true
-            }
-        };
-    }
-
-    private sealed class TextMessageBuilder()
+    private class TextMessageBuilder()
     {
         private ChatRole _currentRole;
         private string? _currentMessageId;
@@ -220,7 +154,7 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
     }
 
-    private sealed class ToolCallBuilder
+    private class ToolCallBuilder
     {
         private string? _conversationId;
         private string? _responseId;
@@ -413,55 +347,6 @@ internal static class ChatResponseUpdateAGUIExtensions
                             Content = SerializeResultContent(functionResultContent, jsonSerializerOptions) ?? "",
                             Role = AGUIRoles.Tool
                         };
-                    }
-                    else if (content is DataContent dataContent)
-                    {
-                        if (MediaTypeHeaderValue.TryParse(dataContent.MediaType, out var mediaType) && mediaType.Equals(s_json))
-                        {
-                            // State snapshot event
-                            yield return new StateSnapshotEvent
-                            {
-#if NET472 || NETSTANDARD2_0
-                                Snapshot = (JsonElement?)JsonSerializer.Deserialize(
-                                dataContent.Data.ToArray(),
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
-#else
-                                Snapshot = (JsonElement?)JsonSerializer.Deserialize(
-                                dataContent.Data.Span,
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
-#endif
-                            };
-                        }
-                        else if (mediaType is { } && mediaType.Equals(s_jsonPatchMediaType))
-                        {
-                            // State snapshot patch event must be a valid JSON patch,
-                            // but its not up to us to validate that here.
-                            yield return new StateDeltaEvent
-                            {
-#if NET472 || NETSTANDARD2_0
-                                Delta = (JsonElement?)JsonSerializer.Deserialize(
-                                dataContent.Data.ToArray(),
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
-#else
-                                Delta = (JsonElement?)JsonSerializer.Deserialize(
-                                dataContent.Data.Span,
-                                jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
-#endif
-                            };
-                        }
-                        else
-                        {
-                            // Text content event
-                            yield return new TextMessageContentEvent
-                            {
-                                MessageId = chatResponse.MessageId!,
-#if NET472 || NETSTANDARD2_0
-                                Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray())
-#else
-                                Delta = Encoding.UTF8.GetString(dataContent.Data.Span)
-#endif
-                            };
-                        }
                     }
                 }
             }

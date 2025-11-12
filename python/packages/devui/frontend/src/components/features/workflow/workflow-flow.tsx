@@ -8,7 +8,6 @@ import {
   Shuffle,
   Zap,
   ArrowDown,
-  ArrowLeftRight,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -40,7 +39,6 @@ import {
   processWorkflowEvents,
   updateNodesWithEvents,
   updateEdgesWithSequenceAnalysis,
-  consolidateBidirectionalEdges,
   type NodeUpdate,
 } from "@/utils/workflow-utils";
 import type { ExtendedResponseStreamEvent } from "@/types";
@@ -61,7 +59,7 @@ function ViewOptionsPanel({
 }: {
   workflowDump?: Workflow;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
-  viewOptions: { showMinimap: boolean; showGrid: boolean; animateRun: boolean; consolidateBidirectionalEdges: boolean };
+  viewOptions: { showMinimap: boolean; showGrid: boolean; animateRun: boolean };
   onToggleViewOption?: (key: keyof typeof viewOptions) => void;
   layoutDirection: "LR" | "TB";
   onLayoutDirectionChange?: (direction: "LR" | "TB") => void;
@@ -136,16 +134,6 @@ function ViewOptionsPanel({
             </div>
             <Checkbox checked={viewOptions.animateRun} onChange={() => {}} />
           </DropdownMenuItem>
-          <DropdownMenuItem
-            className="flex items-center justify-between"
-            onClick={() => onToggleViewOption?.("consolidateBidirectionalEdges")}
-          >
-            <div className="flex items-center">
-              <ArrowLeftRight className="mr-2 h-4 w-4" />
-              Merge Bidirectional Edges
-            </div>
-            <Checkbox checked={viewOptions.consolidateBidirectionalEdges} onChange={() => {}} />
-          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="flex items-center justify-between"
@@ -204,14 +192,12 @@ interface WorkflowFlowProps {
     showMinimap: boolean;
     showGrid: boolean;
     animateRun: boolean;
-    consolidateBidirectionalEdges: boolean;
   };
   onToggleViewOption?: (
     key: keyof NonNullable<WorkflowFlowProps["viewOptions"]>
   ) => void;
   layoutDirection?: "LR" | "TB";
   onLayoutDirectionChange?: (direction: "LR" | "TB") => void;
-  timelineVisible?: boolean;
 }
 
 // Animation handler component that runs inside ReactFlow context
@@ -262,35 +248,16 @@ function WorkflowAnimationHandler({
   return null; // This component doesn't render anything
 }
 
-// Timeline resize handler component that runs inside ReactFlow context
-const TimelineResizeHandler = memo(({ timelineVisible }: { timelineVisible: boolean }) => {
-  const { fitView } = useReactFlow();
-
-  // Trigger fitView when timeline visibility changes to adjust ReactFlow viewport
-  useEffect(() => {
-    // Delay fitView to let CSS transition complete (timeline animation is 300ms)
-    const timeoutId = setTimeout(() => {
-      fitView({ padding: 0.2, duration: 300 });
-    }, 350); // Slightly longer than timeline animation duration
-
-    return () => clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timelineVisible]); // Only trigger when timelineVisible changes, not fitView reference
-
-  return null; // This component doesn't render anything
-});
-
 export const WorkflowFlow = memo(function WorkflowFlow({
   workflowDump,
   events,
   isStreaming,
   onNodeSelect,
   className = "",
-  viewOptions = { showMinimap: false, showGrid: true, animateRun: true, consolidateBidirectionalEdges: true },
+  viewOptions = { showMinimap: false, showGrid: true, animateRun: true },
   onToggleViewOption,
   layoutDirection = "LR",
   onLayoutDirectionChange,
-  timelineVisible = false,
 }: WorkflowFlowProps) {
   // Create initial nodes and edges from workflow dump
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -305,22 +272,17 @@ export const WorkflowFlow = memo(function WorkflowFlow({
     );
     const edges = convertWorkflowDumpToEdges(workflowDump);
 
-    // Apply bidirectional edge consolidation if enabled
-    const finalEdges = viewOptions.consolidateBidirectionalEdges
-      ? consolidateBidirectionalEdges(edges)
-      : edges;
-
     // Apply auto-layout if we have nodes and edges
     const layoutedNodes =
       nodes.length > 0
-        ? applyDagreLayout(nodes, finalEdges, layoutDirection)
+        ? applyDagreLayout(nodes, edges, layoutDirection)
         : nodes;
 
     return {
       initialNodes: layoutedNodes,
-      initialEdges: finalEdges,
+      initialEdges: edges,
     };
-  }, [workflowDump, onNodeSelect, layoutDirection, viewOptions.consolidateBidirectionalEdges]);
+  }, [workflowDump, onNodeSelect, layoutDirection]);
 
   const [nodes, setNodes, onNodesChange] =
     useNodesState<Node<ExecutorNodeData>>(initialNodes);
@@ -361,38 +323,31 @@ export const WorkflowFlow = memo(function WorkflowFlow({
           currentEdges,
           events
         );
-        // Apply consolidation if enabled (preserves updated styling from sequence analysis)
-        return viewOptions.consolidateBidirectionalEdges
-          ? consolidateBidirectionalEdges(updatedEdges)
-          : updatedEdges;
+        return updatedEdges;
       });
     } else {
       // Reset all edges to default state when events are cleared
-      setEdges((currentEdges) => {
-        const resetEdges = currentEdges.map((edge) => ({
+      setEdges((currentEdges) =>
+        currentEdges.map((edge) => ({
           ...edge,
           animated: false,
           style: {
             stroke: "#6b7280", // Gray
             strokeWidth: 2,
           },
-        }));
-        // Apply consolidation if enabled
-        return viewOptions.consolidateBidirectionalEdges
-          ? consolidateBidirectionalEdges(resetEdges)
-          : resetEdges;
-      });
+        }))
+      );
     }
-  }, [events, setEdges, viewOptions.consolidateBidirectionalEdges]);
+  }, [events, setEdges]);
 
-  // Initialize nodes and edges when workflow structure OR consolidation setting changes
+  // Initialize nodes only when workflow structure changes (not on state updates)
   useEffect(() => {
     if (initialNodes.length > 0) {
       setNodes(initialNodes);
       setEdges(initialEdges);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowDump, viewOptions.consolidateBidirectionalEdges]); // Re-initialize when workflow or consolidation toggle changes
+  }, [workflowDump]); // Only re-initialize when workflowDump changes
 
   const onNodeClick = useCallback(
     (event: React.MouseEvent, node: Node<ExecutorNodeData>) => {
@@ -512,7 +467,6 @@ export const WorkflowFlow = memo(function WorkflowFlow({
           isStreaming={isStreaming}
           animateRun={viewOptions.animateRun}
         />
-        <TimelineResizeHandler timelineVisible={timelineVisible} />
         <ViewOptionsPanel
           workflowDump={workflowDump}
           onNodeSelect={onNodeSelect}

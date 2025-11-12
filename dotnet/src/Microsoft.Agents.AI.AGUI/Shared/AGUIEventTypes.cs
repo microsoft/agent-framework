@@ -27,8 +27,4 @@ internal static class AGUIEventTypes
     public const string ToolCallEnd = "TOOL_CALL_END";
 
     public const string ToolCallResult = "TOOL_CALL_RESULT";
-
-    public const string StateSnapshot = "STATE_SNAPSHOT";
-
-    public const string StateDelta = "STATE_DELTA";
 }

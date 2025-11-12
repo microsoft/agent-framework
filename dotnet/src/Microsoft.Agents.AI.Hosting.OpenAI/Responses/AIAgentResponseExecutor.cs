@@ -24,10 +24,6 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         this._agent = agent;
     }
 
-    public ValueTask<ResponseError?> ValidateRequestAsync(
-        CreateResponse request,
-        CancellationToken cancellationToken = default) => ValueTask.FromResult<ResponseError?>(null);
-
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,

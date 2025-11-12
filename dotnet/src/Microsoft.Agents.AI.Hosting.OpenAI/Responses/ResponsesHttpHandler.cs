@@ -34,21 +34,6 @@ internal sealed class ResponsesHttpHandler
         [FromQuery] bool? stream,
         CancellationToken cancellationToken)
     {
-        // Validate the request first
-        ResponseError? validationError = await this._responsesService.ValidateRequestAsync(request, cancellationToken).ConfigureAwait(false);
-        if (validationError is not null)
-        {
-            return Results.BadRequest(new ErrorResponse
-            {
-                Error = new ErrorDetails
-                {
-                    Message = validationError.Message,
-                    Type = "invalid_request_error",
-                    Code = validationError.Code
-                }
-            });
-        }
-
         try
         {
             // Handle streaming vs non-streaming
@@ -70,24 +55,45 @@ internal sealed class ResponsesHttpHandler
                 request,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            return response.Status switch
-            {
-                ResponseStatus.Failed when response.Error is { } error => Results.Problem(
-                    detail: error.Message,
-                    statusCode: StatusCodes.Status500InternalServerError,
-                    title: error.Code ?? "Internal Server Error"),
-                ResponseStatus.Failed => Results.Problem(),
-                ResponseStatus.Queued => Results.Accepted(value: response),
-                _ => Results.Ok(response)
-            };
+            return Results.Ok(response);
         }
-        catch (Exception ex)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Mutually exclusive"))
         {
-            // Return InternalServerError for unexpected exceptions
-            return Results.Problem(
-                detail: ex.Message,
-                statusCode: StatusCodes.Status500InternalServerError,
-                title: "Internal Server Error");
+            // Return OpenAI-style error for mutual exclusivity violations
+            return Results.BadRequest(new ErrorResponse
+            {
+                Error = new ErrorDetails
+                {
+                    Message = ex.Message,
+                    Type = "invalid_request_error",
+                    Code = "mutually_exclusive_parameters"
+                }
+            });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found") || ex.Message.Contains("does not exist"))
+        {
+            // Return OpenAI-style error for not found errors
+            return Results.NotFound(new ErrorResponse
+            {
+                Error = new ErrorDetails
+                {
+                    Message = ex.Message,
+                    Type = "invalid_request_error"
+                }
+            });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No 'agent.name' or 'model' specified"))
+        {
+            // Return OpenAI-style error for missing required parameters
+            return Results.BadRequest(new ErrorResponse
+            {
+                Error = new ErrorDetails
+                {
+                    Message = ex.Message,
+                    Type = "invalid_request_error",
+                    Code = "missing_required_parameter"
+                }
+            });
         }
     }
 

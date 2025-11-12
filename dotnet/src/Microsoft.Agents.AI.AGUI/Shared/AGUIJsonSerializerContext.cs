@@ -44,8 +44,6 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(ToolCallArgsEvent))]
 [JsonSerializable(typeof(ToolCallEndEvent))]
 [JsonSerializable(typeof(ToolCallResultEvent))]
-[JsonSerializable(typeof(StateSnapshotEvent))]
-[JsonSerializable(typeof(StateDeltaEvent))]
 [JsonSerializable(typeof(IDictionary<string, object?>))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(IDictionary<string, System.Text.Json.JsonElement?>))]
@@ -59,6 +57,6 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(float))]
 [JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(decimal))]
-internal sealed partial class AGUIJsonSerializerContext : JsonSerializerContext
+internal partial class AGUIJsonSerializerContext : JsonSerializerContext
 {
 }

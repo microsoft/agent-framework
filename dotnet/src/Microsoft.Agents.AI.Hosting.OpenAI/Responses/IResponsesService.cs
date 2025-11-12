@@ -18,17 +18,6 @@ internal interface IResponsesService
     /// Default limit for list operations.
     /// </summary>
     const int DefaultListLimit = 20;
-
-    /// <summary>
-    /// Validates a create response request before execution.
-    /// </summary>
-    /// <param name="request">The create response request to validate.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A ResponseError if validation fails, null if validation succeeds.</returns>
-    ValueTask<ResponseError?> ValidateRequestAsync(
-        CreateResponse request,
-        CancellationToken cancellationToken = default);
-
     /// <summary>
     /// Creates a model response for the given input.
     /// </summary>
