@@ -7,6 +7,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
@@ -31,6 +32,11 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
     private AgentClient? _agentClient;
     private ConversationClient? _conversationClient;
+
+    /// <summary>
+    /// Optional options used when creating the <see cref="AgentClient"/>.
+    /// </summary>
+    public AgentClientOptions? ClientOptions { get; init; }
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
@@ -78,10 +84,11 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         string? agentVersion,
         string? conversationId,
         IEnumerable<ChatMessage>? messages,
+        IDictionary<string, object?>? inputArguments,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentVersion agentDefinition = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
-        AIAgent agent = await this.GetAgentAsync(agentDefinition, cancellationToken).ConfigureAwait(false);
+        AgentVersion agentVersionResult = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
+        AIAgent agent = await this.GetAgentAsync(agentVersionResult, cancellationToken).ConfigureAwait(false);
 
         ChatOptions chatOptions =
             new()
@@ -89,6 +96,14 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                 ConversationId = conversationId,
                 AllowMultipleToolCalls = this.AllowMultipleToolCalls,
             };
+
+        if (inputArguments is not null)
+        {
+            JsonNode jsonNode = ConvertDictionaryToJson(inputArguments);
+            ResponseCreationOptions responseCreationOptions = new();
+            responseCreationOptions.SetStructuredInputs(BinaryData.FromString(jsonNode.ToJsonString()));
+            chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;
+        }
 
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
@@ -99,7 +114,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
         {
-            update.AuthorName = agentDefinition.Name;
+            update.AuthorName = agentVersionResult.Name;
             yield return update;
         }
     }
@@ -146,16 +161,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AgentClient client = this.GetAgentClient();
 
-        IList<AITool>? tools = null;
-        if (agentVersion.Definition is PromptAgentDefinition promptAgent)
-        {
-            tools =
-                promptAgent.Tools
-                    .Select(tool => tool.AsAITool())
-                    .ToArray();
-        }
-
-        agent = client.GetAIAgent(agentVersion, tools, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
+        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -215,7 +221,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         if (this._agentClient is null)
         {
-            AgentClientOptions clientOptions = new();
+            AgentClientOptions clientOptions = this.ClientOptions ?? new();
 
             if (httpClient is not null)
             {

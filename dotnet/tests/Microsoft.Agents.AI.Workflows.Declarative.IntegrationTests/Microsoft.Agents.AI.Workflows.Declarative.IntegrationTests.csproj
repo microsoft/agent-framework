@@ -5,6 +5,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
     <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
@@ -12,6 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

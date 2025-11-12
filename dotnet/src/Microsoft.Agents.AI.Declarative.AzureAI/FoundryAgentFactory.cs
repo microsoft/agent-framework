@@ -97,10 +97,12 @@ public sealed class FoundryAgentFactory : AgentFactory
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AgentClient.");
             }
+
             if (this._tokenCredential is null)
             {
                 throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AgentClient.");
             }
+
             return new AgentClient(new Uri(endpoint), this._tokenCredential);
         }
 

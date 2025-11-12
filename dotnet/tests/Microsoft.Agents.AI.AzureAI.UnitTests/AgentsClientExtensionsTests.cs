@@ -504,10 +504,10 @@ public sealed class AgentClientExtensionsTests
     #region GetAIAgent(AgentClient, AgentRecord) with tools Tests
 
     /// <summary>
-    /// Verify that GetAIAgent with tools parameter passes tools to the agent.
+    /// Verify that GetAIAgent with additional tools when the definition has no tools does not throw and results in an agent with no tools.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAgentRecordAndTools_PassesToolsToAgent()
+    public void GetAIAgent_WithAgentRecordAndAdditionalTools_WhenDefinitionHasNoTools_ShouldNotThrow()
     {
         // Arrange
         AgentClient client = this.CreateTestAgentClient();
@@ -527,6 +527,8 @@ public sealed class AgentClientExtensionsTests
         Assert.NotNull(chatClient);
         var agentVersion = chatClient.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
+        var definition = Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
+        Assert.Empty(definition.Tools);
     }
 
     /// <summary>
@@ -975,6 +977,88 @@ public sealed class AgentClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgentAsync when AI Tools are provided, uses them for the definition via http request.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithNameAndAITools_SendsToolDefinitionViaHttpAsync()
+    {
+        // Arrange
+        using var httpHandler = new HttpHandlerAssert(async (request) =>
+        {
+            if (request.Content is not null)
+            {
+                var requestBody = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+                Assert.Contains("required_tool", requestBody);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentVersionTestJsonObject, Encoding.UTF8, "application/json") };
+        });
+
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(httpHandler);
+#pragma warning restore CA5399
+
+        var client = new AgentClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        // Act
+        var agent = await client.CreateAIAgentAsync(
+            name: "test-agent",
+            model: "test-model",
+            instructions: "Test",
+            tools: [AIFunctionFactory.Create(() => true, "required_tool")]);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent when AI Tools are provided, uses them for the definition via http request.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithNameAndAITools_SendsToolDefinitionViaHttp()
+    {
+        // Arrange
+        using var httpHandler = new HttpHandlerAssert((request) =>
+        {
+            if (request.Content is not null)
+            {
+#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
+                var requestBody = request.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
+
+                Assert.Contains("required_tool", requestBody);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AgentVersionTestJsonObject, Encoding.UTF8, "application/json") };
+        });
+
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(httpHandler);
+#pragma warning restore CA5399
+
+        var client = new AgentClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        // Act
+        var agent = client.CreateAIAgent(
+            name: "test-agent",
+            model: "test-model",
+            instructions: "Test",
+            tools: [AIFunctionFactory.Create(() => true, "required_tool")]);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.IsType<ChatClientAgent>(agent);
+        var agentVersion = agent.GetService<AgentVersion>();
+        Assert.NotNull(agentVersion);
+        Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
+    }
+
+    /// <summary>
     /// Verify that CreateAIAgent without tools creates an agent successfully.
     /// </summary>
     [Fact]
@@ -997,10 +1081,10 @@ public sealed class AgentClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with inline tools in agent definition throws ArgumentException.
+    /// Verify that when providing AITools with GetAIAgent, any additional tool that doesn't match the tools in agent definition are ignored.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithInlineToolsInDefinition_ThrowsArgumentException()
+    public void GetAIAgent_AdditionalAITools_WhenNotInTheDefinitionAreIgnored()
     {
         // Arrange
         AgentClient client = this.CreateTestAgentClient();
@@ -1012,11 +1096,20 @@ public sealed class AgentClientExtensionsTests
             promptDef.Tools.Add(ResponseTool.CreateFunctionTool("inline_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
         }
 
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            client.GetAIAgent(agentVersion));
+        var invocableInlineAITool = AIFunctionFactory.Create(() => "test", "inline_tool", "An invocable AIFunction for the inline function");
+        var shouldBeIgnoredTool = AIFunctionFactory.Create(() => "test", "additional_tool", "An additional test function that should be ignored");
 
-        Assert.Contains("tools parameter", exception.Message);
+        // Act & Assert
+        var agent = client.GetAIAgent(agentVersion, tools: [invocableInlineAITool, shouldBeIgnoredTool]);
+        Assert.NotNull(agent);
+        var version = agent.GetService<AgentVersion>();
+        Assert.NotNull(version);
+        var definition = Assert.IsType<PromptAgentDefinition>(version.Definition);
+        Assert.NotEmpty(definition.Tools);
+        Assert.NotNull(GetAgentChatOptions(agent));
+        Assert.NotNull(GetAgentChatOptions(agent)!.Tools);
+        Assert.Single(GetAgentChatOptions(agent)!.Tools!);
+        Assert.Equal("inline_tool", (definition.Tools.First() as FunctionTool)?.FunctionName);
     }
 
     #endregion
@@ -2174,19 +2267,54 @@ public sealed class AgentClientExtensionsTests
 
     #endregion
 
-    private sealed class HttpHandlerAssert(Func<HttpRequestMessage, HttpResponseMessage> assertion) : HttpClientHandler
+    private sealed class HttpHandlerAssert : HttpClientHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        private readonly Func<HttpRequestMessage, HttpResponseMessage>? _assertion;
+        private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>>? _assertionAsync;
+
+        public HttpHandlerAssert(Func<HttpRequestMessage, HttpResponseMessage> assertion)
         {
-            var response = assertion(request);
-            return Task.FromResult(response);
+            this._assertion = assertion;
+        }
+        public HttpHandlerAssert(Func<HttpRequestMessage, Task<HttpResponseMessage>> assertionAsync)
+        {
+            this._assertionAsync = assertionAsync;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (this._assertionAsync is not null)
+            {
+                return await this._assertionAsync.Invoke(request);
+            }
+
+            return this._assertion!.Invoke(request);
         }
 
 #if NET
         protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            return assertion(request);
+            return this._assertion!(request);
         }
 #endif
+    }
+
+    /// <summary>
+    /// Helper method to access internal ChatOptions property via reflection.
+    /// </summary>
+    private static ChatOptions? GetAgentChatOptions(ChatClientAgent agent)
+    {
+        if (agent is null)
+        {
+            return null;
+        }
+
+        var chatOptionsProperty = typeof(ChatClientAgent).GetProperty(
+            "ChatOptions",
+            System.Reflection.BindingFlags.Public |
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Instance);
+
+        return chatOptionsProperty?.GetValue(agent) as ChatOptions;
     }
 }

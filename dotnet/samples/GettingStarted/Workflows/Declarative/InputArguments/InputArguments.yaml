@@ -1,0 +1,97 @@
+#
+# This workflow demonstrates providing input arguments to an agent.
+#
+# Example input: 
+# I'd like to go on vacation.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    # Capture the original user message for input to the location-aware agent
+    - kind: SetVariable
+      id: set_count_increment
+      variable: Local.InputMessage
+      value: =System.LastMessage
+
+    # Invoke the triage agent to determine location requirements
+    - kind: InvokeAzureAgent
+      id: solicit_input
+      conversationId: =System.ConversationId
+      agent:
+        name: LocationTriageAgent
+      input:
+        messages: =Local.ActionMessage
+      output:
+        messages: Local.TriageResponse
+
+    # Request input from the user based on the triage response
+    - kind: RequestExternalInput
+      id: request_requirements
+      variable: Local.NextInput
+
+    # Capture the most recent interaction for evaluation
+    - kind: SetTextVariable
+      id: set_status_message
+      variable: Local.LocationStatusInput
+      value: |-
+          AGENT - {MessageText(Local.TriageResponse)}
+
+          USER - {MessageText(Local.NextInput)}
+
+    # Evaluate the status of the location triage
+    - kind: InvokeAzureAgent
+      id: evaluate_location
+      agent:
+        name: LocationCaptureAgent
+      input:
+        messages: =UserMessage(Local.LocationStatusInput)
+      output:
+        responseObject: Local.LocationResponse
+
+    # Determine if the location information is complete
+    - kind: ConditionGroup
+      id: check_completion
+      conditions:
+
+        - condition: |-
+            =Local.LocationResponse.is_location_defined = false Or
+             Local.LocationResponse.is_location_confirmed = false
+          id: check_done
+          actions:
+
+            # Capture the action message for input to the triage agent
+            - kind: SetVariable
+              id: set_next_message
+              variable: Local.ActionMessage
+              value: =AgentMessage(Local.LocationResponse.action)
+
+            - kind: GotoAction
+              id: goto_solicit_input
+              actionId: solicit_input
+
+      elseActions:
+
+    # Create a new conversation so the prior context does not interfere
+    - kind: CreateConversation
+      id: conversation_location
+      conversationId: Local.LocationConversationId
+
+    # Invoke the location-aware agent with the location argument
+    # and loop until the user types "EXIT"
+    - kind: InvokeAzureAgent
+      id: location_response
+      conversationId: =Local.LocationConversationId
+      agent:
+        name: LocationAwareAgent
+      input:
+        messages: =Local.InputMessage
+        arguments:
+          location: =Local.LocationResponse.place
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"
+      output:
+        autoSend: true

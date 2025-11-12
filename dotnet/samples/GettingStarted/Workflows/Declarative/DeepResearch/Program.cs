@@ -14,7 +14,7 @@ namespace Demo.Workflows.Declarative.DeepResearch;
 /// using the Magentic orchestration pattern developed by AutoGen.
 /// </summary>
 /// <remarks>
-/// See the README.md file in the parent folder (../Declarative/README.md) for detailed
+/// See the README.md file in the parent folder (../README.md) for detailed
 /// information the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program
