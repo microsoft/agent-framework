@@ -26,7 +26,7 @@
   -->
   <ItemGroup>
     <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers" />
-  <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
+    <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
     <PackageReference Remove="xunit.analyzers" />
     <PackageReference Remove="Moq.Analyzers" />
     <PackageReference Remove="Roslynator.Analyzers" />
