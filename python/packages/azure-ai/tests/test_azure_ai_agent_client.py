@@ -3,7 +3,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1336,8 +1336,8 @@ def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_agents_c
     mock_chunk = MagicMock(spec=MessageDeltaChunk)
     mock_chunk.delta = mock_delta
 
-    # Call the method
-    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+    # Call the method with empty azure_search_tool_calls
+    citations = chat_client._extract_url_citations(mock_chunk, [])  # type: ignore
 
     # Verify results
     assert len(citations) == 1
@@ -1821,12 +1821,13 @@ def test_azure_ai_chat_client_capture_azure_search_tool_calls(mock_agents_client
     mock_step_data = MagicMock()
     mock_step_data.step_details.tool_calls = [mock_tool_call]
 
-    # Call the method
-    chat_client._capture_azure_search_tool_calls(mock_step_data)  # type: ignore
+    # Call the method with a list to capture tool calls
+    azure_search_tool_calls: list[dict[str, Any]] = []
+    chat_client._capture_azure_search_tool_calls(mock_step_data, azure_search_tool_calls)  # type: ignore
 
     # Verify tool call was captured
-    assert len(chat_client._azure_search_tool_calls) == 1
-    captured_tool_call = chat_client._azure_search_tool_calls[0]
+    assert len(azure_search_tool_calls) == 1
+    captured_tool_call = azure_search_tool_calls[0]
     assert captured_tool_call["type"] == "azure_ai_search"
     assert captured_tool_call["id"] == "call_123"
     assert captured_tool_call["azure_ai_search"] == {"input": "test query", "output": "test output"}
@@ -1838,8 +1839,8 @@ def test_azure_ai_chat_client_get_real_url_from_citation_reference_no_tool_calls
     """Test _get_real_url_from_citation_reference with no tool calls."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    # No tool calls
-    result = chat_client._get_real_url_from_citation_reference("doc_1")  # type: ignore
+    # No tool calls - pass empty list
+    result = chat_client._get_real_url_from_citation_reference("doc_1", [])  # type: ignore
     assert result == "doc_1"
 
 
@@ -1850,11 +1851,11 @@ def test_azure_ai_chat_client_get_real_url_from_citation_reference_invalid_outpu
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Tool call with invalid output format
-    chat_client._azure_search_tool_calls = [  # type: ignore[attr-defined]
+    azure_search_tool_calls = [
         {"id": "call_123", "type": "azure_ai_search", "azure_ai_search": {"output": "invalid_json_format"}}
     ]
 
-    result = chat_client._get_real_url_from_citation_reference("doc_1")  # type: ignore
+    result = chat_client._get_real_url_from_citation_reference("doc_1", azure_search_tool_calls)  # type: ignore
     assert result == "doc_1"
 
 
@@ -1894,7 +1895,7 @@ def test_azure_ai_chat_client_extract_url_citations_with_azure_search_enhanced_u
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
     # Add Azure Search tool calls for URL enhancement
-    chat_client._azure_search_tool_calls = [  # type: ignore[attr-defined]
+    azure_search_tool_calls = [
         {
             "id": "call_123",
             "type": "azure_ai_search",
@@ -1928,7 +1929,7 @@ def test_azure_ai_chat_client_extract_url_citations_with_azure_search_enhanced_u
     mock_chunk = MagicMock(spec=MessageDeltaChunk)
     mock_chunk.delta = mock_delta
 
-    citations = chat_client._extract_url_citations(mock_chunk)  # type: ignore
+    citations = chat_client._extract_url_citations(mock_chunk, azure_search_tool_calls)  # type: ignore
 
     # Verify real URL was used
     assert len(citations) == 1

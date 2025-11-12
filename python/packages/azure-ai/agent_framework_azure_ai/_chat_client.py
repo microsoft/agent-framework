@@ -221,7 +221,6 @@ class AzureAIAgentClient(BaseChatClient):
         self._agent_created = False  # Track whether agent was created inside this class
         self._should_close_client = should_close_client  # Track whether we should close client connection
         self._agent_definition: Agent | None = None  # Cached definition for existing agent
-        self._azure_search_tool_calls: list[dict[str, Any]] = []  # Track Azure AI Search tool calls
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -430,7 +429,9 @@ class AzureAIAgentClient(BaseChatClient):
         # and remove until here.
         return thread_id
 
-    def _extract_url_citations(self, message_delta_chunk: MessageDeltaChunk) -> list[CitationAnnotation]:
+    def _extract_url_citations(
+        self, message_delta_chunk: MessageDeltaChunk, azure_search_tool_calls: list[dict[str, Any]]
+    ) -> list[CitationAnnotation]:
         """Extract URL citations from MessageDeltaChunk."""
         url_citations: list[CitationAnnotation] = []
 
@@ -450,7 +451,9 @@ class AzureAIAgentClient(BaseChatClient):
                             ]
 
                         # Extract real URL from Azure AI Search tool calls
-                        real_url = self._get_real_url_from_citation_reference(annotation.url_citation.url)
+                        real_url = self._get_real_url_from_citation_reference(
+                            annotation.url_citation.url, azure_search_tool_calls
+                        )
 
                         # Create CitationAnnotation with real URL
                         citation = CitationAnnotation(
@@ -464,11 +467,14 @@ class AzureAIAgentClient(BaseChatClient):
 
         return url_citations
 
-    def _get_real_url_from_citation_reference(self, citation_url: str) -> str:
+    def _get_real_url_from_citation_reference(
+        self, citation_url: str, azure_search_tool_calls: list[dict[str, Any]]
+    ) -> str:
         """Extract real URL from Azure AI Search tool calls based on citation reference.
 
         Args:
             citation_url: Citation reference URL (e.g., "doc_0", "#doc_1", or full URL with doc_N)
+            azure_search_tool_calls: List of captured Azure AI Search tool calls
 
         Returns:
             Real document URL if found, otherwise original citation_url
@@ -481,12 +487,12 @@ class AzureAIAgentClient(BaseChatClient):
         doc_index = int(match.group(1))
 
         # Get Azure AI Search tool calls
-        if not hasattr(self, "_azure_search_tool_calls") or not self._azure_search_tool_calls:
+        if not azure_search_tool_calls:
             return citation_url
 
         try:
             # Extract URLs from the most recent Azure AI Search tool call
-            tool_call = self._azure_search_tool_calls[-1]  # Most recent call
+            tool_call = azure_search_tool_calls[-1]  # Most recent call
             output_str = tool_call["azure_ai_search"]["output"]
 
             # Parse the tool call output to get URLs
@@ -507,8 +513,8 @@ class AzureAIAgentClient(BaseChatClient):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Process events from the stream iterator and yield ChatResponseUpdate objects."""
         response_id: str | None = None
-        # Clear Azure Search tool calls for this new stream
-        self._azure_search_tool_calls = []
+        # Track Azure Search tool calls for this stream only
+        azure_search_tool_calls: list[dict[str, Any]] = []
         response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
             async for event_type, event_data, _ in response_stream:  # type: ignore
@@ -518,7 +524,7 @@ class AzureAIAgentClient(BaseChatClient):
                         role = Role.USER if event_data.delta.role == MessageRole.USER else Role.ASSISTANT
 
                         # Extract URL citations from the delta chunk
-                        url_citations = self._extract_url_citations(event_data)
+                        url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)
 
                         # Create contents with citations if any exist
                         citation_content: list[Contents] = []
@@ -593,7 +599,7 @@ class AzureAIAgentClient(BaseChatClient):
                             case AgentStreamEvent.THREAD_RUN_COMPLETED | AgentStreamEvent.THREAD_RUN_STEP_COMPLETED:
                                 # Capture Azure AI Search tool calls when steps complete
                                 if event_type == AgentStreamEvent.THREAD_RUN_STEP_COMPLETED:
-                                    self._capture_azure_search_tool_calls(event_data)
+                                    self._capture_azure_search_tool_calls(event_data, azure_search_tool_calls)
 
                                 if event_data.usage:
                                     usage_content = UsageContent(
@@ -673,7 +679,9 @@ class AzureAIAgentClient(BaseChatClient):
             if isinstance(stream, AsyncAgentRunStream):
                 await stream.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
 
-    def _capture_azure_search_tool_calls(self, step_data: RunStep) -> None:
+    def _capture_azure_search_tool_calls(
+        self, step_data: RunStep, azure_search_tool_calls: list[dict[str, Any]]
+    ) -> None:
         """Capture Azure AI Search tool call data from completed steps."""
         try:
             if (
@@ -683,16 +691,13 @@ class AzureAIAgentClient(BaseChatClient):
             ):
                 for tool_call in step_data.step_details.tool_calls:
                     if hasattr(tool_call, "type") and tool_call.type == "azure_ai_search":
-                        # Create the list if it doesn't exist
-                        if not hasattr(self, "_azure_search_tool_calls"):
-                            self._azure_search_tool_calls = []
                         # Store the complete tool call as a dictionary
                         tool_call_dict = {
                             "id": getattr(tool_call, "id", None),
                             "type": tool_call.type,
                             "azure_ai_search": getattr(tool_call, "azure_ai_search", None),
                         }
-                        self._azure_search_tool_calls.append(tool_call_dict)
+                        azure_search_tool_calls.append(tool_call_dict)
                         logger.debug(f"Captured Azure AI Search tool call: {tool_call_dict['id']}")
         except Exception as ex:
             logger.debug(f"Failed to capture Azure AI Search tool call: {ex}")
