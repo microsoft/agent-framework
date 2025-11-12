@@ -8,8 +8,17 @@ from unittest.mock import Mock
 import pytest
 from agent_framework import AgentThread
 
-from agent_framework_azurefunctions import DurableAIAgent, get_agent
+from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
 from agent_framework_azurefunctions._models import AgentSessionId, DurableAgentThread
+
+
+def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
+    app = AgentFunctionApp(enable_health_check=False, enable_http_endpoints=False)
+    for name in agent_names:
+        agent = Mock()
+        agent.name = name
+        app.add_agent(agent)
+    return app
 
 
 class TestDurableAIAgent:
@@ -266,19 +275,27 @@ class TestDurableAIAgent:
         assert str(entity_id) == "@dafx-writeragent@test-guid-789"
 
 
-class TestGetAgentHelper:
-    """Test suite for the get_agent helper function."""
+class TestAgentFunctionAppGetAgent:
+    """Test suite for AgentFunctionApp.get_agent."""
 
-    def test_get_agent_function(self) -> None:
-        """Test get_agent function creates DurableAIAgent."""
+    def test_get_agent_method(self) -> None:
+        """Test get_agent method creates DurableAIAgent for registered agent."""
+        app = _app_with_registered_agents("MyAgent")
         mock_context = Mock()
         mock_context.instance_id = "test-instance-100"
 
-        agent = get_agent(mock_context, "MyAgent")
+        agent = app.get_agent(mock_context, "MyAgent")
 
         assert isinstance(agent, DurableAIAgent)
         assert agent.agent_name == "MyAgent"
         assert agent.context == mock_context
+
+    def test_get_agent_raises_for_unregistered_agent(self) -> None:
+        """Test get_agent raises ValueError when agent is not registered."""
+        app = _app_with_registered_agents("KnownAgent")
+
+        with pytest.raises(ValueError, match=r"Agent 'MissingAgent' is not registered with this app\."):
+            app.get_agent(Mock(), "MissingAgent")
 
 
 class TestOrchestrationIntegration:
@@ -307,8 +324,8 @@ class TestOrchestrationIntegration:
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
-        # Create agent
-        agent = get_agent(mock_context, "WriterAgent")
+        app = _app_with_registered_agents("WriterAgent")
+        agent = app.get_agent(mock_context, "WriterAgent")
 
         # Create thread
         thread = agent.get_new_thread()
@@ -347,9 +364,9 @@ class TestOrchestrationIntegration:
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
-        # Create multiple agents
-        writer = get_agent(mock_context, "WriterAgent")
-        editor = get_agent(mock_context, "EditorAgent")
+        app = _app_with_registered_agents("WriterAgent", "EditorAgent")
+        writer = app.get_agent(mock_context, "WriterAgent")
+        editor = app.get_agent(mock_context, "EditorAgent")
 
         writer_thread = writer.get_new_thread()
         editor_thread = editor.get_new_thread()

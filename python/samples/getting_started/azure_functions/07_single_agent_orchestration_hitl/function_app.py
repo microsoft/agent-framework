@@ -10,16 +10,15 @@ either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func sta
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
-from collections.abc import Mapping
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -92,7 +91,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
     except ValidationError as exc:
         raise ValueError(f"Invalid content generation input: {exc}") from exc
 
-    writer = get_agent(context, WRITER_AGENT_NAME)
+    writer = app.get_agent(context, WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
     context.set_custom_status(f"Starting content generation for topic: {payload.topic}")

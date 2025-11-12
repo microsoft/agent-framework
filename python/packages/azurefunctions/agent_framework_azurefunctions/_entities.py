@@ -10,7 +10,7 @@ allows for long-running agent conversations.
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from typing import Any, cast
 
 import azure.durable_functions as df
@@ -340,7 +340,7 @@ class AgentEntity:
 def create_agent_entity(
     agent: AgentProtocol,
     callback: AgentResponseCallbackProtocol | None = None,
-):
+) -> Callable[[df.DurableEntityContext], None]:
     """Factory function to create an agent entity class.
 
     Args:

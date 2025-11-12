@@ -374,7 +374,7 @@ class AgentResponse:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        result = {
+        result: dict[str, Any] = {
             "message": self.message,
             "thread_id": self.thread_id,
             "status": self.status,

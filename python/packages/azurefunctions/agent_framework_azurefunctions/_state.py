@@ -25,7 +25,7 @@ class AgentState:
     - Message counting
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize empty agent state."""
         self.conversation_history: list[ChatMessage] = []
         self.last_response: str | None = None

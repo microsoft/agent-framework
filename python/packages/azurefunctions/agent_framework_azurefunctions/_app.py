@@ -9,7 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
@@ -19,6 +19,7 @@ from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._models import AgentSessionId, RunRequest
+from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
 from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
@@ -30,18 +31,46 @@ WAIT_FOR_RESPONSE_FIELD: str = "wait_for_response"
 WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
 
 
-class AgentFunctionApp(df.DFApp):
+EntityHandler = Callable[[df.DurableEntityContext], None]
+HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+if TYPE_CHECKING:
+
+    class DFAppBase:
+        def __init__(self, http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION) -> None: ...
+
+        def function_name(self, name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def route(self, route: str, methods: list[str]) -> Callable[[HandlerT], HandlerT]: ...
+
+        def durable_client_input(self, client_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def entity_trigger(self, context_name: str, entity_name: str) -> Callable[[EntityHandler], EntityHandler]: ...
+
+        def orchestration_trigger(self, context_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def activity_trigger(self, input_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+else:
+    DFAppBase = df.DFApp  # type: ignore[assignment]
+
+
+class AgentFunctionApp(DFAppBase):
     """Main application class for creating durable agent function apps using Durable Entities.
 
     This class uses Durable Entities pattern for agent execution, providing:
+
     - Stateful agent conversations
     - Conversation history management
     - Signal-based operation invocation
     - Better state management than orchestrations
 
-    Usage:
-        ```python
-    from agent_framework.azurefunctions import AgentFunctionApp
+    Example:
+    -------
+
+    .. code-block:: python
+
+        from agent_framework.azure import AgentFunctionApp
         from agent_framework.azure import AzureOpenAIAssistantsClient
 
         # Create agents with unique names
@@ -64,9 +93,18 @@ class AgentFunctionApp(df.DFApp):
         app = AgentFunctionApp()
         app.add_agent(weather_agent)
         app.add_agent(math_agent)
-        ```
+
+
+        @app.orchestration_trigger(context_name="context")
+        def my_orchestration(context):
+            writer = app.get_agent(context, "WeatherAgent")
+            thread = writer.get_new_thread()
+            forecast_task = writer.run("What's the forecast?", thread=thread)
+            forecast = yield forecast_task
+            return forecast
 
     This creates:
+
     - HTTP trigger endpoint for each agent's requests (if enabled)
     - Durable entity for each agent's state management and execution
     - Full access to all Azure Functions capabilities
@@ -197,6 +235,30 @@ class AgentFunctionApp(df.DFApp):
 
         logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
 
+    def get_agent(
+        self,
+        context: AgentOrchestrationContextType,
+        agent_name: str,
+    ) -> DurableAIAgent:
+        """Return a DurableAIAgent proxy for a registered agent.
+
+        Args:
+            context: Durable Functions orchestration context invoking the agent.
+            agent_name: Name of the agent registered on this app.
+
+        Raises:
+            ValueError: If the requested agent has not been registered.
+
+        Returns:
+            DurableAIAgent wrapper bound to the orchestration context.
+        """
+        normalized_name = str(agent_name)
+
+        if normalized_name not in self.agents:
+            raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
+
+        return DurableAIAgent(context, normalized_name)
+
     def _setup_agent_functions(
         self,
         agent: AgentProtocol,
@@ -232,9 +294,13 @@ class AgentFunctionApp(df.DFApp):
         """
         run_function_name = self._build_function_name(agent_name, "http")
 
-        @self.function_name(run_function_name)
-        @self.route(route=f"agents/{agent_name}/run", methods=["POST"])
-        @self.durable_client_input(client_name="client")
+        function_name_decorator = self.function_name(run_function_name)
+        route_decorator = self.route(route=f"agents/{agent_name}/run", methods=["POST"])
+        durable_client_decorator = self.durable_client_input(client_name="client")
+
+        @function_name_decorator
+        @route_decorator
+        @durable_client_decorator
         async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
             """HTTP trigger that calls a durable entity to execute the agent and returns the result.
 
@@ -379,8 +445,9 @@ class AgentFunctionApp(df.DFApp):
 
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
+        health_route = self.route(route="health", methods=["GET"])
 
-        @self.route(route="health", methods=["GET"])
+        @health_route
         def health_check(req: func.HttpRequest) -> func.HttpResponse:
             """Built-in health check endpoint."""
             agent_info = [
@@ -643,8 +710,7 @@ class AgentFunctionApp(df.DFApp):
         headers: dict[str, str] = {}
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
-            headers_mapping = cast(Mapping[Any, Any], raw_headers)
-            for key, value in headers_mapping.items():
+            for key, value in raw_headers.items():
                 if value is not None:
                     headers[str(key).lower()] = str(value)
         return headers
@@ -708,8 +774,7 @@ class AgentFunctionApp(df.DFApp):
         header_value = None
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
-            headers_mapping = cast(Mapping[Any, Any], raw_headers)
-            for key, value in headers_mapping.items():
+            for key, value in raw_headers.items():
                 if str(key).lower() == WAIT_FOR_RESPONSE_HEADER:
                     header_value = value
                     break
