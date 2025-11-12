@@ -84,7 +84,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     [Fact]
     public async Task OrchestrationIdSetDuringOrchestrationAsync()
     {
-        // Setup
+        // Arrange
         AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
             name: "TestAgent",
             instructions: "You are a helpful assistant that always responds with a friendly greeting."
@@ -95,9 +95,9 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
             this._outputHelper,
             registry => registry.AddOrchestrator<TestOrchestrator>());
 
-        // A proxy agent is needed to call the hosted test agent
         DurableTaskClient client = testHelper.GetClient();
 
+        // Act
         string orchestrationId = await client.ScheduleNewOrchestrationInstanceAsync(nameof(TestOrchestrator), "What is the capital of Maine?");
 
         OrchestrationMetadata? status = await client.WaitForInstanceCompletionAsync(
@@ -105,6 +105,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
             true,
             this.TestTimeoutToken);
 
+        // Assert
         EntityInstanceId expectedEntityId = AgentSessionId.Parse(status.ReadOutputAs<string>()!);
 
         EntityMetadata? entity = await client.Entities.GetEntityAsync(expectedEntityId, true, this.TestTimeoutToken);

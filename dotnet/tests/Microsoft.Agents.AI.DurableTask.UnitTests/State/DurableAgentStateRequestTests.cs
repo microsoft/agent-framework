@@ -5,7 +5,7 @@ using Microsoft.Agents.AI.DurableTask.State;
 
 namespace Microsoft.Agents.AI.DurableTask.Tests.Unit.State;
 
-public class DurableAgentStateRequestTests
+public sealed class DurableAgentStateRequestTests
 {
     [Fact]
     public void RequestSerializationDeserialization()
