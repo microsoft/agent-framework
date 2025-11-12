@@ -305,7 +305,7 @@ internal sealed class Program
                                       "description": "The summary of the steps lead to resolution."
                                     }
                                   },
-                                  "required": ["TicketId", "TicketSummary"],
+                                  "required": ["IsResolved", "NeedsEscalation", "ResolutionSummary"],
                                   "additionalProperties": false
                                 }
                                 """),
