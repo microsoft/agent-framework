@@ -248,16 +248,16 @@ public sealed class AgentBotElementYamlTests
     /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.
     /// </summary>
     [Description("Information about a person including their name, age, and occupation")]
-    public sealed class PersonInfo
+    internal sealed class PersonInfo
     {
         [JsonPropertyName("name")]
-        public string? Name { get; set; }
+        internal string? Name { get; set; }
 
         [JsonPropertyName("age")]
-        public int? Age { get; set; }
+        internal int? Age { get; set; }
 
         [JsonPropertyName("occupation")]
-        public string? Occupation { get; set; }
+        internal string? Occupation { get; set; }
     }
 
     private static string? Eval(StringExpression? expression, IConfiguration? configuration = null)
