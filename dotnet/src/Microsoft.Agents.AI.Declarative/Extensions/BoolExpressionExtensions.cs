@@ -42,7 +42,7 @@ internal static class BoolExpressionExtensions
             var formulaValue = engine.Eval(expression.VariableReference!.VariableName);
             if (formulaValue is BooleanValue booleanValue)
             {
-                return booleanValue?.Value;
+                return booleanValue.Value;
             }
             var stringValue = formulaValue as StringValue;
             if (stringValue != null && bool.TryParse(stringValue.Value, out bool result))
