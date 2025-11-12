@@ -12,7 +12,7 @@ metadata:
     - Agent Framework Team
   tags:
     - example
-    - Agent Framework
+    - Microsoft Agent Framework Team
     - workflows
 template:
   kind: hosted
