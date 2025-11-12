@@ -16,6 +16,7 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient().create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

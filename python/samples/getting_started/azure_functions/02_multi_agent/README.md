@@ -9,41 +9,13 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Conversation management (via session IDs) for isolated interactions per agent.
 - Two different methods for registering agents: list-based initialization and incremental addition.
 
-## Environment Setup
+## Prerequisites
 
-### 1. Create and activate a virtual environment
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**Linux/macOS:**
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Install dependencies
-
-- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) – install so you can run `func start` locally.
-- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) – install and start Azurite before launching the app; the sample expects `AzureWebJobsStorage=UseDevelopmentStorage=true`.
-- Python dependencies – from this folder, run `pip install -r requirements.txt` (or use the equivalent command in your active virtual environment).
-
-### 3. Configure local settings
-
-- Copy `local.settings.json.template` to `local.settings.json`, then set the Azure OpenAI values (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`) so the SDK can authenticate, and keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
+Complete the common environment preparation steps described in `../README.md`, including installing Azure Functions Core Tools, starting Azurite, configuring Azure OpenAI settings, and installing this sample's requirements.
 
 ## Running the Sample
 
-With the environment setup and function app running, you can test the sample by sending HTTP requests to the different agent endpoints.
-
-You can use the `demo.http` file to send messages to the agents, or a command line tool like `curl` as shown below:
-
-### Test the Weather Agent
-
-Bash (Linux/macOS/WSL):
+Weather agent request:
 
 ```bash
 curl -X POST http://localhost:7071/api/agents/WeatherAgent/run \
@@ -51,16 +23,8 @@ curl -X POST http://localhost:7071/api/agents/WeatherAgent/run \
     -d '{"message": "What is the weather in Seattle?"}'
 ```
 
-PowerShell:
+Expected HTTP 202 payload:
 
-```powershell
-Invoke-RestMethod -Method Post `
-    -Uri http://localhost:7071/api/agents/WeatherAgent/run `
-    -ContentType application/json `
-    -Body '{"message": "What is the weather in Seattle?"}'
-```
-
-Expected response:
 ```json
 {
   "status": "accepted",
@@ -71,9 +35,7 @@ Expected response:
 }
 ```
 
-### Test the Math Agent
-
-Bash (Linux/macOS/WSL):
+Math agent request:
 
 ```bash
 curl -X POST http://localhost:7071/api/agents/MathAgent/run \
@@ -81,16 +43,8 @@ curl -X POST http://localhost:7071/api/agents/MathAgent/run \
     -d '{"message": "Calculate a 20% tip on a $50 bill"}'
 ```
 
-PowerShell:
+Expected HTTP 202 payload:
 
-```powershell
-Invoke-RestMethod -Method Post `
-    -Uri http://localhost:7071/api/agents/MathAgent/run `
-    -ContentType application/json `
-    -Body '{"message": "Calculate a 20% tip on a $50 bill"}'
-```
-
-Expected response:
 ```json
 {
   "status": "accepted",
@@ -101,21 +55,14 @@ Expected response:
 }
 ```
 
-### Check Health
-
-Bash (Linux/macOS/WSL):
+Health check (optional):
 
 ```bash
 curl http://localhost:7071/api/health
 ```
 
-PowerShell:
-
-```powershell
-Invoke-RestMethod -Uri http://localhost:7071/api/health
-```
-
 Expected response:
+
 ```json
 {
   "status": "healthy",

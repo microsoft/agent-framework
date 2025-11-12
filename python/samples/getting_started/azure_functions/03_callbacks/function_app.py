@@ -17,6 +17,7 @@ from typing import Any, DefaultDict
 import azure.functions as func
 from agent_framework import AgentRunResponseUpdate
 from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 
 from agent_framework.azurefunctions import AgentFunctionApp, AgentCallbackContext, AgentResponseCallbackProtocol
 
@@ -105,7 +106,7 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
 
 
 # 2. Create the agent that will emit streaming updates and final responses.
-callback_agent = AzureOpenAIChatClient().create_agent(
+callback_agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
     name="CallbackAgent",
     instructions=(
         "You are a friendly assistant that narrates actions while responding. "
