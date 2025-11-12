@@ -75,6 +75,22 @@ public abstract class AIAgent
     /// </remarks>
     public virtual string? Description { get; }
 
+    /// <summary>
+    /// Gets additional properties associated with this agent.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or agent-specific
+    /// information that doesn't fit into the standard agent schema. This is useful for
+    /// annotating agents with metadata that can drive application behavior, such as
+    /// authorization requirements, payment information, beta status, icons, visibility settings,
+    /// or whitelist requirements.
+    /// </remarks>
+    public virtual AdditionalPropertiesDictionary? AdditionalProperties { get; }
+
     /// <summary>Asks the <see cref="AIAgent"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
     /// <param name="serviceKey">An optional key that can be used to help identify the target service.</param>
