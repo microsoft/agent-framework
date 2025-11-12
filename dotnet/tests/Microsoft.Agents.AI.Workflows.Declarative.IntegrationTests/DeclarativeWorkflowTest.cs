@@ -17,11 +17,12 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 {
     [Theory]
     [InlineData("CheckSystem.yaml", "CheckSystem.json")]
-    [InlineData("SendActivity.yaml", "SendActivity.json")]
-    [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
-    [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json")]
     [InlineData("ConversationMessages.yaml", "ConversationMessages.json", true)]
+    [InlineData("InputArguments.yaml", "InputArguments.json")]
+    [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
+    [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]
+    [InlineData("SendActivity.yaml", "SendActivity.json")]
     public Task ValidateCaseAsync(string workflowFileName, string testcaseFileName, bool externalConveration = false) =>
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: false), testcaseFileName, externalConveration);
 

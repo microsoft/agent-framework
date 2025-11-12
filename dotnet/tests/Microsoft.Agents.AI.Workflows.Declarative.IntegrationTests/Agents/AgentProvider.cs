@@ -15,6 +15,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
         public const string FunctionTool = "FUNCTIONTOOL";
         public const string Marketing = "MARKETING";
         public const string MathChat = "MATHCHAT";
+        public const string InputArguments = "INPUTARGUMENTS";
     }
 
     public static class Settings
@@ -31,6 +32,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
             Names.FunctionTool => new FunctionToolAgentProvider(configuration),
             Names.Marketing => new MarketingAgentProvider(configuration),
             Names.MathChat => new MathChatAgentProvider(configuration),
+            Names.InputArguments => new PoemAgentProvider(configuration),
             _ => new TestAgentProvider(configuration),
         };
 
@@ -40,7 +42,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
 
         await foreach (AgentVersion agent in this.CreateAgentsAsync(foundryEndpoint))
         {
-            Console.WriteLine($"Created agent: {agent.Name}:{agent.Version})");
+            Console.WriteLine($"Created agent: {agent.Name}:{agent.Version}");
         }
     }
 
