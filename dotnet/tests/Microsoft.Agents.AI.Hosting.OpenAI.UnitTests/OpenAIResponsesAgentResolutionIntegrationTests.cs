@@ -168,23 +168,23 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
     }
 
     /// <summary>
-    /// Verifies that agent resolution using the model property works correctly.
+    /// Verifies that agent resolution using the metadata.entity_id property works correctly.
     /// </summary>
     [Fact]
-    public async Task CreateResponse_WithModelProperty_ResolvesCorrectAgentAsync()
+    public async Task CreateResponse_WithMetadataEntityId_ResolvesCorrectAgentAsync()
     {
         // Arrange
-        const string AgentName = "model-agent";
+        const string AgentName = "metadata-agent";
         const string Instructions = "You are a helpful assistant.";
-        const string ExpectedResponse = "Response via model property";
+        const string ExpectedResponse = "Response via metadata.entity_id";
 
         this._httpClient = await this.CreateTestServerWithAgentResolutionAsync(
             (AgentName, Instructions, ExpectedResponse));
 
-        // Act - Use raw HTTP request to control the model property
+        // Act - Use raw HTTP request with metadata.entity_id
         using StringContent requestContent = new(JsonSerializer.Serialize(new
         {
-            model = AgentName,
+            metadata = new { entity_id = AgentName },
             input = new[]
             {
                 new { type = "message", role = "user", content = "Test message" }
@@ -235,7 +235,7 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         using HttpResponseMessage httpResponse = await this._httpClient!.PostAsync(new Uri("/v1/responses", UriKind.Relative), requestContent);
 
         // Assert
-        Assert.Equal(System.Net.HttpStatusCode.NotFound, httpResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
         Assert.Contains("non-existent-agent", responseJson);
@@ -268,7 +268,6 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
         Assert.Contains("agent.name", responseJson, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("model", responseJson, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
