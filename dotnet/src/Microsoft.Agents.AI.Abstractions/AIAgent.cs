@@ -84,10 +84,7 @@ public abstract class AIAgent
     /// </value>
     /// <remarks>
     /// Additional properties provide a way to include custom metadata or agent-specific
-    /// information that doesn't fit into the standard agent schema. This is useful for
-    /// annotating agents with metadata that can drive application behavior, such as
-    /// authorization requirements, payment information, beta status, icons, visibility settings,
-    /// or whitelist requirements.
+    /// information that doesn't fit into the standard agent schema.
     /// </remarks>
     public virtual AdditionalPropertiesDictionary? AdditionalProperties { get; }
 
