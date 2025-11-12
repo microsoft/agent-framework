@@ -39,12 +39,14 @@ var latestVersion = jokerAgentLatest.GetService<AgentVersion>()!;
 // The AIAgent version can be accessed via the GetService method.
 Console.WriteLine($"Latest agent version id: {latestVersion.Id}");
 
+var options = new ChatClientAgentRunOptions();
+
 // Once you have the AIAgent, you can invoke it like any other AIAgent.
 AgentThread thread = jokerAgentLatest.GetNewThread();
-Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate.", thread));
+Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate.", thread, options));
 
 // This will use the same thread to continue the conversation.
-Console.WriteLine(await jokerAgentLatest.RunAsync("Now tell me a joke about a cat and a dog using last joke as the anchor.", thread));
+Console.WriteLine(await jokerAgentLatest.RunAsync("Now tell me a joke about a cat and a dog using last joke as the anchor.", thread, options));
 
 // Cleanup by agent name removes both agent versions created (jokerAgentV1 + jokerAgentV2).
 agentsClient.DeleteAgent(jokerAgentV1.Name);

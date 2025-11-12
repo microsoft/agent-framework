@@ -33,6 +33,7 @@ public static class FunctionToolExtensions
     /// Creates a <see cref="FunctionTool"/> from a <see cref="InvokeClientTaskAction"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
+    /// <returns>A new <see cref="FunctionTool"/> instance configured with the function name, parameters, and description.</returns>
     internal static FunctionTool CreateFunctionTool(this InvokeClientTaskAction tool)
     {
         Throw.IfNull(tool);
