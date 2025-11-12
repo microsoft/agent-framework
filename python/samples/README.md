@@ -55,6 +55,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_openai/azure_responses_client_with_code_interpreter.py`](./getting_started/agents/azure_openai/azure_responses_client_with_code_interpreter.py) | Azure OpenAI Responses Client with Code Interpreter Example |
 | [`getting_started/agents/azure_openai/azure_responses_client_with_explicit_settings.py`](./getting_started/agents/azure_openai/azure_responses_client_with_explicit_settings.py) | Azure OpenAI Responses Client with Explicit Settings Example |
 | [`getting_started/agents/azure_openai/azure_responses_client_with_function_tools.py`](./getting_started/agents/azure_openai/azure_responses_client_with_function_tools.py) | Azure OpenAI Responses Client with Function Tools Example |
+| [`getting_started/agents/azure_openai/azure_responses_client_with_hosted_mcp.py`](./getting_started/agents/azure_openai/azure_responses_client_with_hosted_mcp.py) | Azure OpenAI Responses Client with Hosted Model Context Protocol (MCP) Example |
 | [`getting_started/agents/azure_openai/azure_responses_client_with_local_mcp.py`](./getting_started/agents/azure_openai/azure_responses_client_with_local_mcp.py) | Azure OpenAI Responses Client with local Model Context Protocol (MCP) Example |
 | [`getting_started/agents/azure_openai/azure_responses_client_with_thread.py`](./getting_started/agents/azure_openai/azure_responses_client_with_thread.py) | Azure OpenAI Responses Client with Thread Management Example |
 
