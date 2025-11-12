@@ -64,8 +64,8 @@ export function WorkflowDetailsModal({
     workflow.source === "directory"
       ? "Local"
       : workflow.source === "in_memory"
-      ? "In-Memory"
-      : "Gallery";
+        ? "In-Memory"
+        : "Gallery";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -147,16 +147,17 @@ export function WorkflowDetailsModal({
             icon={<Package className="h-4 w-4 text-muted-foreground" />}
           >
             {workflow.executors.length > 0 ? (
-              <ul className="space-y-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {workflow.executors.map((executor, index) => (
-                  <li
+                  <div
                     key={index}
-                    className="font-mono text-xs text-foreground break-all"
+                    className="font-mono text-xs text-foreground bg-muted px-2 py-1 rounded truncate"
+                    title={executor}
                   >
-                    • {executor}
-                  </li>
+                    {executor}
+                  </div>
                 ))}
-              </ul>
+              </div>
             ) : (
               <div className="text-muted-foreground">No executors configured</div>
             )}
