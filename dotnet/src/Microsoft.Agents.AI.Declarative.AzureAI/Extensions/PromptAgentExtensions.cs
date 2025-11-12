@@ -25,11 +25,11 @@ internal static class PromptAgentExtensions
         {
             return tool switch
             {
-                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterToolDefinition(),
-                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionToolDefinition(),
-                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
-                WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
-                McpServerTool => ((McpServerTool)tool).CreateMcpToolDefinition(),
+                CodeInterpreterTool codeInterpreterTool => codeInterpreterTool.CreateCodeInterpreterToolDefinition(),
+                InvokeClientTaskAction functionTool => functionTool.CreateFunctionToolDefinition(),
+                FileSearchTool fileSearchTool => fileSearchTool.CreateFileSearchToolDefinition(),
+                WebSearchTool webSearchTool => webSearchTool.CreateBingGroundingToolDefinition(),
+                McpServerTool mcpServerTool => mcpServerTool.CreateMcpToolDefinition(),
                 // TODO: Add other tool types as custom tools
                 // AzureAISearch
                 // AzureFunction
@@ -74,11 +74,11 @@ internal static class PromptAgentExtensions
         {
             return tool switch
             {
-                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
-                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionTool(),
-                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
-                WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
-                McpServerTool => ((McpServerTool)tool).CreateMcpTool(),
+                CodeInterpreterTool codeInterpreterTool => codeInterpreterTool.CreateCodeInterpreterTool(),
+                InvokeClientTaskAction functionTool => functionTool.CreateFunctionTool(),
+                FileSearchTool fileSearchTool => fileSearchTool.CreateFileSearchTool(),
+                WebSearchTool webSearchTool => webSearchTool.CreateWebSearchTool(),
+                McpServerTool mcpServerTool => mcpServerTool.CreateMcpTool(),
                 // TODO: Add other tool types as custom tools
                 // AzureAISearch
                 // AzureFunction

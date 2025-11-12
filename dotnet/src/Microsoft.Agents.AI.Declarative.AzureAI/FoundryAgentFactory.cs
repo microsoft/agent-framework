@@ -23,6 +23,7 @@ public sealed class FoundryAgentFactory : AgentFactory
     /// </summary>
     /// <param name="agentClient">The <see cref="AgentClient"/> instance to use for creating agents.</param>
     public FoundryAgentFactory(AgentClient agentClient)
+    {
         Throw.IfNull(agentClient);
 
         this._agentClient = agentClient;
@@ -31,6 +32,7 @@ public sealed class FoundryAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryAgentFactory"/> class with an associated <see cref="TokenCredential"/>.
     /// </summary>
+    /// <param name="tokenCredential">The <see cref="TokenCredential"/> to use for authenticating requests.</param>
     public FoundryAgentFactory(TokenCredential tokenCredential)
     {
         Throw.IfNull(tokenCredential);
@@ -76,7 +78,7 @@ public sealed class FoundryAgentFactory : AgentFactory
             }
         }
 
-        var agentVersion = agentClient.CreateAgentVersion(agentName: promptAgent.Name, options: agentVersionCreationOptions, cancellationToken: cancellationToken);
+        var agentVersion = await agentClient.CreateAgentVersionAsync(agentName: promptAgent.Name, options: agentVersionCreationOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return agentClient.GetAIAgent(agentVersion, cancellationToken: cancellationToken);
     }
