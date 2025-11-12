@@ -3,13 +3,13 @@
 ###
 ### Endpoints introduced in this sample:
 ### - POST /api/agents/{agentName}/run                          : send a message to the agent
-### - GET  /api/agents/{agentName}/callbacks/{threadId}   : retrieve callback telemetry
-### - DELETE /api/agents/{agentName}/callbacks/{threadId} : clear stored callback events
+### - GET  /api/agents/{agentName}/callbacks/{thread_id}   : retrieve callback telemetry
+### - DELETE /api/agents/{agentName}/callbacks/{thread_id} : clear stored callback events
 
 @baseUrl = http://localhost:7071
 @agentName = CallbackAgent
 @agentRoute = {{baseUrl}}/api/agents/{{agentName}}
-@threadId = test-thread-00
+@thread_id = test-thread-00
 
 ### Health Check
 GET {{baseUrl}}/api/health
@@ -20,11 +20,11 @@ Content-Type: application/json
 
 {
   "message": "Generate a short weather update for Paris and mention streaming callbacks.",
-  "threadId": "{{threadId}}"
+  "thread_id": "{{thread_id}}"
 }
 
 ### Inspect callback telemetry
-GET {{agentRoute}}/callbacks/{{threadId}}
+GET {{agentRoute}}/callbacks/{{thread_id}}
 
 ### Clear stored callback telemetry for the thread
-DELETE {{agentRoute}}/callbacks/{{threadId}}
+DELETE {{agentRoute}}/callbacks/{{thread_id}}

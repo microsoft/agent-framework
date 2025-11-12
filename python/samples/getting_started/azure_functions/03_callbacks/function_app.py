@@ -122,11 +122,11 @@ app.add_agent(callback_agent)
 
 
 @app.function_name("get_callback_events")
-@app.route(route="agents/{agent_name}/callbacks/{threadId}", methods=["GET"])
+@app.route(route="agents/{agent_name}/callbacks/{thread_id}", methods=["GET"])
 async def get_callback_events(req: func.HttpRequest) -> func.HttpResponse:
     """Return all callback events collected for a thread."""
 
-    thread_id = req.route_params.get("threadId", "")
+    thread_id = req.route_params.get("thread_id", "")
     events = callback_events.get(thread_id, [])
     return func.HttpResponse(
         json.dumps(events, indent=2),
@@ -136,24 +136,24 @@ async def get_callback_events(req: func.HttpRequest) -> func.HttpResponse:
 
 
 @app.function_name("reset_callback_events")
-@app.route(route="agents/{agent_name}/callbacks/{threadId}", methods=["DELETE"])
+@app.route(route="agents/{agent_name}/callbacks/{thread_id}", methods=["DELETE"])
 async def reset_callback_events(req: func.HttpRequest) -> func.HttpResponse:
     """Clear the stored callback events for a thread."""
 
-    thread_id = req.route_params.get("threadId", "")
+    thread_id = req.route_params.get("thread_id", "")
     callback_events.pop(thread_id, None)
     return func.HttpResponse(status_code=204)
 
 
 """
-Expected output when querying `GET /api/agents/CallbackAgent/callbacks/{threadId}`:
+Expected output when querying `GET /api/agents/CallbackAgent/callbacks/{thread_id}`:
 
 HTTP/1.1 200 OK
 [
     {
         "timestamp": "2024-01-01T00:00:00Z",
         "agent_name": "CallbackAgent",
-        "thread_id": "<threadId>",
+        "thread_id": "<thread_id>",
         "correlation_id": "<guid>",
         "request_message": "Tell me a short joke",
         "event_type": "stream",
@@ -163,7 +163,7 @@ HTTP/1.1 200 OK
     {
         "timestamp": "2024-01-01T00:00:01Z",
         "agent_name": "CallbackAgent",
-        "thread_id": "<threadId>",
+        "thread_id": "<thread_id>",
         "correlation_id": "<guid>",
         "request_message": "Tell me a short joke",
         "event_type": "final",

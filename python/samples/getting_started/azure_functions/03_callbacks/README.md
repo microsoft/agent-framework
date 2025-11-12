@@ -10,8 +10,8 @@ an HTTP API that can be polled by a web client or dashboard.
 - Registers a default `AgentResponseCallbackProtocol` implementation that logs streaming and final
   responses.
 - Persists callback events in an in-memory store and exposes them via
-  `GET /api/agents/{agentName}/callbacks/{threadId}`.
-- Shows how to reset stored callback events with `DELETE /api/agents/{agentName}/callbacks/{threadId}`.
+  `GET /api/agents/{agentName}/callbacks/{thread_id}`.
+- Shows how to reset stored callback events with `DELETE /api/agents/{agentName}/callbacks/{thread_id}`.
 - Works alongside the standard `/api/agents/{agentName}/run` endpoint so you can correlate callback
   telemetry with agent responses.
 
@@ -57,9 +57,9 @@ an HTTP API that can be polled by a web client or dashboard.
    ```
 
 5. Use the [`demo.http`](./demo.http) file (VS Code REST Client) or any HTTP client to:
-  - Send a message to the agent (optionally providing `threadId`): `POST /api/agents/CallbackAgent/run`
-  - Query callback telemetry for that thread: `GET /api/agents/CallbackAgent/callbacks/{threadId}`
-  - Clear stored events: `DELETE /api/agents/CallbackAgent/callbacks/{threadId}`
+  - Send a message to the agent (optionally providing `thread_id`): `POST /api/agents/CallbackAgent/run`
+  - Query callback telemetry for that thread: `GET /api/agents/CallbackAgent/callbacks/{thread_id}`
+  - Clear stored events: `DELETE /api/agents/CallbackAgent/callbacks/{thread_id}`
 
 Example workflow after the host starts:
 
@@ -75,7 +75,7 @@ UI updates or audit logs on top of Durable Agents.
 
 ## Expected Output
 
-When you call `GET /api/agents/CallbackAgent/callbacks/{threadId}` after sending a request to the agent,
+When you call `GET /api/agents/CallbackAgent/callbacks/{thread_id}` after sending a request to the agent,
 the API returns a list of streaming and final callback events similar to the following:
 
 ```json
@@ -83,7 +83,7 @@ the API returns a list of streaming and final callback events similar to the fol
   {
     "timestamp": "2024-01-01T00:00:00Z",
     "agent_name": "CallbackAgent",
-    "thread_id": "<threadId>",
+    "thread_id": "<thread_id>",
     "correlation_id": "<guid>",
     "request_message": "Tell me a short joke",
     "event_type": "stream",
@@ -93,7 +93,7 @@ the API returns a list of streaming and final callback events similar to the fol
   {
     "timestamp": "2024-01-01T00:00:01Z",
     "agent_name": "CallbackAgent",
-    "thread_id": "<threadId>",
+    "thread_id": "<thread_id>",
     "correlation_id": "<guid>",
     "request_message": "Tell me a short joke",
     "event_type": "final",

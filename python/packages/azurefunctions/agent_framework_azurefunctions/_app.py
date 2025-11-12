@@ -23,7 +23,7 @@ from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
 
-THREAD_ID_FIELD: str = "threadId"
+THREAD_ID_FIELD: str = "thread_id"
 RESPONSE_FORMAT_JSON: str = "json"
 RESPONSE_FORMAT_TEXT: str = "text"
 
@@ -239,7 +239,7 @@ class AgentFunctionApp(df.DFApp):
             Expected request body (RunRequest format):
             {
                 "message": "user message to agent",
-                "threadId": "optional conversation identifier",
+                "thread_id": "optional conversation identifier",
                 "role": "user|system" (optional, default: "user"),
                 "response_format": {...} (optional JSON schema for structured responses),
                 "enable_tool_calls": true|false (optional, default: true)
@@ -385,7 +385,7 @@ class AgentFunctionApp(df.DFApp):
                 {
                     "name": name,
                     "type": type(agent).__name__,
-                    "httpEndpointEnabled": self.agent_http_endpoint_flags.get(
+                    "http_endpoint_enabled": self.agent_http_endpoint_flags.get(
                         name,
                         self.enable_http_endpoints,
                     ),
@@ -513,7 +513,7 @@ class AgentFunctionApp(df.DFApp):
             "message": message,
             THREAD_ID_FIELD: thread_id,
             "status": "timeout",
-            "correlationId": correlation_id,
+            "correlation_id": correlation_id,
         }
 
     def _build_success_result(
@@ -526,7 +526,7 @@ class AgentFunctionApp(df.DFApp):
             THREAD_ID_FIELD: thread_id,
             "status": "success",
             "message_count": response_data.get("message_count", state.message_count),
-            "correlationId": correlation_id,
+            "correlation_id": correlation_id,
         }
 
     def _build_request_data(
@@ -552,7 +552,7 @@ class AgentFunctionApp(df.DFApp):
             "message": message,
             THREAD_ID_FIELD: thread_id,
             "status": "accepted",
-            "correlationId": correlation_id,
+            "correlation_id": correlation_id,
         }
 
     def _create_http_response(
@@ -705,16 +705,15 @@ class AgentFunctionApp(df.DFApp):
         if isinstance(raw_headers, Mapping):
             headers_mapping = cast(Mapping[Any, Any], raw_headers)
             for key, value in headers_mapping.items():
-                if str(key).lower() == "x-wait-for-completion":
+                if str(key).lower() == "x-ms-wait-for-completion":
                     header_value = value
                     break
 
         if header_value is not None:
             return self._coerce_to_bool(header_value)
 
-        for key in ("wait_for_completion", "waitForCompletion", "WaitForCompletion"):
-            if key in req_body:
-                return self._coerce_to_bool(req_body.get(key))
+        if "wait_for_completion" in req_body:
+            return self._coerce_to_bool(req_body.get("wait_for_completion"))
 
         return True
 

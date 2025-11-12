@@ -44,7 +44,7 @@ class TestSampleCallbacks:
         thread_id = "test-callback"
 
         response = SampleTestHelper.post_json(
-            f"{self.base_url}/run", {"message": "Tell me about Python", "threadId": thread_id}
+            f"{self.base_url}/run", {"message": "Tell me about Python", "thread_id": thread_id}
         )
         assert response.status_code == 202
         data = response.json()
@@ -55,7 +55,7 @@ class TestSampleCallbacks:
         thread_id = "test-callback-retrieve"
 
         # Send a message first
-        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Hello", "threadId": thread_id})
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Hello", "thread_id": thread_id})
 
         # Get callbacks
         response = SampleTestHelper.get(f"{self.base_url}/callbacks/{thread_id}")
@@ -68,7 +68,7 @@ class TestSampleCallbacks:
         thread_id = "test-callback-delete"
 
         # Send a message first
-        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Test", "threadId": thread_id})
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Test", "thread_id": thread_id})
 
         # Delete callbacks
         response = requests.delete(f"{self.base_url}/callbacks/{thread_id}", timeout=TIMEOUT)

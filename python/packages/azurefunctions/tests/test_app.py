@@ -261,14 +261,14 @@ class TestWaitForCompletionAndCorrelationId:
 
         assert app._should_wait_for_completion(request, {}) is True
 
-    def test_wait_for_completion_body_variants(self) -> None:
-        """Test that multiple payload spellings are accepted."""
+    def test_wait_for_completion_body_snake_case(self) -> None:
+        """Test that payload controls wait_for_completion."""
         app = self._create_app()
         request = self._make_request()
 
         assert app._should_wait_for_completion(request, {"wait_for_completion": "true"}) is True
-        assert app._should_wait_for_completion(request, {"waitForCompletion": "1"}) is True
-        assert app._should_wait_for_completion(request, {"WaitForCompletion": "no"}) is False
+        assert app._should_wait_for_completion(request, {"wait_for_completion": "false"}) is False
+        assert app._should_wait_for_completion(request, {"wait_for_completion": "0"}) is False
 
 
 class TestAgentEntityOperations:
@@ -568,7 +568,7 @@ class TestIncomingRequestParsing:
         app = self._create_app()
 
         request = Mock()
-        request.params = {"threadId": "query-thread"}
+        request.params = {"thread_id": "query-thread"}
         req_body = {}
 
         thread_id = app._resolve_thread_id(request, req_body)
@@ -612,7 +612,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"X-Wait-For-Completion": "false"}
+        request.headers = {"X-MS-Wait-For-Completion": "false"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -667,7 +667,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"X-Wait-For-Completion": "false", "Accept": "application/json"}
+        request.headers = {"X-MS-Wait-For-Completion": "false", "Accept": "application/json"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")

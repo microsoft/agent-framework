@@ -45,7 +45,7 @@ class TestSampleSingleAgent:
         """Test sending a simple message with JSON payload."""
         response = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about cloud computing.", "threadId": "test-simple-json"},
+            {"message": "Tell me a short joke about cloud computing.", "thread_id": "test-simple-json"},
         )
         # Agent can return 200 (immediate) or 202 (async with wait_for_completion=false)
         assert response.status_code in [200, 202]
@@ -58,7 +58,7 @@ class TestSampleSingleAgent:
             assert data["message_count"] >= 1
         else:
             # Async response - check we got correlation info
-            assert "correlationId" in data or "threadId" in data
+            assert "correlation_id" in data or "thread_id" in data
 
     def test_simple_message_plain_text(self) -> None:
         """Test sending a message with plain text payload."""
@@ -71,9 +71,9 @@ class TestSampleSingleAgent:
             assert "response" in data
 
     def test_thread_id_in_query(self) -> None:
-        """Test using threadId in query parameter."""
+        """Test using thread_id in query parameter."""
         response = SampleTestHelper.post_text(
-            f"{self.base_url}/run?threadId=test-query-thread", "Tell me a short joke about weather in Texas."
+            f"{self.base_url}/run?thread_id=test-query-thread", "Tell me a short joke about weather in Texas."
         )
         assert response.status_code in [200, 202]
         data = response.json()
@@ -88,7 +88,7 @@ class TestSampleSingleAgent:
         # First message
         response1 = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about weather in Seattle.", "threadId": thread_id},
+            {"message": "Tell me a short joke about weather in Seattle.", "thread_id": thread_id},
         )
         assert response1.status_code in [200, 202]
 
@@ -98,7 +98,7 @@ class TestSampleSingleAgent:
 
             # Second message in same session
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about San Francisco?", "threadId": thread_id}
+                f"{self.base_url}/run", {"message": "What about San Francisco?", "thread_id": thread_id}
             )
             assert response2.status_code == 200
             data2 = response2.json()
@@ -107,7 +107,7 @@ class TestSampleSingleAgent:
             # In async mode, we can't easily test message count
             # Just verify we can make multiple calls
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about Texas?", "threadId": thread_id}
+                f"{self.base_url}/run", {"message": "What about Texas?", "thread_id": thread_id}
             )
             assert response2.status_code == 202
 

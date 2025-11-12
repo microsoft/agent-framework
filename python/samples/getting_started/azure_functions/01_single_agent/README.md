@@ -56,7 +56,7 @@ When you send a POST request with plain-text input, the Functions host responds 
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "Tell me a short joke about cloud computing.",
-  "threadId": "<guid>",
-  "correlationId": "<guid>"
+  "thread_id": "<guid>",
+  "correlation_id": "<guid>"
 }
 ```
