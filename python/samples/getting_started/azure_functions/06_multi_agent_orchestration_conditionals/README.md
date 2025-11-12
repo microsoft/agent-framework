@@ -17,8 +17,8 @@ Submit an email payload:
 
 ```bash
 curl -X POST http://localhost:7071/api/spamdetection/run \
-	-H "Content-Type: application/json" \
-	-d '{"subject": "Sale now on", "body": "Limited time offer"}'
+  -H "Content-Type: application/json" \
+  -d '{"subject": "Sale now on", "body": "Limited time offer"}'
 ```
 
 Poll the returned `statusQueryGetUri` or call the status route directly:
