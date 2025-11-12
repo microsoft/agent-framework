@@ -8,7 +8,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 import azure.durable_functions as df
@@ -24,6 +24,8 @@ from ._state import AgentState
 logger = get_logger("agent_framework.azurefunctions")
 
 THREAD_ID_FIELD: str = "threadId"
+RESPONSE_FORMAT_JSON: str = "json"
+RESPONSE_FORMAT_TEXT: str = "text"
 
 
 class AgentFunctionApp(df.DFApp):
@@ -245,8 +247,11 @@ class AgentFunctionApp(df.DFApp):
             """
             logger.debug(f"[HTTP Trigger] Received request on route: /api/agents/{agent_name}/run")
 
+            response_format: str = RESPONSE_FORMAT_JSON
+            thread_id: str | None = None
+
             try:
-                req_body, message = self._parse_incoming_request(req)
+                req_body, message, response_format = self._parse_incoming_request(req)
                 thread_id = self._resolve_thread_id(req=req, req_body=req_body)
                 wait_for_completion = self._should_wait_for_completion(req=req, req_body=req_body)
 
@@ -256,8 +261,11 @@ class AgentFunctionApp(df.DFApp):
 
                 if not message:
                     logger.warning("[HTTP Trigger] Request rejected: Missing message")
-                    return func.HttpResponse(
-                        json.dumps({"error": "Message is required"}), status_code=400, mimetype="application/json"
+                    return self._create_http_response(
+                        payload={"error": "Message is required"},
+                        status_code=400,
+                        response_format=response_format,
+                        thread_id=thread_id,
                     )
 
                 session_id = self._create_session_id(agent_name, thread_id)
@@ -289,10 +297,11 @@ class AgentFunctionApp(df.DFApp):
                     )
 
                     logger.debug(f"[HTTP Trigger] Result status: {result.get('status', 'unknown')}")
-                    return func.HttpResponse(
-                        json.dumps(result),
+                    return self._create_http_response(
+                        payload=result,
                         status_code=200 if result.get("status") == "success" else 500,
-                        mimetype="application/json",
+                        response_format=response_format,
+                        thread_id=thread_id,
                     )
 
                 logger.debug("[HTTP Trigger] wait_for_completion disabled; returning correlation ID")
@@ -301,21 +310,37 @@ class AgentFunctionApp(df.DFApp):
                     message=message, thread_id=thread_id, correlation_id=correlation_id
                 )
 
-                return func.HttpResponse(json.dumps(accepted_response), status_code=202, mimetype="application/json")
+                return self._create_http_response(
+                    payload=accepted_response,
+                    status_code=202,
+                    response_format=response_format,
+                    thread_id=thread_id,
+                )
 
             except IncomingRequestError as exc:
                 logger.warning(f"[HTTP Trigger] Request rejected: {exc!s}")
-                return func.HttpResponse(
-                    json.dumps({"error": str(exc)}), status_code=exc.status_code, mimetype="application/json"
+                return self._create_http_response(
+                    payload={"error": str(exc)},
+                    status_code=exc.status_code,
+                    response_format=response_format,
+                    thread_id=thread_id,
                 )
             except ValueError as exc:
                 logger.error(f"[HTTP Trigger] Invalid JSON: {exc!s}")
-                return func.HttpResponse(
-                    json.dumps({"error": "Invalid JSON"}), status_code=400, mimetype="application/json"
+                return self._create_http_response(
+                    payload={"error": "Invalid JSON"},
+                    status_code=400,
+                    response_format=response_format,
+                    thread_id=thread_id,
                 )
             except Exception as exc:
                 logger.error(f"[HTTP Trigger] Error: {exc!s}", exc_info=True)
-                return func.HttpResponse(json.dumps({"error": str(exc)}), status_code=500, mimetype="application/json")
+                return self._create_http_response(
+                    payload={"error": str(exc)},
+                    status_code=500,
+                    response_format=response_format,
+                    thread_id=thread_id,
+                )
 
         _ = http_start
 
@@ -530,6 +555,43 @@ class AgentFunctionApp(df.DFApp):
             "correlationId": correlation_id,
         }
 
+    def _create_http_response(
+        self,
+        payload: dict[str, Any] | str,
+        status_code: int,
+        response_format: str,
+        thread_id: str | None,
+    ) -> func.HttpResponse:
+        """Create the HTTP response using helper serializers for clarity."""
+        if response_format == RESPONSE_FORMAT_TEXT:
+            return self._build_plain_text_response(payload=payload, status_code=status_code, thread_id=thread_id)
+
+        return self._build_json_response(payload=payload, status_code=status_code)
+
+    def _build_plain_text_response(
+        self,
+        payload: dict[str, Any] | str,
+        status_code: int,
+        thread_id: str | None,
+    ) -> func.HttpResponse:
+        """Return a plain-text response with optional thread identifier header."""
+        body_text = payload if isinstance(payload, str) else self._convert_payload_to_text(payload)
+        headers = {"x-ms-thread-id": thread_id} if thread_id else None
+        return func.HttpResponse(body_text, status_code=status_code, mimetype="text/plain", headers=headers)
+
+    def _build_json_response(self, payload: dict[str, Any] | str, status_code: int) -> func.HttpResponse:
+        """Return the JSON response, serializing dictionaries as needed."""
+        body_json = payload if isinstance(payload, str) else json.dumps(payload)
+        return func.HttpResponse(body_json, status_code=status_code, mimetype="application/json")
+
+    def _convert_payload_to_text(self, payload: dict[str, Any]) -> str:
+        """Convert a structured payload into a human-readable text response."""
+        for key in ("response", "error", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return json.dumps(payload)
+
     def _generate_unique_id(self) -> str:
         """Generate a new unique identifier."""
         import uuid
@@ -559,31 +621,66 @@ class AgentFunctionApp(df.DFApp):
         logger.debug("[HTTP Trigger] No thread identifier provided; using random thread id")
         return self._generate_unique_id()
 
-    def _parse_incoming_request(self, req: func.HttpRequest) -> tuple[dict[str, Any], Any]:
+    def _parse_incoming_request(self, req: func.HttpRequest) -> tuple[dict[str, Any], str, str]:
         """Parse the incoming run request supporting JSON and plain text bodies."""
+        headers = self._extract_normalized_headers(req)
+
+        normalized_content_type = self._extract_content_type(headers)
+        body_parser, body_format = self._select_body_parser(normalized_content_type)
+        prefers_json = self._accepts_json_response(headers)
+        response_format = self._select_response_format(body_format=body_format, prefers_json=prefers_json)
+
+        req_body, message = body_parser(req)
+        return req_body, message, response_format
+
+    def _extract_normalized_headers(self, req: func.HttpRequest) -> dict[str, str]:
+        """Create a lowercase header mapping from the incoming request."""
         headers: dict[str, str] = {}
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
             headers_mapping = cast(Mapping[Any, Any], raw_headers)
             for key, value in headers_mapping.items():
                 if value is not None:
-                    headers[str(key)] = str(value)
-
-        content_type_header = headers.get("content-type")
-
-        normalized_content_type = ""
-        if content_type_header:
-            normalized_content_type = content_type_header.split(";")[0].strip().lower()
-
-        if normalized_content_type in {"application/json"} or normalized_content_type.endswith("+json"):
-            parser = self._parse_json_body
-        else:
-            parser = self._parse_text_body
-
-        return parser(req)
+                    headers[str(key).lower()] = str(value)
+        return headers
 
     @staticmethod
-    def _parse_json_body(req: func.HttpRequest) -> tuple[dict[str, Any], Any]:
+    def _extract_content_type(headers: dict[str, str]) -> str:
+        """Return the normalized content-type value (without parameters)."""
+        content_type_header = headers.get("content-type", "")
+        return content_type_header.split(";")[0].strip().lower() if content_type_header else ""
+
+    def _select_body_parser(
+        self,
+        normalized_content_type: str,
+    ) -> tuple[Callable[[func.HttpRequest], tuple[dict[str, Any], str]], str]:
+        """Choose the body parser and declared body format."""
+        if normalized_content_type in {"application/json"} or normalized_content_type.endswith("+json"):
+            return self._parse_json_body, RESPONSE_FORMAT_JSON
+        return self._parse_text_body, RESPONSE_FORMAT_TEXT
+
+    @staticmethod
+    def _accepts_json_response(headers: dict[str, str]) -> bool:
+        """Check whether the caller explicitly requests a JSON response."""
+        accept_header = headers.get("accept")
+        if not accept_header:
+            return False
+
+        for value in accept_header.split(","):
+            media_type = value.split(";")[0].strip().lower()
+            if media_type == "application/json":
+                return True
+        return False
+
+    @staticmethod
+    def _select_response_format(body_format: str, prefers_json: bool) -> str:
+        """Combine body format and accept preference to determine response format."""
+        if body_format == RESPONSE_FORMAT_JSON or prefers_json:
+            return RESPONSE_FORMAT_JSON
+        return RESPONSE_FORMAT_TEXT
+
+    @staticmethod
+    def _parse_json_body(req: func.HttpRequest) -> tuple[dict[str, Any], str]:
         req_body = req.get_json()
         if not isinstance(req_body, dict):
             raise IncomingRequestError("Invalid JSON payload. Expected an object.")
@@ -594,13 +691,10 @@ class AgentFunctionApp(df.DFApp):
         return typed_req_body, message
 
     @staticmethod
-    def _parse_text_body(req: func.HttpRequest) -> tuple[dict[str, Any], Any]:
+    def _parse_text_body(req: func.HttpRequest) -> tuple[dict[str, Any], str]:
         body_bytes = req.get_body()
         text_body = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
         message = text_body.strip()
-
-        if not message:
-            raise IncomingRequestError("Message is required")
 
         return {}, message
 

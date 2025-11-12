@@ -13,7 +13,6 @@ from agent_framework import AgentRunResponse, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._entities import AgentEntity, AgentState, create_agent_entity
-from agent_framework_azurefunctions._errors import IncomingRequestError
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
@@ -521,26 +520,48 @@ class TestIncomingRequestParsing:
         app = self._create_app()
 
         request = Mock()
+        request.headers = {}
+        request.params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
         request.get_body.return_value = b"Plain text message"
 
-        req_body, message = app._parse_incoming_request(request)
+        req_body, message, response_format = app._parse_incoming_request(request)
 
         assert req_body == {}
         assert message == "Plain text message"
 
-    def test_parse_plain_text_requires_content(self) -> None:
-        """Test that plain-text requests require message content."""
+        assert response_format == "text"
+
+    def test_parse_plain_text_allows_empty_message(self) -> None:
+        """Test that plain-text requests return empty message when content missing."""
         app = self._create_app()
 
         request = Mock()
+        request.headers = {}
+        request.params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
         request.get_body.return_value = b"   "
 
-        with pytest.raises(IncomingRequestError) as exc_info:
-            app._parse_incoming_request(request)
+        req_body, message, response_format = app._parse_incoming_request(request)
 
-        assert "Message is required" in str(exc_info.value)
+        assert req_body == {}
+        assert message == ""
+        assert response_format == "text"
+
+    def test_accept_header_prefers_json(self) -> None:
+        """Test that the Accept header can force JSON responses for plain-text bodies."""
+        app = self._create_app()
+
+        request = Mock()
+        request.headers = {"accept": "application/json"}
+        request.params = {}
+        request.get_json.side_effect = ValueError("Invalid JSON")
+        request.get_body.return_value = b"Plain text message"
+
+        _, message, response_format = app._parse_incoming_request(request)
+
+        assert message == "Plain text message"
+        assert response_format == "json"
 
     def test_extract_thread_id_from_query_params(self) -> None:
         """Test thread identifier extraction from query parameters."""
@@ -602,6 +623,9 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 202
+        assert response.mimetype == "text/plain"
+        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.get_body().decode("utf-8") == "Agent request accepted"
 
         signal_args = client.signal_entity.call_args[0]
         run_request = signal_args[2]
@@ -609,6 +633,55 @@ class TestHttpRunRoute:
         assert run_request["message"] == "Plain text via HTTP"
         assert run_request["role"] == "user"
         assert "thread_id" in run_request
+
+    async def test_http_run_accept_header_returns_json(self) -> None:
+        """Test that Accept header requesting JSON results in JSON response."""
+        mock_agent = Mock()
+        mock_agent.name = "HttpAgentJson"
+
+        captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
+
+        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
+            def decorator(func: TFunc) -> TFunc:
+                return func
+
+            return decorator
+
+        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
+            def decorator(func: TFunc) -> TFunc:
+                route_key = kwargs.get("route") if kwargs else None
+                captured_handlers[route_key] = func
+                return func
+
+            return decorator
+
+        with (
+            patch.object(AgentFunctionApp, "function_name", new=capture_decorator),
+            patch.object(AgentFunctionApp, "route", new=capture_route),
+            patch.object(AgentFunctionApp, "durable_client_input", new=capture_decorator),
+            patch.object(AgentFunctionApp, "entity_trigger", new=capture_decorator),
+        ):
+            AgentFunctionApp(agents=[mock_agent], enable_health_check=False)
+
+        run_route = f"agents/{mock_agent.name}/run"
+        handler = captured_handlers[run_route]
+
+        request = Mock()
+        request.headers = {"X-Wait-For-Completion": "false", "Accept": "application/json"}
+        request.params = {}
+        request.route_params = {}
+        request.get_json.side_effect = ValueError("Invalid JSON")
+        request.get_body.return_value = b"Plain text via HTTP"
+
+        client = AsyncMock()
+
+        response = await handler(request, client)
+
+        assert response.status_code == 202
+        assert response.mimetype == "application/json"
+        assert response.headers.get("x-ms-thread-id") is None
+        body = response.get_body().decode("utf-8")
+        assert '"status": "accepted"' in body
 
 
 if __name__ == "__main__":
