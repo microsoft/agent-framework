@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "PersistentAgent": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\PersistentAgent.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "MicrosoftLearnAgent": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\MicrosoftLearnAgent.yaml \"Tell me a joke about a pirate in Italian.\""
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "Chat": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\azure\\AzureOpenAIChat.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "Responses": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\azure\\AzureOpenAIResponses.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "Assistants": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\azure\\AzureOpenAIAssistants.yaml \"What is the weather in Cambridge, MA in °C?\""
+    }
+  }
+}

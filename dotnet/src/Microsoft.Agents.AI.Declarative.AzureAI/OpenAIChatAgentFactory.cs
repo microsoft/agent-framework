@@ -7,6 +7,7 @@ using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
@@ -21,7 +22,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
+    public OpenAIChatAgentFactory(IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
     {
         this._functions = functions;
     }
@@ -29,7 +30,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(ChatClient chatClient, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(loggerFactory)
+    public OpenAIChatAgentFactory(ChatClient chatClient, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration, loggerFactory)
     {
         Throw.IfNull(chatClient);
 
@@ -40,7 +41,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="OpenAIChatAgentFactory"/> class.
     /// </summary>
-    public OpenAIChatAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, loggerFactory)
+    public OpenAIChatAgentFactory(Uri endpoint, TokenCredential tokenCredential, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(endpoint, tokenCredential, configuration, loggerFactory)
     {
         this._functions = functions;
     }

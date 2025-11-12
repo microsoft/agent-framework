@@ -3,7 +3,7 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format. You must include Assistants as the type in your response.
 model:
-    id: =Env.OPENAI_MODEL
+    id: gpt-4.1-mini
     provider: OpenAI
     apiType: Assistants
     options:
