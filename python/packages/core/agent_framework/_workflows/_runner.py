@@ -11,7 +11,7 @@ from ._checkpoint_encoding import DATACLASS_MARKER, MODEL_MARKER, decode_checkpo
 from ._const import EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
 from ._edge_runner import EdgeRunner, create_edge_runner
-from ._events import WorkflowEvent
+from ._events import SuperStepCompletedEvent, SuperStepStartedEvent, WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
     Message,
@@ -92,6 +92,7 @@ class Runner:
 
             while self._iteration < self._max_iterations:
                 logger.info(f"Starting superstep {self._iteration + 1}")
+                yield SuperStepStartedEvent(iteration=self._iteration + 1)
 
                 # Run iteration concurrently with live event streaming: we poll
                 # for new events while the iteration coroutine progresses.
@@ -126,6 +127,9 @@ class Runner:
                 # Create checkpoint after each superstep iteration
                 await self._create_checkpoint_if_enabled(f"superstep_{self._iteration}")
 
+                yield SuperStepCompletedEvent(iteration=self._iteration)
+
+                # Check for convergence: no more messages to process
                 if not await self._ctx.has_messages():
                     break
 
