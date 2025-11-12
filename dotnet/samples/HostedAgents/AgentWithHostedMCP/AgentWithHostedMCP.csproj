@@ -1,18 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-  <OutputType>Exe</OutputType>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!-- 
-    Disable central package management for this project.
- This project requires explicit package references with versions specified inline rather than 
-      inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
-      be created from this project, and the Docker build process only has access to this folder 
-    and cannot access parent folders where Directory.Packages.props resides.
+        Disable central package management for this project.
+        This project requires explicit package references with versions specified inline rather than 
+        inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
+        be created from this project, and the Docker build process only has access to this folder 
+        and cannot access parent folders where Directory.Packages.props resides.
     -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
@@ -26,7 +26,7 @@
   -->
   <ItemGroup>
     <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers" />
-  <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
+    <PackageReference Remove="Microsoft.VisualStudio.Threading.Analyzers" />
     <PackageReference Remove="xunit.analyzers" />
     <PackageReference Remove="Moq.Analyzers" />
     <PackageReference Remove="Roslynator.Analyzers" />
