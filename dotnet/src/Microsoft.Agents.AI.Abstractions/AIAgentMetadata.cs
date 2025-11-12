@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
@@ -21,9 +22,13 @@ public class AIAgentMetadata
     /// The name of the agent provider, if applicable. Where possible, this should map to the
     /// appropriate name defined in the OpenTelemetry Semantic Conventions for Generative AI systems.
     /// </param>
-    public AIAgentMetadata(string? providerName = null)
+    /// <param name="additionalProperties">
+    /// Additional properties associated with the agent metadata.
+    /// </param>
+    public AIAgentMetadata(string? providerName = null, AdditionalPropertiesDictionary? additionalProperties = null)
     {
         this.ProviderName = providerName;
+        this.AdditionalProperties = additionalProperties;
     }
 
     /// <summary>
@@ -37,4 +42,17 @@ public class AIAgentMetadata
     /// OpenTelemetry Semantic Conventions for Generative AI systems.
     /// </remarks>
     public string? ProviderName { get; }
+
+    /// <summary>
+    /// Gets additional properties associated with the agent metadata.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or agent-specific
+    /// information that doesn't fit into the standard agent schema.
+    /// </remarks>
+    public AdditionalPropertiesDictionary? AdditionalProperties { get; }
 }

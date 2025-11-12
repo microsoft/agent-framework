@@ -221,4 +221,61 @@ public class ChatClientAgentOptionsTests
         Assert.Null(clone.ChatMessageStoreFactory);
         Assert.Null(clone.AIContextProviderFactory);
     }
+
+    [Fact]
+    public void AdditionalProperties_DefaultValue_ReturnsNull()
+    {
+        // Arrange
+        var options = new ChatClientAgentOptions();
+
+        // Act
+        var result = options.AdditionalProperties;
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void AdditionalProperties_CanBeSet_ReturnsSetValue()
+    {
+        // Arrange
+        var options = new ChatClientAgentOptions();
+        var additionalProperties = new AdditionalPropertiesDictionary
+        {
+            ["beta"] = true,
+            ["icon"] = "agent-icon.png"
+        };
+
+        // Act
+        options.AdditionalProperties = additionalProperties;
+
+        // Assert
+        Assert.Same(additionalProperties, options.AdditionalProperties);
+    }
+
+    [Fact]
+    public void Clone_WithAdditionalProperties_ClonesAdditionalProperties()
+    {
+        // Arrange
+        var original = new ChatClientAgentOptions
+        {
+            Id = "test-id",
+            Name = "Test name",
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                ["beta"] = true,
+                ["icon"] = "agent-icon.png"
+            }
+        };
+
+        // Act
+        var clone = original.Clone();
+
+        // Assert
+        Assert.NotSame(original, clone);
+        Assert.NotSame(original.AdditionalProperties, clone.AdditionalProperties);
+        Assert.Equal(original.AdditionalProperties?.Count, clone.AdditionalProperties?.Count);
+        Assert.Equal(true, clone.AdditionalProperties?["beta"]);
+        Assert.Equal("agent-icon.png", clone.AdditionalProperties?["icon"]);
+    }
 }
