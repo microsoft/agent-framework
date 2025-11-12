@@ -15,7 +15,7 @@ internal static class IntExpressionExtensions
     /// </summary>
     /// <param name="expression">Expression to evaluate.</param>
     /// <param name="engine">Recalc engine to use for evaluation.</param>
-    /// <returns>The evaluated number value, or null if the expression is null or cannot be evaluated.</returns>
+    /// <returns>The evaluated integer value, or null if the expression is null or cannot be evaluated.</returns>
     internal static long? Eval(this IntExpression? expression, RecalcEngine? engine)
     {
         if (expression is null)
