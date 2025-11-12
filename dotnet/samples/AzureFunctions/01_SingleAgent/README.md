@@ -65,6 +65,25 @@ The expected `application/json` output will look something like:
 {
   "status": 200,
   "thread_id": "@dafx-joker@your-thread-id",
-  "response": "Why don't pirates ever learn the alphabet? Because they always get stuck at 'C'!"
+  "response": {
+    "Messages": [
+      {
+        "AuthorName": "Joker",
+        "CreatedAt": "2025-11-11T12:00:00.0000000Z",
+        "Role": "assistant",
+        "Contents": [
+          {
+            "Type": "text",
+            "Text": "Why don't pirates ever learn the alphabet? Because they always get stuck at 'C'!"
+          }
+        ]
+      }
+    ],
+    "Usage": {
+      "InputTokenCount": 78,
+      "OutputTokenCount": 36,
+      "TotalTokenCount": 114
+    }
+  }
 }
 ```
