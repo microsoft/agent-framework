@@ -297,7 +297,7 @@ internal static class EntitiesApiExtensions
             Source = "in_memory",
             Executors = [.. executorIds],  // Workflows use Executors instead of Tools
             WorkflowDump = JsonSerializer.SerializeToElement(
-                workflow.ToDevUIDict(EntitiesJsonContext.Default.Options),
+                workflow.ToDevUIDict(),
                 EntitiesJsonContext.Default.DictionaryStringJsonElement),
             InputSchema = JsonSerializer.SerializeToElement(defaultInputSchema, EntitiesJsonContext.Default.DictionaryStringString),
             InputTypeName = "string",

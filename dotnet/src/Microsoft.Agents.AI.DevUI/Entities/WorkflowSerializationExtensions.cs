@@ -20,35 +20,36 @@ internal static class WorkflowSerializationExtensions
     /// This matches the Python workflow.to_dict() format expected by the UI.
     /// </summary>
     /// <param name="workflow">The workflow to convert.</param>
-    /// <param name="options">JSON serialization options containing type info for source-generated serialization. If null, uses EntitiesJsonContext.Default.Options.</param>
     /// <returns>A dictionary with string keys and JsonElement values containing the workflow data.</returns>
-    public static Dictionary<string, JsonElement> ToDevUIDict(this Workflow workflow, JsonSerializerOptions? options = null)
+    public static Dictionary<string, JsonElement> ToDevUIDict(this Workflow workflow)
     {
-        options ??= EntitiesJsonContext.Default.Options;
-
         var result = new Dictionary<string, JsonElement>
         {
-            ["id"] = JsonSerializer.SerializeToElement(workflow.Name ?? Guid.NewGuid().ToString(), (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-            ["start_executor_id"] = JsonSerializer.SerializeToElement(workflow.StartExecutorId, (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-            ["max_iterations"] = JsonSerializer.SerializeToElement(MaxIterationsDefault, (JsonTypeInfo<int>)options.GetTypeInfo(typeof(int)))
+            ["id"] = Serialize(workflow.Name ?? Guid.NewGuid().ToString(), EntitiesJsonContext.Default.String),
+            ["start_executor_id"] = Serialize(workflow.StartExecutorId, EntitiesJsonContext.Default.String),
+            ["max_iterations"] = Serialize(MaxIterationsDefault, EntitiesJsonContext.Default.Int32)
         };
 
         // Add optional fields
         if (!string.IsNullOrEmpty(workflow.Name))
         {
-            result["name"] = JsonSerializer.SerializeToElement(workflow.Name, (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string)));
+            result["name"] = Serialize(workflow.Name, EntitiesJsonContext.Default.String);
         }
 
         if (!string.IsNullOrEmpty(workflow.Description))
         {
-            result["description"] = JsonSerializer.SerializeToElement(workflow.Description, (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string)));
+            result["description"] = Serialize(workflow.Description, EntitiesJsonContext.Default.String);
         }
 
         // Convert executors to Python-compatible format
-        result["executors"] = JsonSerializer.SerializeToElement(ConvertExecutorsToDict(workflow, options), (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>)));
+        result["executors"] = Serialize(
+            ConvertExecutorsToDict(workflow),
+            EntitiesJsonContext.Default.DictionaryStringDictionaryStringString);
 
         // Convert edges to edge_groups format
-        result["edge_groups"] = JsonSerializer.SerializeToElement(ConvertEdgesToEdgeGroups(workflow, options), (JsonTypeInfo<List<JsonElement>>)options.GetTypeInfo(typeof(List<JsonElement>)));
+        result["edge_groups"] = Serialize(
+            ConvertEdgesToEdgeGroups(workflow),
+            EntitiesJsonContext.Default.ListDictionaryStringJsonElement);
 
         return result;
     }
@@ -56,9 +57,9 @@ internal static class WorkflowSerializationExtensions
     /// <summary>
     /// Converts workflow executors to a dictionary format compatible with Python
     /// </summary>
-    private static Dictionary<string, JsonElement> ConvertExecutorsToDict(Workflow workflow, JsonSerializerOptions options)
+    private static Dictionary<string, Dictionary<string, string>> ConvertExecutorsToDict(Workflow workflow)
     {
-        var executors = new Dictionary<string, JsonElement>();
+        var executors = new Dictionary<string, Dictionary<string, string>>();
 
         // Extract executor IDs from edges and start executor
         // (Registrations is internal, so we infer executors from the graph structure)
@@ -86,9 +87,7 @@ internal static class WorkflowSerializationExtensions
                 ["type"] = "Executor"
             };
 
-            executors[executorId] = JsonSerializer.SerializeToElement(
-                executorDict,
-                (JsonTypeInfo<Dictionary<string, string>>)options.GetTypeInfo(typeof(Dictionary<string, string>)));
+            executors[executorId] = executorDict;
         }
 
         return executors;
@@ -97,9 +96,9 @@ internal static class WorkflowSerializationExtensions
     /// <summary>
     /// Converts workflow edges to edge_groups format expected by the UI
     /// </summary>
-    private static List<JsonElement> ConvertEdgesToEdgeGroups(Workflow workflow, JsonSerializerOptions options)
+    private static List<Dictionary<string, JsonElement>> ConvertEdgesToEdgeGroups(Workflow workflow)
     {
-        var edgeGroups = new List<JsonElement>();
+        var edgeGroups = new List<Dictionary<string, JsonElement>>();
         var edgeGroupId = 0;
 
         // Get edges using the public ReflectEdges method
@@ -136,14 +135,12 @@ internal static class WorkflowSerializationExtensions
 
                     var edgeGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = JsonSerializer.SerializeToElement($"edge_group_{edgeGroupId++}", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["type"] = JsonSerializer.SerializeToElement("SingleEdgeGroup", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["edges"] = JsonSerializer.SerializeToElement(edges, options)
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("SingleEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
                     };
 
-                    edgeGroups.Add(JsonSerializer.SerializeToElement(
-                        edgeGroup,
-                        (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>))));
+                    edgeGroups.Add(edgeGroup);
                 }
                 else if (edgeInfo is FanOutEdgeInfo fanOutEdge)
                 {
@@ -164,19 +161,17 @@ internal static class WorkflowSerializationExtensions
 
                     var fanOutGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = JsonSerializer.SerializeToElement($"edge_group_{edgeGroupId++}", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["type"] = JsonSerializer.SerializeToElement("FanOutEdgeGroup", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["edges"] = JsonSerializer.SerializeToElement(edges, options)
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("FanOutEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
                     };
 
                     if (fanOutEdge.HasAssigner)
                     {
-                        fanOutGroup["selection_func_name"] = JsonSerializer.SerializeToElement("selector", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string)));
+                        fanOutGroup["selection_func_name"] = Serialize("selector", EntitiesJsonContext.Default.String);
                     }
 
-                    edgeGroups.Add(JsonSerializer.SerializeToElement(
-                        fanOutGroup,
-                        (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>))));
+                    edgeGroups.Add(fanOutGroup);
                 }
                 else if (edgeInfo is FanInEdgeInfo fanInEdge)
                 {
@@ -197,18 +192,18 @@ internal static class WorkflowSerializationExtensions
 
                     var edgeGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = JsonSerializer.SerializeToElement($"edge_group_{edgeGroupId++}", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["type"] = JsonSerializer.SerializeToElement("FanInEdgeGroup", (JsonTypeInfo<string>)options.GetTypeInfo(typeof(string))),
-                        ["edges"] = JsonSerializer.SerializeToElement(edges, options)
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("FanInEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
                     };
 
-                    edgeGroups.Add(JsonSerializer.SerializeToElement(
-                        edgeGroup,
-                        (JsonTypeInfo<Dictionary<string, JsonElement>>)options.GetTypeInfo(typeof(Dictionary<string, JsonElement>))));
+                    edgeGroups.Add(edgeGroup);
                 }
             }
         }
 
         return edgeGroups;
     }
+
+    private static JsonElement Serialize<T>(T value, JsonTypeInfo<T> typeInfo) => JsonSerializer.SerializeToElement(value, typeInfo);
 }
