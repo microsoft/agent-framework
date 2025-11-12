@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -87,9 +89,16 @@ public abstract class WorkflowAgentProvider
     /// <param name="agentVersion">An optional agent version.</param>
     /// <param name="conversationId">Optional identifier of the target conversation.</param>
     /// <param name="messages">The messages to include in the invocation.</param>
+    /// <param name="inputArguments">Optional input arguments for agents that provide support.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>Asynchronous set of <see cref="AgentRunResponseUpdate"/>.</returns>
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(string agentId, string? agentVersion, string? conversationId, IEnumerable<ChatMessage>? messages, CancellationToken cancellationToken = default);
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+        string agentId,
+        string? agentVersion,
+        string? conversationId,
+        IEnumerable<ChatMessage>? messages,
+        IDictionary<string, object?>? inputArguments,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves a set of messages from a conversation.
@@ -108,4 +117,14 @@ public abstract class WorkflowAgentProvider
         string? before = null,
         bool newestFirst = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Utility method to convert a dictionary of input arguments to a JsonNode.
+    /// </summary>
+    /// <param name="inputArguments">The dictionary of input arguments.</param>
+    /// <returns>A JsonNode representing the input arguments.</returns>
+    protected static JsonNode ConvertDictionaryToJson(IDictionary<string, object?> inputArguments)
+    {
+        return inputArguments.ToFormula().ToJson();
+    }
 }

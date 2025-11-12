@@ -119,13 +119,13 @@ trigger:
         # FACTS
         Consider this initial fact sheet:
 
-        {Trim(Last(Local.TaskFacts).Text)}
+        {MessageText(Local.TaskFacts)}
 
 
         # PLAN
         Here is the plan to follow as best as possible:
 
-        {Last(Local.Plan).Text}
+        {MessageText(Local.Plan)}
 
     - kind: SendActivity
       id: sendActivity_bwNZiM
@@ -247,7 +247,7 @@ trigger:
 
                              Here is the old fact sheet:
 
-                             {Local.TaskFacts}"
+                             {MessageText(Local.TaskFacts)}"
 
                     - kind: SendActivity
                       id: sendActivity_dsBaJU
@@ -291,13 +291,13 @@ trigger:
                         # FACTS
                         Consider this initial fact sheet:
 
-                        {Local.TaskFacts.Text}
+                        {MessageText(Local.TaskFacts)}
 
 
                         # PLAN
                         Here is the plan to follow as best as possible:
 
-                        {Local.Plan.Text}
+                        {MessageText(Local.Plan)}
 
                     - kind: SetVariable
                       id: setVariable_6J2snP
@@ -356,7 +356,7 @@ trigger:
             - kind: SetVariable
               id: setVariable_XzNrdM
               variable: Local.AgentResponseText
-              value: =Last(Local.AgentResponse).Text
+              value: =MessageText(Local.AgentResponse)
 
             - kind: ResetVariable
               id: setVariable_8eIx2A
