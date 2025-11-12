@@ -127,7 +127,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
             DurableAIAgent writer = context.GetAgent("TestAgent");
             AgentThread writerThread = writer.GetNewThread();
 
-            AgentRunResponse response = await writer.RunAsync(
+            await writer.RunAsync(
                 message: context.GetInput<string>()!,
                 thread: writerThread);
 
