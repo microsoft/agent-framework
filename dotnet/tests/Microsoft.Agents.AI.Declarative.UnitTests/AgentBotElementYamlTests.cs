@@ -244,21 +244,22 @@ public sealed class AgentBotElementYamlTests
         Assert.NotNull(connection.Key);
         Assert.Equal("endpoint", Eval(connection.Endpoint, configuration));
         Assert.Equal("apiKey", Eval(connection.Key, configuration));
+    }
 
     /// <summary>
     /// Represents information about a person, including their name, age, and occupation, matched to the JSON schema used in the agent.
     /// </summary>
     [Description("Information about a person including their name, age, and occupation")]
-    internal sealed class PersonInfo
+    public sealed class PersonInfo
     {
         [JsonPropertyName("name")]
-        internal string? Name { get; set; }
+        public string? Name { get; set; }
 
         [JsonPropertyName("age")]
-        internal int? Age { get; set; }
+        public int? Age { get; set; }
 
         [JsonPropertyName("occupation")]
-        internal string? Occupation { get; set; }
+        public string? Occupation { get; set; }
     }
 
     private static string? Eval(StringExpression? expression, IConfiguration? configuration = null)
