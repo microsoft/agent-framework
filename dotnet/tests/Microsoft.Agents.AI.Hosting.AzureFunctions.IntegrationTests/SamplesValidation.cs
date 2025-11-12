@@ -635,14 +635,10 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             RedirectStandardError = true,
         };
 
-        string openAiEndpoint =
-            s_configuration["AZUREAI:ENDPOINT"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__ENDPOINT)
-            s_configuration["AZURE_OPENAI_ENDPOINT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__ENDPOINT or AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment =
-            s_configuration["AZUREAI:DEPLOYMENTNAME"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__DEPLOYMENTNAME)
-            s_configuration["AZURE_OPENAI_DEPLOYMENT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__DEPLOYMENTNAME or AZURE_OPENAI_DEPLOYMENT env variable is not set.");
+        string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
