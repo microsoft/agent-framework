@@ -1,9 +1,9 @@
 # Microsoft.Agents.AI.Hosting.AzureFunctions
 
-This package adds Azure Functions integration and serverless hosting for Microsoft Agent Framework on Azure Functions. It builds upon the [Microsoft.Agents.AI.DurableTask](https://www.nuget.org/packages/Microsoft.Agents.AI.DurableTask) package to provide the following capabilities:
+This package adds Azure Functions integration and serverless hosting for Microsoft Agent Framework on Azure Functions. It builds upon the `Microsoft.Agents.AI.DurableTask` package to provide the following capabilities:
 
 - Stateful, durable execution of agents in distributed, serverless environments
-- Automatic conversation history management in supported [Durable Functions backends](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-task-hubs/choose-durable-functions-backends)
+- Automatic conversation history management in supported [Durable Functions backends](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-storage-providers)
 - Long-running agent workflows as "durable orchestrator" functions
 - Tools and [dashboards](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler/durable-task-scheduler-dashboard) for managing and monitoring agents and agent workflows
 
@@ -25,7 +25,7 @@ Or directly in your project file:
 
 ## Usage Examples
 
-For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/AzureFunctions) in the [Durable Task extension for Agent Framework repository](https://github.com/microsoft/agent-framework).
+For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/) in the [Microsoft Agent Framework GitHub repository](https://github.com/microsoft/agent-framework).
 
 ### Hosting single agents
 
