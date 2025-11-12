@@ -21,8 +21,8 @@ public sealed class FoundryAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryAgentFactory"/> class with an associated <see cref="AgentClient"/>.
     /// </summary>
+    /// <param name="agentClient">The <see cref="AgentClient"/> instance to use for creating agents.</param>
     public FoundryAgentFactory(AgentClient agentClient)
-    {
         Throw.IfNull(agentClient);
 
         this._agentClient = agentClient;
