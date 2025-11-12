@@ -18,7 +18,9 @@ import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, override
+from typing import Any
+
+from typing_extensions import override
 
 from agent_framework import (
     AgentProtocol,

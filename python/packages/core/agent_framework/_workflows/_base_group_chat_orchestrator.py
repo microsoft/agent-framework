@@ -6,7 +6,9 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, override
+from typing import Any
+
+from typing_extensions import override
 
 from .._types import ChatMessage
 from ._executor import Executor

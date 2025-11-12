@@ -10,8 +10,10 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, TypeVar, Union, cast, override
+from typing import Any, Protocol, TypeVar, Union, cast
 from uuid import uuid4
+
+from typing_extensions import override
 
 from agent_framework import (
     AgentProtocol,

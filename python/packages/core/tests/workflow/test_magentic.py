@@ -2,9 +2,10 @@
 
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Any, cast, override
+from typing import Any, cast
 
 import pytest
+from typing_extensions import override
 
 from agent_framework import (
     AgentRunResponse,

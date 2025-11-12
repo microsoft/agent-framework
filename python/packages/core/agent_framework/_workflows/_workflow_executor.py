@@ -4,7 +4,9 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any
+
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from ._workflow import Workflow

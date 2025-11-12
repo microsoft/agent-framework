@@ -2,7 +2,9 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, cast, override
+from typing import Any, cast
+
+from typing_extensions import override
 
 from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResponseContent
 
