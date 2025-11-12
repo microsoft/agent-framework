@@ -81,13 +81,11 @@ internal static class WorkflowSerializationExtensions
         // Create executor entries (we can't access internal Registrations for type info)
         foreach (var executorId in executorIds)
         {
-            var executorDict = new Dictionary<string, string>
+            executors[executorId] = new Dictionary<string, string>
             {
                 ["id"] = executorId,
                 ["type"] = "Executor"
             };
-
-            executors[executorId] = executorDict;
         }
 
         return executors;
