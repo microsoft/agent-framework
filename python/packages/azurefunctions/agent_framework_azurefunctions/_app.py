@@ -47,6 +47,10 @@ if TYPE_CHECKING:
 
         def entity_trigger(self, context_name: str, entity_name: str) -> Callable[[EntityHandler], EntityHandler]: ...
 
+        def orchestration_trigger(self, context_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def activity_trigger(self, input_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
 else:
     DFAppBase = df.DFApp  # type: ignore[assignment]
 
