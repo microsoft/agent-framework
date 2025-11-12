@@ -44,7 +44,7 @@ static string GetWeather(
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
 // Create the agent from the YAML definition.
-var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential());
+var agentFactory = new FoundryAgentFactory(new AzureCliCredential());
 var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Create agent run options

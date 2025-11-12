@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
+using OpenAI.Responses;
 
 namespace Microsoft.Bot.ObjectModel;
 
@@ -63,6 +64,28 @@ internal static class PromptAgentExtensions
         // TODO Handle MCP tool resources
 
         return toolResources;
+    }
+
+    internal static IEnumerable<ResponseTool> GetResponseTools(this GptComponentMetadata promptAgent)
+    {
+        Throw.IfNull(promptAgent);
+
+        return promptAgent.Tools.Select<TaskAction, ResponseTool>(tool =>
+        {
+            return tool switch
+            {
+                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterTool(),
+                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionTool(),
+                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchTool(),
+                WebSearchTool => ((WebSearchTool)tool).CreateWebSearchTool(),
+                McpServerTool => ((McpServerTool)tool).CreateMcpTool(),
+                // TODO: Add other tool types as custom tools
+                // AzureAISearch
+                // AzureFunction
+                // OpenApi
+                _ => throw new NotSupportedException($"Unable to create response tool because of unsupported tool type: {tool.Kind}"),
+            };
+        }).ToList();
     }
 
     #region private

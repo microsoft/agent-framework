@@ -23,4 +23,15 @@ internal static class WebSearchToolExtensions
 
         return new BingGroundingToolDefinition(parameters);
     }
+
+    /// <summary>
+    /// Creates a <see cref="OpenAI.Responses.WebSearchTool"/> from a <see cref="WebSearchTool"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="WebSearchTool"/></param>
+    internal static OpenAI.Responses.WebSearchTool CreateWebSearchTool(this WebSearchTool tool)
+    {
+        Throw.IfNull(tool);
+
+        return new OpenAI.Responses.WebSearchTool();
+    }
 }

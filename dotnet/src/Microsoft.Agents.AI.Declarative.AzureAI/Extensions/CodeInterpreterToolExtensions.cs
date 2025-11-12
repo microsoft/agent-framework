@@ -24,6 +24,20 @@ internal static class CodeInterpreterToolExtensions
     }
 
     /// <summary>
+    /// Creates a <see cref="CodeInterpreterTool"/> from a <see cref="CodeInterpreterTool"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="CodeInterpreterTool"/></param>
+    internal static OpenAI.Responses.CodeInterpreterTool CreateCodeInterpreterTool(this CodeInterpreterTool tool)
+    {
+        Throw.IfNull(tool);
+
+        var containerId = tool.ExtensionData?.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("containerId"))?.Value;
+        Throw.IfNull(containerId, "The containerId must be specified in the extension data to create a code interpreter tool.");
+
+        return new OpenAI.Responses.CodeInterpreterTool(new OpenAI.Responses.CodeInterpreterToolContainer(containerId));
+    }
+
+    /// <summary>
     /// Collects the file IDs from the extension data of a <see cref="CodeInterpreterTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="CodeInterpreterTool"/></param>

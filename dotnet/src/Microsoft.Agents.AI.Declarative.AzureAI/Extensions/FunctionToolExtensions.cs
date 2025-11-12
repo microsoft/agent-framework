@@ -3,6 +3,7 @@
 using System;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
+using OpenAI.Responses;
 
 namespace Microsoft.Bot.ObjectModel;
 
@@ -26,6 +27,26 @@ public static class FunctionToolExtensions
             name: tool.Name,
             description: tool.Description,
             parameters: parameters);
+    }
+
+    /// <summary>
+    /// Creates a <see cref="FunctionToolDefinition"/> from a <see cref="InvokeClientTaskAction"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="InvokeClientTaskAction"/></param>
+    internal static FunctionTool CreateFunctionTool(this InvokeClientTaskAction tool)
+    {
+        Throw.IfNull(tool);
+        Throw.IfNull(tool.Name);
+
+        BinaryData parameters = tool.GetParameters();
+
+        return new FunctionTool(
+            functionName: tool.Name,
+            functionParameters: parameters,
+            strictModeEnabled: null)
+        {
+            FunctionDescription = tool.Description
+        };
     }
 
     /// <summary>

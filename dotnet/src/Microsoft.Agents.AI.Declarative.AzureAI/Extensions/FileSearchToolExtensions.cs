@@ -26,6 +26,17 @@ internal static class FileSearchToolExtensions
     }
 
     /// <summary>
+    /// Creates a <see cref="FileSearchToolDefinition"/> from a <see cref="FileSearchTool"/>.
+    /// </summary>
+    /// <param name="tool">Instance of <see cref="FileSearchTool"/></param>
+    internal static OpenAI.Responses.FileSearchTool CreateFileSearchTool(this FileSearchTool tool)
+    {
+        Throw.IfNull(tool);
+
+        return new OpenAI.Responses.FileSearchTool(tool.GetVectorStoreIds());
+    }
+
+    /// <summary>
     /// Get the vector store IDs for the specified <see cref="FileSearchTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="FileSearchTool"/></param>
