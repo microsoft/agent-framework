@@ -292,8 +292,21 @@ class RunRequest:
     thread_id: str | None = None
     correlation_id: str | None = None
 
-    def __post_init__(self) -> None:
-        self.role = self.coerce_role(self.role)
+    def __init__(
+        self,
+        message: str,
+        role: Role | str | None = Role.USER,
+        response_format: type[BaseModel] | None = None,
+        enable_tool_calls: bool = True,
+        thread_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        self.message = message
+        self.role = self.coerce_role(role)
+        self.response_format = response_format
+        self.enable_tool_calls = enable_tool_calls
+        self.thread_id = thread_id
+        self.correlation_id = correlation_id
 
     @staticmethod
     def coerce_role(value: Role | str | None) -> Role:

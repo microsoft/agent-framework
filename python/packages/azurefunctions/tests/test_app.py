@@ -579,8 +579,8 @@ class TestIncomingRequestParsing:
 
         assert response_format == "text"
 
-    def test_parse_plain_text_allows_empty_message(self) -> None:
-        """Test that plain-text requests return empty message when content missing."""
+    def test_parse_plain_text_trims_whitespace(self) -> None:
+        """Plain-text parser returns an empty string when the body contains only whitespace."""
         app = self._create_app()
 
         request = Mock()
@@ -626,11 +626,8 @@ class TestIncomingRequestParsing:
 class TestHttpRunRoute:
     """Tests for the HTTP run route behavior."""
 
-    async def test_http_run_accepts_plain_text(self) -> None:
-        """Test that the HTTP handler accepts plain-text requests."""
-        mock_agent = Mock()
-        mock_agent.name = "HttpAgent"
-
+    @staticmethod
+    def _get_run_handler(agent: Mock) -> Callable[[func.HttpRequest, Any], Awaitable[func.HttpResponse]]:
         captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
 
         def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
@@ -653,10 +650,17 @@ class TestHttpRunRoute:
             patch.object(AgentFunctionApp, "durable_client_input", new=capture_decorator),
             patch.object(AgentFunctionApp, "entity_trigger", new=capture_decorator),
         ):
-            AgentFunctionApp(agents=[mock_agent], enable_health_check=False)
+            AgentFunctionApp(agents=[agent], enable_health_check=False)
 
-        run_route = f"agents/{mock_agent.name}/run"
-        handler = captured_handlers[run_route]
+        run_route = f"agents/{agent.name}/run"
+        return captured_handlers[run_route]
+
+    async def test_http_run_accepts_plain_text(self) -> None:
+        """Test that the HTTP handler accepts plain-text requests."""
+        mock_agent = Mock()
+        mock_agent.name = "HttpAgent"
+
+        handler = self._get_run_handler(mock_agent)
 
         request = Mock()
         request.headers = {WAIT_FOR_RESPONSE_HEADER: "false"}
@@ -686,32 +690,7 @@ class TestHttpRunRoute:
         mock_agent = Mock()
         mock_agent.name = "HttpAgentJson"
 
-        captured_handlers: dict[str | None, Callable[..., Awaitable[func.HttpResponse]]] = {}
-
-        def capture_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
-                return func
-
-            return decorator
-
-        def capture_route(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
-            def decorator(func: TFunc) -> TFunc:
-                route_key = kwargs.get("route") if kwargs else None
-                captured_handlers[route_key] = func
-                return func
-
-            return decorator
-
-        with (
-            patch.object(AgentFunctionApp, "function_name", new=capture_decorator),
-            patch.object(AgentFunctionApp, "route", new=capture_route),
-            patch.object(AgentFunctionApp, "durable_client_input", new=capture_decorator),
-            patch.object(AgentFunctionApp, "entity_trigger", new=capture_decorator),
-        ):
-            AgentFunctionApp(agents=[mock_agent], enable_health_check=False)
-
-        run_route = f"agents/{mock_agent.name}/run"
-        handler = captured_handlers[run_route]
+        handler = self._get_run_handler(mock_agent)
 
         request = Mock()
         request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": "application/json"}
@@ -729,6 +708,30 @@ class TestHttpRunRoute:
         assert response.headers.get("x-ms-thread-id") is None
         body = response.get_body().decode("utf-8")
         assert '"status": "accepted"' in body
+
+    async def test_http_run_rejects_empty_message(self) -> None:
+        """Test that the HTTP handler rejects empty messages with a 400 response."""
+        mock_agent = Mock()
+        mock_agent.name = "HttpAgentEmpty"
+
+        handler = self._get_run_handler(mock_agent)
+
+        request = Mock()
+        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false"}
+        request.params = {}
+        request.route_params = {}
+        request.get_json.side_effect = ValueError("Invalid JSON")
+        request.get_body.return_value = b"   "
+
+        client = AsyncMock()
+
+        response = await handler(request, client)
+
+        assert response.status_code == 400
+        assert response.mimetype == "text/plain"
+        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.get_body().decode("utf-8") == "Message is required"
+        client.signal_entity.assert_not_called()
 
 
 if __name__ == "__main__":

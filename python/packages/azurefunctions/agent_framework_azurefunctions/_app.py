@@ -404,7 +404,10 @@ class AgentFunctionApp(df.DFApp):
 
     @staticmethod
     def _build_function_name(agent_name: str, prefix: str) -> str:
-        """Generate the Azure Functions name with {prefix}-{sanitized_agent_name}."""
+        """Generate the sanitized function name in the form "{prefix}-{sanitized_agent_name}".
+
+        Example: agent_name="Weather Agent" and prefix="http" becomes "http-Weather_Agent".
+        """
         sanitized_agent = re.sub(r"[^0-9a-zA-Z_]", "_", agent_name or "agent").strip("_")
 
         if not sanitized_agent:
@@ -540,7 +543,7 @@ class AgentFunctionApp(df.DFApp):
 
         return RunRequest(
             message=message,
-            role=RunRequest.coerce_role(req_body.get("role")),
+            role=req_body.get("role"),
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
             thread_id=thread_id,
@@ -578,7 +581,7 @@ class AgentFunctionApp(df.DFApp):
     ) -> func.HttpResponse:
         """Return a plain-text response with optional thread identifier header."""
         body_text = payload if isinstance(payload, str) else self._convert_payload_to_text(payload)
-        headers = {"x-ms-thread-id": thread_id} if thread_id else None
+        headers = {"x-ms-thread-id": thread_id} if thread_id is not None else None
         return func.HttpResponse(body_text, status_code=status_code, mimetype="text/plain", headers=headers)
 
     def _build_json_response(self, payload: dict[str, Any] | str, status_code: int) -> func.HttpResponse:
