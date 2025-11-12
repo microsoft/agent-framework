@@ -50,7 +50,7 @@ class TestSampleMultiAgent:
         """Test MathAgent endpoint."""
         response = SampleTestHelper.post_json(
             f"{self.math_base_url}/run",
-            {"message": "Calculate a 20% tip on a $50 bill", "wait_for_completion": False},
+            {"message": "Calculate a 20% tip on a $50 bill", "wait_for_response": False},
         )
         assert response.status_code == 202
         data = response.json()

@@ -62,6 +62,8 @@ an HTTP API that can be polled by a web client or dashboard.
   - Query callback telemetry for that thread: `GET /api/agents/CallbackAgent/callbacks/{thread_id}`
   - Clear stored events: `DELETE /api/agents/CallbackAgent/callbacks/{thread_id}`
 
+  > **Note:** The run endpoint waits for the agent response by default. To return immediately, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body.
+
 Example workflow after the host starts:
 
 ```text

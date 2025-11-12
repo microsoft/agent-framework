@@ -34,6 +34,8 @@ This sample starts a Durable Functions orchestration that runs two agents in par
    curl http://localhost:7071/api/multiagent/status/<instanceId>
    ```
 
+> **Note:** The agent run endpoints wait for responses by default. If you call them directly and need an immediate HTTP 202, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request payload.
+
 The orchestration launches both agents simultaneously so their domain-specific answers can be combined for the caller.
 
 ## Expected Output

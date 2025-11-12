@@ -42,6 +42,8 @@ With the environment setup and function app running, you can test the sample by 
 
 You can use the `demo.http` file to send messages to the agents, or a command line tool like `curl` as shown below:
 
+> **Note:** Each endpoint waits for the agent response by default. To receive an immediate HTTP 202 instead, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body.
+
 ### Test the Weather Agent
 
 Bash (Linux/macOS/WSL):

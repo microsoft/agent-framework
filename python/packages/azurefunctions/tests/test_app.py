@@ -267,8 +267,8 @@ class TestAgentFunctionAppSetup:
         assert "Agent2" in app2.agents
 
 
-class TestWaitForCompletionAndCorrelationId:
-    """Tests for wait_for_completion flag and correlation ID handling."""
+class TestWaitForResponseAndCorrelationId:
+    """Tests for wait_for_response flag and correlation ID handling."""
 
     def _create_app(self) -> AgentFunctionApp:
         mock_agent = Mock()
@@ -286,21 +286,21 @@ class TestWaitForCompletionAndCorrelationId:
         request.params = params or {}
         return request
 
-    def test_wait_for_completion_header_true(self) -> None:
-        """Test that the wait-for-completion header is honored."""
+    def test_wait_for_response_header_true(self) -> None:
+        """Test that the wait-for-response header is honored."""
         app = self._create_app()
-        request = self._make_request(headers={"X-Wait-For-Completion": "true"})
+        request = self._make_request(headers={"x-ms-wait-for-response": "true"})
 
-        assert app._should_wait_for_completion(request, {}) is True
+        assert app._should_wait_for_response(request, {}) is True
 
-    def test_wait_for_completion_body_snake_case(self) -> None:
-        """Test that payload controls wait_for_completion."""
+    def test_wait_for_response_body_snake_case(self) -> None:
+        """Test that payload controls wait_for_response."""
         app = self._create_app()
         request = self._make_request()
 
-        assert app._should_wait_for_completion(request, {"wait_for_completion": "true"}) is True
-        assert app._should_wait_for_completion(request, {"wait_for_completion": "false"}) is False
-        assert app._should_wait_for_completion(request, {"wait_for_completion": "0"}) is False
+        assert app._should_wait_for_response(request, {"wait_for_response": "true"}) is True
+        assert app._should_wait_for_response(request, {"wait_for_response": "false"}) is False
+        assert app._should_wait_for_response(request, {"wait_for_response": "0"}) is False
 
 
 class TestAgentEntityOperations:
@@ -644,7 +644,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"X-MS-Wait-For-Completion": "false"}
+        request.headers = {"x-ms-wait-for-response": "false"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -699,7 +699,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"X-MS-Wait-For-Completion": "false", "Accept": "application/json"}
+        request.headers = {"x-ms-wait-for-response": "false", "Accept": "application/json"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")

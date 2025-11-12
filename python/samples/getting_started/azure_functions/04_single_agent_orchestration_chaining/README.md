@@ -32,6 +32,8 @@ preserving the conversation state between runs.
    curl http://localhost:7071/api/singleagent/status/<instanceId>
    ```
 
+> **Note:** The underlying agent run endpoint now waits for responses by default. If you invoke it directly and prefer an immediate HTTP 202, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the payload.
+
 The orchestration first requests an inspirational sentence from the agent, then refines the initial response while
 keeping it under 25 words—mirroring the behaviour of the corresponding .NET sample.
 

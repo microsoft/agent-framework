@@ -74,7 +74,7 @@ class TestSampleCallbacks:
         # Send a message first
         SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Hello", "thread_id": thread_id, "wait_for_completion": False},
+            {"message": "Hello", "thread_id": thread_id, "wait_for_response": False},
         )
 
         # Get callbacks
@@ -90,7 +90,7 @@ class TestSampleCallbacks:
         # Send a message first
         SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Test", "thread_id": thread_id, "wait_for_completion": False},
+            {"message": "Test", "thread_id": thread_id, "wait_for_response": False},
         )
 
         # Delete callbacks

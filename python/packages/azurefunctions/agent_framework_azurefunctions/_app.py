@@ -85,18 +85,18 @@ class AgentFunctionApp(df.DFApp):
     def __init__(
         self,
         agents: list[AgentProtocol] | None = None,
-        http_auth_level: func.AuthLevel = func.AuthLevel.ANONYMOUS,
+        http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
-        max_poll_retries: int = 10,
-        poll_interval_seconds: float = 0.5,
+        max_poll_retries: int = 30,
+        poll_interval_seconds: float = 1,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
 
         Args:
             agents: List of agent instances to register
-            http_auth_level: HTTP authentication level (default: ANONYMOUS)
+            http_auth_level: HTTP authentication level (default: FUNCTION)
             enable_health_check: Enable built-in health check endpoint (default: True)
             enable_http_endpoints: Enable HTTP endpoints for agents (default: True)
             max_poll_retries: Maximum number of polling attempts when waiting for a response
@@ -253,11 +253,11 @@ class AgentFunctionApp(df.DFApp):
             try:
                 req_body, message, response_format = self._parse_incoming_request(req)
                 thread_id = self._resolve_thread_id(req=req, req_body=req_body)
-                wait_for_completion = self._should_wait_for_completion(req=req, req_body=req_body)
+                wait_for_response = self._should_wait_for_response(req=req, req_body=req_body)
 
                 logger.debug(f"[HTTP Trigger] Message: {message}")
                 logger.debug(f"[HTTP Trigger] Thread ID: {thread_id}")
-                logger.debug(f"[HTTP Trigger] wait_for_completion: {wait_for_completion}")
+                logger.debug(f"[HTTP Trigger] wait_for_response: {wait_for_response}")
 
                 if not message:
                     logger.warning("[HTTP Trigger] Request rejected: Missing message")
@@ -287,7 +287,7 @@ class AgentFunctionApp(df.DFApp):
 
                 logger.debug(f"[HTTP Trigger] Signal sent to entity {session_id}")
 
-                if wait_for_completion:
+                if wait_for_response:
                     result = await self._get_response_from_entity(
                         client=client,
                         entity_instance_id=entity_instance_id,
@@ -304,7 +304,7 @@ class AgentFunctionApp(df.DFApp):
                         thread_id=thread_id,
                     )
 
-                logger.debug("[HTTP Trigger] wait_for_completion disabled; returning correlation ID")
+                logger.debug("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
 
                 accepted_response = self._build_accepted_response(
                     message=message, thread_id=thread_id, correlation_id=correlation_id
@@ -698,22 +698,22 @@ class AgentFunctionApp(df.DFApp):
 
         return {}, message
 
-    def _should_wait_for_completion(self, req: func.HttpRequest, req_body: dict[str, Any]) -> bool:
-        """Determine whether the caller requested to wait for completion."""
+    def _should_wait_for_response(self, req: func.HttpRequest, req_body: dict[str, Any]) -> bool:
+        """Determine whether the caller requested to wait for the response."""
         header_value = None
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
             headers_mapping = cast(Mapping[Any, Any], raw_headers)
             for key, value in headers_mapping.items():
-                if str(key).lower() == "x-ms-wait-for-completion":
+                if str(key).lower() == "x-ms-wait-for-response":
                     header_value = value
                     break
 
         if header_value is not None:
             return self._coerce_to_bool(header_value)
 
-        if "wait_for_completion" in req_body:
-            return self._coerce_to_bool(req_body.get("wait_for_completion"))
+        if "wait_for_response" in req_body:
+            return self._coerce_to_bool(req_body.get("wait_for_response"))
 
         return True
 

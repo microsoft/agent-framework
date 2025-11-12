@@ -47,7 +47,7 @@ class TestSampleSingleAgent:
             f"{self.base_url}/run",
             {"message": "Tell me a short joke about cloud computing.", "thread_id": "test-simple-json"},
         )
-        # Agent can return 200 (immediate) or 202 (async with wait_for_completion=false)
+        # Agent can return 200 (immediate) or 202 (async with wait_for_response=false)
         assert response.status_code in [200, 202]
         data = response.json()
 

@@ -48,6 +48,8 @@ curl -X POST http://localhost:7071/api/agents/Joker/run \
 
 The agent responds with a JSON payload that includes the generated joke.
 
+> **Note:** To return immediately with an HTTP 202 response instead of waiting for the agent output, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body. The default behavior waits for the response.
+
 ## Expected Output
 
 When you send a POST request with plain-text input, the Functions host responds with an HTTP 202 and queues the request for the durable agent entity. A typical response body looks like the following:
