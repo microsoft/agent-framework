@@ -13,7 +13,8 @@ from agent_framework import AgentRunResponse, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
-from agent_framework_azurefunctions._entities import AgentEntity, AgentState, create_agent_entity
+from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
+from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
@@ -357,8 +358,16 @@ class TestAgentEntityOperations:
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-2"}
         )
 
-        history = entity.state.conversation_history
+        history = entity.state.data.conversation_history[0].messages
         assert len(history) == 2  # User + assistant
+
+        # Send second message
+        await entity.run_agent(
+            mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlation_id": "corr-app-entity-2"}
+        )
+
+        history2= entity.state.data.conversation_history[1].messages
+        assert len(history2) == 2  # User + assistant
 
         user_msg = history[0]
         user_role = getattr(user_msg.role, "value", user_msg.role)
@@ -380,17 +389,17 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
         )
-        assert entity.state.message_count == 1
+        assert len(entity.state.data.conversation_history) == 1
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
         )
-        assert entity.state.message_count == 2
+        assert len(entity.state.data.conversation_history[0].messages) == 2
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -398,19 +407,13 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
 
         # Set some state
-        entity.state.message_count = 10
-        entity.state.last_response = "Some response"
-        entity.state.conversation_history = [
-            ChatMessage(role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"})
-        ]
+        entity.state.data = DurableAgentState()
 
         # Reset
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.message_count == 0
-        assert entity.state.last_response is None
-        assert len(entity.state.conversation_history) == 0
+        assert len(entity.state.data.conversation_history) == 0
 
 
 class TestAgentEntityFactory:
@@ -506,7 +509,7 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(AgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)

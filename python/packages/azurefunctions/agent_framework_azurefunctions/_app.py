@@ -16,11 +16,11 @@ import azure.functions as func
 from agent_framework import AgentProtocol, get_logger
 
 from ._callbacks import AgentResponseCallbackProtocol
+from ._durable_agent_state import DurableAgentState
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._models import AgentSessionId, RunRequest
 from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
-from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -489,7 +489,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         client: df.DurableOrchestrationClient,
         entity_instance_id: df.EntityId,
-    ) -> AgentState | None:
+    ) -> DurableAgentState | None:
         state_response = await client.read_entity_state(entity_instance_id)
         if not state_response or not state_response.entity_exists:
             return None
@@ -500,7 +500,7 @@ class AgentFunctionApp(DFAppBase):
 
         typed_state_payload = cast(dict[str, Any], state_payload)
 
-        agent_state = AgentState()
+        agent_state = DurableAgentState()
         agent_state.restore_state(typed_state_payload)
         return agent_state
 
@@ -589,7 +589,7 @@ class AgentFunctionApp(DFAppBase):
         }
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: AgentState
+        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return {

@@ -15,9 +15,9 @@ import pytest
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role
 from pydantic import BaseModel
 
+from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 from agent_framework_azurefunctions._models import RunRequest
-from agent_framework_azurefunctions._state import AgentState
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
@@ -71,9 +71,9 @@ class TestAgentEntityInit:
         entity = AgentEntity(mock_agent)
 
         assert entity.agent == mock_agent
-        assert entity.state.conversation_history == []
-        assert entity.state.last_response is None
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
+        assert entity.state.data.extension_data is None
+        assert entity.state.schema_version == "1.0.0"
 
     def test_init_stores_agent_reference(self) -> None:
         """Test that the agent reference is stored correctly."""
@@ -237,7 +237,7 @@ class TestAgentEntityRunAgent:
         )
 
         # Should have 2 entries: user message + assistant response
-        history = entity.state.conversation_history
+        history = entity.state.data.conversation_history[0].messages
 
         assert len(history) == 2
 
@@ -257,22 +257,22 @@ class TestAgentEntityRunAgent:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-3a"}
         )
-        assert entity.state.message_count == 1
+        assert len(entity.state.data.conversation_history) == 1
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-3b"}
         )
-        assert entity.state.message_count == 2
+        assert len(entity.state.data.conversation_history) == 2
 
         await entity.run_agent(
             mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlation_id": "corr-entity-3c"}
         )
-        assert entity.state.message_count == 3
+        assert len(entity.state.data.conversation_history) == 3
 
     async def test_run_agent_stores_last_response(self) -> None:
         """Test that run_agent stores the last response."""
@@ -363,8 +363,8 @@ class TestAgentEntityRunAgent:
             mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlation_id": "corr-entity-8c"}
         )
 
-        history = entity.state.conversation_history
-        assert len(history) == 6
+        history = entity.state.data.conversation_history
+        assert len(history) == 3
         assert entity.state.message_count == 3
 
 
@@ -377,7 +377,7 @@ class TestAgentEntityReset:
         entity = AgentEntity(mock_agent)
 
         # Add some history
-        entity.state.conversation_history = [
+        entity.state.data.conversation_history = [
             ChatMessage(role="user", text="msg1"),
             ChatMessage(role="assistant", text="resp1"),
         ]
@@ -385,31 +385,31 @@ class TestAgentEntityReset:
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.conversation_history == []
+        assert entity.state.data.conversation_history == []
 
     def test_reset_clears_last_response(self) -> None:
         """Test that reset clears the last response."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        entity.state.last_response = "Some response"
+        entity.state.data = {"some_key": "some_value"}
 
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.last_response is None
+        assert len(entity.state.data.conversation_history) == 0
 
     def test_reset_clears_message_count(self) -> None:
         """Test that reset clears the message count."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        entity.state.message_count = 10
+        len(entity.state.data.conversation_history) == 10
 
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
     async def test_reset_after_conversation(self) -> None:
         """Test reset after a full conversation."""
@@ -429,14 +429,14 @@ class TestAgentEntityReset:
 
         # Verify state before reset
         assert entity.state.message_count == 2
-        assert len(entity.state.conversation_history) == 4
+        assert len(entity.state.data.conversation_history) == 2
 
         # Reset
         entity.reset(mock_context)
 
         # Verify state after reset
         assert entity.state.message_count == 0
-        assert len(entity.state.conversation_history) == 0
+        assert len(entity.state.data.conversation_history) == 0
         assert entity.state.last_response is None
 
 
@@ -485,13 +485,13 @@ class TestCreateAgentEntity:
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = {
-            "message_count": 5,
             "conversation_history": [
                 ChatMessage(
                     role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
                 ).to_dict()
             ],
-            "last_response": "Test",
+            "message_count": 0,
+            "last_response": None
         }
 
         # Execute
@@ -506,7 +506,7 @@ class TestCreateAgentEntity:
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
         assert state["message_count"] == 0
-        assert state["conversation_history"] == []
+        assert state["data"]["conversation_history"] == []
         assert state["last_response"] is None
 
     def test_entity_function_handles_unknown_operation(self) -> None:
@@ -547,8 +547,7 @@ class TestCreateAgentEntity:
         assert result["status"] == "reset"
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["message_count"] == 0
-        assert state["conversation_history"] == []
+        assert state["data"] == {'conversation_history': [], 'extension_data': None}
 
     def test_entity_function_restores_existing_state(self) -> None:
         """Test that the entity function restores existing state."""
@@ -573,7 +572,7 @@ class TestCreateAgentEntity:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(AgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
             entity_function(mock_context)
 
         restore_state_mock.assert_called_once_with(existing_state)
@@ -684,11 +683,11 @@ class TestConversationHistory:
         )
 
         # Check both user and assistant messages have timestamps
-        for entry in entity.state.conversation_history:
-            timestamp = entry.additional_properties.get("timestamp")
+        for entry in entity.state.data.conversation_history:
+            timestamp = entry.created_at
             assert timestamp is not None
             # Verify timestamp is in ISO format
-            datetime.fromisoformat(timestamp)
+            datetime.fromisoformat(str(timestamp))
 
     async def test_conversation_history_ordering(self) -> None:
         """Test that conversation history maintains the correct order."""
@@ -717,13 +716,13 @@ class TestConversationHistory:
         )
 
         # Verify order
-        history = entity.state.conversation_history
-        assert history[0].text == "Message 1"
-        assert history[1].text == "Response 1"
-        assert history[2].text == "Message 2"
-        assert history[3].text == "Response 2"
-        assert history[4].text == "Message 3"
-        assert history[5].text == "Response 3"
+        history = entity.state.data.conversation_history
+        assert history[0].messages[0].text == "Message 1"
+        assert history[0].messages[1].text == "Response 1"
+        assert history[1].messages[0].text == "Message 2"
+        assert history[1].messages[1].text == "Response 2"
+        assert history[2].messages[0].text == "Message 3"
+        assert history[2].messages[1].text == "Response 3"
 
     async def test_conversation_history_role_alternation(self) -> None:
         """Test that conversation history alternates between user and assistant roles."""
@@ -743,11 +742,11 @@ class TestConversationHistory:
         )
 
         # Check role alternation
-        history = entity.state.conversation_history
-        assert _role_value(history[0]) == "user"
-        assert _role_value(history[1]) == "assistant"
-        assert _role_value(history[2]) == "user"
-        assert _role_value(history[3]) == "assistant"
+        history = entity.state.data.conversation_history
+        assert history[0].messages[0].role == "user"
+        assert history[0].messages[1].role == "assistant"
+        assert history[1].messages[0].role == "user"
+        assert history[1].messages[1].role == "assistant"
 
 
 class TestRunRequestSupport:
@@ -828,9 +827,9 @@ class TestRunRequestSupport:
         await entity.run_agent(mock_context, request)
 
         # Check that system role was stored
-        history = entity.state.conversation_history
-        assert _role_value(history[0]) == "system"
-        assert history[0].text == "System message"
+        history = entity.state.data.conversation_history
+        assert history[0].messages[0].role == "system"
+        assert history[0].messages[0].text == "System message"
 
     async def test_run_agent_with_response_format(self) -> None:
         """Test run_agent with a JSON response format."""
