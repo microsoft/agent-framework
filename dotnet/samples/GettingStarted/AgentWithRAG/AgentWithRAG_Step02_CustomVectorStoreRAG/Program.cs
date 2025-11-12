@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Qdrant to add retrieval augmented generation (RAG) capabilities to an AI agent.
+// This sample shows how to use Qdrant with a custom schema to add retrieval augmented generation (RAG) capabilities to an AI agent.
 // While the sample is using Qdrant, it can easily be replaced with any other vector store that implements the Microsoft.Extensions.VectorData abstractions.
 // The TextSearchProvider runs a search against the vector store before each model invocation and injects the results into the model context.
 

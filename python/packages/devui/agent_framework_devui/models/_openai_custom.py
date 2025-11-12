@@ -386,6 +386,9 @@ class MetaResponse(BaseModel):
     framework: str = "agent_framework"
     """Backend framework identifier."""
 
+    runtime: Literal["python", "dotnet"] = "python"
+    """Backend runtime/language - 'python' or 'dotnet' for deployment guides and feature availability."""
+
     capabilities: dict[str, bool] = {}
     """Server capabilities (e.g., tracing, openai_proxy)."""
 

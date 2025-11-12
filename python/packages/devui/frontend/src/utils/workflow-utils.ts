@@ -11,6 +11,23 @@ import type {
 import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
 
+/**
+ * Truncates text that exceeds the maximum length and appends ellipsis
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length before truncation (default: 50)
+ * @param ellipsis - String to append when truncated (default: '...')
+ * @returns Truncated text with ellipsis if it exceeds maxLength, otherwise original text
+ *
+ * @example
+ * truncateText('Hello World', 5) // 'Hello...'
+ * truncateText('Short', 10) // 'Short'
+ * truncateText('workflow_assistant_43ca50a006aa425e96e8fcf54206a7e3', 35) // 'workflow_assistant_43ca50a006aa4...'
+ */
+export function truncateText(text: string, maxLength: number = 50, ellipsis: string = '...'): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + ellipsis;
+}
+
 export interface WorkflowDumpExecutor {
   id: string;
   type: string;

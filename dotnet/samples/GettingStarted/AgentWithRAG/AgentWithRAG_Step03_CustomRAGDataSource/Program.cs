@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use TextSearchProvider to add retrieval augmented generation (RAG)
-// capabilities to an AI agent. The provider runs a search against an external knowledge base
+// capabilities to an AI agent. This shows a mock implementation of a search function,
+// which can be replaced with any custom search logic to query any external knowledge base.
+// The provider invokes the custom search function
 // before each model invocation and injects the results into the model context.
 
 using Azure.AI.OpenAI;

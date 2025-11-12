@@ -32,6 +32,7 @@ public static class DevUIExtensions
     {
         var group = endpoints.MapGroup("");
         group.MapDevUI(pattern: "/devui");
+        group.MapMeta();
         group.MapEntities();
         return group;
     }

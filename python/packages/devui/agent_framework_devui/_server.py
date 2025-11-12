@@ -397,6 +397,7 @@ class DevServer:
                 ui_mode=self.mode,  # type: ignore[arg-type]
                 version=__version__,
                 framework="agent_framework",
+                runtime="python",  # Python DevUI backend
                 capabilities={
                     "tracing": os.getenv("ENABLE_OTEL") == "true",
                     "openai_proxy": openai_executor.is_configured,
