@@ -116,17 +116,14 @@ internal sealed class TestHelper : IDisposable
 
     internal static ChatClient GetAzureOpenAIChatClient(IConfiguration configuration)
     {
-        string azureOpenAiEndpoint =
-            configuration["AZUREAI:ENDPOINT"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__ENDPOINT)
-            configuration["AZURE_OPENAI_ENDPOINT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__ENDPOINT or AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string azureOpenAiDeploymentName =
-            configuration["AZUREAI:DEPLOYMENTNAME"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__DEPLOYMENTNAME)
-            configuration["AZURE_OPENAI_DEPLOYMENT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__DEPLOYMENTNAME or AZURE_OPENAI_DEPLOYMENT env variable is not set.");
+        string azureOpenAiEndpoint = configuration["AZURE_OPENAI_ENDPOINT"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
+        string azureOpenAiDeploymentName = configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
 
-        // Check if AZURE_OPENAI_KEY is provided for token-based authentication
-        string? azureOpenAiKey = configuration["AZURE_OPENAI_KEY"];
+        // Check if AZURE_OPENAI_API_KEY is provided for key-based authentication.
+        // NOTE: This is not used for automated tests, but can be useful for local development.
+        string? azureOpenAiKey = configuration["AZURE_OPENAI_API_KEY"];
 
         AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
             ? new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureKeyCredential(azureOpenAiKey))
