@@ -24,7 +24,7 @@ internal static class CodeInterpreterToolExtensions
     }
 
     /// <summary>
-    /// Creates a <see cref="CodeInterpreterTool"/> from a <see cref="CodeInterpreterTool"/>.
+    /// Converts a <see cref="Microsoft.Bot.ObjectModel.CodeInterpreterTool"/> to an <see cref="OpenAI.Responses.CodeInterpreterTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="CodeInterpreterTool"/></param>
     internal static OpenAI.Responses.CodeInterpreterTool CreateCodeInterpreterTool(this CodeInterpreterTool tool)
