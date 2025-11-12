@@ -37,7 +37,6 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
-
 [tool.pytest.ini_options]
 testpaths = 'tests'
 addopts = "-ra -q -r fEX"
