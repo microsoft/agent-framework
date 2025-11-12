@@ -17,8 +17,7 @@ uses OpenAPI tools to answer user questions.
 
 # Simulate a conversation with the agent
 USER_INPUTS = [
-    "What is the name and population of the country that uses currency with abbreviation THB?",
-    "What is the current weather in the capital city of that country?",
+    "What is the name, population, and capital city of the country that uses currency with abbreviation THB?",
 ]
 
 
@@ -77,13 +76,9 @@ async def main() -> None:
             # 5. Simulate conversation with the agent maintaining thread context
             print("=== Azure AI Agent with OpenAPI Tools ===\n")
 
-            # Create a thread to maintain conversation context across multiple runs
-            thread = agent.get_new_thread()
-
             for user_input in USER_INPUTS:
                 print(f"User: {user_input}")
-                # Pass the thread to maintain context across multiple agent.run() calls
-                response = await agent.run(user_input, thread=thread)
+                response = await agent.run(user_input)
                 print(f"Agent: {response.text}\n")
 
 
