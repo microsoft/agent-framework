@@ -96,9 +96,9 @@ trigger:
                   IssueDescription: =Local.ServiceParameters.IssueDescription
                 externalLoop:
                   when: |-
-                    =Not(Local.ServiceParameters.IsResolved)
+                    =Not(Local.SupportParameters.IsResolved)
                      And 
-                     Not(Local.ServiceParameters.NeedsEscalation)
+                     Not(Local.SupportParameters.NeedsEscalation)
               output:
                 autoSend: true
                 responseObject: Local.SupportParameters
