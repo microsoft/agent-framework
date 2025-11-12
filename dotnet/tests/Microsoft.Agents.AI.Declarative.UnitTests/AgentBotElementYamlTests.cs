@@ -18,7 +18,7 @@ public sealed class AgentBotElementYamlTests
     [Theory]
     [InlineData(PromptAgents.AgentWithEverything)]
     [InlineData(PromptAgents.AgentWithApiKeyConnection)]
-    [InlineData(PromptAgents.AgentWithEnvironmentVariables)]
+    [InlineData(PromptAgents.AgentWithVariableReferences)]
     [InlineData(PromptAgents.AgentWithOutputSchema)]
     [InlineData(PromptAgents.OpenAIChatAgent)]
     [InlineData(PromptAgents.AgentWithCurrentModels)]
@@ -212,31 +212,36 @@ public sealed class AgentBotElementYamlTests
     }
 
     [Fact]
-    public void FromYaml_WithEnvironmentVariables()
+    public void FromYaml_WithVariableReferences()
     {
         // Arrange
         IConfiguration configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["OpenAIEndpoint"] = "endpoint",
-                ["OpenAIApiKey"] = "apiKey"
+                ["OpenAIApiKey"] = "apiKey",
+                ["Temperature"] = "0.9",
+                ["TopP"] = "0.8"
             })
             .Build();
 
         // Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithEnvironmentVariables, configuration);
+        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences, configuration);
 
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(agent.Model);
         CurrentModels model = (agent.Model as CurrentModels)!;
         Assert.NotNull(model);
+        Assert.NotNull(model.Options);
+        Assert.Equal(0.9, Eval(model.Options?.Temperature, configuration));
+        Assert.Equal(0.8, Eval(model.Options?.TopP, configuration));
         Assert.NotNull(model.Connection);
         Assert.IsType<ApiKeyConnection>(model.Connection);
         ApiKeyConnection connection = (model.Connection as ApiKeyConnection)!;
         Assert.NotNull(connection);
-        Assert.Equal("endpoint", Eval(connection.Endpoint!, configuration));
-        Assert.Equal("apiKey", Eval(connection.Key!, configuration));
+        Assert.Equal("endpoint", Eval(connection.Endpoint, configuration));
+        Assert.Equal("apiKey", Eval(connection.Key, configuration));
     }
 
     /// <summary>
@@ -255,12 +260,39 @@ public sealed class AgentBotElementYamlTests
         public string? Occupation { get; set; }
     }
 
-    private static string? Eval(StringExpression expression, IConfiguration configuration)
+    private static string? Eval(StringExpression? expression, IConfiguration? configuration = null)
     {
-        RecalcEngine engine = new();
-        foreach (var kvp in configuration.AsEnumerable())
+        if (expression == null)
         {
-            engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
+            return null;
+        }
+
+        RecalcEngine engine = new();
+        if (configuration != null)
+        {
+            foreach (var kvp in configuration.AsEnumerable())
+            {
+                engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
+            }
+        }
+
+        return expression.Eval(engine);
+    }
+
+    private static double? Eval(NumberExpression? expression, IConfiguration? configuration = null)
+    {
+        if (expression is null)
+        {
+            return null;
+        }
+
+        RecalcEngine engine = new();
+        if (configuration != null)
+        {
+            foreach (var kvp in configuration.AsEnumerable())
+            {
+                engine.UpdateVariable(kvp.Key, kvp.Value ?? string.Empty);
+            }
         }
 
         return expression.Eval(engine);

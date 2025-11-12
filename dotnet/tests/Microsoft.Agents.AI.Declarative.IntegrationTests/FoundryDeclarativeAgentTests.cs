@@ -27,7 +27,7 @@ public sealed class FoundryDeclarativeAgentTests(ITestOutputHelper output) : Bas
 
         // Arrange
         var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential());
-        var agentYaml = File.ReadAllText("../../../../../../agent-samples/foundry/PersistentAgent.yaml");
+        var agentYaml = File.ReadAllText("../../../../../../agent-samples/foundry/FoundryAgent.yaml");
         agentYaml = agentYaml.Replace("=Env.AZURE_FOUNDRY_PROJECT_ENDPOINT", this.FoundryProjectConfiguration.Endpoint);
         agentYaml = agentYaml.Replace("=Env.AZURE_FOUNDRY_PROJECT_MODEL_ID", this.FoundryProjectConfiguration.ModelId);
 
