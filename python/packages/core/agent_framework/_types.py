@@ -2095,6 +2095,15 @@ class ChatMessage(SerializationMixin):
         """
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
+    @property
+    def reasoning(self) -> str:
+        """Returns the reasoning content of the message.
+
+        Remarks:
+            This property concatenates the text of all TextReasoningContent objects in Contents.
+        """
+        return " ".join(content.text for content in self.contents if isinstance(content, TextReasoningContent))
+
 
 def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
@@ -2505,6 +2514,11 @@ class ChatResponse(SerializationMixin):
         """Returns the concatenated text of all messages in the response."""
         return ("\n".join(message.text for message in self.messages if isinstance(message, ChatMessage))).strip()
 
+    @property
+    def reasoning(self) -> str:
+        """Returns the concatenated reasoning of all messages in the response."""
+        return ("\n".join(message.reasoning for message in self.messages if isinstance(message, ChatMessage))).strip()
+
     def __str__(self) -> str:
         return self.text
 
@@ -2640,6 +2654,11 @@ class ChatResponseUpdate(SerializationMixin):
         """Returns the concatenated text of all contents in the update."""
         return "".join(content.text for content in self.contents if isinstance(content, TextContent))
 
+    @property
+    def reasoning(self) -> str:
+        """Returns the reasoning content of the message."""
+        return " ".join(content.text for content in self.contents if isinstance(content, TextReasoningContent))
+
     def __str__(self) -> str:
         return self.text
 
@@ -2748,6 +2767,11 @@ class AgentRunResponse(SerializationMixin):
     def text(self) -> str:
         """Get the concatenated text of all messages."""
         return "".join(msg.text for msg in self.messages) if self.messages else ""
+
+    @property
+    def reasoning(self) -> str:
+        """Get the concatenated reasoning of all messages."""
+        return " ".join(msg.reasoning for msg in self.messages) if self.messages else ""
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:
@@ -2914,6 +2938,11 @@ class AgentRunResponseUpdate(SerializationMixin):
             if self.contents
             else ""
         )
+
+    @property
+    def reasoning(self) -> str:
+        """Get the concatenated text of all TextReasoningContent objects in contents."""
+        return " ".join(content.text for content in self.contents if isinstance(content, TextReasoningContent))
 
     @property
     def user_input_requests(self) -> list[UserInputRequestContents]:

@@ -33,8 +33,10 @@ dependencies = [
     "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
+    "agent-framework-ollama",
     "agent-framework-purview",
     "agent-framework-redis",
+    
 ]
 
 [dependency-groups]
@@ -98,6 +100,8 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
+agent-framework-runtime = { workspace = true }
+agent-framework-ollama = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-anthropic = { workspace = true }
