@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net;
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
@@ -45,55 +46,101 @@ internal static class BuiltInFunctions
         [DurableClient] DurableTaskClient client,
         FunctionContext context)
     {
-        // The session ID is an optional query string parameter.
-        string? threadIdFromQuery = req.Query["threadId"];
+        // Parse request body - support both JSON and plain text
+        string? message = null;
+        string? threadIdFromBody = null;
+
+        if (req.Headers.TryGetValues("Content-Type", out IEnumerable<string>? contentTypeValues) &&
+            contentTypeValues.Any(ct => ct.Contains("application/json", StringComparison.OrdinalIgnoreCase)))
+        {
+            // Parse JSON body using POCO record
+            AgentRunRequest? requestBody = await req.ReadFromJsonAsync<AgentRunRequest>(context.CancellationToken);
+            if (requestBody != null)
+            {
+                message = requestBody.Message;
+                threadIdFromBody = requestBody.ThreadId;
+            }
+        }
+        else
+        {
+            // Plain text body
+            message = await req.ReadAsStringAsync();
+        }
+
+        // The thread ID can come from query string or JSON body
+        string? threadIdFromQuery = req.Query["thread_id"];
+
+        // Validate that if thread_id is specified in both places, they must match
+        if (!string.IsNullOrEmpty(threadIdFromQuery) && !string.IsNullOrEmpty(threadIdFromBody) &&
+            !string.Equals(threadIdFromQuery, threadIdFromBody, StringComparison.Ordinal))
+        {
+            return await CreateErrorResponseAsync(
+                req,
+                context,
+                HttpStatusCode.BadRequest,
+                "thread_id specified in both query string and request body must match.");
+        }
+
+        string? threadIdValue = threadIdFromBody ?? threadIdFromQuery;
 
         // If no session ID is provided, use a new one based on the function name and invocation ID.
         // This may be better than a random one because it can be correlated with the function invocation.
         // Specifying a session ID is how the caller correlates multiple calls to the same agent session.
-        AgentSessionId sessionId = string.IsNullOrEmpty(threadIdFromQuery)
+        AgentSessionId sessionId = string.IsNullOrEmpty(threadIdValue)
             ? new AgentSessionId(GetAgentName(context), context.InvocationId)
-            : AgentSessionId.Parse(threadIdFromQuery);
+            : AgentSessionId.Parse(threadIdValue);
 
-        string? message = await req.ReadAsStringAsync();
         if (string.IsNullOrWhiteSpace(message))
         {
-            HttpResponseData response = req.CreateResponse(HttpStatusCode.BadRequest);
-            await response.WriteAsJsonAsync(
-                new { error = "Run request cannot be empty." },
-                context.CancellationToken);
-            return response;
+            return await CreateErrorResponseAsync(
+                req,
+                context,
+                HttpStatusCode.BadRequest,
+                "Run request cannot be empty.");
+        }
+
+        // Check if we should wait for response (default is true)
+        bool waitForResponse = true;
+        if (req.Headers.TryGetValues("x-ms-wait-for-response", out IEnumerable<string>? waitForResponseValues))
+        {
+            string? waitForResponseValue = waitForResponseValues.FirstOrDefault();
+            if (!string.IsNullOrEmpty(waitForResponseValue) && bool.TryParse(waitForResponseValue, out bool parsedValue))
+            {
+                waitForResponse = parsedValue;
+            }
         }
 
         AIAgent agentProxy = client.AsDurableAgentProxy(context, GetAgentName(context));
 
-        AgentRunResponse agentResponse = await agentProxy.RunAsync(
+        DurableAgentRunOptions options = new() { IsFireAndForget = !waitForResponse };
+
+        if (waitForResponse)
+        {
+            AgentRunResponse agentResponse = await agentProxy.RunAsync(
+                message: new ChatMessage(ChatRole.User, message),
+                thread: new DurableAgentThread(sessionId),
+                options: options,
+                cancellationToken: context.CancellationToken);
+
+            return await CreateSuccessResponseAsync(
+                req,
+                context,
+                HttpStatusCode.OK,
+                sessionId.ToString(),
+                agentResponse);
+        }
+
+        // Fire and forget - return 202 Accepted
+        await agentProxy.RunAsync(
             message: new ChatMessage(ChatRole.User, message),
             thread: new DurableAgentThread(sessionId),
-            options: null,
+            options: options,
             cancellationToken: context.CancellationToken);
 
-        HttpResponseData httpResponse = req.CreateResponse(HttpStatusCode.OK);
-        httpResponse.Headers.Add("X-Agent-Thread", sessionId.ToString());
-
-        // If the caller accepts JSON, return the entire response object as JSON.
-        // TODO: Need to define a standard response schema for agent responses.
-        //       https://github.com/Azure/durable-agent-framework/issues/113
-        if (req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
-            acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase))
-        {
-            await httpResponse.WriteAsJsonAsync(
-                new { response = agentResponse, threadId = sessionId },
-                context.CancellationToken);
-        }
-        else
-        {
-            // The default is to return the response as text/plain.
-            httpResponse.Headers.Add("Content-Type", "text/plain");
-            await httpResponse.WriteStringAsync(agentResponse.Text, context.CancellationToken);
-        }
-
-        return httpResponse;
+        return await CreateAcceptedResponseAsync(
+            req,
+            context,
+            sessionId.ToString());
     }
 
     public static async Task<string?> RunMcpToolAsync(
@@ -128,6 +175,106 @@ internal static class BuiltInFunctions
         return agentResponse.Text;
     }
 
+    /// <summary>
+    /// Creates an error response with the specified status code and error message.
+    /// </summary>
+    /// <param name="req">The HTTP request data.</param>
+    /// <param name="context">The function context.</param>
+    /// <param name="statusCode">The HTTP status code.</param>
+    /// <param name="errorMessage">The error message.</param>
+    /// <returns>The HTTP response data containing the error.</returns>
+    private static async Task<HttpResponseData> CreateErrorResponseAsync(
+        HttpRequestData req,
+        FunctionContext context,
+        HttpStatusCode statusCode,
+        string errorMessage)
+    {
+        HttpResponseData response = req.CreateResponse(statusCode);
+        bool acceptsJson = req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
+            acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
+
+        if (acceptsJson)
+        {
+            ErrorResponse errorResponse = new((int)statusCode, errorMessage);
+            await response.WriteAsJsonAsync(errorResponse, context.CancellationToken);
+        }
+        else
+        {
+            response.Headers.Add("Content-Type", "text/plain");
+            await response.WriteStringAsync(errorMessage, context.CancellationToken);
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// Creates a successful agent run response with the agent's response.
+    /// </summary>
+    /// <param name="req">The HTTP request data.</param>
+    /// <param name="context">The function context.</param>
+    /// <param name="statusCode">The HTTP status code (typically 200 OK).</param>
+    /// <param name="threadId">The thread ID for the conversation.</param>
+    /// <param name="agentResponse">The agent's response.</param>
+    /// <returns>The HTTP response data containing the success response.</returns>
+    private static async Task<HttpResponseData> CreateSuccessResponseAsync(
+        HttpRequestData req,
+        FunctionContext context,
+        HttpStatusCode statusCode,
+        string threadId,
+        AgentRunResponse agentResponse)
+    {
+        HttpResponseData response = req.CreateResponse(statusCode);
+        response.Headers.Add("x-ms-thread-id", threadId);
+
+        bool acceptsJson = req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
+            acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
+
+        if (acceptsJson)
+        {
+            AgentRunSuccessResponse successResponse = new((int)statusCode, threadId, agentResponse);
+            await response.WriteAsJsonAsync(successResponse, context.CancellationToken);
+        }
+        else
+        {
+            response.Headers.Add("Content-Type", "text/plain");
+            await response.WriteStringAsync(agentResponse.Text, context.CancellationToken);
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// Creates an accepted (fire-and-forget) agent run response.
+    /// </summary>
+    /// <param name="req">The HTTP request data.</param>
+    /// <param name="context">The function context.</param>
+    /// <param name="threadId">The thread ID for the conversation.</param>
+    /// <returns>The HTTP response data containing the accepted response.</returns>
+    private static async Task<HttpResponseData> CreateAcceptedResponseAsync(
+        HttpRequestData req,
+        FunctionContext context,
+        string threadId)
+    {
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        response.Headers.Add("x-ms-thread-id", threadId);
+
+        bool acceptsJson = req.Headers.TryGetValues("Accept", out IEnumerable<string>? acceptValues) &&
+            acceptValues.Contains("application/json", StringComparer.OrdinalIgnoreCase);
+
+        if (acceptsJson)
+        {
+            AgentRunAcceptedResponse acceptedResponse = new((int)HttpStatusCode.Accepted, threadId);
+            await response.WriteAsJsonAsync(acceptedResponse, context.CancellationToken);
+        }
+        else
+        {
+            response.Headers.Add("Content-Type", "text/plain");
+            await response.WriteStringAsync("Request accepted.", context.CancellationToken);
+        }
+
+        return response;
+    }
+
     private static string GetAgentName(FunctionContext context)
     {
         // Check if the function name starts with the HttpPrefix
@@ -143,6 +290,44 @@ internal static class BuiltInFunctions
         // Remove the HttpPrefix from the function name to get the agent name.
         return functionName[HttpPrefix.Length..];
     }
+
+    /// <summary>
+    /// Represents a request to run an agent.
+    /// </summary>
+    /// <param name="Message">The message to send to the agent.</param>
+    /// <param name="ThreadId">The optional thread ID to continue a conversation.</param>
+    private sealed record AgentRunRequest(
+        [property: JsonPropertyName("message")] string? Message,
+        [property: JsonPropertyName("thread_id")] string? ThreadId);
+
+    /// <summary>
+    /// Represents an error response.
+    /// </summary>
+    /// <param name="Status">The HTTP status code.</param>
+    /// <param name="Error">The error message.</param>
+    private sealed record ErrorResponse(
+        [property: JsonPropertyName("status")] int Status,
+        [property: JsonPropertyName("error")] string Error);
+
+    /// <summary>
+    /// Represents a successful agent run response.
+    /// </summary>
+    /// <param name="Status">The HTTP status code.</param>
+    /// <param name="ThreadId">The thread ID for the conversation.</param>
+    /// <param name="Response">The agent response.</param>
+    private sealed record AgentRunSuccessResponse(
+        [property: JsonPropertyName("status")] int Status,
+        [property: JsonPropertyName("thread_id")] string ThreadId,
+        [property: JsonPropertyName("response")] AgentRunResponse Response);
+
+    /// <summary>
+    /// Represents an accepted (fire-and-forget) agent run response.
+    /// </summary>
+    /// <param name="Status">The HTTP status code.</param>
+    /// <param name="ThreadId">The thread ID for the conversation.</param>
+    private sealed record AgentRunAcceptedResponse(
+        [property: JsonPropertyName("status")] int Status,
+        [property: JsonPropertyName("thread_id")] string ThreadId);
 
     /// <summary>
     /// A service provider that combines the original service provider with an additional DurableTaskClient instance.

@@ -9,27 +9,21 @@ preserving the conversation state between runs.
 - HTTP endpoints for starting the orchestration and polling for status/output
 
 ## Prerequisites
-- Python 3.10+
-- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)
-- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) running locally so the sample can use `AzureWebJobsStorage=UseDevelopmentStorage=true`
-- Environment variables configured:
-  - `AZURE_OPENAI_ENDPOINT`
-  - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
-  - `AZURE_OPENAI_API_KEY` (required for key-based auth; ensure Azure CLI is logged in if you prefer token-based auth)
-- Keep `TASKHUB_NAME` set to `default` unless you intend to change the durable task hub name.
-- Copy `local.settings.json.template` to `local.settings.json` and populate those keys—including `AZURE_OPENAI_API_KEY`—along with any storage settings before running the Functions host.
-- Install dependencies with `pip install -r requirements.txt`
+
+Start with the shared setup instructions in `../README.md` to create a virtual environment, install dependencies, and configure Azure OpenAI and storage settings.
 
 ## Running the Sample
-1. Start the Functions host: `func start`.
-2. Kick off the orchestration:
-   ```bash
-   curl -X POST http://localhost:7071/api/singleagent/run
-   ```
-3. Copy the `statusQueryGetUri` from the response and poll until the orchestration completes:
-   ```bash
-   curl http://localhost:7071/api/singleagent/status/<instanceId>
-   ```
+Start the orchestration:
+
+```bash
+curl -X POST http://localhost:7071/api/singleagent/run
+```
+
+Poll the returned `statusQueryGetUri` until completion:
+
+```bash
+curl http://localhost:7071/api/singleagent/status/<instanceId>
+```
 
 > **Note:** The underlying agent run endpoint now waits for responses by default. If you invoke it directly and prefer an immediate HTTP 202, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the payload.
 

@@ -16,6 +16,7 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient()
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     physicist = chat_client.create_agent(
         name=PHYSICIST_AGENT_NAME,

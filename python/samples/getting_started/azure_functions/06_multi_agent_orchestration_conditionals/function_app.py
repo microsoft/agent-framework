@@ -18,6 +18,7 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
@@ -43,7 +44,7 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient()
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     spam_agent = chat_client.create_agent(
         name=SPAM_AGENT_NAME,
