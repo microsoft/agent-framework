@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_poem
+      conversationId: =System.ConversationId
+      agent:
+        name: PoemAgent
+      input:
+        arguments:
+          style: "ee cummings"

@@ -136,7 +136,7 @@ public static class AgentClientExtensions
     /// </summary>
     /// <param name="agentClient">The client used to interact with Azure AI Agents. Cannot be <see langword="null"/>.</param>
     /// <param name="agentVersion">The agent version to be converted. Cannot be <see langword="null"/>.</param>
-    /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
+    /// <param name="tools">In-process invocable tools to be provided. If no tools are provided manual handling will be necessary to invoke in-process tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
@@ -156,7 +156,7 @@ public static class AgentClientExtensions
         Throw.IfNull(agentClient);
         Throw.IfNull(agentVersion);
 
-        ValidateUsingToolsParameter(agentVersion, tools);
+        var allowDeclarativeMode = tools is not { Count: > 0 };
 
         return CreateChatClientAgent(
             agentClient,
@@ -164,7 +164,7 @@ public static class AgentClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
+            !allowDeclarativeMode,
             services);
     }
 
@@ -293,7 +293,6 @@ public static class AgentClientExtensions
             new AgentVersionCreationOptions(new PromptAgentDefinition(model) { Instructions = instructions }) { Description = description },
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
             services,
             cancellationToken);
     }
@@ -339,7 +338,6 @@ public static class AgentClientExtensions
             new AgentVersionCreationOptions(new PromptAgentDefinition(model) { Instructions = instructions }) { Description = description },
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
             services,
             cancellationToken);
     }
@@ -381,7 +379,7 @@ public static class AgentClientExtensions
             Instructions = options.Instructions,
         };
 
-        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools, RequireInvocableTools);
+        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
 
         AgentVersionCreationOptions? creationOptions = new(agentDefinition);
         if (!string.IsNullOrWhiteSpace(options.Description))
@@ -440,7 +438,7 @@ public static class AgentClientExtensions
             Instructions = options.Instructions,
         };
 
-        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools, RequireInvocableTools);
+        ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
 
         AgentVersionCreationOptions? creationOptions = new(agentDefinition);
         if (!string.IsNullOrWhiteSpace(options.Description))
@@ -489,16 +487,13 @@ public static class AgentClientExtensions
         Throw.IfNullOrWhitespace(name);
         Throw.IfNull(creationOptions);
 
-        var tools = (creationOptions.Definition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
-
         return CreateAIAgent(
             agentClient,
             name,
-            tools,
+            tools: null,
             creationOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: false,
             services: null,
             cancellationToken);
     }
@@ -531,16 +526,13 @@ public static class AgentClientExtensions
         Throw.IfNull(agentClient);
         Throw.IfNull(creationOptions);
 
-        var tools = (creationOptions.Definition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
-
         return CreateAIAgentAsync(
             agentClient,
             name,
-            tools,
+            tools: null,
             creationOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: false,
             services: null,
             cancellationToken);
     }
@@ -594,7 +586,6 @@ public static class AgentClientExtensions
         AgentVersionCreationOptions creationOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
-        bool requireInvocableTools,
         IServiceProvider? services,
         CancellationToken cancellationToken)
     {
@@ -602,9 +593,12 @@ public static class AgentClientExtensions
         Throw.IfNullOrWhitespace(name);
         Throw.IfNull(creationOptions);
 
-        tools ??= (creationOptions.Definition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+        var allowDeclarativeMode = tools is not { Count: > 0 };
 
-        ApplyToolsToAgentDefinition(creationOptions.Definition, tools, requireInvocableTools);
+        if (!allowDeclarativeMode)
+        {
+            ApplyToolsToAgentDefinition(creationOptions.Definition, tools);
+        }
 
         AgentVersion agentVersion = CreateAgentVersionWithProtocol(agentClient, name, creationOptions, cancellationToken);
 
@@ -614,7 +608,7 @@ public static class AgentClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools,
+            !allowDeclarativeMode,
             services);
     }
 
@@ -625,7 +619,6 @@ public static class AgentClientExtensions
         AgentVersionCreationOptions creationOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
-        bool requireInvocableTools,
         IServiceProvider? services,
         CancellationToken cancellationToken)
     {
@@ -633,9 +626,12 @@ public static class AgentClientExtensions
         Throw.IfNull(agentClient);
         Throw.IfNull(creationOptions);
 
-        tools ??= (creationOptions.Definition as PromptAgentDefinition)?.Tools.Select(t => t.AsAITool()).ToList();
+        var allowDeclarativeMode = tools is not { Count: > 0 };
 
-        ApplyToolsToAgentDefinition(creationOptions.Definition, tools, requireInvocableTools);
+        if (!allowDeclarativeMode)
+        {
+            ApplyToolsToAgentDefinition(creationOptions.Definition, tools);
+        }
 
         AgentVersion agentVersion = await CreateAgentVersionWithProtocolAsync(agentClient, name, creationOptions, cancellationToken).ConfigureAwait(false);
 
@@ -645,7 +641,7 @@ public static class AgentClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools,
+            !allowDeclarativeMode,
             services);
     }
 
@@ -719,14 +715,11 @@ public static class AgentClientExtensions
             // Check function tools
             foreach (ResponseTool responseTool in definitionTools)
             {
-                if (responseTool is FunctionTool functionTool)
+                if (requireInvocableTools && responseTool is FunctionTool functionTool)
                 {
                     // Check if a tool with the same type and name exists in the provided tools.
-                    var matchingTool = chatOptions?.Tools?.FirstOrDefault(t =>
-                        requireInvocableTools
-                            ? t is AIFunction tf && functionTool.FunctionName == tf.Name // When invocable tools are required, match only AIFunction.
-                            : (t is AIFunctionDeclaration tfd && functionTool.FunctionName == tfd.Name) ? true // When not required, match AIFunctionDeclaration OR
-                            : (t.GetService<FunctionTool>() is FunctionTool ft && functionTool.FunctionName == ft.FunctionName)); // Match a FunctionTool converted AsAITool.
+                    // When invocable tools are required, match only AIFunction.
+                    var matchingTool = chatOptions?.Tools?.FirstOrDefault(t => t is AIFunction tf && functionTool.FunctionName == tf.Name);
 
                     if (matchingTool is null)
                     {
@@ -742,7 +735,7 @@ public static class AgentClientExtensions
                 (agentTools ??= []).Add(responseTool.AsAITool());
             }
 
-            if (missingTools is { Count: > 0 })
+            if (requireInvocableTools && missingTools is { Count: > 0 })
             {
                 throw new InvalidOperationException($"The following prompt agent definition required tools were not provided: {string.Join(", ", missingTools)}");
             }
@@ -796,35 +789,14 @@ public static class AgentClientExtensions
         return agentOptions;
     }
 
-    /// <summary>For already created agent versions, retrieve the definition and validate the tools parameter.</summary>
-    /// <exception cref="ArgumentException"><see cref="PromptAgentDefinition.Tools"/> cannot be used. The <paramref name="tools"/> parameter should be used instead.</exception>
-    /// <remarks>
-    /// Because <see cref="PromptAgentDefinition.Tools"/> doesn't support in-proc tools (only declarative/definitions),
-    /// the <paramref name="tools"/> parameter needs to be the single source of truth for tools, and must be provided when using tools.
-    /// </remarks>
-    private static void ValidateUsingToolsParameter(AgentVersion agentVersion, IList<AITool>? tools)
-    {
-        if (agentVersion.Definition is PromptAgentDefinition { Tools.Count: > 0 } && tools is null or { Count: 0 })
-        {
-            throw new ArgumentException("When retrieving prompt agents with tools the tools parameter needs to be provided with the necessary tools.", nameof(tools));
-        }
-    }
-
     /// <summary>
-    /// Adds the specified AI tools to a prompt agent definition, ensuring that all tools are compatible and, if required, invocable.
+    /// Adds the specified AI tools to a prompt agent definition, while also ensuring that all invocable tools are provided.
     /// </summary>
-    /// <remarks>This method ensures that only compatible and properly constructed tools are added to the agent definition.
-    /// When <paramref name="requireInvocableTools"/> is <see langword="true"/>, all tools must be
-    /// invocable AIFunctions, which can be created using AIFunctionFactory.Create. Tools are converted to ResponseTool
-    /// instances before being added.</remarks>
     /// <param name="agentDefinition">The agent definition to which the tools will be applied. Must be a PromptAgentDefinition to support tools.</param>
     /// <param name="tools">A list of AI tools to add to the agent definition. If null or empty, no tools are added.</param>
-    /// <param name="requireInvocableTools">Indicates whether all provided tools must be invocable AI functions. If set to <see langword="true"/>, only
-    /// invocable AIFunctions are accepted.</param>
-    /// <exception cref="ArgumentException">Thrown if <paramref name="agentDefinition"/> is not a <see cref="PromptAgentDefinition"/>.</exception>
-    /// <exception cref="InvalidOperationException">Thrown if <paramref name="requireInvocableTools"/> is <see langword="true"/> and a tool is an
-    /// <see cref="AIFunctionDeclaration"/> that is not invocable, or if a tool cannot be converted to a <see cref="ResponseTool"/>.</exception>
-    private static void ApplyToolsToAgentDefinition(AgentDefinition agentDefinition, IList<AITool>? tools, bool requireInvocableTools)
+    /// <exception cref="ArgumentException">Thrown if tools were provided but <paramref name="agentDefinition"/> is not a <see cref="PromptAgentDefinition"/>.</exception>
+    /// <exception cref="InvalidOperationException">When providing functions, they need to be invokable AIFunctions.</exception>
+    private static void ApplyToolsToAgentDefinition(AgentDefinition agentDefinition, IList<AITool>? tools)
     {
         if (tools is { Count: > 0 })
         {
@@ -833,10 +805,14 @@ public static class AgentClientExtensions
                 throw new ArgumentException("Only prompt agent definitions support tools.", nameof(agentDefinition));
             }
 
+            // When tools are provided, those should represent the complete set of tools for the agent definition.
+            // This is particularly important for existing agents so no duplication happens for what was already defined.
+            promptAgentDefinition.Tools.Clear();
+
             foreach (var tool in tools)
             {
                 // Ensure that any AIFunctions provided are In-Proc, not just the declarations.
-                if (requireInvocableTools && tool is not AIFunction && (
+                if (tool is not AIFunction && (
                     tool.GetService<FunctionTool>() is not null // Declarative FunctionTool converted as AsAITool()
                     || tool is AIFunctionDeclaration)) // AIFunctionDeclaration type
                 {
