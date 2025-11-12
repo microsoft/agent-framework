@@ -42,8 +42,6 @@ source .venv/bin/activate
     - Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY` so the Azure OpenAI SDK can authenticate; keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
 
 
-
-
 - Run the command `func start` from the root of the sample
 
 - Follow the specific instructions/requests for each sample
