@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import MutableMapping, MutableSequence
+from collections.abc import MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -320,7 +320,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
 
-    def get_mcp_tool(self, tool: HostedMCPTool) -> MutableMapping[str, Any]:
+    def get_mcp_tool(self, tool: HostedMCPTool) -> Any:
         """Get MCP tool from HostedMCPTool."""
         mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
@@ -339,7 +339,9 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         return mcp
 
-    def get_conversation_id(self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool) -> str | None:
+    def get_conversation_id(
+        self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
+    ) -> str | None:
         """Get the conversation ID from the response if store is True."""
         if store:
             # If conversation ID exists, it means that we operate with conversation
