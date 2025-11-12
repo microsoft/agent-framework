@@ -305,7 +305,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         return run_options
 
-    async def initialize_client(self):
+    async def initialize_client(self) -> None:
         """Initialize OpenAI client asynchronously."""
         self.client = await self.project_client.get_openai_client()  # type: ignore
 
@@ -322,11 +322,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
     def get_mcp_tool(self, tool: HostedMCPTool) -> MutableMapping[str, Any]:
         """Get MCP tool from HostedMCPTool."""
-        mcp: MCPTool = {
-            "type": "mcp",
-            "server_label": tool.name.replace(" ", "_"),
-            "server_url": str(tool.url),
-        }
+        mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
         if tool.allowed_tools:
             mcp["allowed_tools"] = list(tool.allowed_tools)
