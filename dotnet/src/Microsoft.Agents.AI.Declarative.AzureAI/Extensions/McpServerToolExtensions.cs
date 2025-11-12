@@ -35,6 +35,7 @@ internal static class McpServerToolExtensions
     /// Creates a <see cref="McpTool"/> from a <see cref="McpServerTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="McpServerTool"/></param>
+    /// <returns>A new <see cref="McpTool"/> instance configured with the server name and URL.</returns>
     internal static McpTool CreateMcpTool(this McpServerTool tool)
     {
         Throw.IfNull(tool);
