@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass
 
 from agent_framework import (
-    AgentExecutor,  # Executor that runs the agent
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
     ChatMessage,  # Chat message structure
@@ -148,6 +147,7 @@ async def main() -> None:
     # response_format enforces that the model produces JSON compatible with GuessOutput.
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
     agent = chat_client.create_agent(
+        name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "
             "If the user says 'higher' or 'lower', adjust your next guess. "
@@ -158,16 +158,15 @@ async def main() -> None:
         response_format=GuessOutput,
     )
 
-    # Build a simple loop: TurnManager <-> AgentExecutor.
     # TurnManager coordinates and gathers human replies while AgentExecutor runs the model.
     turn_manager = TurnManager(id="turn_manager")
-    agent_exec = AgentExecutor(agent=agent, id="agent")
 
+    # Build a simple loop: TurnManager <-> AgentExecutor.
     workflow = (
         WorkflowBuilder()
         .set_start_executor(turn_manager)
-        .add_edge(turn_manager, agent_exec)  # Ask agent to make/adjust a guess
-        .add_edge(agent_exec, turn_manager)  # Agent's response comes back to coordinator
+        .add_edge(turn_manager, agent)  # Ask agent to make/adjust a guess
+        .add_edge(agent, turn_manager)  # Agent's response comes back to coordinator
     ).build()
 
     # Human in the loop run: alternate between invoking the workflow and supplying collected responses.

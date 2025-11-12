@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Sample weather agent for Agent Framework Debug UI."""
 
+import logging
 import os
 from collections.abc import Awaitable, Callable
 from typing import Annotated
@@ -14,8 +15,20 @@ from agent_framework import (
     Role,
     chat_middleware,
     function_middleware,
+    ai_function
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_devui import register_cleanup
+
+logger = logging.getLogger(__name__)
+
+
+def cleanup_resources():
+    """Cleanup function that runs when DevUI shuts down."""
+    logger.info("=" * 60)
+    logger.info(" Cleaning up resources...")
+    logger.info("   (In production, this would close credentials, sessions, etc.)")
+    logger.info("=" * 60)
 
 
 @chat_middleware
@@ -93,6 +106,14 @@ def get_forecast(
 
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
+@ai_function(approval_mode="always_require")
+def send_email(
+    recipient: Annotated[str, "The email address of the recipient."],
+    subject: Annotated[str, "The subject of the email."],
+    body: Annotated[str, "The body content of the email."],
+) -> str:
+    """Simulate sending an email."""
+    return f"Email sent to {recipient} with subject '{subject}'."
 
 # Agent instance following Agent Framework conventions
 agent = ChatAgent(
@@ -106,9 +127,12 @@ agent = ChatAgent(
     chat_client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
-    tools=[get_weather, get_forecast],
+    tools=[get_weather, get_forecast, send_email],
     middleware=[security_filter_middleware, atlantis_location_filter_middleware],
 )
+
+# Register cleanup hook - demonstrates resource cleanup on shutdown
+register_cleanup(agent, cleanup_resources)
 
 
 def main():

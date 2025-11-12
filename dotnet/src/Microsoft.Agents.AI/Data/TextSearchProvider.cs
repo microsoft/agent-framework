@@ -44,37 +44,15 @@ public sealed class TextSearchProvider : AIContextProvider
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
     private readonly Queue<string> _recentMessagesText;
-    private readonly TextSearchProviderOptions _options;
     private readonly List<ChatRole> _recentMessageRolesIncluded;
+    private readonly int _recentMessageMemoryLimit;
+    private readonly TextSearchProviderOptions.TextSearchBehavior _searchTime;
+    private readonly string _contextPrompt;
+    private readonly string _citationsPrompt;
+    private readonly Func<IList<TextSearchResult>, string>? _contextFormatter;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TextSearchProvider"/> class.
-    /// </summary>
-    /// <param name="searchAsync">Delegate that executes the search logic. Must not be <see langword="null"/>.</param>
-    /// <param name="options">Optional configuration options.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="searchAsync"/> is <see langword="null"/>.</exception>
-    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
-    {
-        this._searchAsync = searchAsync ?? throw new ArgumentNullException(nameof(searchAsync));
-        this._options = options ?? new();
-        Throw.IfLessThan(this._options.RecentMessageMemoryLimit, 0);
-        this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
-        this._recentMessagesText = new();
-        this._recentMessageRolesIncluded = this._options.RecentMessageRolesIncluded ?? [ChatRole.User];
-
-        // Create the on-demand search tool (only used if behavior is OnDemandFunctionCalling)
-        this._tools =
-        [
-            AIFunctionFactory.Create(
-                this.SearchAsync,
-                name: this._options.FunctionToolName ?? DefaultPluginSearchFunctionName,
-                description: this._options.FunctionToolDescription ?? DefaultPluginSearchFunctionDescription)
-        ];
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="TextSearchProvider"/> class from previously serialized state.
     /// </summary>
     /// <param name="searchAsync">Delegate that executes the search logic. Must not be <see langword="null"/>.</param>
     /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized provider state.</param>
@@ -82,44 +60,56 @@ public sealed class TextSearchProvider : AIContextProvider
     /// <param name="options">Optional configuration options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="searchAsync"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// Only overridden prompts (function name, function description, context prompt, citations prompt) are restored.
-    /// If a value was not persisted or matches the defaults it will fall back to the built-in defaults.
-    /// Custom <see cref="TextSearchProviderOptions.ContextFormatter"/> delegates are not serialized.
-    /// </remarks>
-    public TextSearchProvider(Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, TextSearchProviderOptions? options = null, ILoggerFactory? loggerFactory = null)
+    public TextSearchProvider(
+        Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
+        JsonElement serializedState,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        TextSearchProviderOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
     {
-        this._searchAsync = searchAsync ?? throw new ArgumentNullException(nameof(searchAsync));
-        this._options = options ?? new();
-        Throw.IfLessThan(this._options.RecentMessageMemoryLimit, 0);
+        // Validate and assign parameters
+        this._searchAsync = Throw.IfNull(searchAsync);
         this._logger = loggerFactory?.CreateLogger<TextSearchProvider>();
-        this._recentMessageRolesIncluded = this._options.RecentMessageRolesIncluded ?? [ChatRole.User];
+        this._recentMessageMemoryLimit = Throw.IfLessThan(options?.RecentMessageMemoryLimit ?? 0, 0);
+        this._recentMessageRolesIncluded = options?.RecentMessageRolesIncluded ?? [ChatRole.User];
+        this._searchTime = options?.SearchTime ?? TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke;
+        this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
+        this._citationsPrompt = options?.CitationsPrompt ?? DefaultCitationsPrompt;
+        this._contextFormatter = options?.ContextFormatter;
 
+        // Restore recent messages from serialized state if provided
         List<string>? restoredMessages = null;
-
-        var state = serializedState.Deserialize(AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(TextSearchProviderState))) as TextSearchProviderState;
-        if (state?.RecentMessagesText is { Count: > 0 })
+        if (serializedState.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            restoredMessages = state.RecentMessagesText;
+            this._recentMessagesText = new();
         }
+        else
+        {
+            var jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
+            var state = serializedState.Deserialize(jso.GetTypeInfo(typeof(TextSearchProviderState))) as TextSearchProviderState;
+            if (state?.RecentMessagesText is { Count: > 0 })
+            {
+                restoredMessages = state.RecentMessagesText;
+            }
 
-        // Restore recent messages respecting the limit (may truncate if limit changed afterwards).
-        this._recentMessagesText = restoredMessages is null ? new() : new(restoredMessages.Take(this._options.RecentMessageMemoryLimit));
+            // Restore recent messages respecting the limit (may truncate if limit changed afterwards).
+            this._recentMessagesText = restoredMessages is null ? new() : new(restoredMessages.Take(this._recentMessageMemoryLimit));
+        }
 
         // Create the on-demand search tool (only used if behavior is OnDemandFunctionCalling)
         this._tools =
         [
             AIFunctionFactory.Create(
                 this.SearchAsync,
-                name: this._options.FunctionToolName ?? DefaultPluginSearchFunctionName,
-                description: this._options.FunctionToolDescription ?? DefaultPluginSearchFunctionDescription)
+                name: options?.FunctionToolName ?? DefaultPluginSearchFunctionName,
+                description: options?.FunctionToolDescription ?? DefaultPluginSearchFunctionDescription)
         ];
     }
 
     /// <inheritdoc />
     public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        if (this._options.SearchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
+        if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
             // Expose the search tool for on-demand invocation.
             return new AIContext { Tools = this._tools }; // No automatic message injection.
@@ -171,7 +161,7 @@ public sealed class TextSearchProvider : AIContextProvider
     /// <inheritdoc />
     public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        int limit = this._options.RecentMessageMemoryLimit;
+        int limit = this._recentMessageMemoryLimit;
         if (limit <= 0)
         {
             return default; // Memory disabled.
@@ -220,9 +210,9 @@ public sealed class TextSearchProvider : AIContextProvider
     {
         // Only persist values that differ from defaults plus recent memory configuration & messages.
         TextSearchProviderState state = new();
-        if (this._options.RecentMessageMemoryLimit > 0 && this._recentMessagesText.Count > 0)
+        if (this._recentMessageMemoryLimit > 0 && this._recentMessagesText.Count > 0)
         {
-            state.RecentMessagesText = this._recentMessagesText.Take(this._options.RecentMessageMemoryLimit).ToList();
+            state.RecentMessagesText = this._recentMessagesText.Take(this._recentMessageMemoryLimit).ToList();
         }
 
         return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(TextSearchProviderState)));
@@ -253,9 +243,9 @@ public sealed class TextSearchProvider : AIContextProvider
     /// <returns>Formatted string (may be empty).</returns>
     private string FormatResults(IList<TextSearchResult> results)
     {
-        if (this._options.ContextFormatter is not null)
+        if (this._contextFormatter is not null)
         {
-            return this._options.ContextFormatter(results) ?? string.Empty;
+            return this._contextFormatter(results) ?? string.Empty;
         }
 
         if (results.Count == 0)
@@ -264,7 +254,7 @@ public sealed class TextSearchProvider : AIContextProvider
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine(this._options.ContextPrompt ?? DefaultContextPrompt);
+        sb.AppendLine(this._contextPrompt);
         for (int i = 0; i < results.Count; i++)
         {
             var result = results[i];
@@ -279,7 +269,7 @@ public sealed class TextSearchProvider : AIContextProvider
             sb.AppendLine($"Contents: {result.Text}");
             sb.AppendLine("----");
         }
-        sb.AppendLine(this._options.CitationsPrompt ?? DefaultCitationsPrompt);
+        sb.AppendLine(this._citationsPrompt);
         sb.AppendLine();
         return sb.ToString();
     }

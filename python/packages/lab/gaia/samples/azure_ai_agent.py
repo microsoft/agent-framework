@@ -10,8 +10,6 @@ Required Environment Variables:
     AZURE_AI_MODEL_DEPLOYMENT_NAME: Name of the model deployment to use
 
 Optional Environment Variables:
-    BING_CONNECTION_NAME: Name of the Bing connection for web search
-        OR
     BING_CONNECTION_ID: ID of the Bing connection for web search
 
 Authentication:
@@ -21,7 +19,7 @@ Authentication:
 Example:
     export AZURE_AI_PROJECT_ENDPOINT="https://your-project.azure.com"
     export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
-    export BING_CONNECTION_NAME="bing-grounding-connection"
+    export BING_CONNECTION_ID="connection-id"
     az login
 """
 

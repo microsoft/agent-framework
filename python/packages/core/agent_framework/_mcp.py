@@ -19,7 +19,7 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, Field, create_model
 
 from ._tools import AIFunction, HostedMCPSpecificApproval
 from ._types import ChatMessage, Contents, DataContent, Role, TextContent, UriContent
@@ -224,13 +224,20 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
 
         python_type = resolve_type(prop_details)
+        description = prop_details.get("description", "")
 
         # Create field definition for create_model
         if prop_name in required:
-            field_definitions[prop_name] = (python_type, ...)
+            field_definitions[prop_name] = (
+                (python_type, Field(description=description)) if description else (python_type, ...)
+            )
         else:
             default_value = prop_details.get("default", None)
-            field_definitions[prop_name] = (python_type, default_value)
+            field_definitions[prop_name] = (
+                (python_type, Field(default=default_value, description=description))
+                if description
+                else (python_type, default_value)
+            )
 
     return create_model(f"{tool.name}_input", **field_definitions)
 

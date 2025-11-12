@@ -3,8 +3,10 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   Workflow,
   Home,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { truncateText } from "@/utils/workflow-utils";
 
 export type ExecutorState =
   | "pending"
@@ -81,11 +83,13 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
     const details = [];
 
     if (nodeData.error && typeof nodeData.error === "string") {
+      // Truncate error to first 150 characters for node display
+      const truncatedError = truncateText(nodeData.error, 150);
       details.push(
         <div key="error" className="mb-2">
           <div className="text-xs font-medium text-red-600 dark:text-red-400 mb-1">Error:</div>
-          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800">
-            {nodeData.error}
+          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800 break-words">
+            {truncatedError}
           </div>
         </div>
       );
@@ -155,34 +159,32 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
         isRunning ? config.glow : "shadow-sm",
       )}
     >
-      {/* Small circular handles */}
-      {!nodeData.isStartNode && (
-        <Handle
-          type="target"
-          position={targetPosition}
-          className="!w-2 !h-2 !rounded-full !border !border-gray-600 dark:!border-gray-500 transition-colors !min-w-0 !min-h-0"
-          style={{
-            backgroundColor: nodeData.state === "running" ? "#643FB2" :
-                           nodeData.state === "completed" ? "#10b981" :
-                           nodeData.state === "failed" ? "#ef4444" :
-                           nodeData.state === "cancelled" ? "#f97316" : "#4b5563"
-          }}
-        />
-      )}
+      {/* Small circular handles - always render both to support any edge configuration */}
+      <Handle
+        type="target"
+        position={targetPosition}
+        id="target"
+        className="!w-2 !h-2 !rounded-full !border !border-gray-600 dark:!border-gray-500 transition-colors !min-w-0 !min-h-0"
+        style={{
+          backgroundColor: nodeData.state === "running" ? "#643FB2" :
+                         nodeData.state === "completed" ? "#10b981" :
+                         nodeData.state === "failed" ? "#ef4444" :
+                         nodeData.state === "cancelled" ? "#f97316" : "#4b5563"
+        }}
+      />
 
-      {!nodeData.isEndNode && (
-        <Handle
-          type="source"
-          position={sourcePosition}
-          className="!w-2 !h-2 !rounded-full !border !border-gray-600 dark:!border-gray-500 transition-colors !min-w-0 !min-h-0"
-          style={{
-            backgroundColor: nodeData.state === "running" ? "#643FB2" :
-                           nodeData.state === "completed" ? "#10b981" :
-                           nodeData.state === "failed" ? "#ef4444" :
-                           nodeData.state === "cancelled" ? "#f97316" : "#4b5563"
-          }}
-        />
-      )}
+      <Handle
+        type="source"
+        position={sourcePosition}
+        id="source"
+        className="!w-2 !h-2 !rounded-full !border !border-gray-600 dark:!border-gray-500 transition-colors !min-w-0 !min-h-0"
+        style={{
+          backgroundColor: nodeData.state === "running" ? "#643FB2" :
+                         nodeData.state === "completed" ? "#10b981" :
+                         nodeData.state === "failed" ? "#ef4444" :
+                         nodeData.state === "cancelled" ? "#f97316" : "#4b5563"
+        }}
+      />
 
       <div className="p-3">
         {/* Header with icon and title */}
@@ -196,18 +198,16 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
                 <Workflow className="w-5 h-5 text-gray-300 dark:text-gray-400" />
               )}
             </div>
-            {/* Small status badge for running state */}
-            {isRunning && (
-              <div className={cn(
-                "absolute -top-1 -right-1 w-3 h-3 rounded-full animate-pulse",
-                config.badgeColor
-              )} />
-            )}
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
-              {nodeData.name || nodeData.executorId}
-            </h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
+                {nodeData.name || nodeData.executorId}
+              </h3>
+              {isRunning && (
+                <Loader2 className="w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] animate-spin flex-shrink-0" />
+              )}
+            </div>
             {nodeData.executorType && (
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
                 {nodeData.executorType}
