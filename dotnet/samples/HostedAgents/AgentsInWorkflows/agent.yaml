@@ -9,7 +9,7 @@ description: |
   seamlessly integrated into workflow pipelines and composed as workflow executors.
 metadata:
     authors:
-        - Agent Framework Team
+        - Microsoft Agent Framework Team
     tags:
         - example
         - Agent Framework
