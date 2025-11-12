@@ -1,170 +1,189 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Agents.AI.Workflows.Specialized;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public sealed class WorkflowHostExecutorTests
 {
     [Fact]
-    public async Task ForwardWorkflowEventAsync_WithAutoYieldOutputHandlerResultObjectTrue_YieldsOutput()
+    public async Task WorkflowHostExecutor_WithAutoYieldOutputHandlerResultObjectTrue_YieldsSubworkflowOutput()
     {
         // Arrange
-        const string testData = "test output data";
-        WorkflowOutputEvent outputEvent = new(testData, "SubworkflowExecutor");
+        const string outputData = "test output from subworkflow";
 
-        TestRunContext testContext = new();
+        Func<string, IWorkflowContext, CancellationToken, ValueTask> processFunc = (input, context, cancellationToken) => context.YieldOutputAsync(input, cancellationToken);
 
-        ExecutorOptions options = new()
-        {
-            AutoSendMessageHandlerResultObject = false,
-            AutoYieldOutputHandlerResultObject = true
-        };
+        ExecutorBinding subworkflowExecutor = processFunc.BindAsExecutor("SubworkflowExecutor", threadsafe: true);
+        Workflow subworkflow = new WorkflowBuilder(subworkflowExecutor)
+            .WithOutputFrom(subworkflowExecutor)
+            .Build();
 
-        Workflow emptyWorkflow = new WorkflowBuilder(new SimpleTestExecutor("start")).Build();
-        TestableWorkflowHostExecutor hostExecutor = new("TestHost", emptyWorkflow, "run1", new object(), options);
-
-        await hostExecutor.AttachSuperStepContextAsync(testContext);
-
-        // Act
-        await hostExecutor.SimulateForwardWorkflowEventAsync(outputEvent);
-
-        // Assert
-        testContext.Events.OfType<WorkflowOutputEvent>().Should().HaveCount(1, "YieldOutputAsync should create one WorkflowOutputEvent");
-        WorkflowOutputEvent? yieldedEvent = testContext.Events.OfType<WorkflowOutputEvent>().FirstOrDefault();
-        yieldedEvent.Should().NotBeNull();
-        yieldedEvent!.SourceId.Should().Be("TestHost");
-        yieldedEvent.As<string>().Should().Be(testData);
-
-        testContext.QueuedMessages.Should().BeEmpty("SendMessageAsync should not be called");
-    }
-
-    [Fact]
-    public async Task ForwardWorkflowEventAsync_WithAutoSendMessageHandlerResultObjectTrue_SendsMessage()
-    {
-        // Arrange
-        const string testData = "test output data";
-        WorkflowOutputEvent outputEvent = new(testData, "SubworkflowExecutor");
-
-        TestRunContext testContext = new();
-
-        ExecutorOptions options = new()
-        {
-            AutoSendMessageHandlerResultObject = true,
-            AutoYieldOutputHandlerResultObject = false
-        };
-
-        Workflow emptyWorkflow = new WorkflowBuilder(new SimpleTestExecutor("start")).Build();
-        TestableWorkflowHostExecutor hostExecutor = new("TestHost", emptyWorkflow, "run1", new object(), options);
-
-        await hostExecutor.AttachSuperStepContextAsync(testContext);
-
-        // Act
-        await hostExecutor.SimulateForwardWorkflowEventAsync(outputEvent);
-
-        // Assert
-        testContext.QueuedMessages.Should().ContainKey("TestHost");
-        testContext.QueuedMessages["TestHost"].Should().HaveCount(1);
-        testContext.QueuedMessages["TestHost"][0].Message.Should().Be(testData);
-
-        testContext.Events.OfType<WorkflowOutputEvent>().Should().BeEmpty("YieldOutputAsync should not be called");
-    }
-
-    [Fact]
-    public async Task ForwardWorkflowEventAsync_WithBothOptionsFalse_DoesNothing()
-    {
-        // Arrange
-        const string testData = "test output data";
-        WorkflowOutputEvent outputEvent = new(testData, "SubworkflowExecutor");
-
-        TestRunContext testContext = new();
-
-        ExecutorOptions options = new()
-        {
-            AutoSendMessageHandlerResultObject = false,
-            AutoYieldOutputHandlerResultObject = false
-        };
-
-        Workflow emptyWorkflow = new WorkflowBuilder(new SimpleTestExecutor("start")).Build();
-        TestableWorkflowHostExecutor hostExecutor = new("TestHost", emptyWorkflow, "run1", new object(), options);
-
-        await hostExecutor.AttachSuperStepContextAsync(testContext);
-
-        // Act
-        await hostExecutor.SimulateForwardWorkflowEventAsync(outputEvent);
-
-        // Assert
-        testContext.QueuedMessages.Should().BeEmpty("SendMessageAsync should not be called");
-        testContext.Events.OfType<WorkflowOutputEvent>().Should().BeEmpty("YieldOutputAsync should not be called");
-    }
-
-    [Fact]
-    public async Task ForwardWorkflowEventAsync_WithNullOutputData_DoesNothing()
-    {
-        // Arrange
-        WorkflowOutputEvent outputEvent = new(null!, "SubworkflowExecutor");
-
-        TestRunContext testContext = new();
-
-        ExecutorOptions options = new()
-        {
-            AutoSendMessageHandlerResultObject = false,
-            AutoYieldOutputHandlerResultObject = true
-        };
-
-        Workflow emptyWorkflow = new WorkflowBuilder(new SimpleTestExecutor("start")).Build();
-        TestableWorkflowHostExecutor hostExecutor = new("TestHost", emptyWorkflow, "run1", new object(), options);
-
-        await hostExecutor.AttachSuperStepContextAsync(testContext);
-
-        // Act
-        await hostExecutor.SimulateForwardWorkflowEventAsync(outputEvent);
-
-        // Assert
-        testContext.Events.OfType<WorkflowOutputEvent>().Should().BeEmpty("YieldOutputAsync should not be called when data is null");
-        testContext.QueuedMessages.Should().BeEmpty("SendMessageAsync should not be called when data is null");
-    }
-
-    /// <summary>
-    /// Simple executor for testing that doesn't require type parameters.
-    /// </summary>
-    private sealed class SimpleTestExecutor : Executor
-    {
-        public SimpleTestExecutor(string id) : base(id)
-        {
-        }
-
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) => routeBuilder;
-    }
-
-    /// <summary>
-    /// Testable wrapper for WorkflowHostExecutor that exposes internal methods for testing.
-    /// </summary>
-    private sealed class TestableWorkflowHostExecutor : WorkflowHostExecutor
-    {
-        public TestableWorkflowHostExecutor(string id, Workflow workflow, string runId, object ownershipToken, ExecutorOptions? options = null)
-            : base(id, workflow, runId, ownershipToken, options)
-        {
-        }
-
-        public async ValueTask SimulateForwardWorkflowEventAsync(WorkflowEvent evt)
-        {
-            // Use reflection to invoke the private ForwardWorkflowEventAsync method
-            System.Reflection.MethodInfo? method = typeof(WorkflowHostExecutor)
-                .GetMethod("ForwardWorkflowEventAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-            if (method != null)
+        ExecutorBinding workflowHostExecutor = subworkflow.BindAsExecutor(
+            "HostExecutor",
+            new ExecutorOptions
             {
-                object? result = method.Invoke(this, [null, evt]);
-                if (result is ValueTask valueTask)
+                AutoSendMessageHandlerResultObject = false,
+                AutoYieldOutputHandlerResultObject = true
+            });
+
+        Func<string, string, ValueTask<Executor>> createOrchestrator = (id, _) => new(new OrchestratorExecutor(id));
+        ExecutorBinding orchestrator = createOrchestrator.BindExecutor();
+
+        Workflow workflow = new WorkflowBuilder(orchestrator)
+            .AddEdge(orchestrator, workflowHostExecutor)
+            .AddEdge(workflowHostExecutor, orchestrator)
+            .WithOutputFrom(workflowHostExecutor)
+            .Build();
+
+        // Act
+        Run workflowRun = await InProcessExecution.RunAsync(workflow, outputData);
+
+        // Assert
+        RunStatus status = await workflowRun.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle);
+
+        List<WorkflowOutputEvent> outputEvents = workflowRun.OutgoingEvents
+            .OfType<WorkflowOutputEvent>()
+            .ToList();
+
+        outputEvents.Should().HaveCount(1, "the workflow should produce exactly one output event");
+        outputEvents[0].As<string>().Should().Be(outputData, "the output should match the input data");
+    }
+
+    [Fact]
+    public async Task WorkflowHostExecutor_WithAutoSendMessageHandlerResultObjectTrue_SendsMessageNotYield()
+    {
+        // Arrange
+        const string outputData = "test output from subworkflow";
+
+        Func<string, IWorkflowContext, CancellationToken, ValueTask> processFunc = (input, context, cancellationToken) => context.YieldOutputAsync(input, cancellationToken);
+
+        ExecutorBinding subworkflowExecutor = processFunc.BindAsExecutor("SubworkflowExecutor", threadsafe: true);
+        Workflow subworkflow = new WorkflowBuilder(subworkflowExecutor)
+            .WithOutputFrom(subworkflowExecutor)
+            .Build();
+
+        ExecutorBinding workflowHostExecutor = subworkflow.BindAsExecutor(
+            "HostExecutor",
+            new ExecutorOptions
+            {
+                AutoSendMessageHandlerResultObject = true,
+                AutoYieldOutputHandlerResultObject = false
+            });
+
+        Func<string, string, ValueTask<Executor>> createOrchestrator = (id, _) => new(new OrchestratorExecutor(id));
+        ExecutorBinding orchestrator = createOrchestrator.BindExecutor();
+
+        Workflow workflow = new WorkflowBuilder(orchestrator)
+            .AddEdge(orchestrator, workflowHostExecutor)
+            .AddEdge(workflowHostExecutor, orchestrator)
+            .WithOutputFrom(orchestrator)
+            .Build();
+
+        // Act
+        Run workflowRun = await InProcessExecution.RunAsync(workflow, outputData);
+
+        // Assert
+        RunStatus status = await workflowRun.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle);
+
+        List<WorkflowOutputEvent> outputEvents = workflowRun.OutgoingEvents
+            .OfType<WorkflowOutputEvent>()
+            .ToList();
+
+        // With AutoSendMessageHandlerResultObject, the output is sent as a message back to orchestrator, which yields it
+        outputEvents.Should().HaveCount(1, "the workflow should produce exactly one output event");
+        outputEvents[0].As<string>().Should().Be(outputData, "the output should match the input data");
+    }
+
+    [Fact]
+    public async Task WorkflowHostExecutor_WithBothOptionsFalse_DoesNotPropagate()
+    {
+        // Arrange
+        const string outputData = "test output from subworkflow";
+
+        Func<string, IWorkflowContext, CancellationToken, ValueTask> processFunc = (input, context, cancellationToken) => context.YieldOutputAsync(input, cancellationToken);
+
+        ExecutorBinding subworkflowExecutor = processFunc.BindAsExecutor("SubworkflowExecutor", threadsafe: true);
+        Workflow subworkflow = new WorkflowBuilder(subworkflowExecutor)
+            .WithOutputFrom(subworkflowExecutor)
+            .Build();
+
+        ExecutorBinding workflowHostExecutor = subworkflow.BindAsExecutor(
+            "HostExecutor",
+            new ExecutorOptions
+            {
+                AutoSendMessageHandlerResultObject = false,
+                AutoYieldOutputHandlerResultObject = false
+            });
+
+        Func<string, string, ValueTask<Executor>> createOrchestrator = (id, _) => new(new OrchestratorExecutor(id));
+        ExecutorBinding orchestrator = createOrchestrator.BindExecutor();
+
+        Workflow workflow = new WorkflowBuilder(orchestrator)
+            .AddEdge(orchestrator, workflowHostExecutor)
+            .AddEdge(workflowHostExecutor, orchestrator)
+            .WithOutputFrom(orchestrator)
+            .Build();
+
+        // Act
+        Run workflowRun = await InProcessExecution.RunAsync(workflow, outputData);
+
+        // Assert
+        RunStatus status = await workflowRun.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle);
+
+        List<WorkflowOutputEvent> outputEvents = workflowRun.OutgoingEvents
+            .OfType<WorkflowOutputEvent>()
+            .ToList();
+
+        // When both options are false, the subworkflow output is not propagated
+        outputEvents.Should().BeEmpty("no output should be yielded when both options are false");
+    }
+
+    private sealed class OrchestratorExecutor : StatefulExecutor<OrchestratorExecutor.State>
+    {
+        internal sealed class State
+        {
+            public bool ReceivedInput { get; set; }
+            public string? Result { get; set; }
+        }
+
+        public OrchestratorExecutor(string id)
+            : base(id, () => new State(), declareCrossRunShareable: false)
+        {
+        }
+
+        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            return routeBuilder
+                .AddHandler<string>(this.HandleInputAsync);
+        }
+
+        private async ValueTask HandleInputAsync(string input, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            await this.InvokeWithStateAsync(ProcessInputAsync, context, cancellationToken: cancellationToken);
+
+            async ValueTask<State?> ProcessInputAsync(State state, IWorkflowContext context, CancellationToken cancellationToken)
+            {
+                if (!state.ReceivedInput)
                 {
-                    await valueTask;
+                    state.ReceivedInput = true;
+                    await context.SendMessageAsync(input, cancellationToken: cancellationToken);
                 }
+                else
+                {
+                    state.Result = input;
+                    await context.YieldOutputAsync(input, cancellationToken);
+                }
+
+                return state;
             }
         }
     }
