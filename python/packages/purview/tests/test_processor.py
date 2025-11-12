@@ -170,7 +170,7 @@ class TestScopedContentProcessor:
         request = process_content_request_factory()
         response = ProtectionScopesResponse(**{"value": None})
 
-        should_process, actions = processor._check_applicable_scopes(request, response)
+        should_process, actions, execution_mode = processor._check_applicable_scopes(request, response)
 
         assert should_process is False
         assert actions == []
@@ -200,7 +200,7 @@ class TestScopedContentProcessor:
         })
         response = ProtectionScopesResponse(**{"value": [scope]})
 
-        should_process, actions = processor._check_applicable_scopes(request, response)
+        should_process, actions, execution_mode = processor._check_applicable_scopes(request, response)
 
         assert should_process is True
         assert len(actions) == 1
@@ -220,7 +220,7 @@ class TestScopedContentProcessor:
     async def test_process_with_scopes_calls_client_methods(
         self, processor: ScopedContentProcessor, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test _process_with_scopes calls get_protection_scopes and process_content."""
+        """Test _process_with_scopes calls get_protection_scopes when scopes response is empty."""
         from agent_framework_purview._models import (
             ContentActivitiesResponse,
             ProtectionScopesResponse,
@@ -237,9 +237,10 @@ class TestScopedContentProcessor:
         response = await processor._process_with_scopes(request)
 
         mock_client.get_protection_scopes.assert_called_once()
+        # When no scopes apply, process_content is not called (activities are sent in background)
         mock_client.process_content.assert_not_called()
-        mock_client.send_content_activities.assert_called_once()
-        assert response.id is None
+        # The response should have id=204 (No Content) when no scopes apply
+        assert response.id == "204"
 
     async def test_map_messages_with_user_id_in_additional_properties(self, mock_client: AsyncMock) -> None:
         """Test user_id extraction from message additional_properties."""
@@ -308,7 +309,7 @@ class TestScopedContentProcessor:
     async def test_process_content_sends_activities_when_not_applicable(
         self, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test that content activities are sent when scopes don't apply."""
+        """Test that response is returned when scopes don't apply (activities sent in background)."""
         settings = PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
@@ -325,7 +326,7 @@ class TestScopedContentProcessor:
         mock_ps_response.scopes = []
         mock_client.get_protection_scopes.return_value = mock_ps_response
 
-        # Mock send_content_activities to return success
+        # Mock send_content_activities to return success (called in background)
         mock_ca_response = MagicMock()
         mock_ca_response.error = None
         mock_client.send_content_activities.return_value = mock_ca_response
@@ -334,14 +335,13 @@ class TestScopedContentProcessor:
 
         mock_client.get_protection_scopes.assert_called_once()
         mock_client.process_content.assert_not_called()
-        mock_client.send_content_activities.assert_called_once()
-        # When content activities succeed, response has no errors (processing_errors can be None or empty)
-        assert response.processing_errors is None or response.processing_errors == []
+        # Response should have id=204 when no scopes apply
+        assert response.id == "204"
 
     async def test_process_content_handles_activities_error(
         self, mock_client: AsyncMock, process_content_request_factory
     ) -> None:
-        """Test error handling when content activities fail."""
+        """Test that errors in background activities don't affect the response."""
         settings = PurviewSettings(
             app_name="Test App",
             tenant_id="12345678-1234-1234-1234-123456789012",
@@ -358,12 +358,269 @@ class TestScopedContentProcessor:
         mock_ps_response.scopes = []
         mock_client.get_protection_scopes.return_value = mock_ps_response
 
-        # Mock send_content_activities to return error
+        # Mock send_content_activities to return error (called in background task)
         mock_ca_response = MagicMock()
         mock_ca_response.error = "Test error message"
         mock_client.send_content_activities.return_value = mock_ca_response
 
         response = await processor._process_with_scopes(pc_request)
 
-        assert len(response.processing_errors) == 1
-        assert response.processing_errors[0].message == "Test error message"
+        # Since activities are sent in background, errors don't affect the response
+        # Response should have id=204 when no scopes apply
+        assert response.id == "204"
+
+
+class TestUserIdResolution:
+    """Test user ID resolution from various sources."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        """Create a mock Purview client."""
+        client = AsyncMock()
+        client.get_user_info_from_token = AsyncMock(
+            return_value={
+                "tenant_id": "12345678-1234-1234-1234-123456789012",
+                "user_id": "11111111-1111-1111-1111-111111111111",
+                "client_id": "12345678-1234-1234-1234-123456789012",
+            }
+        )
+        return client
+
+    @pytest.fixture
+    def settings(self) -> PurviewSettings:
+        """Create settings."""
+        return PurviewSettings(
+            app_name="Test App",
+            tenant_id="12345678-1234-1234-1234-123456789012",
+            purview_app_location=PurviewAppLocation(
+                location_type=PurviewLocationType.APPLICATION, location_value="app-id"
+            ),
+        )
+
+    async def test_user_id_from_token_when_no_other_source(self, mock_client: AsyncMock) -> None:
+        """Test user_id is extracted from token when no other source available."""
+        settings = PurviewSettings(app_name="Test App")  # No tenant_id or app_location
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [ChatMessage(role=Role.USER, text="Test")]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        mock_client.get_user_info_from_token.assert_called_once()
+        assert user_id == "11111111-1111-1111-1111-111111111111"
+
+    async def test_user_id_from_additional_properties_takes_priority(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test user_id from additional_properties takes priority over token."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [
+            ChatMessage(
+                role=Role.USER,
+                text="Test",
+                additional_properties={"user_id": "22222222-2222-2222-2222-222222222222"},
+            )
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        # Token info should not be called since we have user_id in message
+        mock_client.get_user_info_from_token.assert_not_called()
+        assert user_id == "22222222-2222-2222-2222-222222222222"
+
+    async def test_user_id_from_author_name_as_fallback(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test user_id is extracted from author_name when it's a valid GUID."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [
+            ChatMessage(
+                role=Role.USER,
+                text="Test",
+                author_name="33333333-3333-3333-3333-333333333333",
+            )
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert user_id == "33333333-3333-3333-3333-333333333333"
+
+    async def test_author_name_ignored_if_not_valid_guid(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test author_name is ignored if it's not a valid GUID."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [
+            ChatMessage(
+                role=Role.USER,
+                text="Test",
+                author_name="John Doe",  # Not a GUID
+            )
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        # Should return empty since author_name is not a valid GUID
+        assert user_id is None
+        assert len(requests) == 0
+
+    async def test_provided_user_id_used_as_last_resort(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test provided_user_id parameter is used as last resort."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [ChatMessage(role=Role.USER, text="Test")]
+
+        requests, user_id = await processor._map_messages(
+            messages, Activity.UPLOAD_TEXT, provided_user_id="44444444-4444-4444-4444-444444444444"
+        )
+
+        assert user_id == "44444444-4444-4444-4444-444444444444"
+
+    async def test_invalid_provided_user_id_ignored(self, mock_client: AsyncMock, settings: PurviewSettings) -> None:
+        """Test invalid provided_user_id is ignored."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [ChatMessage(role=Role.USER, text="Test")]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT, provided_user_id="not-a-guid")
+
+        assert user_id is None
+        assert len(requests) == 0
+
+    async def test_multiple_messages_same_user_id(self, mock_client: AsyncMock, settings: PurviewSettings) -> None:
+        """Test that all messages use the same resolved user_id."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [
+            ChatMessage(
+                role=Role.USER, text="First", additional_properties={"user_id": "55555555-5555-5555-5555-555555555555"}
+            ),
+            ChatMessage(role=Role.ASSISTANT, text="Response"),
+            ChatMessage(role=Role.USER, text="Second"),
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert user_id == "55555555-5555-5555-5555-555555555555"
+        # All requests should have the same user_id
+        assert all(req.user_id == "55555555-5555-5555-5555-555555555555" for req in requests)
+
+    async def test_first_valid_user_id_in_messages_is_used(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test that the first valid user_id found in messages is used for all."""
+        processor = ScopedContentProcessor(mock_client, settings)
+
+        messages = [
+            ChatMessage(role=Role.USER, text="First", author_name="Not a GUID"),
+            ChatMessage(
+                role=Role.ASSISTANT,
+                text="Response",
+                additional_properties={"user_id": "66666666-6666-6666-6666-666666666666"},
+            ),
+            ChatMessage(
+                role=Role.USER, text="Third", additional_properties={"user_id": "77777777-7777-7777-7777-777777777777"}
+            ),
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        # First valid user_id (from second message) should be used
+        assert user_id == "66666666-6666-6666-6666-666666666666"
+        assert all(req.user_id == "66666666-6666-6666-6666-666666666666" for req in requests)
+
+
+class TestScopedContentProcessorCaching:
+    """Test caching functionality in ScopedContentProcessor."""
+
+    @pytest.fixture
+    def mock_client(self) -> AsyncMock:
+        """Create a mock Purview client."""
+        client = AsyncMock()
+        client.get_user_info_from_token = AsyncMock(
+            return_value={
+                "tenant_id": "12345678-1234-1234-1234-123456789012",
+                "user_id": "12345678-1234-1234-1234-123456789012",
+                "client_id": "12345678-1234-1234-1234-123456789012",
+            }
+        )
+        client.get_protection_scopes = AsyncMock()
+        return client
+
+    @pytest.fixture
+    def settings(self) -> PurviewSettings:
+        """Create test settings."""
+        location = PurviewAppLocation(location_type=PurviewLocationType.APPLICATION, location_value="app-id")
+        return PurviewSettings(
+            app_name="Test App",
+            tenant_id="12345678-1234-1234-1234-123456789012",
+            default_user_id="12345678-1234-1234-1234-123456789012",
+            purview_app_location=location,
+        )
+
+    async def test_protection_scopes_cached_on_first_call(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test that protection scopes response is cached after first call."""
+        from agent_framework_purview._cache import InMemoryCacheProvider
+        from agent_framework_purview._models import ProtectionScopesResponse
+
+        cache_provider = InMemoryCacheProvider()
+        processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache_provider)
+
+        mock_client.get_protection_scopes.return_value = ProtectionScopesResponse(
+            scope_identifier="scope-123", scopes=[]
+        )
+
+        messages = [ChatMessage(role=Role.USER, text="Test")]
+
+        await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
+
+        mock_client.get_protection_scopes.assert_called_once()
+
+        await processor.process_messages(messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012")
+
+        mock_client.get_protection_scopes.assert_called_once()
+
+    async def test_payment_required_exception_cached_at_tenant_level(
+        self, mock_client: AsyncMock, settings: PurviewSettings
+    ) -> None:
+        """Test that 402 payment required exceptions are cached at tenant level."""
+        from agent_framework_purview._cache import InMemoryCacheProvider
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        cache_provider = InMemoryCacheProvider()
+        processor = ScopedContentProcessor(mock_client, settings, cache_provider=cache_provider)
+
+        mock_client.get_protection_scopes.side_effect = PurviewPaymentRequiredError("Payment required")
+
+        messages = [ChatMessage(role=Role.USER, text="Test")]
+
+        with pytest.raises(PurviewPaymentRequiredError):
+            await processor.process_messages(
+                messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012"
+            )
+
+        mock_client.get_protection_scopes.assert_called_once()
+
+        with pytest.raises(PurviewPaymentRequiredError):
+            await processor.process_messages(
+                messages, Activity.UPLOAD_TEXT, user_id="12345678-1234-1234-1234-123456789012"
+            )
+
+        mock_client.get_protection_scopes.assert_called_once()
+
+    async def test_custom_cache_provider_used(self, mock_client: AsyncMock, settings: PurviewSettings) -> None:
+        """Test that custom cache provider is used when provided."""
+        from agent_framework_purview._cache import InMemoryCacheProvider
+
+        custom_cache = InMemoryCacheProvider(default_ttl_seconds=60)
+        processor = ScopedContentProcessor(mock_client, settings, cache_provider=custom_cache)
+
+        assert processor._cache is custom_cache
+        assert processor._cache._default_ttl == 60
