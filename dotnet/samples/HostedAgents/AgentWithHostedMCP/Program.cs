@@ -15,7 +15,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // Create an MCP tool that can be called without approval.
-var mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAddress: "https://learn.microsoft.com/api/mcp")
+AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAddress: "https://learn.microsoft.com/api/mcp")
 {
     AllowedTools = ["microsoft_docs_search"],
     ApprovalMode = HostedMcpServerToolApprovalMode.NeverRequire
