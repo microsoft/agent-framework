@@ -26,6 +26,8 @@ logger = get_logger("agent_framework.azurefunctions")
 THREAD_ID_FIELD: str = "thread_id"
 RESPONSE_FORMAT_JSON: str = "json"
 RESPONSE_FORMAT_TEXT: str = "text"
+WAIT_FOR_RESPONSE_FIELD: str = "wait_for_response"
+WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
 
 
 class AgentFunctionApp(df.DFApp):
@@ -705,15 +707,19 @@ class AgentFunctionApp(df.DFApp):
         if isinstance(raw_headers, Mapping):
             headers_mapping = cast(Mapping[Any, Any], raw_headers)
             for key, value in headers_mapping.items():
-                if str(key).lower() == "x-ms-wait-for-response":
+                if str(key).lower() == WAIT_FOR_RESPONSE_HEADER:
                     header_value = value
                     break
 
         if header_value is not None:
             return self._coerce_to_bool(header_value)
 
-        if "wait_for_response" in req_body:
-            return self._coerce_to_bool(req_body.get("wait_for_response"))
+        params = req.params or {}
+        if WAIT_FOR_RESPONSE_FIELD in params:
+            return self._coerce_to_bool(params.get(WAIT_FOR_RESPONSE_FIELD))
+
+        if WAIT_FOR_RESPONSE_FIELD in req_body:
+            return self._coerce_to_bool(req_body.get(WAIT_FOR_RESPONSE_FIELD))
 
         return True
 

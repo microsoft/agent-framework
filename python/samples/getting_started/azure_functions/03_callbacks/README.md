@@ -14,7 +14,6 @@ an HTTP API that can be polled by a web client or dashboard.
 - Shows how to reset stored callback events with `DELETE /api/agents/{agentName}/callbacks/{thread_id}`.
 - Works alongside the standard `/api/agents/{agentName}/run` endpoint so you can correlate callback
   telemetry with agent responses.
-- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-CallbackAgent`).
 
 ## Prerequisites
 

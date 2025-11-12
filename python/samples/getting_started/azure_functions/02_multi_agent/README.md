@@ -8,7 +8,6 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Registering multiple agents with the Function app and running them using HTTP.
 - Conversation management (via thread IDs) for isolated interactions per agent.
 - Two different methods for registering agents: list-based initialization and incremental addition.
-- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-WeatherAgent`).
 
 ## Environment Setup
 

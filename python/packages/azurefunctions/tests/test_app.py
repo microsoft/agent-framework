@@ -12,6 +12,7 @@ import pytest
 from agent_framework import AgentRunResponse, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
 from agent_framework_azurefunctions._entities import AgentEntity, AgentState, create_agent_entity
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
@@ -289,7 +290,7 @@ class TestWaitForResponseAndCorrelationId:
     def test_wait_for_response_header_true(self) -> None:
         """Test that the wait-for-response header is honored."""
         app = self._create_app()
-        request = self._make_request(headers={"x-ms-wait-for-response": "true"})
+        request = self._make_request(headers={WAIT_FOR_RESPONSE_HEADER: "true"})
 
         assert app._should_wait_for_response(request, {}) is True
 
@@ -298,9 +299,23 @@ class TestWaitForResponseAndCorrelationId:
         app = self._create_app()
         request = self._make_request()
 
-        assert app._should_wait_for_response(request, {"wait_for_response": "true"}) is True
-        assert app._should_wait_for_response(request, {"wait_for_response": "false"}) is False
-        assert app._should_wait_for_response(request, {"wait_for_response": "0"}) is False
+        assert app._should_wait_for_response(request, {WAIT_FOR_RESPONSE_FIELD: "true"}) is True
+        assert app._should_wait_for_response(request, {WAIT_FOR_RESPONSE_FIELD: "false"}) is False
+        assert app._should_wait_for_response(request, {WAIT_FOR_RESPONSE_FIELD: "0"}) is False
+
+    def test_wait_for_response_query_parameter(self) -> None:
+        """Test that query parameter controls wait_for_response."""
+        app = self._create_app()
+        request = self._make_request(params={WAIT_FOR_RESPONSE_FIELD: "true"})
+
+        assert app._should_wait_for_response(request, {}) is True
+
+    def test_wait_for_response_query_precedence(self) -> None:
+        """Test that query parameter overrides body value."""
+        app = self._create_app()
+        request = self._make_request(params={WAIT_FOR_RESPONSE_FIELD: "false"})
+
+        assert app._should_wait_for_response(request, {WAIT_FOR_RESPONSE_FIELD: "true"}) is False
 
 
 class TestAgentEntityOperations:
@@ -644,7 +659,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"x-ms-wait-for-response": "false"}
+        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -699,7 +714,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {"x-ms-wait-for-response": "false", "Accept": "application/json"}
+        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": "application/json"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")

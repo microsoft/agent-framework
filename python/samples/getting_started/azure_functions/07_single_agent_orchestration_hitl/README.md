@@ -19,7 +19,6 @@ output or a maximum number of attempts is reached.
   deterministic state (`context.wait_for_external_event` + timed cancellation).
 - Activity functions that encapsulate the out-of-band operations such as notifying
 a reviewer and publishing content.
-- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-WriterAgent`).
 
 ## Run the Sample
 1. Configure the environment variables and install dependencies with `pip install -r requirements.txt`.
