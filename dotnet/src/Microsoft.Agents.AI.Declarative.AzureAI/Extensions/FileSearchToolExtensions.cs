@@ -26,7 +26,7 @@ internal static class FileSearchToolExtensions
     }
 
     /// <summary>
-    /// Creates a <see cref="FileSearchToolDefinition"/> from a <see cref="FileSearchTool"/>.
+    /// Creates an <see cref="OpenAI.Responses.FileSearchTool"/> from a <see cref="FileSearchTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="FileSearchTool"/></param>
     internal static OpenAI.Responses.FileSearchTool CreateFileSearchTool(this FileSearchTool tool)
