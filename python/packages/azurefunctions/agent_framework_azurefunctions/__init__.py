@@ -1,4 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
+
+__version__ = "0.1.0"
+__all__ = []
 """Azure Durable Agent Function App.
 
 This package provides integration between Microsoft Agent Framework and Azure Durable Functions,
