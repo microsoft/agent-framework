@@ -16,10 +16,9 @@ from collections.abc import Mapping
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -85,8 +84,8 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     except ValidationError as exc:
         raise ValueError(f"Invalid email payload: {exc}") from exc
 
-    spam_agent = get_agent(context, SPAM_AGENT_NAME)
-    email_agent = get_agent(context, EMAIL_AGENT_NAME)
+    spam_agent = app.get_agent(context, SPAM_AGENT_NAME)
+    email_agent = app.get_agent(context, EMAIL_AGENT_NAME)
 
     spam_thread = spam_agent.get_new_thread()
 

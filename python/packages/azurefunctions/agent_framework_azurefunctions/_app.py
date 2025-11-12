@@ -19,6 +19,7 @@ from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._models import AgentSessionId, ChatRole, RunRequest
+from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
 from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
@@ -42,7 +43,7 @@ class AgentFunctionApp(df.DFApp):
 
     Usage:
         ```python
-    from agent_framework.azurefunctions import AgentFunctionApp
+        from agent_framework.azure import AgentFunctionApp
         from agent_framework.azure import AzureOpenAIAssistantsClient
 
         # Create agents with unique names
@@ -65,6 +66,15 @@ class AgentFunctionApp(df.DFApp):
         app = AgentFunctionApp()
         app.add_agent(weather_agent)
         app.add_agent(math_agent)
+
+
+        @app.orchestration_trigger(context_name="context")
+        def my_orchestration(context):
+            writer = app.get_agent(context, "WeatherAgent")
+            thread = writer.get_new_thread()
+            forecast_task = writer.run("What's the forecast?", thread=thread)
+            forecast = yield forecast_task
+            return forecast
         ```
 
     This creates:
@@ -197,6 +207,30 @@ class AgentFunctionApp(df.DFApp):
         )
 
         logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
+
+    def get_agent(
+        self,
+        context: AgentOrchestrationContextType,
+        agent_name: str,
+    ) -> DurableAIAgent:
+        """Return a DurableAIAgent proxy for a registered agent.
+
+        Args:
+            context: Durable Functions orchestration context invoking the agent.
+            agent_name: Name of the agent registered on this app.
+
+        Raises:
+            ValueError: If the requested agent has not been registered.
+
+        Returns:
+            DurableAIAgent wrapper bound to the orchestration context.
+        """
+        normalized_name = str(agent_name)
+
+        if normalized_name not in self.agents:
+            raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
+
+        return DurableAIAgent(context, normalized_name)
 
     def _setup_agent_functions(
         self,

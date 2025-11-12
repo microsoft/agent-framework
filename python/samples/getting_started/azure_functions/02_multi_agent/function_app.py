@@ -11,8 +11,7 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAM
 import logging
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.azurefunctions import AgentFunctionApp
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)

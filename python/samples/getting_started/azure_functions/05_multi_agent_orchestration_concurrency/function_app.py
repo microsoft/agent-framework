@@ -14,10 +14,9 @@ from typing import Any
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +58,8 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     if not prompt or not str(prompt).strip():
         raise ValueError("Prompt is required")
 
-    physicist = get_agent(context, PHYSICIST_AGENT_NAME)
-    chemist = get_agent(context, CHEMIST_AGENT_NAME)
+    physicist = app.get_agent(context, PHYSICIST_AGENT_NAME)
+    chemist = app.get_agent(context, CHEMIST_AGENT_NAME)
 
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()

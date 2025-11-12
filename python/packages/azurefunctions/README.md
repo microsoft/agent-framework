@@ -16,6 +16,14 @@ The durable agent extension lets you host Microsoft Agent Framework agents on Az
 
 See the durable functions integration sample in the repository to learn how to:
 
+```python
+from agent_framework_azurefunctions import AgentFunctionApp
+
+_app = AgentFunctionApp()
+```
+
+This namespace now exposes the Azure Functions integration types.
+
 - Register agents with `AgentFunctionApp`
 - Post messages using the generated `/api/agents/{agent_name}/run` endpoint
 

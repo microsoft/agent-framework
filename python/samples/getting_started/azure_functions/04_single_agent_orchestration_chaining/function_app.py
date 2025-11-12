@@ -14,10 +14,9 @@ from typing import Any
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 def single_agent_orchestration(context: DurableOrchestrationContext):
     """Run the writer agent twice on the same thread to mirror chaining behaviour."""
 
-    writer = get_agent(context, WRITER_AGENT_NAME)
+    writer = app.get_agent(context, WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
     initial = yield writer.run(

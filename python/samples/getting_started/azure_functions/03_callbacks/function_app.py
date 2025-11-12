@@ -16,10 +16,13 @@ from typing import Any, DefaultDict
 
 import azure.functions as func
 from agent_framework import AgentRunResponseUpdate
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import (
+    AgentCallbackContext,
+    AgentFunctionApp,
+    AgentResponseCallbackProtocol,
+    AzureOpenAIChatClient,
+)
 from azure.identity import AzureCliCredential
-
-from agent_framework.azurefunctions import AgentFunctionApp, AgentCallbackContext, AgentResponseCallbackProtocol
 
 logger = logging.getLogger(__name__)
 
