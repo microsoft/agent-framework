@@ -45,7 +45,7 @@ internal static class IntExpressionExtensions
                 return (long)numberValue.Value;
             }
             var stringValue = formulaValue as StringValue;
-            if (stringValue != null && int.TryParse(stringValue.Value, out int result))
+            if (stringValue != null && long.TryParse(stringValue.Value, out long result))
             {
                 return result;
             }
