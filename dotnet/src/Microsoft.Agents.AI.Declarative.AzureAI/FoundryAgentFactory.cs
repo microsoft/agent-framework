@@ -106,6 +106,6 @@ public sealed class FoundryAgentFactory : AgentFactory
             return new AgentClient(new Uri(endpoint), this._tokenCredential);
         }
 
-        throw new InvalidOperationException("An AgentClient must be registered in the service provider or a FoundryConnection must be specified in the agent definition model connection to create an AgentClient.");
+        throw new InvalidOperationException("An AgentClient must be registered in the service provider or a RemoteConnection must be specified in the agent definition model connection to create an AgentClient.");
     }
 }
