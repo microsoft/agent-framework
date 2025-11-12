@@ -65,7 +65,7 @@ export interface ResponseFailedEvent {
 
 // Custom Agent Framework OpenAI event types with structured data
 export interface ResponseWorkflowEventComplete {
-  type: "response.workflow_event.completed";
+  type: "response.workflow_event.complete";
   data: {
     event_type: string;
     data?: Record<string, unknown>;
@@ -125,32 +125,6 @@ export interface ResponseFunctionToolCall {
   status?: "in_progress" | "completed" | "incomplete";
 }
 
-// DevUI Extension: Output item types for response.output_item.added events
-export interface ResponseOutputImageItem {
-  id: string;
-  type: "output_image";
-  image_url: string;
-  alt_text?: string;
-  mime_type: string;
-}
-
-export interface ResponseOutputFileItem {
-  id: string;
-  type: "output_file";
-  filename: string;
-  file_url?: string;
-  file_data?: string;
-  mime_type: string;
-}
-
-export interface ResponseOutputDataItem {
-  id: string;
-  type: "output_data";
-  data: string;
-  mime_type: string;
-  description?: string;
-}
-
 // Workflow Item Types - flexible interface for any workflow item
 export interface WorkflowItem {
   type: string;  // "executor_action", "workflow_action", "message", or any future type
@@ -173,34 +147,24 @@ export function isExecutorAction(item: WorkflowItem): item is ExecutorActionItem
   return item.type === "executor_action" && "executor_id" in item;
 }
 
-// Union of all possible output items
-export type ResponseOutputItem =
-  | ResponseFunctionToolCall
-  | ResponseOutputImageItem
-  | ResponseOutputFileItem
-  | ResponseOutputDataItem
-  | ExecutorActionItem
-  | WorkflowItem;
-
-// OpenAI Responses API - Output Item Added Event
-// OpenAI standard: Output item added event (extended to support our output types)
+// OpenAI Responses API - Output Item Events
 export interface ResponseOutputItemAddedEvent {
   type: "response.output_item.added";
-  item: ResponseOutputItem;
+  item: WorkflowItem | ResponseFunctionToolCall | any;  // Flexible to support various item types
   output_index: number;
   sequence_number?: number;
 }
 
 export interface ResponseOutputItemDoneEvent {
   type: "response.output_item.done";
-  item: ResponseOutputItem;
+  item: WorkflowItem | ResponseFunctionToolCall | any;
   output_index: number;
   sequence_number?: number;
 }
 
 // Trace event - matching actual backend output
 export interface ResponseTraceEventComplete {
-  type: "response.trace.completed";
+  type: "response.trace_event.complete";
   data: {
     operation_name?: string;
     duration_ms?: number;
@@ -215,7 +179,7 @@ export interface ResponseTraceEventComplete {
 
 // New trace event format from backend
 export interface ResponseTraceComplete {
-  type: "response.trace.completed";
+  type: "response.trace.complete";
   data: {
     type?: string;
     span_id?: string;
@@ -280,20 +244,6 @@ export interface ResponseFunctionResultComplete {
   timestamp?: string;  // Optional ISO timestamp for UI display
 }
 
-// DevUI Extension: Workflow Requests Human Input (HIL)
-export interface ResponseRequestInfoEvent {
-  type: "response.request_info.requested";
-  request_id: string;
-  source_executor_id: string;
-  request_type: string;
-  request_data: Record<string, unknown>;
-  request_schema: Record<string, unknown>;
-  item_id: string;
-  output_index: number;
-  sequence_number: number;
-  timestamp: string;
-}
-
 // DevUI Extension: Turn Separator (UI-only event for grouping)
 export interface TurnSeparatorEvent {
   type: "debug.turn_separator";
@@ -316,7 +266,6 @@ export type StructuredEvent =
   | ResponseFunctionCallDelta
   | ResponseFunctionCallArgumentsDelta
   | ResponseFunctionResultComplete
-  | ResponseRequestInfoEvent
   | ResponseErrorEvent
   | ResponseFunctionApprovalRequestedEvent
   | ResponseFunctionApprovalRespondedEvent
@@ -425,18 +374,6 @@ export interface MessageInputFile {
   filename?: string;
 }
 
-// DevUI Extension: Function approval request content (shown in chat)
-export interface MessageFunctionApprovalRequestContent {
-  type: "function_approval_request";
-  request_id: string;
-  status: "pending" | "approved" | "rejected";
-  function_call: {
-    id: string;
-    name: string;
-    arguments: Record<string, unknown>;
-  };
-}
-
 // DevUI Extension: Function approval response content
 export interface MessageFunctionApprovalResponseContent {
   type: "function_approval_response";
@@ -449,45 +386,12 @@ export interface MessageFunctionApprovalResponseContent {
   };
 }
 
-// ============================================================================
-// DevUI Extension: Output Content Types (Agent-Generated Media/Data)
-// ============================================================================
-// These extend the OpenAI Responses API to support rich content outputs
-// that aren't natively supported (images, files, data). They mirror the
-// input types but for agent outputs.
-
-export interface MessageOutputImage {
-  type: "output_image";
-  image_url: string; // URL or data URI (data:image/png;base64,...)
-  alt_text?: string;
-  mime_type: string;
-}
-
-export interface MessageOutputFile {
-  type: "output_file";
-  filename: string;
-  file_url?: string;
-  file_data?: string; // base64
-  mime_type: string;
-}
-
-export interface MessageOutputData {
-  type: "output_data";
-  data: string;
-  mime_type: string;
-  description?: string;
-}
-
 export type MessageContent =
   | MessageTextContent
   | MessageInputTextContent
   | MessageOutputTextContent
   | MessageInputImage
   | MessageInputFile
-  | MessageOutputImage
-  | MessageOutputFile
-  | MessageOutputData
-  | MessageFunctionApprovalRequestContent
   | MessageFunctionApprovalResponseContent;
 
 // Message item (user/assistant messages with content)
@@ -497,7 +401,6 @@ export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: MessageContent[];
   status: "in_progress" | "completed" | "incomplete";
-  created_at?: number; // Unix timestamp in seconds - when this message was created
   usage?: {
     input_tokens: number;
     output_tokens: number;
@@ -513,7 +416,6 @@ export interface ConversationFunctionCall {
   name: string;
   arguments: string;
   status: "in_progress" | "completed" | "incomplete";
-  created_at?: number; // Unix timestamp in seconds - when this function call was made
 }
 
 // Function call output item
@@ -523,7 +425,6 @@ export interface ConversationFunctionCallOutput {
   call_id: string;
   output: string;
   status?: "in_progress" | "completed" | "incomplete";
-  created_at?: number; // Unix timestamp in seconds - when this function result was received
 }
 
 // Union of all conversation item types

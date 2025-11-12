@@ -64,13 +64,12 @@ internal static class Program
             return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
         }).AddAsAIAgent();
 
-        builder.Services.AddOpenAIResponses();
-        builder.Services.AddOpenAIConversations();
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.AddDevUI();
+        }
 
         var app = builder.Build();
-
-        app.MapOpenAIResponses();
-        app.MapOpenAIConversations();
 
         if (builder.Environment.IsDevelopment())
         {

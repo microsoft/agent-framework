@@ -38,21 +38,18 @@ builder.Services.AddChatClient(chatClient);
 // Register your agents
 builder.AddAIAgent("my-agent", "You are a helpful assistant.");
 
-// Register services for OpenAI responses and conversations (also required for DevUI)
-builder.Services.AddOpenAIResponses();
-builder.Services.AddOpenAIConversations();
+// Add DevUI services
+builder.AddDevUI();
 
 var app = builder.Build();
 
-// Map endpoints for OpenAI responses and conversations (also required for DevUI)
+// Map the DevUI endpoint
+app.MapDevUI();
+
+// Add required endpoints
+app.MapEntities();
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();
-
-if (builder.Environment.IsDevelopment())
-{
-    // Map DevUI endpoint to /devui
-    app.MapDevUI();
-}
 
 app.Run();
 ```
