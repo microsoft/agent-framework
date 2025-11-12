@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Azure.AI.Agents;
 using Azure.Core;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -24,8 +25,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// project endpoint and credentials to authenticate requests.</remarks>
 /// <param name="projectEndpoint">A <see cref="Uri"/> instance representing the endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
-/// <param name="httpClient">An optional <see cref="HttpClient"/> instance to be used for making HTTP requests. If not provided, a default client will be used.</param>
-public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials, HttpClient? httpClient = null) : WorkflowAgentProvider
+public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : WorkflowAgentProvider
 {
     private readonly Dictionary<string, AgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
@@ -36,7 +36,18 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <summary>
     /// Optional options used when creating the <see cref="AgentClient"/>.
     /// </summary>
-    public AgentClientOptions? ClientOptions { get; init; }
+    public AgentClientOptions? AgentClientOptions { get; init; }
+
+    /// <summary>
+    /// Optional options used when invoking the <see cref="AIAgent"/>.
+    /// </summary>
+    public OpenAIClientOptions? OpenAIClientOptions { get; init; }
+
+    /// <summary>
+    /// An optional <see cref="HttpClient"/> instance to be used for making HTTP requests.
+    /// If not provided, a default client will be used.
+    /// </summary>
+    public HttpClient? HttpClient { get; init; }
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
@@ -161,7 +172,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AgentClient client = this.GetAgentClient();
 
-        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, openAIClientOptions: null, services: null, cancellationToken);
+        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, this.OpenAIClientOptions, services: null, cancellationToken);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -221,11 +232,11 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         if (this._agentClient is null)
         {
-            AgentClientOptions clientOptions = this.ClientOptions ?? new();
+            AgentClientOptions clientOptions = this.AgentClientOptions ?? new();
 
-            if (httpClient is not null)
+            if (this.HttpClient is not null)
             {
-                clientOptions.Transport = new HttpClientPipelineTransport(httpClient);
+                clientOptions.Transport = new HttpClientPipelineTransport(this.HttpClient);
             }
 
             AgentClient newClient = new(projectEndpoint, projectCredentials, clientOptions);

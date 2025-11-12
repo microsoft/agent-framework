@@ -117,7 +117,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             this.AssertNotExecuted("sendActivity_even");
             this.AssertMessage("ODD");
         }
-        this.AssertExecuted("end_all");
+        this.AssertExecuted("activity_final");
     }
 
     [Theory]
@@ -141,7 +141,30 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
             this.AssertExecuted("sendActivity_odd");
             this.AssertNotExecuted("sendActivity_else");
         }
-        this.AssertExecuted("end_all");
+        this.AssertExecuted("activity_final");
+    }
+
+    [Theory]
+    [InlineData(12, 4)]
+    [InlineData(37, 9)]
+    public async Task ConditionActionWithFallThroughAsync(int input, int expectedActions)
+    {
+        await this.RunWorkflowAsync("ConditionFallThrough.yaml", input);
+        this.AssertExecutionCount(expectedActions);
+        this.AssertExecuted("setVariable_test");
+        this.AssertExecuted("conditionGroup_test", isScope: true);
+        if (input % 2 == 0)
+        {
+            this.AssertNotExecuted("conditionItem_odd");
+            this.AssertNotExecuted("sendActivity_odd");
+        }
+        else
+        {
+            this.AssertExecuted("conditionItem_odd", isScope: true);
+            this.AssertExecuted("sendActivity_odd");
+            this.AssertMessage("ODD");
+        }
+        this.AssertExecuted("activity_final");
     }
 
     [Theory]

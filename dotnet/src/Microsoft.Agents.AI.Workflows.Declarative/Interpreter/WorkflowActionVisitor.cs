@@ -137,16 +137,21 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
             conditionItem.Accept(this);
         }
 
+        if (lastConditionItemId is not null)
+        {
+            // Create clean start for else action from prior conditions
+            this.RestartAfter(lastConditionItemId, action.Id);
+        }
+
         if (item.ElseActions?.Actions.Length > 0)
         {
-            if (lastConditionItemId is not null)
-            {
-                // Create clean start for else action from prior conditions
-                this.RestartAfter(lastConditionItemId, action.Id);
-            }
-
             // Create conditional link for else action
             string stepId = ConditionGroupExecutor.Steps.Else(item);
+            this._workflowModel.AddLink(action.Id, stepId, action.IsElse);
+        }
+        else
+        {
+            string stepId = Steps.Post(action.Id);
             this._workflowModel.AddLink(action.Id, stepId, action.IsElse);
         }
     }

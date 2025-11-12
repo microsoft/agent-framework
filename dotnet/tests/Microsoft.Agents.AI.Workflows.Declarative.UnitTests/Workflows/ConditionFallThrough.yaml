@@ -19,10 +19,6 @@ trigger:
             - kind: SendActivity
               id: sendActivity_odd
               activity: ODD
-      elseActions:
-        - kind: SendActivity
-          id: sendActivity_else
-          activity: EVEN
 
     - kind: SendActivity
       id: activity_final
