@@ -45,6 +45,9 @@ internal static class AgentRunResponseUpdateExtensions
         var updateEnumerator = updates.GetAsyncEnumerator(cancellationToken);
         await using var _ = updateEnumerator.ConfigureAwait(false);
 
+        // Track active item IDs by executor ID to pair invoked/completed/failed events
+        Dictionary<string, string> executorItemIds = [];
+
         AgentRunResponseUpdate? previousUpdate = null;
         StreamingEventGenerator? generator = null;
         while (await updateEnumerator.MoveNextAsync().ConfigureAwait(false))
@@ -55,7 +58,92 @@ internal static class AgentRunResponseUpdateExtensions
             // Special-case for agent framework workflow events.
             if (update.RawRepresentation is WorkflowEvent workflowEvent)
             {
-                yield return CreateWorkflowEventResponse(workflowEvent, seq.Increment(), outputIndex);
+                // Convert executor events to standard OpenAI output_item events
+                if (workflowEvent is ExecutorInvokedEvent invokedEvent)
+                {
+                    var itemId = IdGenerator.NewId(prefix: "item");
+                    // Store the item ID for this executor so we can reuse it for completion/failure
+                    executorItemIds[invokedEvent.ExecutorId] = itemId;
+
+                    var item = new ExecutorActionItemResource
+                    {
+                        Id = itemId,
+                        ExecutorId = invokedEvent.ExecutorId,
+                        Status = "in_progress",
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+
+                    yield return new StreamingOutputItemAdded
+                    {
+                        SequenceNumber = seq.Increment(),
+                        OutputIndex = outputIndex,
+                        Item = item
+                    };
+                }
+                else if (workflowEvent is ExecutorCompletedEvent completedEvent)
+                {
+                    // Reuse the item ID from the invoked event, or generate a new one if not found
+                    var itemId = executorItemIds.TryGetValue(completedEvent.ExecutorId, out var existingId)
+                        ? existingId
+                        : IdGenerator.NewId(prefix: "item");
+
+                    // Remove from tracking as this executor run is now complete
+                    executorItemIds.Remove(completedEvent.ExecutorId);
+                    JsonElement? resultData = null;
+                    if (completedEvent.Data != null && JsonSerializer.IsReflectionEnabledByDefault)
+                    {
+                        resultData = JsonSerializer.SerializeToElement(
+                            completedEvent.Data,
+                            OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
+                    }
+
+                    var item = new ExecutorActionItemResource
+                    {
+                        Id = itemId,
+                        ExecutorId = completedEvent.ExecutorId,
+                        Status = "completed",
+                        Result = resultData,
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+
+                    yield return new StreamingOutputItemDone
+                    {
+                        SequenceNumber = seq.Increment(),
+                        OutputIndex = outputIndex,
+                        Item = item
+                    };
+                }
+                else if (workflowEvent is ExecutorFailedEvent failedEvent)
+                {
+                    // Reuse the item ID from the invoked event, or generate a new one if not found
+                    var itemId = executorItemIds.TryGetValue(failedEvent.ExecutorId, out var existingId)
+                        ? existingId
+                        : IdGenerator.NewId(prefix: "item");
+
+                    // Remove from tracking as this executor run has now failed
+                    executorItemIds.Remove(failedEvent.ExecutorId);
+
+                    var item = new ExecutorActionItemResource
+                    {
+                        Id = itemId,
+                        ExecutorId = failedEvent.ExecutorId,
+                        Status = "failed",
+                        Error = failedEvent.Data?.ToString(),
+                        CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+
+                    yield return new StreamingOutputItemDone
+                    {
+                        SequenceNumber = seq.Increment(),
+                        OutputIndex = outputIndex,
+                        Item = item
+                    };
+                }
+                else
+                {
+                    // For other workflow events (not executor-specific), keep the old format as fallback
+                    yield return CreateWorkflowEventResponse(workflowEvent, seq.Increment(), outputIndex);
+                }
                 continue;
             }
 
@@ -165,7 +253,7 @@ internal static class AgentRunResponseUpdateExtensions
                 MaxOutputTokens = request.MaxOutputTokens,
                 MaxToolCalls = request.MaxToolCalls,
                 Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],
-                Model = request.Agent?.Name ?? request.Model,
+                Model = request.Model,
                 Output = outputs?.ToList() ?? [],
                 ParallelToolCalls = request.ParallelToolCalls ?? true,
                 PreviousResponseId = request.PreviousResponseId,

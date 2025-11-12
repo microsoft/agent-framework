@@ -4,14 +4,17 @@
  */
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { EntitySelector } from "./entity-selector";
 import { ModeToggle } from "@/components/mode-toggle";
-import { Settings } from "lucide-react";
+import { Settings, Zap } from "lucide-react";
 import type { AgentInfo, WorkflowInfo } from "@/types";
+import { useDevUIStore } from "@/stores";
 
 interface AppHeaderProps {
   agents: AgentInfo[];
   workflows: WorkflowInfo[];
+  entities?: (AgentInfo | WorkflowInfo)[];
   selectedItem?: AgentInfo | WorkflowInfo;
   onSelect: (item: AgentInfo | WorkflowInfo) => void;
   onBrowseGallery?: () => void;
@@ -22,12 +25,15 @@ interface AppHeaderProps {
 export function AppHeader({
   agents,
   workflows,
+  entities,
   selectedItem,
   onSelect,
   onBrowseGallery,
   isLoading = false,
   onSettingsClick,
 }: AppHeaderProps) {
+  const { oaiMode } = useDevUIStore();
+
   return (
     <header className="flex h-14 items-center gap-4 border-b px-4">
       <div className="flex items-center gap-2 font-semibold">
@@ -58,15 +64,29 @@ export function AppHeader({
           </defs>
         </svg>
         Dev UI
+        {/* Mode Badge */}
+        {oaiMode.enabled && (
+          <Badge variant="secondary" className="gap-1 ml-2">
+            <Zap className="h-3 w-3" />
+            OpenAI: {oaiMode.model}
+          </Badge>
+        )}
       </div>
-      <EntitySelector
-        agents={agents}
-        workflows={workflows}
-        selectedItem={selectedItem}
-        onSelect={onSelect}
-        onBrowseGallery={onBrowseGallery}
-        isLoading={isLoading}
-      />
+
+      {/* Show entity selector only when NOT in OAI mode */}
+      {!oaiMode.enabled && (
+        <EntitySelector
+          agents={agents}
+          workflows={workflows}
+          entities={entities}
+          selectedItem={selectedItem}
+          onSelect={onSelect}
+          onBrowseGallery={onBrowseGallery}
+          isLoading={isLoading}
+        />
+      )}
+
+      <div className="flex-1"></div>
 
       <div className="flex items-center gap-2 ml-auto">
         <ModeToggle />
