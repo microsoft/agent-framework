@@ -18,6 +18,7 @@ import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 from agent_framework.azurefunctions import AgentFunctionApp, get_agent
 from pydantic import BaseModel, ValidationError
 
@@ -52,7 +53,7 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient().create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

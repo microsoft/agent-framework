@@ -64,10 +64,6 @@ def _should_skip_azure_functions_integration_tests() -> tuple[bool, str]:
     if not deployment_name or deployment_name == "your-deployment-name":
         return True, "No real AZURE_OPENAI_CHAT_DEPLOYMENT_NAME provided; skipping integration tests."
 
-    api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
-    if not api_key or api_key == "your-api-key-here":
-        return True, "No real AZURE_OPENAI_API_KEY provided; skipping integration tests."
-
     return False, "Integration tests enabled."
 
 

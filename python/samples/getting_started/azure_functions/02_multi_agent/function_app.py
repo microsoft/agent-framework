@@ -13,7 +13,7 @@ from typing import Any
 
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.azurefunctions import AgentFunctionApp
-
+from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 
 # 1. Create multiple agents, each with its own instruction set and tools.
-chat_client = AzureOpenAIChatClient()
+chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
 weather_agent = chat_client.create_agent(
     name="WeatherAgent",
