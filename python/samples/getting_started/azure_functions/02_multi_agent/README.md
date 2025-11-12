@@ -6,7 +6,7 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 
 - Using the Microsoft Agent Framework to define multiple AI agents with unique names and instructions.
 - Registering multiple agents with the Function app and running them using HTTP.
-- Conversation management (via session IDs) for isolated interactions per agent.
+- Conversation management (via thread IDs) for isolated interactions per agent.
 - Two different methods for registering agents: list-based initialization and incremental addition.
 
 ## Environment Setup
@@ -66,8 +66,8 @@ Expected response:
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "What is the weather in Seattle?",
-  "conversation_id": "<guid>",
-  "correlation_id": "<guid>"
+  "threadId": "<guid>",
+  "correlationId": "<guid>"
 }
 ```
 
@@ -96,8 +96,8 @@ Expected response:
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "Calculate a 20% tip on a $50 bill",
-  "conversation_id": "<guid>",
-  "correlation_id": "<guid>"
+  "threadId": "<guid>",
+  "correlationId": "<guid>"
 }
 ```
 

@@ -45,7 +45,7 @@ class TestSampleSingleAgent:
         """Test sending a simple message with JSON payload."""
         response = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about cloud computing.", "sessionId": "test-simple-json"},
+            {"message": "Tell me a short joke about cloud computing.", "threadId": "test-simple-json"},
         )
         # Agent can return 200 (immediate) or 202 (async with wait_for_completion=false)
         assert response.status_code in [200, 202]
@@ -58,7 +58,7 @@ class TestSampleSingleAgent:
             assert data["message_count"] >= 1
         else:
             # Async response - check we got correlation info
-            assert "correlationId" in data or "sessionId" in data
+            assert "correlationId" in data or "threadId" in data
 
     def test_simple_message_plain_text(self) -> None:
         """Test sending a message with plain text payload."""
@@ -70,10 +70,10 @@ class TestSampleSingleAgent:
             assert data["status"] == "success"
             assert "response" in data
 
-    def test_session_key_in_query(self) -> None:
-        """Test using sessionKey in query parameter."""
+    def test_thread_id_in_query(self) -> None:
+        """Test using threadId in query parameter."""
         response = SampleTestHelper.post_text(
-            f"{self.base_url}/run?sessionKey=test-query-session", "Tell me a short joke about weather in Texas."
+            f"{self.base_url}/run?threadId=test-query-thread", "Tell me a short joke about weather in Texas."
         )
         assert response.status_code in [200, 202]
         data = response.json()
@@ -83,12 +83,12 @@ class TestSampleSingleAgent:
 
     def test_conversation_continuity(self) -> None:
         """Test conversation context is maintained across requests."""
-        session_id = "test-continuity"
+        thread_id = "test-continuity"
 
         # First message
         response1 = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about weather in Seattle.", "sessionId": session_id},
+            {"message": "Tell me a short joke about weather in Seattle.", "threadId": thread_id},
         )
         assert response1.status_code in [200, 202]
 
@@ -98,7 +98,7 @@ class TestSampleSingleAgent:
 
             # Second message in same session
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about San Francisco?", "sessionId": session_id}
+                f"{self.base_url}/run", {"message": "What about San Francisco?", "threadId": thread_id}
             )
             assert response2.status_code == 200
             data2 = response2.json()
@@ -107,7 +107,7 @@ class TestSampleSingleAgent:
             # In async mode, we can't easily test message count
             # Just verify we can make multiple calls
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about Texas?", "sessionId": session_id}
+                f"{self.base_url}/run", {"message": "What about Texas?", "threadId": thread_id}
             )
             assert response2.status_code == 202
 

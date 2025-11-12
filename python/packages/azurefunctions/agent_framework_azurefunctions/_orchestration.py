@@ -136,7 +136,7 @@ class DurableAIAgent(AgentProtocol):
             message=message_str,
             enable_tool_calls=enable_tool_calls,
             correlation_id=correlation_id,
-            conversation_id=session_id.key,
+            thread_id=session_id.key,
             response_format=response_format,
         )
 

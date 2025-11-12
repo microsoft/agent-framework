@@ -287,13 +287,13 @@ class TestAgentEntityOperations:
 
         result = await entity.run_agent(
             mock_context,
-            {"message": "Test message", "conversation_id": "test-conv-123", "correlation_id": "corr-app-entity-1"},
+            {"message": "Test message", "thread_id": "test-conv-123", "correlation_id": "corr-app-entity-1"},
         )
 
         assert result["status"] == "success"
         assert result["response"] == "Test response"
         assert result["message"] == "Test message"
-        assert result["conversation_id"] == "test-conv-123"
+        assert result["thread_id"] == "test-conv-123"
         assert entity.state.message_count == 1
 
     async def test_entity_stores_conversation_history(self) -> None:
@@ -308,7 +308,7 @@ class TestAgentEntityOperations:
 
         # Send first message
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "conversation_id": "conv-1", "correlation_id": "corr-app-entity-2"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-2"}
         )
 
         history = entity.state.conversation_history
@@ -337,12 +337,12 @@ class TestAgentEntityOperations:
         assert entity.state.message_count == 0
 
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "conversation_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
         )
         assert entity.state.message_count == 1
 
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "conversation_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
         )
         assert entity.state.message_count == 2
 
@@ -391,7 +391,7 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run_agent"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "conversation_id": "conv-123",
+            "thread_id": "conv-123",
             "correlation_id": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
@@ -478,7 +478,7 @@ class TestErrorHandling:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Test message", "conversation_id": "conv-1", "correlation_id": "corr-app-error-1"}
+            mock_context, {"message": "Test message", "thread_id": "conv-1", "correlation_id": "corr-app-error-1"}
         )
 
         assert result["status"] == "error"
@@ -542,17 +542,17 @@ class TestIncomingRequestParsing:
 
         assert "Message is required" in str(exc_info.value)
 
-    def test_extract_session_key_from_query_params(self) -> None:
-        """Test session key extraction from query parameters."""
+    def test_extract_thread_id_from_query_params(self) -> None:
+        """Test thread identifier extraction from query parameters."""
         app = self._create_app()
 
         request = Mock()
-        request.params = {"sessionId": "query-session"}
+        request.params = {"threadId": "query-thread"}
         req_body = {}
 
-        session_key = app._resolve_session_key(request, req_body)
+        thread_id = app._resolve_thread_id(request, req_body)
 
-        assert session_key == "query-session"
+        assert thread_id == "query-thread"
 
 
 class TestHttpRunRoute:
@@ -591,7 +591,7 @@ class TestHttpRunRoute:
         handler = captured_handlers[run_route]
 
         request = Mock()
-        request.headers = {}
+        request.headers = {"X-Wait-For-Completion": "false"}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -608,6 +608,7 @@ class TestHttpRunRoute:
 
         assert run_request["message"] == "Plain text via HTTP"
         assert run_request["role"] == "user"
+        assert "thread_id" in run_request
 
 
 if __name__ == "__main__":

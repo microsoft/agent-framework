@@ -36,7 +36,7 @@ Content-Type: application/json
 
 {
   "message": "What is the weather in Seattle?",
-  "sessionId": "weather-user-001",
+  "threadId": "weather-user-001",
   "waitForCompletion": true
 }
 
@@ -51,7 +51,7 @@ Content-Type: application/json
 
 {
   "message": "Calculate a 20% tip on a $50 bill",
-  "sessionId": "math-user-001",
+  "threadId": "math-user-001",
   "waitForCompletion": true
 }
 

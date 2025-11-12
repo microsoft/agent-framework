@@ -41,10 +41,10 @@ class TestSampleCallbacks:
 
     def test_agent_with_callbacks(self) -> None:
         """Test agent execution with callback tracking."""
-        conversation_id = "test-callback"
+        thread_id = "test-callback"
 
         response = SampleTestHelper.post_json(
-            f"{self.base_url}/run", {"message": "Tell me about Python", "conversationId": conversation_id}
+            f"{self.base_url}/run", {"message": "Tell me about Python", "threadId": thread_id}
         )
         assert response.status_code == 202
         data = response.json()
@@ -52,26 +52,26 @@ class TestSampleCallbacks:
 
     def test_get_callbacks(self) -> None:
         """Test retrieving callback events."""
-        conversation_id = "test-callback-retrieve"
+        thread_id = "test-callback-retrieve"
 
         # Send a message first
-        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Hello", "conversationId": conversation_id})
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Hello", "threadId": thread_id})
 
         # Get callbacks
-        response = SampleTestHelper.get(f"{self.base_url}/callbacks/{conversation_id}")
+        response = SampleTestHelper.get(f"{self.base_url}/callbacks/{thread_id}")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
     def test_delete_callbacks(self) -> None:
         """Test clearing callback events."""
-        conversation_id = "test-callback-delete"
+        thread_id = "test-callback-delete"
 
         # Send a message first
-        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Test", "conversationId": conversation_id})
+        SampleTestHelper.post_json(f"{self.base_url}/run", {"message": "Test", "threadId": thread_id})
 
         # Delete callbacks
-        response = requests.delete(f"{self.base_url}/callbacks/{conversation_id}", timeout=TIMEOUT)
+        response = requests.delete(f"{self.base_url}/callbacks/{thread_id}", timeout=TIMEOUT)
         assert response.status_code == 204
 
 
