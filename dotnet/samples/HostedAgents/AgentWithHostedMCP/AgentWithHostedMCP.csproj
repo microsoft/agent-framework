@@ -8,11 +8,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!-- 
-    Disable central package management for this project.
- This project requires explicit package references with versions specified inline rather than 
-      inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
-      be created from this project, and the Docker build process only has access to this folder 
-    and cannot access parent folders where Directory.Packages.props resides.
+        Disable central package management for this project.
+        This project requires explicit package references with versions specified inline rather than 
+        inheriting them from Directory.Packages.props. This is necessary because a Docker image will 
+        be created from this project, and the Docker build process only has access to this folder 
+        and cannot access parent folders where Directory.Packages.props resides.
     -->
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
   </PropertyGroup>
