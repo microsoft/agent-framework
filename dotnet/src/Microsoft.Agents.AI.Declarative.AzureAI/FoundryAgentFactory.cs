@@ -2,10 +2,11 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Agents;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
-using Azure.AI.Agents;
 using Microsoft.Bot.ObjectModel;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -22,7 +23,8 @@ public sealed class FoundryAgentFactory : AgentFactory
     /// Creates a new instance of the <see cref="FoundryAgentFactory"/> class with an associated <see cref="AgentClient"/>.
     /// </summary>
     /// <param name="agentClient">The <see cref="AgentClient"/> instance to use for creating agents.</param>
-    public FoundryAgentFactory(AgentClient agentClient)
+    /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>
+    public FoundryAgentFactory(AgentClient agentClient, IConfiguration? configuration = null) : base(configuration)
     {
         Throw.IfNull(agentClient);
 
@@ -33,7 +35,8 @@ public sealed class FoundryAgentFactory : AgentFactory
     /// Creates a new instance of the <see cref="FoundryAgentFactory"/> class with an associated <see cref="TokenCredential"/>.
     /// </summary>
     /// <param name="tokenCredential">The <see cref="TokenCredential"/> to use for authenticating requests.</param>
-    public FoundryAgentFactory(TokenCredential tokenCredential)
+    /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>
+    public FoundryAgentFactory(TokenCredential tokenCredential, IConfiguration? configuration = null) : base(configuration)
     {
         Throw.IfNull(tokenCredential);
 
@@ -89,7 +92,7 @@ public sealed class FoundryAgentFactory : AgentFactory
         var connection = externalModel?.Connection as RemoteConnection;
         if (connection is not null)
         {
-            var endpoint = connection.Endpoint?.LiteralValue;
+            var endpoint = connection.Endpoint?.Eval(this.Engine);
             if (string.IsNullOrEmpty(endpoint))
             {
                 throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AgentClient.");

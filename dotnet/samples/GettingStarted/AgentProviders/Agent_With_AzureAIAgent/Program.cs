@@ -16,7 +16,7 @@ const string JokerName = "JokerAgent";
 var agentsClient = new AgentClient(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-var agentVersionCreationOptions = new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions });
+var agentVersionCreationOptions = new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions, Temperature = 0.9f });
 // Azure.AI.Agents SDK creates and manages agent by name and versions.
 // You can create a server side agent version with the Azure.AI.Agents SDK client below.
 var agentVersion = agentsClient.CreateAgentVersion(agentName: JokerName, options: agentVersionCreationOptions);
