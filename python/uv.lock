@@ -246,7 +246,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0a20251110001", index = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" },
+    { name = "azure-ai-projects", specifier = "==2.0.0b1" },
 ]
 
 [[package]]
@@ -880,16 +880,16 @@ wheels = [
 [[package]]
 name = "azure-ai-projects"
 version = "2.0.0b1"
-source = { registry = "https://pkgs.dev.azure.com/azure-sdk/public/_packaging/azure-sdk-for-python/pypi/simple" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-storage-blob", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2b1/azure_ai_projects-2.0.0b1.tar.gz", hash = "sha256:259413c5129b4f4902da335c36c2a0389b003953fa0116d9d054f54c3f42c3f4" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/33/69b9db7f232a43216bf6fb58172335a269abdc923e78e7ecacc71590aa6e/azure_ai_projects-2.0.0b1.tar.gz", hash = "sha256:259413c5129b4f4902da335c36c2a0389b003953fa0116d9d054f54c3f42c3f4", size = 335085, upload-time = "2025-11-12T03:59:59.652Z" }
 wheels = [
-    { url = "https://pkgs.dev.azure.com/azure-sdk/29ec6040-b234-4e31-b139-33dc4287b756/_packaging/3572dbf9-b5ef-433b-9137-fc4d7768e7cc/pypi/download/azure-ai-projects/2b1/azure_ai_projects-2.0.0b1-py3-none-any.whl", hash = "sha256:88eca153c63c8d93bc1776858ae036f1796ef0b9552b77736c446e575e3b132a" },
+    { url = "https://files.pythonhosted.org/packages/82/69/b0f93d40bf24ecf3785097e601e389f9d8b5d33b979db7eee6ec5b92df40/azure_ai_projects-2.0.0b1-py3-none-any.whl", hash = "sha256:88eca153c63c8d93bc1776858ae036f1796ef0b9552b77736c446e575e3b132a", size = 221008, upload-time = "2025-11-12T04:00:01.281Z" },
 ]
 
 [[package]]
@@ -1679,7 +1679,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
