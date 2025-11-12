@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask.State;
@@ -58,10 +59,20 @@ internal static partial class DurableAgentJsonUtilities
     private static JsonSerializerOptions CreateDefaultOptions()
     {
         // Base configuration from the source-generated context below.
-        JsonSerializerOptions options = new(JsonContext.Default.Options);
+        JsonSerializerOptions options = new(JsonContext.Default.Options)
+        {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as AgentAbstractionsJsonUtilities and AIJsonUtilities
+        };
 
         // Chain in shared abstractions resolver (Microsoft.Extensions.AI + Agent abstractions) so dependent types are covered.
+        options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
+
+        if (JsonSerializer.IsReflectionEnabledByDefault)
+        {
+            options.Converters.Add(new JsonStringEnumConverter());
+        }
 
         options.MakeReadOnly();
         return options;
