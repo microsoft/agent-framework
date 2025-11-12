@@ -21,14 +21,38 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata? _metadata;
     private readonly AgentClient _agentClient;
-    private readonly AgentVersion _agentVersion;
+    private readonly AgentVersion? _agentVersion;
+    private readonly AgentRecord? _agentRecord;
     private readonly ChatOptions? _chatOptions;
-
+    private readonly AgentReference _agentReference;
     /// <summary>
     /// The usage of a no-op model is a necessary change to avoid OpenAIClients to throw exceptions when
     /// used with Azure AI Agents as the model used is now defined at the agent creation time.
     /// </summary>
     private const string NoOpModel = "no-op";
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AzureAIAgentChatClient"/> class.
+    /// </summary>
+    /// <param name="agentClient">An instance of <see cref="AgentClient"/> to interact with Azure AI Agents services.</param>
+    /// <param name="agentReference">An instance of <see cref="AgentReference"/> representing the specific agent to use.</param>
+    /// <param name="defaultModelId">The default model to use for the agent, if applicable.</param>
+    /// <param name="chatOptions">An instance of <see cref="ChatOptions"/> representing the options on how the agent was predefined.</param>
+    /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <remarks>
+    /// The <see cref="IChatClient"/> provided should be decorated with a <see cref="AzureAIAgentChatClient"/> for proper functionality.
+    /// </remarks>
+    internal AzureAIAgentChatClient(AgentClient agentClient, AgentReference agentReference, string? defaultModelId, ChatOptions? chatOptions, OpenAIClientOptions? openAIClientOptions = null)
+        : base(Throw.IfNull(agentClient)
+            .GetOpenAIClient(openAIClientOptions)
+            .GetOpenAIResponseClient(defaultModelId ?? NoOpModel)
+            .AsIChatClient())
+    {
+        this._agentClient = agentClient;
+        this._agentReference = Throw.IfNull(agentReference);
+        this._metadata = new ChatClientMetadata("azure.ai.agents", defaultModelId: defaultModelId);
+        this._chatOptions = chatOptions;
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AzureAIAgentChatClient"/> class.
@@ -43,18 +67,18 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
     internal AzureAIAgentChatClient(AgentClient agentClient, AgentRecord agentRecord, ChatOptions? chatOptions, OpenAIClientOptions? openAIClientOptions = null)
         : this(agentClient, Throw.IfNull(agentRecord).Versions.Latest, chatOptions, openAIClientOptions)
     {
+        this._agentRecord = agentRecord;
     }
 
     internal AzureAIAgentChatClient(AgentClient agentClient, AgentVersion agentVersion, ChatOptions? chatOptions, OpenAIClientOptions? openAIClientOptions = null)
-        : base(agentClient
-            .GetOpenAIClient(openAIClientOptions)
-            .GetOpenAIResponseClient((agentVersion.Definition as PromptAgentDefinition)?.Model ?? NoOpModel)
-            .AsIChatClient())
+        : this(
+              agentClient,
+              new AgentReference(Throw.IfNull(agentVersion).Name) { Version = agentVersion.Version },
+              (agentVersion.Definition as PromptAgentDefinition)?.Model,
+              chatOptions,
+              openAIClientOptions)
     {
-        this._agentClient = Throw.IfNull(agentClient);
-        this._agentVersion = Throw.IfNull(agentVersion);
-        this._metadata = new ChatClientMetadata("azure.ai.agents");
-        this._chatOptions = chatOptions;
+        this._agentVersion = agentVersion;
     }
 
     /// <inheritdoc/>
@@ -66,6 +90,10 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
             ? this._agentClient
             : (serviceKey is null && serviceType == typeof(AgentVersion))
             ? this._agentVersion
+            : (serviceKey is null && serviceType == typeof(AgentRecord))
+            ? this._agentRecord
+            : (serviceKey is null && serviceType == typeof(AgentReference))
+            ? this._agentReference
             : base.GetService(serviceType, serviceKey);
     }
 
@@ -113,7 +141,7 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
                 responseCreationOptions = new ResponseCreationOptions();
             }
 
-            SetAgentReference(responseCreationOptions, this._agentVersion);
+            this.SetAgentReference(responseCreationOptions);
 
             return responseCreationOptions;
         };
@@ -130,11 +158,9 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
         responseCreationOptions.Patch.Set([.. "$."u8, .. Encoding.UTF8.GetBytes(key)], value);
     }
 
-    private static void SetAgentReference(ResponseCreationOptions responseCreationOptions, AgentVersion agentVersion)
+    private void SetAgentReference(ResponseCreationOptions responseCreationOptions)
     {
-        var agentReference = new AgentReference(agentVersion.Name) { Version = agentVersion.Version };
-
-        SetAdditionalProperty(responseCreationOptions, "agent", ModelReaderWriter.Write(agentReference, new ModelReaderWriterOptions("W"), AzureAIAgentsContext.Default));
+        SetAdditionalProperty(responseCreationOptions, "agent", ModelReaderWriter.Write(this._agentReference, new ModelReaderWriterOptions("W"), AzureAIAgentsContext.Default));
         responseCreationOptions.Patch.Remove([.. "$."u8, .. Encoding.UTF8.GetBytes("model")]);
     }
 #pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
