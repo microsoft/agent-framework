@@ -1,4 +1,4 @@
-﻿# Build the application
+# Build the application
 FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
 WORKDIR /src
 
