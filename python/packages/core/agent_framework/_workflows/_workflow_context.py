@@ -411,7 +411,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         return self._shared_state
 
     @deprecated(
-        "Use executor member properties directly instead. For state sharing between executors, use `set_shared_state`."
+        "Override `on_checkpoint_save()` methods instead. "
+        "For cross-executor state sharing, use set_shared_state() instead. "
+        "This API will be removed after 12/01/2025."
     )
     async def set_executor_state(self, state: dict[str, Any]) -> None:
         """Store executor state in shared state under a reserved key.
@@ -432,7 +434,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
 
     @deprecated(
-        "Use executor member properties directly instead. For state sharing between executors, use `get_shared_state`."
+        "Override `on_checkpoint_restore()` methods instead. "
+        "For cross-executor state sharing, use get_shared_state() instead. "
+        "This API will be removed after 12/01/2025."
     )
     async def get_executor_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""

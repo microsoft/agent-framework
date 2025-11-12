@@ -133,6 +133,9 @@ async def main():
                 break
             if isinstance(event, SuperStepCompletedEvent) and random() < 0.5:
                 # Randomly simulate system interruptions
+                # The `SuperStepCompletedEvent` ensures we only interrupt after
+                # the current super-step is fully complete and checkpointed.
+                # If we interrupt mid-step, the workflow may resume from an earlier point.
                 print("\n** Simulating workflow interruption. Stopping execution. **")
                 break
 

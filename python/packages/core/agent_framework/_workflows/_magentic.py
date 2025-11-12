@@ -1058,8 +1058,10 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         if self._task_ledger is not None:
             state["task_ledger"] = _message_to_payload(self._task_ledger)
 
-        with contextlib.suppress(Exception):
+        try:
             state["manager_state"] = self._manager.on_checkpoint_save()
+        except Exception as exc:
+            logger.warning("Failed to save manager state for checkpoint: %s\nSkipping...", exc)
 
         return state
 

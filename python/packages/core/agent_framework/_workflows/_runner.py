@@ -279,14 +279,15 @@ class Runner:
         Updated behavior:
           - Executors should implement `on_checkpoint_save(self) -> dict` to provide state.
 
-        Both behaviors can coexist; the updated behavior takes precedence, i.e., overrides
-        any state provided by the backward compatibility methods.
+        This method will try the backward compatibility behavior first; if that does not yield state,
+        it falls back to the updated behavior.
 
         Only JSON-serializable dicts should be provided by executors.
         """
         for exec_id, executor in self._executors.items():
-            # TODO(@taochen): Remove backward compatibility
             state_dict: dict[str, Any] | None = None
+            # Try backward compatibility behavior first
+            # TODO(@taochen): Remove backward compatibility
             snapshot = getattr(executor, "snapshot_state", None)
             try:
                 if callable(snapshot):
@@ -302,9 +303,12 @@ class Runner:
             except Exception as ex:  # pragma: no cover
                 logger.debug(f"Executor {exec_id} snapshot_state failed: {ex}")
 
-            # Updated behavior: use on_checkpoint_save() method
-            state_dict = state_dict or {}
-            state_dict |= await executor.on_checkpoint_save()
+            if state_dict is None:
+                # Try the updated behavior only if backward compatibility did not yield state
+                try:
+                    state_dict = await executor.on_checkpoint_save()
+                except Exception as ex:  # pragma: no cover
+                    raise ValueError(f"Executor {exec_id} on_checkpoint_save failed: {ex}") from ex
 
             try:
                 await self._set_executor_state(exec_id, state_dict)
@@ -321,8 +325,8 @@ class Runner:
         Updated behavior:
             - Executors should implement `on_checkpoint_restore(self, state: dict)` to restore state.
 
-        Both behaviors can coexist; the updated behavior takes precedence, i.e., overrides
-        any restoration performed by the backward compatibility methods.
+        This method will try the backward compatibility behavior first; if that does not restore state,
+        it falls back to the updated behavior.
         """
         has_executor_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
         if not has_executor_states:
@@ -342,6 +346,7 @@ class Runner:
             if not executor:
                 raise ValueError(f"Executor {executor_id} not found during state restoration.")
 
+            # Try backward compatibility behavior first
             # TODO(@taochen): Remove backward compatibility
             restored = False
             restore_method = getattr(executor, "restore_state", None)
@@ -354,12 +359,13 @@ class Runner:
             except Exception as ex:  # pragma: no cover - defensive
                 raise ValueError(f"Executor {executor_id} restore_state failed: {ex}") from ex
 
-            # Updated behavior: use on_checkpoint_restore() method
-            try:
-                await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
-                restored = True
-            except Exception as ex:  # pragma: no cover - defensive
-                raise ValueError(f"Executor {executor_id} on_checkpoint_restore failed: {ex}") from ex
+            if not restored:
+                # Try the updated behavior only if backward compatibility did not restore
+                try:
+                    await executor.on_checkpoint_restore(state)  # pyright: ignore[reportUnknownArgumentType]
+                    restored = True
+                except Exception as ex:  # pragma: no cover - defensive
+                    raise ValueError(f"Executor {executor_id} on_checkpoint_restore failed: {ex}") from ex
 
             if not restored:
                 logger.debug(f"Executor {executor_id} does not support state restoration; skipping.")
