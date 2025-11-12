@@ -7,6 +7,7 @@ preserving the conversation state between runs.
 - Deterministic orchestrations that make sequential agent calls on a shared thread
 - Reusing an agent thread to carry conversation history across invocations
 - HTTP endpoints for starting the orchestration and polling for status/output
+- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-SingleAgent`).
 
 ## Prerequisites
 - Python 3.10+

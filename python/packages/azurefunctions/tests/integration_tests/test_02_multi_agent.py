@@ -38,21 +38,26 @@ class TestSampleMultiAgent:
     def test_weather_agent(self) -> None:
         """Test WeatherAgent endpoint."""
         response = SampleTestHelper.post_json(
-            f"{self.weather_base_url}/run", {"message": "What is the weather in Seattle?"}
+            f"{self.weather_base_url}/run",
+            {"message": "What is the weather in Seattle?"},
         )
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "accepted"
+        assert data["status"] == "success"
+        assert "response" in data
 
     def test_math_agent(self) -> None:
         """Test MathAgent endpoint."""
         response = SampleTestHelper.post_json(
-            f"{self.math_base_url}/run", {"message": "Calculate a 20% tip on a $50 bill"}
+            f"{self.math_base_url}/run",
+            {"message": "Calculate a 20% tip on a $50 bill", "wait_for_completion": False},
         )
         assert response.status_code == 202
         data = response.json()
+
         assert data["status"] == "accepted"
-        assert "response" in data
+        assert "correlation_id" in data
+        assert "thread_id" in data
 
 
 if __name__ == "__main__":

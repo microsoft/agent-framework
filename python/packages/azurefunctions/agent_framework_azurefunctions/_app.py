@@ -228,7 +228,7 @@ class AgentFunctionApp(df.DFApp):
         Args:
             agent_name: The agent name (used for both routing and entity identification)
         """
-        run_function_name = self._build_function_name(agent_name, "run")
+        run_function_name = self._build_function_name(agent_name, "http")
 
         @self.function_name(run_function_name)
         @self.route(route=f"agents/{agent_name}/run", methods=["POST"])
@@ -401,17 +401,17 @@ class AgentFunctionApp(df.DFApp):
         _ = health_check
 
     @staticmethod
-    def _build_function_name(agent_name: str, suffix: str) -> str:
-        """Generate a unique, Azure Functions-compliant name for an agent function."""
-        sanitized = re.sub(r"[^0-9a-zA-Z_]", "_", agent_name or "agent").strip("_")
+    def _build_function_name(agent_name: str, prefix: str) -> str:
+        """Generate the Azure Functions name with {prefix}-{sanitized_agent_name}."""
+        sanitized_agent = re.sub(r"[^0-9a-zA-Z_]", "_", agent_name or "agent").strip("_")
 
-        if not sanitized:
-            sanitized = "agent"
+        if not sanitized_agent:
+            sanitized_agent = "agent"
 
-        if sanitized[0].isdigit():
-            sanitized = f"agent_{sanitized}"
+        if sanitized_agent[0].isdigit():
+            sanitized_agent = f"agent_{sanitized_agent}"
 
-        return f"{sanitized}_{suffix}"
+        return f"{prefix}-{sanitized_agent}"
 
     async def _read_cached_state(
         self,

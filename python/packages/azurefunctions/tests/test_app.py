@@ -149,6 +149,38 @@ class TestAgentFunctionAppSetup:
         # Verify agent is registered
         assert "TestAgent" in app.agents
 
+    def test_http_function_name_uses_prefix_format(self) -> None:
+        """Ensure function names follow the prefix-agent naming convention."""
+        mock_agent = Mock()
+        mock_agent.name = "Agent 42"
+
+        captured_names: list[str] = []
+
+        def capture_function_name(
+            self: AgentFunctionApp, name: str, *args: Any, **kwargs: Any
+        ) -> Callable[[TFunc], TFunc]:
+            def decorator(func: TFunc) -> TFunc:
+                captured_names.append(name)
+                return func
+
+            return decorator
+
+        def passthrough_decorator(*args: Any, **kwargs: Any) -> Callable[[TFunc], TFunc]:
+            def decorator(func: TFunc) -> TFunc:
+                return func
+
+            return decorator
+
+        with (
+            patch.object(AgentFunctionApp, "function_name", new=capture_function_name),
+            patch.object(AgentFunctionApp, "route", new=passthrough_decorator),
+            patch.object(AgentFunctionApp, "durable_client_input", new=passthrough_decorator),
+            patch.object(AgentFunctionApp, "entity_trigger", new=passthrough_decorator),
+        ):
+            AgentFunctionApp(agents=[mock_agent])
+
+        assert captured_names == ["http-Agent_42"]
+
     def test_setup_skips_http_trigger_when_disabled(self) -> None:
         """Test that HTTP trigger is not created when disabled."""
         mock_agent = Mock()

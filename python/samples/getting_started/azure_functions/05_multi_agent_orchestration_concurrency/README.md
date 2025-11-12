@@ -6,6 +6,7 @@ This sample starts a Durable Functions orchestration that runs two agents in par
 - Two agents (`PhysicistAgent` and `ChemistAgent`) share a single Azure OpenAI deployment configuration.
 - The orchestration uses `context.task_all(...)` to safely run both agents concurrently.
 - HTTP routes (`/api/multiagent/run` and `/api/multiagent/status/{instanceId}`) mirror the .NET sample for parity.
+- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-PhysicistAgent`).
 
 ## Prerequisites
 - Python 3.10+

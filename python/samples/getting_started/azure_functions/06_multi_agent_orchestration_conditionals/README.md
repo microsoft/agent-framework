@@ -15,6 +15,7 @@ when appropriate, drafts a response using an email assistant agent.
 - Two Azure OpenAI agents share a single deployment: one flags spam, the other drafts replies.
 - Structured responses (`is_spam` and `reason`, or `response`) determine which orchestration branch runs.
 - Activity functions handle the side effects of spam handling and email sending.
+- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-SpamDetector`).
 
 ## Run the Sample
 1. Configure the environment variables and install dependencies with `pip install -r requirements.txt`.

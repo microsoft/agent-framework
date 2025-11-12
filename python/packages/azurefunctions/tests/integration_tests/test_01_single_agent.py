@@ -64,11 +64,10 @@ class TestSampleSingleAgent:
         """Test sending a message with plain text payload."""
         response = SampleTestHelper.post_text(f"{self.base_url}/run", "Tell me a short joke about networking.")
         assert response.status_code in [200, 202]
-        data = response.json()
 
-        if response.status_code == 200:
-            assert data["status"] == "success"
-            assert "response" in data
+        # Agent responded with plain text when the request body was text/plain.
+        assert response.text.strip()
+        assert response.headers.get("x-ms-thread-id") is not None
 
     def test_thread_id_in_query(self) -> None:
         """Test using thread_id in query parameter."""
@@ -76,10 +75,9 @@ class TestSampleSingleAgent:
             f"{self.base_url}/run?thread_id=test-query-thread", "Tell me a short joke about weather in Texas."
         )
         assert response.status_code in [200, 202]
-        data = response.json()
 
-        if response.status_code == 200:
-            assert data["status"] == "success"
+        assert response.text.strip()
+        assert response.headers.get("x-ms-thread-id") == "test-query-thread"
 
     def test_conversation_continuity(self) -> None:
         """Test conversation context is maintained across requests."""

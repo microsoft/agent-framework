@@ -106,7 +106,7 @@ class AgentEntity:
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
 
         # Store message in history with role
-        self.state.add_user_message(message, role=role.value, correlation_id=correlation_id)
+        self.state.add_user_message(message, role=role, correlation_id=correlation_id)
 
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 

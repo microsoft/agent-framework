@@ -9,6 +9,7 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Calling the agent through generated HTTP endpoints (`/api/agents/Joker/run`).
 - Managing conversation state with thread identifiers, so multiple clients can
   interact with the agent concurrently without sharing context.
+- Generated Azure Functions names use the prefix-agent pattern (e.g., `http-Joker`).
 
 ## Environment Setup
 
