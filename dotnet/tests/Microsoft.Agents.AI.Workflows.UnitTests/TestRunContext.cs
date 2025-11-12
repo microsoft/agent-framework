@@ -107,6 +107,9 @@ public class TestRunContext : IRunnerContext
     public ValueTask SendMessageAsync<TMessage>(string senderId, [System.Diagnostics.CodeAnalysis.DisallowNull] TMessage message, CancellationToken cancellationToken = default)
         => this.SendMessageAsync(senderId, message, cancellationToken);
 
+    public ValueTask YieldOutputAsync(string sourceId, object output, CancellationToken cancellationToken = default)
+        => this.AddEventAsync(new WorkflowOutputEvent(output, sourceId), cancellationToken);
+
     ValueTask<string> ISuperStepJoinContext.AttachSuperstepAsync(ISuperStepRunner superStepRunner, CancellationToken cancellationToken) => new(string.Empty);
     ValueTask<bool> ISuperStepJoinContext.DetachSuperstepAsync(string joinId) => new(false);
 }
