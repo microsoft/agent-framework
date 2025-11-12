@@ -21,6 +21,8 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
+    /// <param name="agentClient">The <see cref="PersistentAgentsClient"/> instance to use for creating agents.</param>
+    /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>
     public FoundryPersistentAgentFactory(PersistentAgentsClient agentClient, IConfiguration? configuration = null) : base(configuration)
     {
         Throw.IfNull(agentClient);
@@ -31,6 +33,8 @@ public sealed class FoundryPersistentAgentFactory : AgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="FoundryPersistentAgentFactory"/> class.
     /// </summary>
+    /// <param name="tokenCredential">The <see cref="TokenCredential"/> to use for authenticating requests.</param>
+    /// <param name="configuration">The <see cref="IConfiguration"/> instance to use for configuration.</param>
     public FoundryPersistentAgentFactory(TokenCredential tokenCredential, IConfiguration? configuration = null) : base(configuration)
     {
         Throw.IfNull(tokenCredential);

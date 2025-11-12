@@ -85,6 +85,7 @@
     <Project Path="samples/GettingStarted/DeclarativeAgents/Azure/DeclarativeAzureAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/Foundry/DeclarativeFoundryAgents.csproj" />
+    <Project Path="samples/GettingStarted/DeclarativeAgents/FoundryPersistent/DeclarativeFoundryPersistentAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/OpenAI/DeclarativeOpenAIAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
