@@ -36,6 +36,10 @@ public record RunRequest
     [JsonInclude]
     internal string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
 
+    [JsonInclude]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    internal string? OrchestrationId { get; set; }
+
     /// <summary>
     /// Initializes a new instance of the <see cref="RunRequest"/> class for a single message.
     /// </summary>
