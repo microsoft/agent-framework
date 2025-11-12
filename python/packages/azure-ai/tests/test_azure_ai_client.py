@@ -691,10 +691,6 @@ def test_get_conversation_id_with_parsed_response_and_store_true() -> None:
     """Test get_conversation_id works with ParsedResponse when store is True."""
     client = create_test_azure_ai_client(MagicMock())
 
-    # Create a simple BaseModel for testing
-    class TestModel(BaseModel):
-        content: str = "test"
-
     # Mock ParsedResponse with conversation
     mock_response = MagicMock(spec=ParsedResponse[BaseModel])
     mock_response.id = "resp_parsed_12345"
@@ -710,10 +706,6 @@ def test_get_conversation_id_with_parsed_response_and_store_true() -> None:
 def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     """Test get_conversation_id returns response ID with ParsedResponse when no conversation exists."""
     client = create_test_azure_ai_client(MagicMock())
-
-    # Create a simple BaseModel for testing
-    class TestModel(BaseModel):
-        content: str = "test"
 
     # Mock ParsedResponse without conversation
     mock_response = MagicMock(spec=ParsedResponse[BaseModel])

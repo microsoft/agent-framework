@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.ai.agents.models import FileInfo, VectorStore
 from azure.identity.aio import AzureCliCredential
 
