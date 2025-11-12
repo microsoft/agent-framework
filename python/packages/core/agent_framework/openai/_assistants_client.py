@@ -502,8 +502,6 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     tool_outputs = []
                 if function_result_content.result:
                     output = prepare_function_call_results(function_result_content.result)
-                elif function_result_content.exception:
-                    output = "Error: " + str(function_result_content.exception)
                 else:
                     output = "No output received."
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))

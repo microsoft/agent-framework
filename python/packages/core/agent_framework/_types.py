@@ -1050,6 +1050,50 @@ class DataContent(BaseContent):
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
+    @staticmethod
+    def detect_image_format_from_base64(image_base64: str) -> str:
+        """Detect image format from base64 data by examining the binary header.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Image format as string (png, jpeg, webp, gif) with png as fallback
+        """
+        try:
+            # Constants for image format detection
+            # ~75 bytes of binary data should be enough to detect most image formats
+            FORMAT_DETECTION_BASE64_CHARS = 100
+
+            # Decode a small portion to detect format
+            decoded_data = base64.b64decode(image_base64[:FORMAT_DETECTION_BASE64_CHARS])
+            if decoded_data.startswith(b"\x89PNG"):
+                return "png"
+            if decoded_data.startswith(b"\xff\xd8\xff"):
+                return "jpeg"
+            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                return "webp"
+            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                return "gif"
+            return "png"  # Default fallback
+        except Exception:
+            return "png"  # Fallback if decoding fails
+
+    @classmethod
+    def create_data_uri_from_base64(cls, image_base64: str) -> tuple[str, str]:
+        """Create a data URI and media type from base64 image data.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Tuple of (data_uri, media_type)
+        """
+        format_type = cls.detect_image_format_from_base64(image_base64)
+        uri = f"data:image/{format_type};base64,{image_base64}"
+        media_type = f"image/{format_type}"
+        return uri, media_type
+
 
 class UriContent(BaseContent):
     """Represents a URI content.
