@@ -85,9 +85,3 @@ Any MCP-compatible client can connect to the server endpoint and utilize the exp
    - **PlantAdvisor** - Set "Low light in Seattle" as the query and click the **Run Tool** button.
 
 You'll see the results of the tool calls in the MCP Inspector interface under the **Tool Results** section. You should also see the results in the terminal where you ran the `func start` command.
-
-## Learn More
-
-- [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
-- [Microsoft Agent Framework Documentation](https://github.com/Azure/durable-agent-framework)
-- [Azure Functions Documentation](https://learn.microsoft.com/azure/azure-functions/)

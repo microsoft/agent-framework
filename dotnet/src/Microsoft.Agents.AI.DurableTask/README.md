@@ -13,7 +13,7 @@ These capabilities are implemented using foundational technologies from the Dura
 - [Durable Orchestrations](https://learn.microsoft.com/azure/azure-functions/durable/durable-functions-orchestrations) for long-running agent workflows
 - The [Durable Task Scheduler](https://learn.microsoft.com/azure/azure-functions/durable/durable-task-scheduler/choose-orchestration-framework) for managing durable task execution and observability at scale
 
-This package can be used by itself or in conjunction with the [Microsoft.Agents.AI.Hosting.AzureFunctions](https://www.nuget.org/packages/Microsoft.Agents.AI.Hosting.AzureFunctions) package, which provides additional features via Azure Functions integration.
+This package can be used by itself or in conjunction with the `Microsoft.Agents.AI.Hosting.AzureFunctions` package, which provides additional features via Azure Functions integration.
 
 ## Install the package
 
@@ -31,11 +31,11 @@ Or directly in your project file:
 </ItemGroup>
 ```
 
-You can alternatively just reference the [Microsoft.Agents.AI.Hosting.AzureFunctions](https://www.nuget.org/packages/Microsoft.Agents.AI.Hosting.AzureFunctions) package if you're hosting your agents and orchestrations in the Azure Functions .NET Isolated worker.
+You can alternatively just reference the `Microsoft.Agents.AI.Hosting.AzureFunctions` package if you're hosting your agents and orchestrations in the Azure Functions .NET Isolated worker.
 
 ## Usage Examples
 
-For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/AzureFunctions).
+For a comprehensive tour of all the functionality, concepts, and APIs, check out the [Azure Functions samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/).
 
 ## Feedback & Contributing
 
