@@ -94,7 +94,7 @@ public sealed class FoundryAgentFactory : AgentFactory
             }
             if (this._tokenCredential is null)
             {
-                throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an PersistentAgentsClient.");
+                throw new InvalidOperationException("A TokenCredential must be registered in the service provider to create an AgentClient.");
             }
             return new AgentClient(new Uri(endpoint), this._tokenCredential);
         }
