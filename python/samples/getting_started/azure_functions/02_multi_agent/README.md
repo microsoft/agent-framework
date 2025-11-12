@@ -6,7 +6,7 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 
 - Using the Microsoft Agent Framework to define multiple AI agents with unique names and instructions.
 - Registering multiple agents with the Function app and running them using HTTP.
-- Conversation management (via session IDs) for isolated interactions per agent.
+- Conversation management (via thread IDs) for isolated interactions per agent.
 - Two different methods for registering agents: list-based initialization and incremental addition.
 
 ## Prerequisites
@@ -15,6 +15,15 @@ Complete the common environment preparation steps described in `../README.md`, i
 
 ## Running the Sample
 
+With the environment setup and function app running, you can test the sample by sending HTTP requests to the different agent endpoints.
+
+You can use the `demo.http` file to send messages to the agents, or a command line tool like `curl` as shown below:
+
+> **Note:** Each endpoint waits for the agent response by default. To receive an immediate HTTP 202 instead, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body.
+
+### Test the Weather Agent
+
+Bash (Linux/macOS/WSL):
 Weather agent request:
 
 ```bash
@@ -30,7 +39,7 @@ Expected HTTP 202 payload:
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "What is the weather in Seattle?",
-  "conversation_id": "<guid>",
+  "thread_id": "<guid>",
   "correlation_id": "<guid>"
 }
 ```
@@ -50,7 +59,7 @@ Expected HTTP 202 payload:
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "Calculate a 20% tip on a $50 bill",
-  "conversation_id": "<guid>",
+  "thread_id": "<guid>",
   "correlation_id": "<guid>"
 }
 ```

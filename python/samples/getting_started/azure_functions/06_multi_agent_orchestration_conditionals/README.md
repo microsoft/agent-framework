@@ -27,6 +27,8 @@ Poll the returned `statusQueryGetUri` or call the status route directly:
 curl http://localhost:7071/api/spamdetection/status/<instanceId>
 ```
 
+> **Note:** The spam detection run endpoint waits for responses by default. To opt into an immediate HTTP 202, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the POST body.
+
 ## Expected Responses
 - Spam payloads return `Email marked as spam: <reason>` by invoking the `handle_spam_email` activity.
 - Legitimate emails return `Email sent: <draft>` after the email assistant agent produces a structured reply.

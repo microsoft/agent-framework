@@ -8,9 +8,9 @@ serializing agent framework responses.
 
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from agent_framework import AgentRunResponse, ChatMessage, get_logger
+from agent_framework import AgentRunResponse, ChatMessage, Role, get_logger
 
 logger = get_logger("agent_framework.azurefunctions.state")
 
@@ -38,7 +38,7 @@ class AgentState:
     def add_user_message(
         self,
         content: str,
-        role: Literal["user", "system", "assistant", "tool"] = "user",
+        role: Role = Role.USER,
         correlation_id: str | None = None,
     ) -> None:
         """Add a user message to the conversation history as a ChatMessage object.

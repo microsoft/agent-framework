@@ -10,8 +10,8 @@ an HTTP API that can be polled by a web client or dashboard.
 - Registers a default `AgentResponseCallbackProtocol` implementation that logs streaming and final
   responses.
 - Persists callback events in an in-memory store and exposes them via
-  `GET /api/agents/{agentName}/callbacks/{conversationId}`.
-- Shows how to reset stored callback events with `DELETE /api/agents/{agentName}/callbacks/{conversationId}`.
+  `GET /api/agents/{agentName}/callbacks/{thread_id}`.
+- Shows how to reset stored callback events with `DELETE /api/agents/{agentName}/callbacks/{thread_id}`.
 - Works alongside the standard `/api/agents/{agentName}/run` endpoint so you can correlate callback
   telemetry with agent responses.
 
@@ -32,6 +32,8 @@ curl -X POST http://localhost:7071/api/agents/CallbackAgent/run \
    -d '{"message": "Tell me a short joke"}'
 ```
 
+> **Note:** The run endpoint waits for the agent response by default. To return immediately, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body.
+
 Poll callback telemetry (replace `<conversationId>` with the value from the POST response):
 
 ```bash
@@ -46,7 +48,7 @@ curl -X DELETE http://localhost:7071/api/agents/CallbackAgent/callbacks/<convers
 
 ## Expected Output
 
-When you call `GET /api/agents/CallbackAgent/callbacks/{conversationId}` after sending a request to the agent,
+When you call `GET /api/agents/CallbackAgent/callbacks/{thread_id}` after sending a request to the agent,
 the API returns a list of streaming and final callback events similar to the following:
 
 ```json
@@ -54,7 +56,7 @@ the API returns a list of streaming and final callback events similar to the fol
   {
     "timestamp": "2024-01-01T00:00:00Z",
     "agent_name": "CallbackAgent",
-    "conversation_id": "<conversationId>",
+    "thread_id": "<thread_id>",
     "correlation_id": "<guid>",
     "request_message": "Tell me a short joke",
     "event_type": "stream",
@@ -64,7 +66,7 @@ the API returns a list of streaming and final callback events similar to the fol
   {
     "timestamp": "2024-01-01T00:00:01Z",
     "agent_name": "CallbackAgent",
-    "conversation_id": "<conversationId>",
+    "thread_id": "<thread_id>",
     "correlation_id": "<guid>",
     "request_message": "Tell me a short joke",
     "event_type": "final",
