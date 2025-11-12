@@ -10,8 +10,9 @@ metadata:
   authors:
     - Microsoft Agent Framework Team
   tags:
-    - example
-    - Agent Framework
+    - Microsoft Agent Framework
+    - Retrieval-Augmented Generation
+    - RAG
 template:
   kind: hosted
   name: AgentWithTextSearchRag
