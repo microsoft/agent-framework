@@ -6,7 +6,7 @@ The agent connects to the Microsoft Learn MCP server to search documentation and
 Key features:
 - Configuring MCP tools with automatic approval (no user confirmation required)
 - Filtering available tools from an MCP server
-- Using Azure OpenAI Responses with MCP tool
+- Using Azure OpenAI Responses with MCP tools
 
 ## Prerequisites
 
