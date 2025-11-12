@@ -27,6 +27,7 @@ internal static class CodeInterpreterToolExtensions
     /// Converts a <see cref="Microsoft.Bot.ObjectModel.CodeInterpreterTool"/> to an <see cref="OpenAI.Responses.CodeInterpreterTool"/>.
     /// </summary>
     /// <param name="tool">Instance of <see cref="CodeInterpreterTool"/></param>
+    /// <returns>A new <see cref="OpenAI.Responses.CodeInterpreterTool"/> instance configured with the container ID from the tool's extension data.</returns>
     internal static OpenAI.Responses.CodeInterpreterTool CreateCodeInterpreterTool(this CodeInterpreterTool tool)
     {
         Throw.IfNull(tool);
