@@ -23,6 +23,47 @@ public static class AgentClientExtensions
     /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AgentClient"/>.
     /// </summary>
     /// <param name="agentClient">The <see cref="AgentClient"/> to create the <see cref="ChatClientAgent"/> with. Cannot be <see langword="null"/>.</param>
+    /// <param name="agentReference">The <see cref="AgentReference"/> representing the name and version of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/>.</param>
+    /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the named Azure AI Agent.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentClient"/> or <paramref name="agentReference"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
+    /// <remarks>
+    /// When retrieving an agent by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
+    /// on <see cref="AIAgent.GetService(Type, object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
+    /// </remarks>
+    public static ChatClientAgent GetAIAgent(
+        this AgentClient agentClient,
+        AgentReference agentReference,
+        IList<AITool>? tools = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        OpenAIClientOptions? openAIClientOptions = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(agentClient);
+        Throw.IfNull(agentReference);
+
+        return CreateChatClientAgent(
+            agentClient,
+            agentReference,
+            new ChatClientAgentOptions()
+            {
+                Id = $"{agentReference.Name}:{agentReference.Version}",
+                Name = agentReference.Name,
+                ChatOptions = new() { Tools = tools },
+            },
+            clientFactory,
+            openAIClientOptions,
+            services);
+    }
+
+    /// <summary>
+    /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AgentClient"/>.
+    /// </summary>
+    /// <param name="agentClient">The <see cref="AgentClient"/> to create the <see cref="ChatClientAgent"/> with. Cannot be <see langword="null"/>.</param>
     /// <param name="name">The name of the server side agent to create a <see cref="ChatClientAgent"/> for. Cannot be <see langword="null"/> or whitespace.</param>
     /// <param name="tools">The tools to use when interacting with the agent. This is required when using prompt agent definitions with tools.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
@@ -33,7 +74,6 @@ public static class AgentClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty or whitespace, or when the agent with the specified name was not found.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
     public static ChatClientAgent GetAIAgent(
         this AgentClient agentClient,
         string name,
@@ -54,8 +94,7 @@ public static class AgentClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            services,
-            cancellationToken);
+            services);
     }
 
     /// <summary>
@@ -72,7 +111,6 @@ public static class AgentClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty or whitespace, or when the agent with the specified name was not found.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AgentClient agentClient,
         string name,
@@ -93,8 +131,7 @@ public static class AgentClientExtensions
             tools,
             clientFactory,
             openAIClientOptions,
-            services,
-            cancellationToken);
+            services);
     }
 
     /// <summary>
@@ -106,29 +143,29 @@ public static class AgentClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the Azure AI Agent.</returns>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentClient"/> or <paramref name="agentRecord"/> is <see langword="null"/>.</exception>
     public static ChatClientAgent GetAIAgent(
         this AgentClient agentClient,
         AgentRecord agentRecord,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
+        IServiceProvider? services = null)
     {
         Throw.IfNull(agentClient);
         Throw.IfNull(agentRecord);
 
-        return GetAIAgent(
+        var allowDeclarativeMode = tools is not { Count: > 0 };
+
+        return CreateChatClientAgent(
             agentClient,
-            agentRecord.Versions.Latest,
+            agentRecord,
             tools,
             clientFactory,
             openAIClientOptions,
-            services,
-            cancellationToken);
+            !allowDeclarativeMode,
+            services);
     }
 
     /// <summary>
@@ -140,18 +177,15 @@ public static class AgentClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="openAIClientOptions">An optional <see cref="OpenAIClientOptions"/> for configuring the underlying OpenAI client.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the provided version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="agentClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
-    /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
     public static ChatClientAgent GetAIAgent(
         this AgentClient agentClient,
         AgentVersion agentVersion,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         OpenAIClientOptions? openAIClientOptions = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
+        IServiceProvider? services = null)
     {
         Throw.IfNull(agentClient);
         Throw.IfNull(agentVersion);
@@ -206,7 +240,6 @@ public static class AgentClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
             services);
     }
 
@@ -248,7 +281,6 @@ public static class AgentClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools: true,
             services);
     }
 
@@ -397,7 +429,6 @@ public static class AgentClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            RequireInvocableTools,
             services);
     }
 
@@ -456,7 +487,6 @@ public static class AgentClientExtensions
             agentOptions,
             clientFactory,
             openAIClientOptions,
-            RequireInvocableTools,
             services);
     }
 
@@ -652,10 +682,47 @@ public static class AgentClientExtensions
         ChatClientAgentOptions agentOptions,
         Func<IChatClient, IChatClient>? clientFactory,
         OpenAIClientOptions? openAIClientOptions,
-        bool requireInvocableTools,
         IServiceProvider? services)
     {
         IChatClient chatClient = new AzureAIAgentChatClient(agentClient, agentVersion, agentOptions.ChatOptions, openAIClientOptions);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, agentOptions, services: services);
+    }
+
+    /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
+    private static ChatClientAgent CreateChatClientAgent(
+        AgentClient agentClient,
+        AgentRecord agentRecord,
+        ChatClientAgentOptions agentOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        OpenAIClientOptions? openAIClientOptions,
+        IServiceProvider? services)
+    {
+        IChatClient chatClient = new AzureAIAgentChatClient(agentClient, agentRecord, agentOptions.ChatOptions, openAIClientOptions);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, agentOptions, services: services);
+    }
+
+    /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>
+    private static ChatClientAgent CreateChatClientAgent(
+        AgentClient agentClient,
+        AgentReference agentReference,
+        ChatClientAgentOptions agentOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        OpenAIClientOptions? openAIClientOptions,
+        IServiceProvider? services)
+    {
+        IChatClient chatClient = new AzureAIAgentChatClient(agentClient, agentReference, defaultModelId: null, agentOptions.ChatOptions, openAIClientOptions);
 
         if (clientFactory is not null)
         {
@@ -680,7 +747,23 @@ public static class AgentClientExtensions
             CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             openAIClientOptions,
-            requireInvocableTools,
+            services);
+
+    /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
+    private static ChatClientAgent CreateChatClientAgent(
+        AgentClient AgentClient,
+        AgentRecord agentRecord,
+        IList<AITool>? tools,
+        Func<IChatClient, IChatClient>? clientFactory,
+        OpenAIClientOptions? openAIClientOptions,
+        bool requireInvocableTools,
+        IServiceProvider? services)
+        => CreateChatClientAgent(
+            AgentClient,
+            agentRecord,
+            CreateChatClientAgentOptions(agentRecord.Versions.Latest, new ChatOptions() { Tools = tools }, requireInvocableTools),
+            clientFactory,
+            openAIClientOptions,
             services);
 
     /// <summary>
