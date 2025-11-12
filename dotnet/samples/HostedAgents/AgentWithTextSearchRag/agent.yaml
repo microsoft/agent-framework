@@ -8,25 +8,23 @@ description: |
   This agent can answer questions about Contoso Outdoors policies and products, including return 
   policies, refunds, shipping options, and product care instructions (e.g., tent maintenance).
 metadata:
-    authors:
-        - Agent Framework Team
-    tags:
-        - example
-        - Agent Framework
+  authors:
+    - Agent Framework Team
+tags:
+    - example
+    - Agent Framework
 template:
-    kind: hosted
-    name: AgentWithTextSearchRag
-    protocols:
-        - protocol: responses
-          version: "v1"
-    environment_variables:
-        - name: AZURE_OPENAI_ENDPOINT
-          value: ${AZURE_OPENAI_ENDPOINT}
-        - name: AZURE_OPENAI_DEPLOYMENT_NAME
-          value: gpt-4o-mini
-parameters:
-    properties: []
+  kind: hosted
+  name: AgentWithTextSearchRag
+  protocols:
+    - protocol: responses
+      version: "v1"
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
 resources:
-    - name: "gpt-4o-mini"
-      kind: model
-      id: gpt-4o-mini
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini
