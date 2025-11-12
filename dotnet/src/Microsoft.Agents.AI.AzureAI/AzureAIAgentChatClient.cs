@@ -72,42 +72,41 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
     /// <inheritdoc/>
     public override async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
-        var conversationId = await this.GetOrCreateConversationAsync(options, cancellationToken).ConfigureAwait(false);
-        var conversationChatOptions = this.GetConversationEnabledChatOptions(options, conversationId);
+        var agentOptions = this.GetAgentEnabledChatOptions(options);
 
-        return await base.GetResponseAsync(messages, conversationChatOptions, cancellationToken).ConfigureAwait(false);
+        return await base.GetResponseAsync(messages, agentOptions, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
     public async override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var conversation = await this.GetOrCreateConversationAsync(options, cancellationToken).ConfigureAwait(false);
-        var conversationOptions = this.GetConversationEnabledChatOptions(options, conversation);
+        var agentOptions = this.GetAgentEnabledChatOptions(options);
 
-        await foreach (var chunk in base.GetStreamingResponseAsync(messages, conversationOptions, cancellationToken).ConfigureAwait(false))
+        await foreach (var chunk in base.GetStreamingResponseAsync(messages, agentOptions, cancellationToken).ConfigureAwait(false))
         {
             yield return chunk;
         }
     }
 
-    private async Task<string> GetOrCreateConversationAsync(ChatOptions? options, CancellationToken cancellationToken)
-        => string.IsNullOrWhiteSpace(options?.ConversationId)
-            ? (await this._agentClient.GetConversationClient().CreateConversationAsync(cancellationToken: cancellationToken).ConfigureAwait(false)).Value.Id
-            : options.ConversationId;
-
-    private ChatOptions GetConversationEnabledChatOptions(ChatOptions? chatOptions, string conversationId)
+    private ChatOptions GetAgentEnabledChatOptions(ChatOptions? options)
     {
         // Start with a clone of the base chat options defined for the agent, if any.
-        ChatOptions conversationChatOptions = this._chatOptions?.Clone() ?? new();
+        ChatOptions agentEnabledChatOptions = this._chatOptions?.Clone() ?? new();
 
         // Ignore per-request all options that can't be overridden.
-        conversationChatOptions.Instructions = null;
-        conversationChatOptions.Tools = null;
+        agentEnabledChatOptions.Instructions = null;
+        agentEnabledChatOptions.Tools = null;
+        agentEnabledChatOptions.Temperature = null;
+        agentEnabledChatOptions.TopP = null;
+        agentEnabledChatOptions.PresencePenalty = null;
+
+        // Use the conversation from the request, or the one defined at the client level.
+        agentEnabledChatOptions.ConversationId = options?.ConversationId ?? this._chatOptions?.ConversationId;
 
         // Preserve the original RawRepresentationFactory
-        var originalFactory = chatOptions?.RawRepresentationFactory;
+        var originalFactory = options?.RawRepresentationFactory;
 
-        conversationChatOptions.RawRepresentationFactory = (client) =>
+        agentEnabledChatOptions.RawRepresentationFactory = (client) =>
         {
             if (originalFactory?.Invoke(this) is not ResponseCreationOptions responseCreationOptions)
             {
@@ -115,12 +114,11 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
             }
 
             SetAgentReference(responseCreationOptions, this._agentVersion);
-            SetConversationReference(responseCreationOptions, conversationId);
 
             return responseCreationOptions;
         };
 
-        return conversationChatOptions;
+        return agentEnabledChatOptions;
     }
 
     // Since the SetAdditionalProperty/SetAgentReference/SetConversationReference extensions in Azure.AI.Agents does not yet support the recent updates in OpenAI 2.6.0
@@ -138,11 +136,6 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
 
         SetAdditionalProperty(responseCreationOptions, "agent", ModelReaderWriter.Write(agentReference, new ModelReaderWriterOptions("W"), AzureAIAgentsContext.Default));
         responseCreationOptions.Patch.Remove([.. "$."u8, .. Encoding.UTF8.GetBytes("model")]);
-    }
-
-    private static void SetConversationReference(ResponseCreationOptions responseCreationOptions, string conversationId)
-    {
-        SetAdditionalProperty(responseCreationOptions, "conversation", BinaryData.FromString($"\"{conversationId}\""));
     }
 #pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 }
