@@ -90,7 +90,7 @@ public sealed class FoundryAgentFactory : AgentFactory
             var endpoint = connection.Endpoint?.LiteralValue;
             if (string.IsNullOrEmpty(endpoint))
             {
-                throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an PersistentAgentsClient.");
+                throw new InvalidOperationException("The endpoint must be specified in the agent definition model connection to create an AgentClient.");
             }
             if (this._tokenCredential is null)
             {
