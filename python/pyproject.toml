@@ -257,6 +257,7 @@ pytest --import-mode=importlib
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
+-rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
 """
@@ -266,6 +267,7 @@ cmd = """
 pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
+-rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
 """

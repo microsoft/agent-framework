@@ -9,7 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
@@ -31,7 +31,27 @@ WAIT_FOR_RESPONSE_FIELD: str = "wait_for_response"
 WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
 
 
-class AgentFunctionApp(df.DFApp):
+EntityHandler = Callable[[df.DurableEntityContext], None]
+HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+if TYPE_CHECKING:
+
+    class DFAppBase:
+        def __init__(self, http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION) -> None: ...
+
+        def function_name(self, name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def route(self, route: str, methods: list[str]) -> Callable[[HandlerT], HandlerT]: ...
+
+        def durable_client_input(self, client_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def entity_trigger(self, context_name: str, entity_name: str) -> Callable[[EntityHandler], EntityHandler]: ...
+
+else:
+    DFAppBase = df.DFApp  # type: ignore[assignment]
+
+
+class AgentFunctionApp(DFAppBase):
     """Main application class for creating durable agent function apps using Durable Entities.
 
     This class uses Durable Entities pattern for agent execution, providing:
@@ -266,9 +286,13 @@ class AgentFunctionApp(df.DFApp):
         """
         run_function_name = self._build_function_name(agent_name, "http")
 
-        @self.function_name(run_function_name)
-        @self.route(route=f"agents/{agent_name}/run", methods=["POST"])
-        @self.durable_client_input(client_name="client")
+        function_name_decorator = self.function_name(run_function_name)
+        route_decorator = self.route(route=f"agents/{agent_name}/run", methods=["POST"])
+        durable_client_decorator = self.durable_client_input(client_name="client")
+
+        @function_name_decorator
+        @route_decorator
+        @durable_client_decorator
         async def http_start(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
             """HTTP trigger that calls a durable entity to execute the agent and returns the result.
 
@@ -413,8 +437,9 @@ class AgentFunctionApp(df.DFApp):
 
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
+        health_route = self.route(route="health", methods=["GET"])
 
-        @self.route(route="health", methods=["GET"])
+        @health_route
         def health_check(req: func.HttpRequest) -> func.HttpResponse:
             """Built-in health check endpoint."""
             agent_info = [
@@ -677,8 +702,7 @@ class AgentFunctionApp(df.DFApp):
         headers: dict[str, str] = {}
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
-            headers_mapping = cast(Mapping[Any, Any], raw_headers)
-            for key, value in headers_mapping.items():
+            for key, value in raw_headers.items():
                 if value is not None:
                     headers[str(key).lower()] = str(value)
         return headers
@@ -742,8 +766,7 @@ class AgentFunctionApp(df.DFApp):
         header_value = None
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
-            headers_mapping = cast(Mapping[Any, Any], raw_headers)
-            for key, value in headers_mapping.items():
+            for key, value in raw_headers.items():
                 if str(key).lower() == WAIT_FOR_RESPONSE_HEADER:
                     header_value = value
                     break
