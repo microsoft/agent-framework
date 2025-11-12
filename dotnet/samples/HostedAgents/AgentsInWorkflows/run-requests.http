@@ -1,0 +1,30 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Simple string input
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": "Hello, how are you today?"
+}
+
+### Explicit input
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Hello, how are you today?"
+                }
+            ]
+        }
+    ]
+}
