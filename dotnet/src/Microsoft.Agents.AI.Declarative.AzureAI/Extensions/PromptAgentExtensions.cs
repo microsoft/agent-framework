@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Azure.AI.Agents.Persistent;
 using Microsoft.Shared.Diagnostics;
+using OpenAI.Responses;
 
 namespace Microsoft.Bot.ObjectModel;
 
@@ -24,11 +25,11 @@ internal static class PromptAgentExtensions
         {
             return tool switch
             {
-                CodeInterpreterTool => ((CodeInterpreterTool)tool).CreateCodeInterpreterToolDefinition(),
-                InvokeClientTaskAction => ((InvokeClientTaskAction)tool).CreateFunctionToolDefinition(),
-                FileSearchTool => ((FileSearchTool)tool).CreateFileSearchToolDefinition(),
-                WebSearchTool => ((WebSearchTool)tool).CreateBingGroundingToolDefinition(),
-                McpServerTool => ((McpServerTool)tool).CreateMcpToolDefinition(),
+                CodeInterpreterTool codeInterpreterTool => codeInterpreterTool.CreateCodeInterpreterToolDefinition(),
+                InvokeClientTaskAction functionTool => functionTool.CreateFunctionToolDefinition(),
+                FileSearchTool fileSearchTool => fileSearchTool.CreateFileSearchToolDefinition(),
+                WebSearchTool webSearchTool => webSearchTool.CreateBingGroundingToolDefinition(),
+                McpServerTool mcpServerTool => mcpServerTool.CreateMcpToolDefinition(),
                 // TODO: Add other tool types as custom tools
                 // AzureAISearch
                 // AzureFunction
@@ -63,6 +64,33 @@ internal static class PromptAgentExtensions
         // TODO Handle MCP tool resources
 
         return toolResources;
+    }
+
+    /// <summary>
+    /// Returns the Foundry response tools which correspond with the provided <see cref="GptComponentMetadata"/>.
+    /// </summary>
+    /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/>.</param>
+    /// <returns>A collection of <see cref="ResponseTool"/> instances corresponding to the tools defined in the agent.</returns>
+    internal static IEnumerable<ResponseTool> GetResponseTools(this GptComponentMetadata promptAgent)
+    {
+        Throw.IfNull(promptAgent);
+
+        return promptAgent.Tools.Select<TaskAction, ResponseTool>(tool =>
+        {
+            return tool switch
+            {
+                CodeInterpreterTool codeInterpreterTool => codeInterpreterTool.CreateCodeInterpreterTool(),
+                InvokeClientTaskAction functionTool => functionTool.CreateFunctionTool(),
+                FileSearchTool fileSearchTool => fileSearchTool.CreateFileSearchTool(),
+                WebSearchTool webSearchTool => webSearchTool.CreateWebSearchTool(),
+                McpServerTool mcpServerTool => mcpServerTool.CreateMcpTool(),
+                // TODO: Add other tool types as custom tools
+                // AzureAISearch
+                // AzureFunction
+                // OpenApi
+                _ => throw new NotSupportedException($"Unable to create response tool because of unsupported tool type: {tool.Kind}"),
+            };
+        }).ToList();
     }
 
     #region private

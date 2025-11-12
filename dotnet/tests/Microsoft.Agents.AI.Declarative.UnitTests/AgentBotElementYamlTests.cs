@@ -7,7 +7,6 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx;
-using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
 

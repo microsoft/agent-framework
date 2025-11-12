@@ -1,12 +1,8 @@
 {
   "profiles": {
-    "PersistentAgent": {
+    "FoundryAgent": {
       "commandName": "Project",
-      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\PersistentAgent.yaml \"What is the weather in Cambridge, MA in °C?\""
-    },
-    "MicrosoftLearnAgent": {
-      "commandName": "Project",
-      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\MicrosoftLearnAgent.yaml \"Tell me a joke about a pirate in Italian.\""
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\foundry\\FoundryAgent.yaml \"Tell me a recipe for chocolate chip cookies?\""
     }
   }
 }

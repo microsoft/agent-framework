@@ -2,8 +2,10 @@
 
 // This sample shows how to load an AI agent from a YAML file and process a prompt using Foundry Agents as the backend.
 
+using System.ComponentModel;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -38,9 +40,22 @@ IConfiguration configuration = new ConfigurationBuilder()
     })
     .Build();
 
+// Example function tool that can be used by the agent.
+[Description("Get the weather for a given location.")]
+static string GetWeather(
+    [Description("The city and state, e.g. San Francisco, CA")] string location,
+    [Description("The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.")] string unit)
+    => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
+
 // Create the agent from the YAML definition.
-var agentFactory = new FoundryAgentFactory(new AzureCliCredential(), configuration);
+var agentFactory = new FoundryPersistentAgentFactory(new AzureCliCredential(), configuration);
 var agent = await agentFactory.CreateFromYamlAsync(text);
 
+// Create agent run options
+var options = new ChatClientAgentRunOptions(new()
+{
+    Tools = [AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather))]
+});
+
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent!.RunAsync(prompt));
+Console.WriteLine(await agent!.RunAsync(prompt, options: options));
