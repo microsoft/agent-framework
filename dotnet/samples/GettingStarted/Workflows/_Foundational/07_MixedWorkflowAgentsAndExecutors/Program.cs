@@ -283,17 +283,21 @@ internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("Jai
 /// <summary>
 /// Executor that outputs the final result and marks the end of the workflow.
 /// </summary>
-internal sealed class FinalOutputExecutor() : Executor<ChatMessage, string>("FinalOutput")
+internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string>("FinalOutput")
 {
-    public override ValueTask<string> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override ValueTask<string> HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Green;
+
+        var assistantOutput = message.LastOrDefault(m => m.Role == ChatRole.Assistant)
+            ?? throw new InvalidOperationException("Response agent returned no assistant message.");
+
         Console.WriteLine($"\n[{this.Id}] Final Response:");
-        Console.WriteLine($"{message.Text}");
+        Console.WriteLine($"{assistantOutput.Text}");
         Console.WriteLine("\n[End of Workflow]");
         Console.ResetColor();
 
-        return ValueTask.FromResult(message.Text ?? string.Empty);
+        return ValueTask.FromResult(assistantOutput.Text ?? string.Empty);
     }
 }
