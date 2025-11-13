@@ -36,7 +36,7 @@ public sealed class TicketingPlugin
         return ticket.Id;
     }
 
-    [Description("Resolve an existing a ticket in Azure DevOps given its identifier.")]
+    [Description("Resolve an existing ticket in Azure DevOps given its identifier.")]
     public void ResolveTicket(string id, string resolutionSummary)
     {
         Trace(nameof(ResolveTicket));
