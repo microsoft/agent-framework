@@ -35,17 +35,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         this._channelHandler = channelHandler;
     }
 
-    /// <summary>
-    /// Process a list of messages.
-    /// The list of messages should be a prompt or response.
-    /// </summary>
-    /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent.</param>
-    /// <param name="threadId">The thread where the messages were sent.</param>
-    /// <param name="activity">An activity to indicate prompt or response.</param>
-    /// <param name="purviewSettings">Purview settings containing tenant id, app name, etc.</param>
-    /// <param name="userId">The user who sent the prompt or is receiving the response.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns></returns>
+    /// <inheritdoc/>
     public async Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = await this.MapMessageToPCRequestsAsync(messages, threadId, activity, purviewSettings, userId, cancellationToken).ConfigureAwait(false);
@@ -103,13 +93,13 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Transform a list of ChatMessages into a list of ProcessContentRequests.
     /// </summary>
-    /// <param name="messages"></param>
-    /// <param name="threadId"></param>
-    /// <param name="activity"></param>
-    /// <param name="settings"></param>
-    /// <param name="userId"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
+    /// <param name="messages">The messages to transform.</param>
+    /// <param name="threadId">The id of the message thread.</param>
+    /// <param name="activity">The activity performed on the content.</param>
+    /// <param name="settings">The settings used for purview integration.</param>
+    /// <param name="userId">The entra id of the user who made the interaction.</param>
+    /// <param name="cancellationToken">The cancellation token used to cancel async operations.</param>
+    /// <returns>A list of process content requests.</returns>
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = new();
@@ -196,9 +186,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Orchestrates process content and protection scopes calls.
     /// </summary>
-    /// <param name="pcRequest"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
+    /// <param name="pcRequest">The process content request.</param>
+    /// <param name="cancellationToken">The cancellation token used to cancel async operations.</param>
+    /// <returns>A process content response. This could be a response from the process content API or a response generated from a content activities call.</returns>
     private async Task<ProcessContentResponse> ProcessContentWithProtectionScopesAsync(ProcessContentRequest pcRequest, CancellationToken cancellationToken)
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
@@ -251,9 +241,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Dedupe policy actions received from the service.
     /// </summary>
-    /// <param name="pcResponse"></param>
-    /// <param name="actionInfos"></param>
-    /// <returns></returns>
+    /// <param name="pcResponse">The process content response which may contain DLP actions.</param>
+    /// <param name="actionInfos">DLP actions returned from protection scopes.</param>
+    /// <returns>The process content response with the protection scopes DLP actions added. Actions are deduplicated.</returns>
     private static ProcessContentResponse CombinePolicyActions(ProcessContentResponse pcResponse, List<DlpActionInfo>? actionInfos)
     {
         if (actionInfos == null || actionInfos.Count == 0)
@@ -276,9 +266,9 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Check if any scopes are applicable to the request.
     /// </summary>
-    /// <param name="pcRequest"></param>
-    /// <param name="psResponse"></param>
-    /// <returns></returns>
+    /// <param name="pcRequest">The process content request.</param>
+    /// <param name="psResponse">The protection scopes response that was returned for the process content request.</param>
+    /// <returns>A bool indicating if the content needs to be processed. A list of applicable actions from the scopes response, and the execution mode for the process content request.</returns>
     private static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
     {
         ProtectionScopeActivities requestActivity = TranslateActivity(pcRequest.ContentToProcess.ActivityMetadata.Activity);
@@ -326,11 +316,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Create a ProtectionScopesRequest for the given content ProcessContentRequest.
     /// </summary>
-    /// <param name="pcRequest"></param>
-    /// <param name="userId"></param>
-    /// <param name="tenantId"></param>
-    /// <param name="correlationId"></param>
-    /// <returns></returns>
+    /// <param name="pcRequest">The process content request.</param>
+    /// <param name="userId">The entra user id of the user who sent the data.</param>
+    /// <param name="tenantId">The tenant id of the user who sent the data.</param>
+    /// <param name="correlationId">The correlation id of the request.</param>
+    /// <returns>The protection scopes request generated from the process content request.</returns>
     private static ProtectionScopesRequest CreateProtectionScopesRequest(ProcessContentRequest pcRequest, string userId, string tenantId, Guid correlationId)
     {
         return new ProtectionScopesRequest(userId, tenantId)
@@ -346,8 +336,8 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <summary>
     /// Map process content activity to protection scope activity.
     /// </summary>
-    /// <param name="activity"></param>
-    /// <returns></returns>
+    /// <param name="activity">The process content activity.</param>
+    /// <returns>The protection scopes activity.</returns>
     private static ProtectionScopeActivities TranslateActivity(Activity activity)
     {
         switch (activity)

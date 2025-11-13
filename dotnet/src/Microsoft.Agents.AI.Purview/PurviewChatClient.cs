@@ -20,8 +20,8 @@ internal class PurviewChatClient : IChatClient
     /// <summary>
     /// Initializes a new instance of the <see cref="PurviewChatClient"/> class.
     /// </summary>
-    /// <param name="innerChatClient"></param>
-    /// <param name="purviewWrapper"></param>
+    /// <param name="innerChatClient">The inner chat client to wrap.</param>
+    /// <param name="purviewWrapper">The purview wrapper used to interact with the Purview service.</param>
     public PurviewChatClient(IChatClient innerChatClient, PurviewWrapper purviewWrapper)
     {
         this._innerChatClient = innerChatClient;

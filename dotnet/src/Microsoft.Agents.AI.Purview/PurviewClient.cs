@@ -50,10 +50,10 @@ internal sealed class PurviewClient : IPurviewClient
     /// <summary>
     /// Creates a new <see cref="PurviewClient"/> instance.
     /// </summary>
-    /// <param name="tokenCredential"></param>
-    /// <param name="purviewSettings"></param>
-    /// <param name="httpClient"></param>
-    /// <param name="logger"></param>
+    /// <param name="tokenCredential">The token credential used to authenticate with Purview.</param>
+    /// <param name="purviewSettings">The settings used for purview requests.</param>
+    /// <param name="httpClient">The HttpClient used to make network requests to Purview.</param>
+    /// <param name="logger">The logger used to log information from the middleware.</param>
     public PurviewClient(TokenCredential tokenCredential, PurviewSettings purviewSettings, HttpClient httpClient, ILogger logger)
     {
         this._tokenCredential = tokenCredential;
@@ -251,7 +251,7 @@ internal sealed class PurviewClient : IPurviewClient
     public async Task<ContentActivitiesResponse> SendContentActivitiesAsync(ContentActivitiesRequest request, CancellationToken cancellationToken)
     {
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
-        string? userId = request.UserId;
+        string userId = request.UserId;
 
         string uri = $"{this._graphUri}/{userId}/dataSecurityAndGovernance/activities/contentActivities";
 

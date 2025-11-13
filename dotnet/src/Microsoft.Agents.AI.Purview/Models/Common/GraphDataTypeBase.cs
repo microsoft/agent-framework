@@ -9,6 +9,10 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 /// </summary>
 internal abstract class GraphDataTypeBase
 {
+    /// <summary>
+    /// Create a new instance of the <see cref="GraphDataTypeBase"/> class.
+    /// </summary>
+    /// <param name="dataType">The data type of the graph object.</param>
     public GraphDataTypeBase(string dataType)
     {
         this.DataType = dataType;

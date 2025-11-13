@@ -23,10 +23,10 @@ internal sealed class PurviewWrapper : IDisposable
     /// <summary>
     /// Creates a new <see cref="PurviewWrapper"/> instance.
     /// </summary>
-    /// <param name="scopedProcessor"></param>
-    /// <param name="purviewSettings"></param>
-    /// <param name="logger"></param>
-    /// <param name="channelHandler"></param>
+    /// <param name="scopedProcessor">The scoped processor used to orchestrate the calls to Purview.</param>
+    /// <param name="purviewSettings">The settings for Purview integration.</param>
+    /// <param name="logger">The logger used for logging.</param>
+    /// <param name="channelHandler">The channel handler used to queue background jobs and add job runners.</param>
     public PurviewWrapper(IScopedContentProcessor scopedProcessor, PurviewSettings purviewSettings, ILogger logger, IChannelHandler channelHandler)
     {
         this._scopedProcessor = scopedProcessor;
@@ -59,11 +59,11 @@ internal sealed class PurviewWrapper : IDisposable
     /// <summary>
     /// Processes a prompt and response exchange at a chat client level.
     /// </summary>
-    /// <param name="messages"></param>
-    /// <param name="options"></param>
-    /// <param name="innerChatClient"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
+    /// <param name="messages">The messages sent to the chat client.</param>
+    /// <param name="options">The chat options used with the chat client.</param>
+    /// <param name="innerChatClient">The wrapped chat client.</param>
+    /// <param name="cancellationToken">The cancellation token used to interrupt async operations.</param>
+    /// <returns>The chat client's response. This could be the response from the chat client or a message indicating that Purview has blocked the prompt or response.</returns>
     public async Task<ChatResponse> ProcessChatContentAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, IChatClient innerChatClient, CancellationToken cancellationToken)
     {
         string? resolvedUserId = null;
@@ -114,12 +114,12 @@ internal sealed class PurviewWrapper : IDisposable
     /// <summary>
     /// Processes a prompt and response exchange at an agent level.
     /// </summary>
-    /// <param name="messages"></param>
-    /// <param name="thread"></param>
-    /// <param name="options"></param>
-    /// <param name="innerAgent"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
+    /// <param name="messages">The messages sent to the agent.</param>
+    /// <param name="thread">The thread used for this agent conversation.</param>
+    /// <param name="options">The options used with this agent.</param>
+    /// <param name="innerAgent">The wrapped agent.</param>
+    /// <param name="cancellationToken">The cancellation token used to interrupt async operations.</param>
+    /// <returns>The agent's response. This could be the response from the agent or a message indicating that Purview has blocked the prompt or response.</returns>
     public async Task<AgentRunResponse> ProcessAgentContentAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
     {
         string threadId = GetThreadIdFromAgentThread(thread, messages);

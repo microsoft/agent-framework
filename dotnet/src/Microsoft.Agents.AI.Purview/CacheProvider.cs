@@ -20,8 +20,8 @@ internal sealed class CacheProvider : ICacheProvider
     /// <summary>
     /// Create a new instance of the <see cref="CacheProvider"/> class.
     /// </summary>
-    /// <param name="cache"></param>
-    /// <param name="purviewSettings"></param>
+    /// <param name="cache">The cache where the data is stored.</param>
+    /// <param name="purviewSettings">The purview integration settings.</param>
     public CacheProvider(IDistributedCache cache, PurviewSettings purviewSettings)
     {
         this._cache = cache;

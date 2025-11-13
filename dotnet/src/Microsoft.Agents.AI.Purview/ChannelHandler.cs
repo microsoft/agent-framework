@@ -23,9 +23,9 @@ internal class ChannelHandler : IChannelHandler
     /// <summary>
     /// Creates a new instance of JobHandler.
     /// </summary>
-    /// <param name="purviewSettings"></param>
-    /// <param name="logger"></param>
-    /// <param name="jobChannel"></param>
+    /// <param name="purviewSettings">The purview integration settings.</param>
+    /// <param name="logger">The logger used for logging job information.</param>
+    /// <param name="jobChannel">The job channel used for queuing and reading background jobs.</param>
     public ChannelHandler(PurviewSettings purviewSettings, ILogger logger, Channel<BackgroundJobBase> jobChannel)
     {
         this._purviewSettings = purviewSettings;

@@ -21,10 +21,10 @@ internal sealed class BackgroundJobRunner
     /// <summary>
     /// Initializes a new instance of the <see cref="BackgroundJobRunner"/> class.
     /// </summary>
-    /// <param name="channelHandler"></param>
-    /// <param name="purviewClient"></param>
-    /// <param name="logger"></param>
-    /// <param name="purviewSettings"></param>
+    /// <param name="channelHandler">The channel handler used to manage job channels.</param>
+    /// <param name="purviewClient">The Purview client used to send requests to Purview.</param>
+    /// <param name="logger">The logger used to log information about background jobs.</param>
+    /// <param name="purviewSettings">The settings used to configure Purview client behavior.</param>
     public BackgroundJobRunner(IChannelHandler channelHandler, IPurviewClient purviewClient, ILogger logger, PurviewSettings purviewSettings)
     {
         this._channelHandler = channelHandler;
@@ -55,8 +55,8 @@ internal sealed class BackgroundJobRunner
     /// <summary>
     /// Runs a job.
     /// </summary>
-    /// <param name="job"></param>
-    /// <returns></returns>
+    /// <param name="job">The job to run.</param>
+    /// <returns>A task representing the job.</returns>
     private async Task RunJobAsync(BackgroundJobBase job)
     {
         switch (job)

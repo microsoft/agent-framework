@@ -13,13 +13,13 @@ internal sealed class ProtectionScopesCacheKey
     /// <summary>
     /// Creates a new instance of <see cref="ProtectionScopesCacheKey"/>.
     /// </summary>
-    /// <param name="userId"></param>
-    /// <param name="tenantId"></param>
-    /// <param name="activities"></param>
-    /// <param name="location"></param>
-    /// <param name="pivotOn"></param>
-    /// <param name="deviceMetadata"></param>
-    /// <param name="integratedAppMetadata"></param>
+    /// <param name="userId">The entra id of the user who made the interaction.</param>
+    /// <param name="tenantId">The tenant id of the user who made the interaction.</param>
+    /// <param name="activities">The activity performed with the data.</param>
+    /// <param name="location">The location where the data came from.</param>
+    /// <param name="pivotOn">The property to pivot on.</param>
+    /// <param name="deviceMetadata">Metadata about the device that made the interaction.</param>
+    /// <param name="integratedAppMetadata">Metadata about the app that is integrating with Purview.</param>
     public ProtectionScopesCacheKey(
         string userId,
         string tenantId,

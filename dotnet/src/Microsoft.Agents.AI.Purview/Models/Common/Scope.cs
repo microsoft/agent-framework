@@ -9,6 +9,9 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 /// </summary>
 internal sealed class Scope
 {
+    /// <summary>
+    /// The odata type of the scope used to identify what type of scope was returned.
+    /// </summary>
     [JsonPropertyName("@odata.type")]
     public string? ODataType { get; set; }
 

@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.Purview.Models.Common;
 
 /// <summary>
-/// Request for meta data information
+/// Request for metadata information
 /// </summary>
 [DataContract]
 internal sealed class ActivityMetadata
@@ -14,14 +14,14 @@ internal sealed class ActivityMetadata
     /// <summary>
     /// Initializes a new instance of the <see cref="ActivityMetadata"/> class.
     /// </summary>
-    /// <param name="activity"></param>
+    /// <param name="activity">The activity performed with the content.</param>
     public ActivityMetadata(Activity activity)
     {
         this.Activity = activity;
     }
 
     /// <summary>
-    /// Content name
+    /// The activity performed with the content.
     /// </summary>
     [DataMember]
     [JsonConverter(typeof(JsonStringEnumConverter<Activity>))]

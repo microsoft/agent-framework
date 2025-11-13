@@ -12,7 +12,7 @@ internal sealed class ContentActivityJob : BackgroundJobBase
     /// <summary>
     /// Create a new instance of the <see cref="ContentActivityJob"/> class.
     /// </summary>
-    /// <param name="request"></param>
+    /// <param name="request">The content activities request to be sent in the background.</param>
     public ContentActivityJob(ContentActivitiesRequest request)
     {
         this.Request = request;

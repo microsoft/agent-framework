@@ -10,19 +10,19 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 internal sealed class AiAgentInfo
 {
     /// <summary>
-    /// Gets or sets Plugin id.
+    /// Gets or sets agent id.
     /// </summary>
     [JsonPropertyName("identifier")]
     public string? Identifier { get; set; }
 
     /// <summary>
-    /// Gets or sets Plugin Name.
+    /// Gets or sets agent name.
     /// </summary>
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
     /// <summary>
-    /// Gets or sets Plugin Version.
+    /// Gets or sets agent version.
     /// </summary>
     [JsonPropertyName("version")]
     public string? Version { get; set; }

@@ -17,8 +17,8 @@ internal sealed class ProtectionScopesRequest
     /// <summary>
     /// Creates a new instance of ProtectionScopesRequest.
     /// </summary>
-    /// <param name="userId"></param>
-    /// <param name="tenantId"></param>
+    /// <param name="userId">The entra id of the user who made the interaction.</param>
+    /// <param name="tenantId">The tenant id of the user who made the interaction.</param>
     public ProtectionScopesRequest(string userId, string tenantId)
     {
         this.UserId = userId;
@@ -46,7 +46,7 @@ internal sealed class ProtectionScopesRequest
     public PolicyPivotProperty? PivotOn { get; set; }
 
     /// <summary>
-    /// Device meta data
+    /// Device metadata
     /// </summary>
     [DataMember]
     [JsonPropertyName("deviceMetadata")]

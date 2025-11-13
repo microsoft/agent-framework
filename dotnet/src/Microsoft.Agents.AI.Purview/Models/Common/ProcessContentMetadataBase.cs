@@ -17,10 +17,10 @@ internal abstract class ProcessContentMetadataBase : GraphDataTypeBase
     /// <summary>
     /// Creates a new instance of ProcessContentMetadataBase.
     /// </summary>
-    /// <param name="content"></param>
-    /// <param name="identifier"></param>
-    /// <param name="isTruncated"></param>
-    /// <param name="name"></param>
+    /// <param name="content">The content that will be processed.</param>
+    /// <param name="identifier">The unique identifier for the content.</param>
+    /// <param name="isTruncated">Indicates if the content is truncated.</param>
+    /// <param name="name">The name of the content.</param>
     public ProcessContentMetadataBase(ContentBase content, string identifier, bool isTruncated, string name) : base(ProcessConversationMetadataDataType)
     {
         this.Identifier = identifier;

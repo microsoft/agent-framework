@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 internal sealed class DlpActionInfo
 {
     /// <summary>
-    /// Gets or sets the name of the action. This would be a ToString of <see cref="DlpAction"/> enum.
+    /// Gets or sets the type of the DLP action.
     /// </summary>
     [JsonPropertyName("action")]
     public DlpAction Action { get; set; }

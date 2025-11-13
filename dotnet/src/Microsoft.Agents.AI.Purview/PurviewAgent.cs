@@ -21,8 +21,8 @@ internal class PurviewAgent : AIAgent, IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="PurviewAgent"/> class.
     /// </summary>
-    /// <param name="innerAgent"></param>
-    /// <param name="purviewWrapper"></param>
+    /// <param name="innerAgent">The agent-framework agent that the middleware wraps.</param>
+    /// <param name="purviewWrapper">The purview wrapper used to interact with the Purview service.</param>
     public PurviewAgent(AIAgent innerAgent, PurviewWrapper purviewWrapper)
     {
         this._innerAgent = innerAgent;

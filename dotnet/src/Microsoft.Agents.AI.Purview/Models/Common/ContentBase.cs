@@ -11,6 +11,10 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 [JsonDerivedType(typeof(PurviewBinaryContent))]
 internal abstract class ContentBase : GraphDataTypeBase
 {
+    /// <summary>
+    /// Creates a new instance of the <see cref="ContentBase"/> class.
+    /// </summary>
+    /// <param name="dataType">The graph data type of the content.</param>
     public ContentBase(string dataType) : base(dataType)
     {
     }

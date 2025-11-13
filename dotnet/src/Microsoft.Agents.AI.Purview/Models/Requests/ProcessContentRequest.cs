@@ -14,9 +14,9 @@ internal sealed class ProcessContentRequest
     /// <summary>
     /// Creates a new instance of ProcessContentRequest.
     /// </summary>
-    /// <param name="contentToProcess"></param>
-    /// <param name="userId"></param>
-    /// <param name="tenantId"></param>
+    /// <param name="contentToProcess">The content and its metadata that will be processed.</param>
+    /// <param name="userId">The entra user id of the user making the request.</param>
+    /// <param name="tenantId">The tenant id of the user making the request.</param>
     public ProcessContentRequest(ContentToProcess contentToProcess, string userId, string tenantId)
     {
         this.ContentToProcess = contentToProcess;

@@ -22,36 +22,36 @@ internal interface IPurviewClient
     /// <summary>
     /// Get user info from auth token.
     /// </summary>
-    /// <param name="cancellationToken"></param>
-    /// <param name="tenantId"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
+    /// <param name="cancellationToken">The cancellation token used to cancel async processing.</param>
+    /// <param name="tenantId">The default tenant id used to retrieve the token and its info.</param>
+    /// <returns>The token info from the token.</returns>
+    /// <exception cref="InvalidOperationException">Throw if the token was invalid or could not be retrieved.</exception>
     Task<TokenInfo> GetUserInfoFromTokenAsync(CancellationToken cancellationToken, string? tenantId = default);
 
     /// <summary>
     /// Call ProcessContent API.
     /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <param name="request">The request containing the content to process.</param>
+    /// <param name="cancellationToken">The cancellation token used to cancel async processing.</param>
+    /// <returns>The response from the Purview API.</returns>
+    /// <exception cref="PurviewException">Thrown for validation, auth, and network errors.</exception>
     Task<ProcessContentResponse> ProcessContentAsync(ProcessContentRequest request, CancellationToken cancellationToken);
 
     /// <summary>
     /// Call user ProtectionScope API.
     /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <param name="request">The request containing the protection scopes metadata.</param>
+    /// <param name="cancellationToken">The cancellation token used to cancel async processing.</param>
+    /// <returns>The protection scopes that apply to the data sent in the request.</returns>
+    /// <exception cref="PurviewException">Thrown for validation, auth, and network errors.</exception>
     Task<ProtectionScopesResponse> GetProtectionScopesAsync(ProtectionScopesRequest request, CancellationToken cancellationToken);
 
     /// <summary>
     /// Call contentActivities API.
     /// </summary>
-    /// <param name="request"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
-    /// <exception cref="PurviewException"></exception>
+    /// <param name="request">The request containing the content metadata. Used to generate interaction records.</param>
+    /// <param name="cancellationToken">The cancellation token used to cancel async processing.</param>
+    /// <returns>The response from the Purview API.</returns>
+    /// <exception cref="PurviewException">Thrown for validation, auth, and network errors.</exception>
     Task<ContentActivitiesResponse> SendContentActivitiesAsync(ContentActivitiesRequest request, CancellationToken cancellationToken);
 }

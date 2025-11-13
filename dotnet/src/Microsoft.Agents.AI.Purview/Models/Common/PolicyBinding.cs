@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Purview.Models.Common;
@@ -15,7 +14,6 @@ internal sealed class PolicyBinding
     /// Gets or sets the users to be included.
     /// </summary>
     [JsonPropertyName("inclusions")]
-    [Required]
     public ICollection<Scope>? Inclusions { get; set; }
 
     /// <summary>

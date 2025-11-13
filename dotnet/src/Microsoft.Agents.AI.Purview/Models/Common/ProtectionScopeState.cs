@@ -13,12 +13,12 @@ internal enum ProtectionScopeState
     /// <summary>
     /// Scope state hasn't changed.
     /// </summary>
-    NotModified,
+    NotModified = 0,
 
     /// <summary>
     /// Scope state has changed.
     /// </summary>
-    Modified,
+    Modified = 1,
 
     /// <summary>
     /// Unknown value placeholder for future use.

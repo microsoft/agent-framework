@@ -15,18 +15,18 @@ internal interface IChannelHandler
     /// <summary>
     /// Queue a job for background processing.
     /// </summary>
-    /// <param name="job"></param>
+    /// <param name="job">The job queued for background processing.</param>
     void QueueJob(BackgroundJobBase job);
 
     /// <summary>
     /// Add a runner to the channel handler.
     /// </summary>
-    /// <param name="runnerTask"></param>
+    /// <param name="runnerTask">The runner task used to process jobs.</param>
     void AddRunner(Func<Channel<BackgroundJobBase>, Task> runnerTask);
 
     /// <summary>
     /// Stop the channel and wait for all runners to complete
     /// </summary>
-    /// <returns></returns>
+    /// <returns>A task representing the job.</returns>
     Task StopAndWaitForCompletionAsync();
 }

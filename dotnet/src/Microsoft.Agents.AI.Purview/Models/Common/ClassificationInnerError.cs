@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.Purview.Models.Common;
 
 /// <summary>
-///  Inner error.
+/// Inner classification error.
 /// </summary>
 internal sealed class ClassificationInnerError
 {

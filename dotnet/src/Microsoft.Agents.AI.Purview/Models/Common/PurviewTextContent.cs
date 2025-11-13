@@ -14,7 +14,7 @@ internal sealed class PurviewTextContent : ContentBase
     /// <summary>
     /// Initializes a new instance of the <see cref="PurviewTextContent"/> class.
     /// </summary>
-    /// <param name="data"></param>
+    /// <param name="data">The text content in string format.</param>
     public PurviewTextContent(string data) : base(TextContentDataType)
     {
         this.Data = data;

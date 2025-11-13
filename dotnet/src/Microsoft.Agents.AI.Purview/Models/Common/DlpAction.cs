@@ -31,12 +31,12 @@ internal enum DlpAction
     BrowserRestriction,
 
     /// <summary>
-    /// Generate Alert
+    /// The DLP action to generate an alert
     /// </summary>
     GenerateAlert,
 
     /// <summary>
-    /// GenerateIncidentReportAction
+    /// The DLP action to generate an incident report
     /// </summary>
     GenerateIncidentReportAction,
 

@@ -14,11 +14,11 @@ internal sealed class ContentActivitiesRequest
     /// <summary>
     /// Initializes a new instance of the <see cref="ContentActivitiesRequest"/> class.
     /// </summary>
-    /// <param name="userId"></param>
-    /// <param name="tenantId"></param>
-    /// <param name="contentMetadata"></param>
-    /// <param name="correlationId"></param>
-    /// <param name="scopeIdentifier"></param>
+    /// <param name="userId">The entra id of the user who performed the activity.</param>
+    /// <param name="tenantId">The tenant id of the user who performed the activity.</param>
+    /// <param name="contentMetadata">The metadata about the content that was sent.</param>
+    /// <param name="correlationId">The correlation id of the request.</param>
+    /// <param name="scopeIdentifier">The scope identifier of the protection scopes associated with this request.</param>
     public ContentActivitiesRequest(string userId, string tenantId, ContentToProcess contentMetadata, Guid correlationId = default, string? scopeIdentifier = null)
     {
         this.UserId = userId ?? throw new ArgumentNullException(nameof(userId));
@@ -38,7 +38,7 @@ internal sealed class ContentActivitiesRequest
     /// Gets or sets the user ID of the content that is generating the signal.
     /// </summary>
     [JsonPropertyName("userId")]
-    public string? UserId { get; set; }
+    public string UserId { get; set; }
 
     /// <summary>
     /// Gets or sets the scope identifier for the signal.

@@ -16,7 +16,7 @@ public class PurviewSettings
     /// <summary>
     /// Initializes a new instance of the <see cref="PurviewSettings"/> class.
     /// </summary>
-    /// <param name="appName"></param>
+    /// <param name="appName">The publicly visible name of the application.</param>
     public PurviewSettings(string appName)
     {
         this.AppName = appName;

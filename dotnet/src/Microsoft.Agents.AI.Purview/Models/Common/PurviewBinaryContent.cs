@@ -14,7 +14,7 @@ internal sealed class PurviewBinaryContent : ContentBase
     /// <summary>
     /// Initializes a new instance of the <see cref="PurviewBinaryContent"/> class.
     /// </summary>
-    /// <param name="data"></param>
+    /// <param name="data">The binary content in byte array format.</param>
     public PurviewBinaryContent(byte[] data) : base(BinaryContentDataType)
     {
         this.Data = data;

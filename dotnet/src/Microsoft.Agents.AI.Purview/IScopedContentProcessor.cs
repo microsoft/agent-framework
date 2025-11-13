@@ -23,6 +23,6 @@ internal interface IScopedContentProcessor
     /// <param name="purviewSettings">Purview settings containing tenant id, app name, etc.</param>
     /// <param name="userId">The user who sent the prompt or is receiving the response.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns></returns>
+    /// <returns>A bool indicating if the request should be blocked and the user id of the user who made the request.</returns>
     Task<(bool shouldBlock, string? userId)> ProcessMessagesAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings purviewSettings, string? userId, CancellationToken cancellationToken);
 }

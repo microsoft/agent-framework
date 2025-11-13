@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 namespace Microsoft.Agents.AI.Purview.Models.Common;
 
 /// <summary>
-/// Request for meta data information
+/// Request for metadata information
 /// </summary>
 [JsonDerivedType(typeof(ProtectedAppMetadata))]
 internal class IntegratedAppMetadata
@@ -19,7 +19,7 @@ internal class IntegratedAppMetadata
     public string? Name { get; set; }
 
     /// <summary>
-    /// App version
+    /// Application version
     /// </summary>
     [DataMember]
     [JsonPropertyName("version")]

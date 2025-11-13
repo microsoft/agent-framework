@@ -22,7 +22,7 @@ internal sealed class DeviceMetadata
     public string? IpAddress { get; set; }
 
     /// <summary>
-    /// OS SystemSpecifications
+    /// OS specifications
     /// </summary>
     [JsonPropertyName("operatingSystemSpecifications")]
     public OperatingSystemSpecifications? OperatingSystemSpecifications { get; set; }

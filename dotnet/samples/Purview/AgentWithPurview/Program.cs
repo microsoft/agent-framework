@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure OpenAI Responses as the backend.
+// This sample shows how to create and use a simple AI agent with Purview integration.
+// It uses Azure OpenAI as the backend, but any IChatClient can be used.
+// Authentication to Purview is done using an InteractiveBrowserCredential.
+// Any TokenCredential with Purview API permissions can be used here.
 
 using Azure.AI.OpenAI;
 using Azure.Core;
@@ -21,7 +24,7 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-IChatClient client = new AzureOpenAIClient(
+using IChatClient client = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
     .GetOpenAIResponseClient(deploymentName)
@@ -30,14 +33,11 @@ IChatClient client = new AzureOpenAIClient(
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
     .Build();
 
-using (client)
-{
-    Console.WriteLine("Enter a prompt to send to the client:");
-    string? promptText = Console.ReadLine();
+Console.WriteLine("Enter a prompt to send to the client:");
+string? promptText = Console.ReadLine();
 
-    if (!string.IsNullOrEmpty(promptText))
-    {
-        // Invoke the agent and output the text result.
-        Console.WriteLine(await client.GetResponseAsync(promptText));
-    }
+if (!string.IsNullOrEmpty(promptText))
+{
+    // Invoke the agent and output the text result.
+    Console.WriteLine(await client.GetResponseAsync(promptText));
 }

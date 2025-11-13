@@ -12,7 +12,7 @@ internal sealed class ProcessContentJob : BackgroundJobBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ProcessContentJob"/> class.
     /// </summary>
-    /// <param name="request"></param>
+    /// <param name="request">The process content request to be sent in the background.</param>
     public ProcessContentJob(ProcessContentRequest request)
     {
         this.Request = request;
