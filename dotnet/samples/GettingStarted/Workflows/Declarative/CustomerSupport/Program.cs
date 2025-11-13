@@ -259,6 +259,9 @@ internal sealed class Program
                 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
                 - If the user reports that the issue persists, then escalate.
+
+                Issue: {{IssueDescription}}
+                Attempted Resolution Steps: {{AttemptedResolutionSteps}}
                 """,
             StructuredInputs =
             {

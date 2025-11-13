@@ -55,8 +55,7 @@ trigger:
     # Notify user of ticket identifier.
     - kind: SendActivity
       id: log_ticket
-      activity: |-
-        Created ticket - {Local.TicketParameters.TicketId}
+      activity: "Created ticket #{Local.TicketParameters.TicketId}"
 
     # Determine which team for which route the ticket.
     - kind: InvokeAzureAgent
@@ -71,7 +70,7 @@ trigger:
     # Notify user of routing decision.
     - kind: SendActivity
       id: log_route
-      activity: Routing ticket to - {Local.RoutingParameters.TeamName}
+      activity: Routing to {Local.RoutingParameters.TeamName}
 
     - kind: ConditionGroup
       id: check_routing
@@ -120,12 +119,11 @@ trigger:
                       input:
                         arguments:
                           TicketId: =Local.TicketParameters.TicketId
-                          ResolutionSummary: =Local.SupportParameters.AttemptedResolutionSteps
+                          ResolutionSummary: =Local.SupportParameters.ResolutionSummary
 
                     - kind: SendActivity
                       id: log_resolution
-                      activity: |-
-                        Resolved ticket - {Local.TicketParameters.TicketId}
+                      activity: "Resolved ticket #{Local.TicketParameters.TicketId}"
 
                     - kind: GotoAction
                       id: end_when_solved
