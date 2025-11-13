@@ -23,5 +23,5 @@ internal sealed class DurableAgentState
     /// The version is specified in semver (i.e. "major.minor.patch") format.
     /// </remarks>
     [JsonPropertyName("schemaVersion")]
-    public string SchemaVersion { get; init; } = "1.0.0";
+    public string SchemaVersion { get; init; } = "1.1.0";
 }

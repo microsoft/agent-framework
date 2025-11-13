@@ -12,6 +12,12 @@ namespace Microsoft.Agents.AI.DurableTask.State;
 internal sealed class DurableAgentStateRequest : DurableAgentStateEntry
 {
     /// <summary>
+    /// Gets the ID of the orchestration that initiated this request (if any).
+    /// </summary>
+    [JsonPropertyName("orchestrationId")]
+    public string? OrchestrationId { get; init; }
+
+    /// <summary>
     /// Gets the expected response type for this request (e.g. "json" or "text").
     /// </summary>
     /// <remarks>
@@ -41,6 +47,7 @@ internal sealed class DurableAgentStateRequest : DurableAgentStateEntry
         return new DurableAgentStateRequest()
         {
             CorrelationId = request.CorrelationId,
+            OrchestrationId = request.OrchestrationId,
             Messages = request.Messages.Select(DurableAgentStateMessage.FromChatMessage).ToList(),
             CreatedAt = request.Messages.Min(m => m.CreatedAt) ?? DateTimeOffset.UtcNow,
             ResponseType = request.ResponseFormat is ChatResponseFormatJson ? "json" : "text",
