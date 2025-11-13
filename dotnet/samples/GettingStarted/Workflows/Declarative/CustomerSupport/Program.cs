@@ -420,7 +420,7 @@ internal sealed class Program
                                   "properties": {
                                     "IsComplete": {
                                       "type": "boolean",
-                                      "description": "Has the email has been sent and no more user input is required."
+                                      "description": "Has the email been sent and no more user input is required."
                                     },
                                     "UserMessage": {
                                       "type": "string",
