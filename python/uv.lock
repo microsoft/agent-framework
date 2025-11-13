@@ -1771,7 +1771,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (python_full_version < '3.13' and sys_platform == 'linux') or (python_full_version < '3.13' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -2469,9 +2469,9 @@ dependencies = [
     { name = "typer-slim", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/63/eeea214a6b456d8e91ac2ea73ebb83da3af9aa64716dfb6e28dd9b2e6223/huggingface_hub-1.1.2.tar.gz", hash = "sha256:7bdafc432dc12fa1f15211bdfa689a02531d2a47a3cc0d74935f5726cdbcab8e", size = 606173, upload-time = "2025-11-06T10:04:38.398Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/8a/3cba668d9cd1b4e3eb6c1c3ff7bf0f74a7809bdbb5c327bcdbdbac802d23/huggingface_hub-1.1.4.tar.gz", hash = "sha256:a7424a766fffa1a11e4c1ac2040a1557e2101f86050fdf06627e7b74cc9d2ad6", size = 606842, upload-time = "2025-11-13T10:51:57.602Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/21/e15d90fd09b56938502a0348d566f1915f9789c5bb6c00c1402dc7259b6e/huggingface_hub-1.1.2-py3-none-any.whl", hash = "sha256:dfcfa84a043466fac60573c3e4af475490a7b0d7375b22e3817706d6659f61f7", size = 514955, upload-time = "2025-11-06T10:04:36.674Z" },
+    { url = "https://files.pythonhosted.org/packages/33/3f/969137c9d9428ed8bf171d27604243dd950a47cac82414826e2aebbc0a4c/huggingface_hub-1.1.4-py3-none-any.whl", hash = "sha256:867799fbd2ef338b7f8b03d038d9c0e09415dfe45bb2893b48a510d1d746daa5", size = 515580, upload-time = "2025-11-13T10:51:55.742Z" },
 ]
 
 [[package]]
@@ -4262,6 +4262,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/4d/16d777528149cd0e06306973081b5b070506abcd0fe831c6cb6966260d59/posthog-7.0.0.tar.gz", hash = "sha256:94973227f5fe5e7d656d305ff48c8bff3d505fd1e78b6fcd7ccc9dfe8d3401c2", size = 126504, upload-time = "2025-11-11T18:13:06.986Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/9a/dc29b9ff4e5233a3c071b6b4c85dba96f4fcb9169c460bc81abd98555fb3/posthog-7.0.0-py3-none-any.whl", hash = "sha256:676d8a5197a17bf7bd00e31020a5f232988f249f57aab532f0d01c6243835934", size = 144727, upload-time = "2025-11-11T18:13:05.444Z" },
+]
+
+[[package]]
+name = "powerfx"
+version = "0.0.31"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pythonnet", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/1d/40228886242df10c10ed69faf27e973d020c586aa723a51afbe48542d535/powerfx-0.0.31.tar.gz", hash = "sha256:fa9637f315d71163dd900d16f97fce562d550049713d2fc358f8d446bb23906f", size = 3235618, upload-time = "2025-09-16T15:10:13.159Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/45/fdc98dc8a3e38a3cde464e18624a4851785bf7cc63f207d04279e0a1db4f/powerfx-0.0.31-py3-none-any.whl", hash = "sha256:616dcff4950624d3c63dd72c01daea60b0838e217b0c5533dd2c40677444a340", size = 3481524, upload-time = "2025-09-16T15:10:10.393Z" },
 ]
 
 [[package]]
