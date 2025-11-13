@@ -103,14 +103,14 @@
     <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.16.2" />
     <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.16.2-preview.1" />
     <!-- Azure Functions -->
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.2.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.0.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.9.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.5" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
     <!-- Community -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <!-- Test -->
