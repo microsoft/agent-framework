@@ -145,7 +145,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                Alaways create a ticket in Azure DevOps.
+                Always create a ticket in Azure DevOps.
 
                 Include the following information in the TicketSummary.
 
