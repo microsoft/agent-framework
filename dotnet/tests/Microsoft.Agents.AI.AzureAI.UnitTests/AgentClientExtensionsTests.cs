@@ -1944,6 +1944,360 @@ public sealed class AgentClientExtensionsTests
 
     #endregion
 
+    #region GetAIAgent(AgentClient, AgentReference) Tests
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when AgentClient is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AgentClient? client = null;
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.GetAIAgent(agentReference));
+
+        Assert.Equal("agentClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentNullException when agentReference is null.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_WithNullAgentReference_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            mockClient.Object.GetAIAgent((AgentReference)null!));
+
+        Assert.Equal("agentReference", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with AgentReference creates a valid agent.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_CreatesValidAgent()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-name", agent.Name);
+        Assert.Equal("test-name:1", agent.Id);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with AgentReference and clientFactory applies the factory.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+        TestChatClient? testChatClient = null;
+
+        // Act
+        var agent = client.GetAIAgent(
+            agentReference,
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with AgentReference sets the agent ID correctly.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_SetsAgentIdCorrectly()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "2" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-name:2", agent.Id);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with AgentReference and tools includes the tools in ChatOptions.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithAgentReference_WithTools_IncludesToolsInChatOptions()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+        var tools = new List<AITool>
+        {
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference, tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        var chatOptions = GetAgentChatOptions(agent);
+        Assert.NotNull(chatOptions);
+        Assert.NotNull(chatOptions.Tools);
+        Assert.Single(chatOptions.Tools);
+    }
+
+    #endregion
+
+    #region GetService<AgentRecord> Tests
+
+    /// <summary>
+    /// Verify that GetService returns AgentRecord for agents created from AgentRecord.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentRecord_ReturnsAgentRecord()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+
+        // Act
+        var agent = client.GetAIAgent(agentRecord);
+        var retrievedRecord = agent.GetService<AgentRecord>();
+
+        // Assert
+        Assert.NotNull(retrievedRecord);
+        Assert.Equal(agentRecord.Id, retrievedRecord.Id);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for AgentRecord when agent is created from AgentReference.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentReference_ReturnsNullForAgentRecord()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+        var retrievedRecord = agent.GetService<AgentRecord>();
+
+        // Assert
+        Assert.Null(retrievedRecord);
+    }
+
+    #endregion
+
+    #region GetService<AgentVersion> Tests
+
+    /// <summary>
+    /// Verify that GetService returns AgentVersion for agents created from AgentVersion.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentVersion_ReturnsAgentVersion()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentVersion agentVersion = this.CreateTestAgentVersion();
+
+        // Act
+        var agent = client.GetAIAgent(agentVersion);
+        var retrievedVersion = agent.GetService<AgentVersion>();
+
+        // Assert
+        Assert.NotNull(retrievedVersion);
+        Assert.Equal(agentVersion.Id, retrievedVersion.Id);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for AgentVersion when agent is created from AgentReference.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentReference_ReturnsNullForAgentVersion()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-name") { Version = "1" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+        var retrievedVersion = agent.GetService<AgentVersion>();
+
+        // Assert
+        Assert.Null(retrievedVersion);
+    }
+
+    #endregion
+
+    #region ChatClientMetadata Tests
+
+    /// <summary>
+    /// Verify that ChatClientMetadata is properly populated for agents created from AgentRecord.
+    /// </summary>
+    [Fact]
+    public void ChatClientMetadata_WithAgentRecord_IsPopulatedCorrectly()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+
+        // Act
+        var agent = client.GetAIAgent(agentRecord);
+        var metadata = agent.GetService<ChatClientMetadata>();
+
+        // Assert
+        Assert.NotNull(metadata);
+        Assert.NotNull(metadata.DefaultModelId);
+    }
+
+    /// <summary>
+    /// Verify that ChatClientMetadata.DefaultModelId is set from PromptAgentDefinition model property.
+    /// </summary>
+    [Fact]
+    public void ChatClientMetadata_WithPromptAgentDefinition_SetsDefaultModelIdFromModel()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var definition = new PromptAgentDefinition("gpt-4-turbo")
+        {
+            Instructions = "Test instructions"
+        };
+        AgentRecord agentRecord = this.CreateTestAgentRecord(definition);
+
+        // Act
+        var agent = client.GetAIAgent(agentRecord);
+        var metadata = agent.GetService<ChatClientMetadata>();
+
+        // Assert
+        Assert.NotNull(metadata);
+        // The metadata should contain the model information from the agent definition
+        Assert.NotNull(metadata.DefaultModelId);
+        Assert.Equal("gpt-4-turbo", metadata.DefaultModelId);
+    }
+
+    /// <summary>
+    /// Verify that ChatClientMetadata is properly populated for agents created from AgentVersion.
+    /// </summary>
+    [Fact]
+    public void ChatClientMetadata_WithAgentVersion_IsPopulatedCorrectly()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentVersion agentVersion = this.CreateTestAgentVersion();
+
+        // Act
+        var agent = client.GetAIAgent(agentVersion);
+        var metadata = agent.GetService<ChatClientMetadata>();
+
+        // Assert
+        Assert.NotNull(metadata);
+        Assert.NotNull(metadata.DefaultModelId);
+        Assert.Equal((agentVersion.Definition as PromptAgentDefinition)!.Model, metadata.DefaultModelId);
+    }
+
+    #endregion
+
+    #region AgentReference Availability Tests
+
+    /// <summary>
+    /// Verify that GetService returns AgentReference for agents created from AgentReference.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentReference_ReturnsAgentReference()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("test-agent") { Version = "1.0" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+        var retrievedReference = agent.GetService<AgentReference>();
+
+        // Assert
+        Assert.NotNull(retrievedReference);
+        Assert.Equal("test-agent", retrievedReference.Name);
+        Assert.Equal("1.0", retrievedReference.Version);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for AgentReference when agent is created from AgentRecord.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentRecord_ReturnsAlsoAgentReference()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentRecord agentRecord = this.CreateTestAgentRecord();
+
+        // Act
+        var agent = client.GetAIAgent(agentRecord);
+        var retrievedReference = agent.GetService<AgentReference>();
+
+        // Assert
+        Assert.NotNull(retrievedReference);
+        Assert.Equal(agentRecord.Name, retrievedReference.Name);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns null for AgentReference when agent is created from AgentVersion.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentVersion_ReturnsAlsoAgentReference()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        AgentVersion agentVersion = this.CreateTestAgentVersion();
+
+        // Act
+        var agent = client.GetAIAgent(agentVersion);
+        var retrievedReference = agent.GetService<AgentReference>();
+
+        // Assert
+        Assert.NotNull(retrievedReference);
+        Assert.Equal(agentVersion.Name, retrievedReference.Name);
+    }
+
+    /// <summary>
+    /// Verify that GetService returns AgentReference with correct version information.
+    /// </summary>
+    [Fact]
+    public void GetService_WithAgentReference_ReturnsCorrectVersionInformation()
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var agentReference = new AgentReference("versioned-agent") { Version = "3.5" };
+
+        // Act
+        var agent = client.GetAIAgent(agentReference);
+        var retrievedReference = agent.GetService<AgentReference>();
+
+        // Assert
+        Assert.NotNull(retrievedReference);
+        Assert.Equal("versioned-agent", retrievedReference.Name);
+        Assert.Equal("3.5", retrievedReference.Version);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     /// <summary>
@@ -1957,9 +2311,9 @@ public sealed class AgentClientExtensionsTests
     /// <summary>
     /// Creates a test AgentRecord for testing.
     /// </summary>
-    private AgentRecord CreateTestAgentRecord()
+    private AgentRecord CreateTestAgentRecord(AgentDefinition? agentDefinition = null)
     {
-        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJson()))!;
+        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJson(agentDefinition: agentDefinition)))!;
     }
 
     private const string OpenAPISpec = """
