@@ -1,0 +1,59 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- CA2007: This rule should generally be suppressed in Durable Task libraries. Also, this is not library code. -->
+    <NoWarn>$(NoWarn);CA2007</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- NuGet package metadata -->
+  <PropertyGroup>
+    <Title>Azure Functions extensions for Microsoft Agent Framework</Title>
+    <Description>Provides durable agent hosting and orchestration support for Microsoft Agent Framework workloads.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Project references -->
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.DurableTask\Microsoft.Agents.AI.DurableTask.csproj" />
+  </ItemGroup>
+
+  <!-- Public dependencies -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" />
+  </ItemGroup>
+
+  <!-- Internals -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests" />
+  </ItemGroup>
+
+  <!-- Ensure README.md is included in the NuGet package -->
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+        This attribute tells the Functions build process to restore the specified WebJobs extension package,
+        making the MCP extension available to the Functions host.
+    -->
+    <AssemblyAttribute Include="Microsoft.Azure.Functions.Worker.Extensions.Abstractions.ExtensionInformationAttribute">
+      <_Parameter1>Microsoft.Azure.Functions.Extensions.Mcp</_Parameter1>
+      <_Parameter2>1.0.0</_Parameter2>
+      <!--
+        Force Azure Functions host to load the MCP extension automatically, even when
+        the consuming application doesn't explicitly reference McpToolTrigger attributes
+      -->
+      <_Parameter3>true</_Parameter3>
+      <_Parameter3_IsLiteral>true</_Parameter3_IsLiteral>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>

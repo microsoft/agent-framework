@@ -19,7 +19,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 from pydantic import BaseModel, Field
 
 from agent_framework_ag_ui import AgentFrameworkAgent
@@ -54,10 +54,18 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-# Create the task steps agent using tool-based approach for streaming
-agent = ChatAgent(
-    name="task_steps_agent",
-    instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
+def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create the task steps agent using tool-based approach for streaming.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance
+    """
+    agent = ChatAgent(
+        name="task_steps_agent",
+        instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
     When asked to perform a task, you MUST:
     1. Use the generate_task_steps tool to create the steps
@@ -75,25 +83,25 @@ agent = ChatAgent(
     - "Installing platform"
     - "Adding finishing touches"
     """,
-    chat_client=AzureOpenAIChatClient(),
-    tools=[generate_task_steps],
-)
+        chat_client=chat_client,
+        tools=[generate_task_steps],
+    )
 
-task_steps_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="TaskStepsAgent",
-    description="Generates task steps with streaming state updates",
-    state_schema={
-        "steps": {"type": "array", "description": "The list of task steps"},
-    },
-    predict_state_config={
-        "steps": {
-            "tool": "generate_task_steps",
-            "tool_argument": "steps",
-        }
-    },
-    require_confirmation=False,  # Agentic generative UI updates automatically without confirmation
-)
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="TaskStepsAgent",
+        description="Generates task steps with streaming state updates",
+        state_schema={
+            "steps": {"type": "array", "description": "The list of task steps"},
+        },
+        predict_state_config={
+            "steps": {
+                "tool": "generate_task_steps",
+                "tool_argument": "steps",
+            }
+        },
+        require_confirmation=False,  # Agentic generative UI updates automatically without confirmation
+    )
 
 
 # Wrap the agent's run method to add step execution simulation
@@ -131,7 +139,7 @@ class TaskStepsAgentWithExecution:
         logger.info("TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
 
         # First, run the base agent to generate the plan - buffer text messages
-        final_state: dict[str, Any] | None = None
+        final_state: dict[str, Any] = {}
         run_finished_event: Any = None
         tool_call_id: str | None = None
         buffered_text_events: list[Any] = []  # Buffer text from first LLM call
@@ -142,8 +150,19 @@ class TaskStepsAgentWithExecution:
 
             match event:
                 case StateSnapshotEvent(snapshot=snapshot):
-                    final_state = snapshot
+                    final_state = snapshot.copy() if snapshot else {}
                     logger.info(f"Captured STATE_SNAPSHOT event with state: {final_state}")
+                    yield event
+                case StateDeltaEvent(delta=delta):
+                    # Apply state delta to final_state
+                    if delta:
+                        for patch in delta:
+                            if patch.get("op") == "replace" and patch.get("path") == "/steps":
+                                final_state["steps"] = patch.get("value", [])
+                                logger.info(
+                                    f"Applied STATE_DELTA: updated steps to {len(final_state.get('steps', []))} items"
+                                )
+                    logger.info(f"Yielding event immediately: {event_type_str}")
                     yield event
                 case RunFinishedEvent():
                     run_finished_event = event
@@ -314,5 +333,14 @@ class TaskStepsAgentWithExecution:
             yield run_finished_event
 
 
-# Export the wrapped agent
-task_steps_agent_wrapped = TaskStepsAgentWithExecution(task_steps_agent)
+def task_steps_agent_wrapped(chat_client: ChatClientProtocol) -> TaskStepsAgentWithExecution:
+    """Create a task steps agent with execution simulation.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A wrapped agent instance with step execution simulation
+    """
+    base_agent = _create_task_steps_agent(chat_client)
+    return TaskStepsAgentWithExecution(base_agent)

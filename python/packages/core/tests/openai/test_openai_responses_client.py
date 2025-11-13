@@ -1407,27 +1407,27 @@ def test_create_response_content_image_generation_fallback():
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
 
 
-def test_prepare_options_store_parameter_handling() -> None:
+async def test_prepare_options_store_parameter_handling() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="Test message")]
 
     test_conversation_id = "test-conversation-123"
     chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is True
     assert options["previous_response_id"] == test_conversation_id
 
     chat_options = ChatOptions(store=False, conversation_id="")
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
 
     chat_options = ChatOptions(store=None, conversation_id=None)
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
     assert "previous_response_id" not in options
 
     chat_options = ChatOptions()
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
     assert "previous_response_id" not in options
 

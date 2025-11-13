@@ -205,6 +205,18 @@ agents.md
 .claude/
 WARP.md
 
+# Azurite storage emulator files
+*/__azurite_db_blob__.json
+*/__azurite_db_blob_extent__.json
+*/__azurite_db_queue__.json
+*/__azurite_db_queue_extent__.json
+*/__azurite_db_table__.json
+*/__blobstorage__/
+*/__queuestorage__/
+
+# Azure Functions local settings
+local.settings.json
+
 # Frontend
 **/frontend/node_modules/
 **/frontend/.vite/
