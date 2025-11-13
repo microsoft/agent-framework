@@ -46,7 +46,7 @@ internal static class CodeInterpreterToolExtensions
     {
         var fileIds = tool.ExtensionData?.GetPropertyOrNull<TableDataValue>(InitializablePropertyPath.Create("fileIds"));
         return fileIds is not null
-            ? [.. fileIds.Values.Select(fileId => fileId.GetPropertyOrNull<StringDataValue>(InitializablePropertyPath.Create("value"))?.Value)]
+            ? [.. fileIds.Values.Select(fileId => fileId.GetProperty<StringDataValue>(InitializablePropertyPath.Create("value"))!.Value!)]
             : null;
     }
 

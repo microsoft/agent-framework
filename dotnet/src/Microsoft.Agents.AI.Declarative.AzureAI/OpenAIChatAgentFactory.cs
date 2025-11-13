@@ -63,7 +63,7 @@ public sealed class OpenAIChatAgentFactory : OpenAIAgentFactory
             Name = promptAgent.Name,
             Description = promptAgent.Description,
             Instructions = promptAgent.Instructions?.ToTemplateString(),
-            ChatOptions = promptAgent.GetChatOptions(this._functions),
+            ChatOptions = promptAgent.GetChatOptions(this.Engine, this._functions),
         };
 
         ChatClient? chatClient = this._chatClient ?? this.CreateChatClient(promptAgent);
