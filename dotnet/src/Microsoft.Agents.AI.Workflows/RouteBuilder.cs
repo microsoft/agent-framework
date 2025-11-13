@@ -22,6 +22,14 @@ using MessageHandlerF =
         System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Execution.CallResult>
     >;
 
+using PortHandlerF =
+    System.Func<
+        Microsoft.Agents.AI.Workflows.ExternalResponse, // message
+        Microsoft.Agents.AI.Workflows.IWorkflowContext, // context
+        System.Threading.CancellationToken, // cancellation
+        System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.ExternalResponse?>
+    >;
+
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
@@ -32,9 +40,16 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </remarks>
 public class RouteBuilder
 {
+    private readonly IExternalRequestContext? _externalRequestContext;
     private readonly Dictionary<Type, MessageHandlerF> _typedHandlers = [];
     private readonly Dictionary<Type, Type> _outputTypes = [];
+    private readonly Dictionary<string, PortHandlerF> _portHandlers = [];
     private CatchAllF? _catchAll;
+
+    internal RouteBuilder(IExternalRequestContext? externalRequestContext)
+    {
+        this._externalRequestContext = externalRequestContext;
+    }
 
     internal RouteBuilder AddHandlerInternal(Type messageType, MessageHandlerF handler, Type? outputType, bool overwrite = false)
     {
@@ -99,6 +114,44 @@ public class RouteBuilder
         {
             TResult result = await handler.Invoke(message, context, cancellationToken).ConfigureAwait(false);
             return CallResult.ReturnResult(result);
+        }
+    }
+
+    internal RouteBuilder AddPortHandler<TRequest, TResponse>(string id, Func<TResponse, IWorkflowContext, CancellationToken, ValueTask> handler, out PortBinding portBinding, bool overwrite = false)
+    {
+        if (this._externalRequestContext == null)
+        {
+            throw new InvalidOperationException("An external request context is required to register port handlers.");
+        }
+
+        RequestPort port = RequestPort.Create<TRequest, TResponse>(id);
+        IExternalRequestSink sink = this._externalRequestContext!.RegisterPort(port);
+        portBinding = new(port, sink);
+
+        if (this._portHandlers.ContainsKey(id) == overwrite)
+        {
+            this._portHandlers[id] = InvokeHandlerAsync;
+        }
+        else if (overwrite)
+        {
+            throw new InvalidOperationException($"A handler for port id {id} is not registered (overwrite = true).");
+        }
+        else
+        {
+            throw new InvalidOperationException($"A handler for port id {id} is already registered (overwrite = false).");
+        }
+
+        return this;
+
+        async ValueTask<ExternalResponse?> InvokeHandlerAsync(ExternalResponse response, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            if (!response.DataIs(out TResponse? typedResponse))
+            {
+                throw new InvalidOperationException($"Received response data is not of expected type {typeof(TResponse).FullName} for port {port.Id}.");
+            }
+
+            await handler(typedResponse, context, cancellationToken).ConfigureAwait(false);
+            return response;
         }
     }
 
@@ -279,7 +332,7 @@ public class RouteBuilder
 
         async ValueTask<CallResult> WrappedHandlerAsync(object message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            TResult result = await handler.Invoke((TInput)message, context, cancellationToken).ConfigureAwait(false);
+            TResult result = await handler((TInput)message, context, cancellationToken).ConfigureAwait(false);
             return CallResult.ReturnResult(result);
         }
     }
@@ -514,5 +567,29 @@ public class RouteBuilder
         }
     }
 
-    internal MessageRouter Build() => new(this._typedHandlers, [.. this._outputTypes.Values], this._catchAll);
+    private void RegisterPortHandlerRouter()
+    {
+        Dictionary<string, PortHandlerF> portHandlers = this._portHandlers;
+        this.AddHandler<ExternalResponse, ExternalResponse?>(InvokeHandlerAsync);
+
+        ValueTask<ExternalResponse?> InvokeHandlerAsync(ExternalResponse response, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            if (portHandlers.TryGetValue(response.PortInfo.PortId, out PortHandlerF? portHandler))
+            {
+                return portHandler(response, context, cancellationToken);
+            }
+
+            throw new InvalidOperationException($"Unknown port {response.PortInfo}");
+        }
+    }
+
+    internal MessageRouter Build()
+    {
+        if (this._portHandlers.Count > 0)
+        {
+            this.RegisterPortHandlerRouter();
+        }
+
+        return new(this._typedHandlers, [.. this._outputTypes.Values], this._catchAll);
+    }
 }
