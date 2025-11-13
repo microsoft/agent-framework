@@ -5,6 +5,8 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace MixedWorkflowWithAgentsAndExecutors;
 
@@ -230,14 +232,20 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// Executor that synchronizes agent output and prepares it for the next stage.
 /// This demonstrates how executors can process agent outputs and forward to the next agent.
 /// </summary>
-internal sealed class JailbreakSyncExecutor() : Executor<ChatMessage>("JailbreakSync")
+internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
-    public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(
+        List<ChatMessage> message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
     {
+        ChatMessage agentReply = message.LastOrDefault(m => m.Role == ChatRole.Assistant)
+            ?? throw new InvalidOperationException("Detector returned no assistant message.");
+
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Magenta;
 
-        string fullAgentResponse = message.Text?.Trim() ?? "UNKNOWN";
+        string fullAgentResponse = agentReply.Text?.Trim() ?? "UNKNOWN";
 
         Console.WriteLine($"[{this.Id}] Full Agent Response:");
         Console.WriteLine(fullAgentResponse);
