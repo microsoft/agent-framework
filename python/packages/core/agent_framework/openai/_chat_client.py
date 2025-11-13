@@ -69,10 +69,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
+        client = await self.ensure_client()
         options_dict = self._prepare_options(messages, chat_options)
         try:
             return self._create_chat_response(
-                await self.client.chat.completions.create(stream=False, **options_dict), chat_options
+                await client.chat.completions.create(stream=False, **options_dict), chat_options
             )
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -97,10 +98,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        client = await self.ensure_client()
         options_dict = self._prepare_options(messages, chat_options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
-            async for chunk in await self.client.chat.completions.create(stream=True, **options_dict):
+            async for chunk in await client.chat.completions.create(stream=True, **options_dict):
                 if len(chunk.choices) == 0 and chunk.usage is None:
                     continue
                 yield self._create_chat_response_update(chunk)

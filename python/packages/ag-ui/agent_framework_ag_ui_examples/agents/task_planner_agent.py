@@ -3,7 +3,7 @@
 """Example agent demonstrating human-in-the-loop with function approvals."""
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 
 from agent_framework_ag_ui import AgentFrameworkAgent, TaskPlannerConfirmationStrategy
 
@@ -54,20 +54,32 @@ def book_meeting_room(room_name: str, date: str, start_time: str, end_time: str)
     return f"Meeting room '{room_name}' booked for {date} from {start_time} to {end_time}"
 
 
-agent = ChatAgent(
-    name="task_planner",
-    instructions=(
-        "You are a helpful assistant that plans and executes tasks. "
-        "You have access to calendar, email, and meeting room booking functions. "
-        "All of these actions require user approval before execution."
-    ),
-    chat_client=AzureOpenAIChatClient(),
-    tools=[create_calendar_event, send_email, book_meeting_room],
+_TASK_PLANNER_INSTRUCTIONS = (
+    "You are a helpful assistant that plans and executes tasks. "
+    "You have access to calendar, email, and meeting room booking functions. "
+    "All of these actions require user approval before execution."
 )
 
-task_planner_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="TaskPlanner",
-    description="Plans and executes tasks with user approval",
-    confirmation_strategy=TaskPlannerConfirmationStrategy(),
-)
+
+def task_planner_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create a task planner agent with user approval for actions.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance with task planning capabilities
+    """
+    agent = ChatAgent(
+        name="task_planner",
+        instructions=_TASK_PLANNER_INSTRUCTIONS,
+        chat_client=chat_client,
+        tools=[create_calendar_event, send_email, book_meeting_room],
+    )
+
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="TaskPlanner",
+        description="Plans and executes tasks with user approval",
+        confirmation_strategy=TaskPlannerConfirmationStrategy(),
+    )

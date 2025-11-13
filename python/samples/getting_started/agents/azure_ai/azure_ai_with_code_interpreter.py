@@ -2,57 +2,53 @@
 
 import asyncio
 
-from agent_framework import AgentRunResponse, ChatResponseUpdate, HostedCodeInterpreterTool
-from agent_framework.azure import AzureAIAgentClient
-from azure.ai.agents.models import (
-    RunStepDeltaCodeInterpreterDetailItemObject,
-)
+from agent_framework import ChatResponse, HostedCodeInterpreterTool
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
+from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
 """
-Azure AI Agent with Code Interpreter Example
+Azure AI Agent Code Interpreter Example
 
-This sample demonstrates using HostedCodeInterpreterTool with Azure AI Agents
+This sample demonstrates using HostedCodeInterpreterTool with AzureAIClient
 for Python code execution and mathematical problem solving.
 """
 
 
-def print_code_interpreter_inputs(response: AgentRunResponse) -> None:
-    """Helper method to access code interpreter data."""
-
-    print("\nCode Interpreter Inputs during the run:")
-    if response.raw_representation is None:
-        return
-    for chunk in response.raw_representation:
-        if isinstance(chunk, ChatResponseUpdate) and isinstance(
-            chunk.raw_representation, RunStepDeltaCodeInterpreterDetailItemObject
-        ):
-            print(chunk.raw_representation.input, end="")
-    print("\n")
-
-
 async def main() -> None:
-    """Example showing how to use the HostedCodeInterpreterTool with Azure AI."""
-    print("=== Azure AI Agent with Code Interpreter Example ===")
+    """Example showing how to use the HostedCodeInterpreterTool with AzureAIClient."""
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential) as chat_client,
-    ):
-        agent = chat_client.create_agent(
-            name="CodingAgent",
-            instructions=("You are a helpful assistant that can write and execute Python code to solve problems."),
+        AzureAIClient(async_credential=credential).create_agent(
+            instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
             tools=HostedCodeInterpreterTool(),
-        )
-        query = "Generate the factorial of 100 using python code, show the code and execute it."
+        ) as agent,
+    ):
+        query = "Use code to get the factorial of 100?"
         print(f"User: {query}")
-        response = await AgentRunResponse.from_agent_response_generator(agent.run_stream(query))
-        print(f"Agent: {response}")
-        # To review the code interpreter outputs, you can access
-        # them from the response raw_representations, just uncomment the next line:
-        # print_code_interpreter_inputs(response)
+        result = await agent.run(query)
+        print(f"Result: {result}\n")
+
+        if (
+            isinstance(result.raw_representation, ChatResponse)
+            and isinstance(result.raw_representation.raw_representation, OpenAIResponse)
+            and len(result.raw_representation.raw_representation.output) > 0
+        ):
+            # Find the first ResponseCodeInterpreterToolCall item
+            code_interpreter_item = next(
+                (
+                    item
+                    for item in result.raw_representation.raw_representation.output
+                    if isinstance(item, ResponseCodeInterpreterToolCall)
+                ),
+                None,
+            )
+
+            if code_interpreter_item is not None:
+                generated_code = code_interpreter_item.code
+                print(f"Generated code:\n{generated_code}")
 
 
 if __name__ == "__main__":
