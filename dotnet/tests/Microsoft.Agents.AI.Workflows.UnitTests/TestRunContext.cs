@@ -10,6 +10,36 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public class TestRunContext : IRunnerContext
 {
+    private sealed class TestExternalRequestContext(IRunnerContext runnerContext, string executorId, EdgeMap? map) : IExternalRequestContext
+    {
+        public IExternalRequestSink RegisterPort(RequestPort port)
+        {
+            if (map?.TryRegisterPort(runnerContext, executorId, port) == false)
+            {
+                throw new InvalidOperationException("Duplicate port id: " + port.Id);
+            }
+
+            return runnerContext;
+        }
+    }
+
+    internal TestRunContext ConfigureExecutor(Executor executor, EdgeMap? map = null)
+    {
+        executor.Configure(new TestExternalRequestContext(this, executor.Id, map));
+        this.Executors.Add(executor.Id, executor);
+        return this;
+    }
+
+    internal TestRunContext ConfigureExecutors(IEnumerable<Executor> executors, EdgeMap? map = null)
+    {
+        foreach (var executor in executors)
+        {
+            this.ConfigureExecutor(executor, map);
+        }
+
+        return this;
+    }
+
     private sealed class BoundContext(
         string executorId,
         TestRunContext runnerContext,
@@ -57,7 +87,7 @@ public class TestRunContext : IRunnerContext
         return default;
     }
 
-    public IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null)
+    public IWorkflowContext BindWorkflowContext(string executorId, Dictionary<string, string>? traceContext = null)
         => new BoundContext(executorId, this, traceContext);
 
     public List<ExternalRequest> ExternalRequests { get; } = [];

@@ -71,6 +71,16 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         this.OutgoingEvents = outgoingEvents;
     }
 
+    public IExternalRequestSink RegisterPort(string executorId, RequestPort port)
+    {
+        if (!this._edgeMap.TryRegisterPort(this, executorId, port))
+        {
+            throw new InvalidOperationException($"A port with ID {port.Id} already exists.");
+        }
+
+        return this;
+    }
+
     public async ValueTask<Executor> EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
@@ -84,7 +94,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             }
 
             Executor executor = await registration.CreateInstanceAsync(this._runId).ConfigureAwait(false);
-            await executor.InitializeAsync(this.Bind(executorId), cancellationToken: cancellationToken)
+            executor.Configure(this.BindExternalRequestContext(executorId));
+
+            await executor.InitializeAsync(this.BindWorkflowContext(executorId), cancellationToken: cancellationToken)
                           .ConfigureAwait(false);
 
             tracer?.TraceActivated(executorId);
@@ -233,10 +245,16 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    public IWorkflowContext Bind(string executorId, Dictionary<string, string>? traceContext = null)
+    public IExternalRequestContext BindExternalRequestContext(string executorId)
     {
         this.CheckEnded();
-        return new BoundContext(this, executorId, traceContext);
+        return new BoundExternalRequestContext(this, executorId);
+    }
+
+    public IWorkflowContext BindWorkflowContext(string executorId, Dictionary<string, string>? traceContext = null)
+    {
+        this.CheckEnded();
+        return new BoundWorkflowContext(this, executorId, traceContext);
     }
 
     public ValueTask PostAsync(ExternalRequest request)
@@ -260,7 +278,17 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     internal StateManager StateManager { get; } = new();
 
-    private sealed class BoundContext(
+    private sealed class BoundExternalRequestContext(
+        InProcessRunnerContext RunnerContext,
+        string ExecutorId) : IExternalRequestContext
+    {
+        public IExternalRequestSink RegisterPort(RequestPort port)
+        {
+            return RunnerContext.RegisterPort(ExecutorId, port);
+        }
+    }
+
+    private sealed class BoundWorkflowContext(
         InProcessRunnerContext RunnerContext,
         string ExecutorId,
         Dictionary<string, string>? traceContext) : IWorkflowContext
@@ -312,7 +340,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointingAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointingAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
+            await executor.OnCheckpointingAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -325,7 +353,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         async Task InvokeCheckpointRestoredAsync(Task<Executor> executorTask)
         {
             Executor executor = await executorTask.ConfigureAwait(false);
-            await executor.OnCheckpointRestoredAsync(this.Bind(executor.Id), cancellationToken).ConfigureAwait(false);
+            await executor.OnCheckpointRestoredAsync(this.BindWorkflowContext(executor.Id), cancellationToken).ConfigureAwait(false);
         }
     }
 
