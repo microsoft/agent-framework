@@ -14,7 +14,7 @@ public enum SearchState
     PressedEnter   // Enter key pressed, transitioning to results
 }
 
-internal sealed class ComputerUseUtil
+internal static class ComputerUseUtil
 {
     /// <summary>
     /// Load and convert screenshot images to base64 data URLs.

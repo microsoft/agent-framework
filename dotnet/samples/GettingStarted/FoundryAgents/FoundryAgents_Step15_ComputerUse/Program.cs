@@ -86,7 +86,12 @@ internal sealed class Program
             TruncationMode = ResponseTruncationMode.Auto
         };
         chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;
-        ChatClientAgentRunOptions runOptions = new(chatOptions);
+        ChatClientAgentRunOptions runOptions = new(chatOptions)
+        {
+            AllowBackgroundResponses = true,
+        };
+
+        AgentThread thread = agent.GetNewThread();
 
         ChatMessage message = new(ChatRole.User, [
             new TextContent("I need you to help me search for 'OpenAI news'. Please type 'OpenAI news' and submit the search. Once you see search results, the task is complete."),
@@ -96,8 +101,7 @@ internal sealed class Program
         // Initial request with screenshot - start with Bing search page
         Console.WriteLine("Starting computer automation session (initial screenshot: cua_browser_search.png)...");
 
-        AgentRunResponse runResponse = await agent.RunAsync(message, options: runOptions);
-        Console.WriteLine($"Initial response received (ID: {runResponse.ResponseId})");
+        AgentRunResponse runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
 
         // Main interaction loop
         const int MaxIterations = 10;
@@ -107,6 +111,20 @@ internal sealed class Program
 
         while (true)
         {
+            // Poll until the response is complete.
+            while (runResponse.ContinuationToken is { } token)
+            {
+                // Wait before polling again.
+                await Task.Delay(TimeSpan.FromSeconds(2));
+
+                // Continue with the token.
+                runOptions.ContinuationToken = token;
+
+                runResponse = await agent.RunAsync(thread, runOptions);
+            }
+
+            Console.WriteLine($"Agent response received (ID: {runResponse.ResponseId})");
+
             if (iteration >= MaxIterations)
             {
                 Console.WriteLine($"\nReached maximum iterations ({MaxIterations}). Stopping.");
@@ -147,7 +165,10 @@ internal sealed class Program
                 ConversationId = runResponse.ResponseId,
                 RawRepresentationFactory = (_) => responseCreationOptions
             };
-            runOptions = new(chatOptions);
+            runOptions = new(chatOptions)
+            {
+                AllowBackgroundResponses = true,
+            };
 
             AIContent content = new()
             {
@@ -159,8 +180,6 @@ internal sealed class Program
             // Follow-up message with action result and new screenshot
             message = new(ChatRole.User, [content]);
             runResponse = await agent.RunAsync(message, options: runOptions);
-
-            Console.WriteLine($"Follow-up response received (ID: {runResponse.ResponseId})");
         }
     }
 }
