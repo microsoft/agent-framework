@@ -52,6 +52,12 @@ trigger:
       output:
         responseObject: Local.TicketParameters
 
+    # Capture the attempted resolution steps.
+    - kind: SetVariable
+      id: capture_attempted_resolution
+      variable: Local.ResolutionSteps
+      value: =Local.ServiceParameters.AttemptedResolutionSteps
+
     # Notify user of ticket identifier.
     - kind: SendActivity
       id: log_ticket
@@ -93,6 +99,7 @@ trigger:
               input:
                 arguments:
                   IssueDescription: =Local.ServiceParameters.IssueDescription
+                  AttemptedResolutionSteps: =Local.ServiceParameters.AttemptedResolutionSteps
                 externalLoop:
                   when: |-
                     =Not(Local.SupportParameters.IsResolved)
@@ -101,6 +108,12 @@ trigger:
               output:
                 autoSend: true
                 responseObject: Local.SupportParameters
+
+            # Capture the attempted resolution steps.
+            - kind: SetVariable
+              id: capture_attempted_resolution
+              variable: Local.ResolutionSteps
+              value: =Local.ServiceParameters.ResolutionSummary
 
             # Check if the issue was resolved by support.
             - kind: ConditionGroup
@@ -139,7 +152,7 @@ trigger:
         arguments:
           TicketId: =Local.TicketParameters.TicketId
           IssueDescription: =Local.ServiceParameters.IssueDescription
-          ResolutionSummary: =Local.SupportParameters.AttemptedResolutionSteps
+          ResolutionSummary: =Local.ResolutionSteps
         externalLoop:
           when: =Not(Local.EscalationParameters.IsComplete)
       output:
