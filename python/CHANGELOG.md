@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251112] - 2025-11-12
+
+### Added
+
+- **agent-framework-azure-ai**: Azure AI client based on new `azure-ai-projects` package ([#1910](https://github.com/microsoft/agent-framework/pull/1910))
+- **agent-framework-anthropic**: Add convenience method on data content ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
+### Changed
+
+- **agent-framework-core**: Update OpenAI samples to use agents ([#2012](https://github.com/microsoft/agent-framework/pull/2012))
+
+### Fixed
+
+- **agent-framework-anthropic**: Fixed image handling in Anthropic client ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
 ## [1.0.0b251111] - 2025-11-11
 
 ### Added
@@ -204,7 +219,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112...HEAD
+[1.0.0b251112]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...python-1.0.0b251112
 [1.0.0b251111]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251108...python-1.0.0b251111
 [1.0.0b251108]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106.post1...python-1.0.0b251108
 [1.0.0b251106.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106...python-1.0.0b251106.post1
