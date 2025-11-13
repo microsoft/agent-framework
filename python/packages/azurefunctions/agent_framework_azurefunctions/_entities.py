@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import json
 from collections.abc import AsyncIterable
+from datetime import datetime, timezone
 from typing import Any, cast, Callable
 
 import azure.durable_functions as df
@@ -130,6 +131,12 @@ class AgentEntity:
             for m in state_request.messages:
                 chat_messages.append(m.to_chat_message())
 
+            # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
+            # Azure OpenAI doesn't support the 'metadata' field in messages
+            for msg in chat_messages:
+                if hasattr(msg, 'additional_properties'):
+                    msg.additional_properties = {}
+
             run_kwargs: dict[str, Any] = {"messages": chat_messages}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
@@ -208,6 +215,33 @@ class AgentEntity:
             logger.error(f"Error: {exc!s}")
             logger.error(f"Error type: {type(exc).__name__}")
             logger.error(f"Full traceback:\n{error_traceback}")
+
+            # Create error response and store it in conversation history so polling can find it
+            from agent_framework import ChatMessage, ErrorContent
+
+            # Get the pending request
+            pending_request = self._pending_requests.pop(correlation_id, None)
+
+            # Create error message
+            error_message = DurableAgentStateMessage.from_chat_message(
+                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
+            )
+
+            # Combine request and error response messages
+            messages = []
+            if pending_request:
+                messages.extend(pending_request.messages)
+            messages.append(error_message)
+
+            # Create and store error response in conversation history
+            error_state_response = DurableAgentStateResponse(
+                correlation_id=correlation_id,
+                created_at=datetime.now(tz=timezone.utc),
+                messages=messages,
+                extension_data=None,
+                usage=None
+            )
+            self.state.data.conversation_history.append(error_state_response)
 
             error_response = AgentResponse(
                 response=f"Error: {exc!s}",
