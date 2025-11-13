@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- CA2007: This rule should generally be suppressed in Durable Task libraries -->
+    <!-- MEAI001: UserInputRequestContent is experimental but used in source-generated code for AgentRunResponse -->
+    <NoWarn>$(NoWarn);CA2007;MEAI001</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- NuGet package metadata -->
+  <PropertyGroup>
+    <Title>Durable Task extensions for Microsoft Agent Framework</Title>
+    <Description>Provides distributed durable execution capabilities for agents built with Microsoft Agent Framework.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Durable Task dependencies -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DurableTask.Client" />
+    <PackageReference Include="Microsoft.DurableTask.Worker" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.DurableTask.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureFunctions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

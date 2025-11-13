@@ -5,6 +5,9 @@ import importlib
 from typing import Any
 
 _IMPORTS: dict[str, tuple[str, str]] = {
+    "AgentCallbackContext": ("agent_framework_azurefunctions", "azurefunctions"),
+    "AgentFunctionApp": ("agent_framework_azurefunctions", "azurefunctions"),
+    "AgentResponseCallbackProtocol": ("agent_framework_azurefunctions", "azurefunctions"),
     "AzureAIAgentClient": ("agent_framework_azure_ai", "azure-ai"),
     "AzureAIClient": ("agent_framework_azure_ai", "azure-ai"),
     "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "core"),
@@ -12,6 +15,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AzureAISettings": ("agent_framework_azure_ai", "azure-ai"),
     "AzureOpenAISettings": ("agent_framework.azure._shared", "core"),
     "AzureOpenAIResponsesClient": ("agent_framework.azure._responses_client", "core"),
+    "DurableAIAgent": ("agent_framework_azurefunctions", "azurefunctions"),
     "get_entra_auth_token": ("agent_framework.azure._entra_id_authentication", "core"),
 }
 
