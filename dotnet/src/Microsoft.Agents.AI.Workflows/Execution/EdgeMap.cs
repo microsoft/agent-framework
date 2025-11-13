@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,7 +13,7 @@ internal sealed class EdgeMap
 {
     private readonly Dictionary<EdgeId, EdgeRunner> _edgeRunners = [];
     private readonly Dictionary<EdgeId, IStatefulEdgeRunner> _statefulRunners = [];
-    private readonly Dictionary<string, ResponseEdgeRunner> _portEdgeRunners;
+    private readonly ConcurrentDictionary<string, ResponseEdgeRunner> _portEdgeRunners;
 
     private readonly ResponseEdgeRunner _inputRunner;
     private readonly IStepTracer? _stepTracer;
@@ -51,12 +52,16 @@ internal sealed class EdgeMap
             }
         }
 
-        this._portEdgeRunners = workflowPorts.ToDictionary(
-            port => port.Id,
-            port => ResponseEdgeRunner.ForPort(runContext, port)
-            );
+        this._portEdgeRunners = new();
+        foreach (RequestPort port in workflowPorts)
+        {
+            if (!this.TryRegisterPort(runContext, port.Id, port))
+            {
+                throw new InvalidOperationException($"Duplicate port ID detected: {port.Id}");
+            }
+        }
 
-        this._inputRunner = new ResponseEdgeRunner(runContext, startExecutorId);
+        this._inputRunner = new ResponseEdgeRunner(runContext, startExecutorId, "");
         this._stepTracer = stepTracer;
     }
 
@@ -70,6 +75,9 @@ internal sealed class EdgeMap
 
         return edgeRunner.ChaseEdgeAsync(message, this._stepTracer);
     }
+
+    public bool TryRegisterPort(IRunnerContext runContext, string executorId, RequestPort port)
+        => this._portEdgeRunners.TryAdd(port.Id, ResponseEdgeRunner.ForPort(runContext, executorId, port));
 
     public ValueTask<DeliveryMapping?> PrepareDeliveryForInputAsync(MessageEnvelope message)
     {

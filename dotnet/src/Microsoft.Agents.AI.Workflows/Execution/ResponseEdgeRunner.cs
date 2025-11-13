@@ -8,16 +8,18 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
-internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkId)
+internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string executorId, string sinkId)
     : EdgeRunner<string>(runContext, sinkId)
 {
-    public static ResponseEdgeRunner ForPort(IRunnerContext runContext, RequestPort port)
+    public static ResponseEdgeRunner ForPort(IRunnerContext runContext, string executorId, RequestPort port)
     {
         Throw.IfNull(port);
 
         // The port is an request port, so we can use the port's ID as the sink ID.
-        return new ResponseEdgeRunner(runContext, port.Id);
+        return new ResponseEdgeRunner(runContext, executorId, port.Id);
     }
+
+    public string ExecutorId => executorId;
 
     protected internal override async ValueTask<DeliveryMapping?> ChaseEdgeAsync(MessageEnvelope envelope, IStepTracer? stepTracer)
     {
@@ -27,7 +29,7 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkI
         activity?
             .SetTag(Tags.EdgeGroupType, nameof(ResponseEdgeRunner))
             .SetTag(Tags.MessageSourceId, envelope.SourceId)
-            .SetTag(Tags.MessageTargetId, this.EdgeData);
+            .SetTag(Tags.MessageTargetId, $"{this.ExecutorId}[{this.EdgeData}]");
 
         try
         {
@@ -48,5 +50,5 @@ internal sealed class ResponseEdgeRunner(IRunnerContext runContext, string sinkI
         }
     }
 
-    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.EdgeData, tracer).ConfigureAwait(false);
+    private async ValueTask<Executor> FindExecutorAsync(IStepTracer? tracer) => await this.RunContext.EnsureExecutorAsync(this.ExecutorId, tracer).ConfigureAwait(false);
 }

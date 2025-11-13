@@ -180,7 +180,7 @@ public class SpecializedExecutorSmokeTests
         List<ChatMessage> expected = TestAIAgent.ToChatMessages(MessageStrings);
 
         TestAIAgent agent = new(expected);
-        AIAgentHostExecutor host = new(agent);
+        AIAgentHostExecutor host = new(agent, new());
 
         TestWorkflowContext collectingContext = new(host.Id);
 

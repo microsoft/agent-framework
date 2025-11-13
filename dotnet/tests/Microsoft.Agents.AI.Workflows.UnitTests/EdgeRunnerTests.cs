@@ -28,9 +28,11 @@ public class EdgeRunnerTests
             : null;
 
         TestRunContext runContext = new();
-
-        runContext.Executors["executor1"] = new ForwardMessageExecutor<string>("executor1");
-        runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
+        runContext.ConfigureExecutors(
+            [
+                new ForwardMessageExecutor<string>("executor1"),
+                new ForwardMessageExecutor<string>("executor2")
+            ]);
 
         DirectEdgeData edgeData = new("executor1", "executor2", new EdgeId(0), condition);
         DirectEdgeRunner runner = new(runContext, edgeData);
@@ -78,9 +80,11 @@ public class EdgeRunnerTests
     {
         TestRunContext runContext = new();
 
-        runContext.Executors["executor1"] = new ForwardMessageExecutor<string>("executor1");
-        runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
-        runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
+        runContext.ConfigureExecutors([
+                new ForwardMessageExecutor<string>("executor1"),
+                new ForwardMessageExecutor<string>("executor2"),
+                new ForwardMessageExecutor<string>("executor3")
+            ]);
 
         Func<object?, int, IEnumerable<int>>? assigner
             = assignerSelectsEmpty.HasValue
@@ -150,10 +154,11 @@ public class EdgeRunnerTests
     public async Task Test_FanInEdgeRunnerAsync()
     {
         TestRunContext runContext = new();
-
-        runContext.Executors["executor1"] = new ForwardMessageExecutor<string>("executor1");
-        runContext.Executors["executor2"] = new ForwardMessageExecutor<string>("executor2");
-        runContext.Executors["executor3"] = new ForwardMessageExecutor<string>("executor3");
+        runContext.ConfigureExecutors([
+            new ForwardMessageExecutor<string>("executor1"),
+            new ForwardMessageExecutor<string>("executor2"),
+            new ForwardMessageExecutor<string>("executor3")
+        ]);
 
         FanInEdgeData edgeData = new(["executor1", "executor2"], "executor3", new EdgeId(0), null);
         FanInEdgeRunner runner = new(runContext, edgeData);
