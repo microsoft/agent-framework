@@ -13,7 +13,7 @@ internal static class AgentFactory
     public static async ValueTask<AgentVersion> CreateAgentAsync(
         this AgentClient agentClient,
         string agentName,
-        PromptAgentDefinition agentDefinition,
+        AgentDefinition agentDefinition,
         string agentDescription)
     {
         AgentVersionCreationOptions options =
