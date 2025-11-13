@@ -111,7 +111,7 @@ trigger:
 
             # Capture the attempted resolution steps.
             - kind: SetVariable
-              id: capture_attempted_resolution
+              id: capture_support_resolution
               variable: Local.ResolutionSteps
               value: =Local.ServiceParameters.ResolutionSummary
 
