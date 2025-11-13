@@ -13,8 +13,6 @@ from enum import Enum
 from typing import Any, Protocol, TypeVar, Union, cast
 from uuid import uuid4
 
-from typing_extensions import override
-
 from agent_framework import (
     AgentProtocol,
     AgentRunResponse,
@@ -47,9 +45,15 @@ from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 

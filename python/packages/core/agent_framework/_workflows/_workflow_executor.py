@@ -2,11 +2,10 @@
 
 import asyncio
 import logging
+import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-
-from typing_extensions import override
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -26,6 +25,12 @@ from ._runner_context import Message
 from ._typing_utils import is_instance_of
 from ._workflow import WorkflowRunResult
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 

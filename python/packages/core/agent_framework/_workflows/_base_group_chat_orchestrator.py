@@ -4,16 +4,21 @@
 
 import inspect
 import logging
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
-
-from typing_extensions import override
 
 from .._types import ChatMessage
 from ._executor import Executor
 from ._orchestrator_helpers import ParticipantRegistry
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 

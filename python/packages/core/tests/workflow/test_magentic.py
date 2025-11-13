@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
-from typing_extensions import override
 
 from agent_framework import (
     AgentRunResponse,
@@ -42,6 +42,11 @@ from agent_framework._workflows._magentic import (  # type: ignore[reportPrivate
     _MagenticProgressLedgerItem,  # type: ignore
     _MagenticStartMessage,  # type: ignore
 )
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 
 def test_magentic_start_message_from_string():

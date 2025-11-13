@@ -16,11 +16,10 @@ Key properties:
 
 import logging
 import re
+import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
-
-from typing_extensions import override
 
 from agent_framework import (
     AgentProtocol,
@@ -51,6 +50,12 @@ from ._request_info_mixin import response_handler
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 

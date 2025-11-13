@@ -1,10 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any, cast
-
-from typing_extensions import override
 
 from agent_framework import FunctionApprovalRequestContent, FunctionApprovalResponseContent
 
@@ -21,6 +20,11 @@ from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 logger = logging.getLogger(__name__)
 
