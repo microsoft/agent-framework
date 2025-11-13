@@ -4,7 +4,7 @@ using System.ComponentModel;
 
 namespace Demo.Workflows.Declarative.CustomerSupport;
 
-public sealed class TicketingPlugin
+internal sealed class TicketingPlugin
 {
     private readonly Dictionary<string, TicketItem> _ticketStore = [];
 

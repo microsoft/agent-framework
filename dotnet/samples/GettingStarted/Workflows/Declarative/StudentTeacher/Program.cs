@@ -14,7 +14,7 @@ namespace Demo.Workflows.Declarative.StudentTeacher;
 /// </summary>
 /// <remarks>
 /// See the README.md file in the parent folder (../README.md) for detailed
-/// information the configuration required to run this sample.
+/// information about the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program
 {
