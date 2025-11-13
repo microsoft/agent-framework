@@ -36,7 +36,7 @@ try
     while (true)
     {
         string? message;
-        
+
         if (autoMode)
         {
             if (queryIndex >= queries.Count)
@@ -112,4 +112,3 @@ catch (Exception ex)
 {
     Console.WriteLine($"\nAn error occurred: {ex.Message}");
 }
-
