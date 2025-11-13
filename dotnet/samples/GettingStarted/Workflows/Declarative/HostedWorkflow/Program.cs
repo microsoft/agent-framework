@@ -135,16 +135,13 @@ internal sealed class Program
         if (args.Length > 0)
         {
             string[] workflowInput = [.. args.Skip(1)];
-
             input = workflowInput.FirstOrDefault();
         }
 
         try
         {
             Console.ForegroundColor = ConsoleColor.DarkGreen;
-
             Console.Write("\nINPUT: ");
-
             Console.ForegroundColor = ConsoleColor.White;
 
             if (!string.IsNullOrWhiteSpace(input))
@@ -152,6 +149,7 @@ internal sealed class Program
                 Console.WriteLine(input);
                 return input;
             }
+
             while (string.IsNullOrWhiteSpace(input))
             {
                 input = Console.ReadLine();
