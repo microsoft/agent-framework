@@ -341,9 +341,9 @@ class TestAgentEntityOperations:
         assert result["response"] == "Test response"
         assert result["message"] == "Test message"
         assert result["thread_id"] == "test-conv-123"
-        assert entity.state.message_count == 1
+        assert entity.state.messageCount == 1
 
-    async def test_entity_stores_conversation_history(self) -> None:
+    async def test_entity_stores_conversationHistory(self) -> None:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
@@ -358,7 +358,7 @@ class TestAgentEntityOperations:
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-2"}
         )
 
-        history = entity.state.data.conversation_history[0].messages
+        history = entity.state.data.conversationHistory[0].messages
         assert len(history) == 2  # User + assistant
 
         # Send second message
@@ -366,7 +366,7 @@ class TestAgentEntityOperations:
             mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlation_id": "corr-app-entity-2"}
         )
 
-        history2= entity.state.data.conversation_history[1].messages
+        history2= entity.state.data.conversationHistory[1].messages
         assert len(history2) == 2  # User + assistant
 
         user_msg = history[0]
@@ -379,7 +379,7 @@ class TestAgentEntityOperations:
         assert assistant_role == "assistant"
         assert assistant_msg.text == "Response 1"
 
-    async def test_entity_increments_message_count(self) -> None:
+    async def test_entity_increments_messageCount(self) -> None:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
@@ -389,17 +389,17 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert len(entity.state.data.conversation_history) == 0
+        assert len(entity.state.data.conversationHistory) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
         )
-        assert len(entity.state.data.conversation_history) == 1
+        assert len(entity.state.data.conversationHistory) == 1
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
         )
-        assert len(entity.state.data.conversation_history[0].messages) == 2
+        assert len(entity.state.data.conversationHistory[0].messages) == 2
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -413,7 +413,7 @@ class TestAgentEntityOperations:
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert len(entity.state.data.conversation_history) == 0
+        assert len(entity.state.data.conversationHistory) == 0
 
 
 class TestAgentEntityFactory:
@@ -461,9 +461,9 @@ class TestAgentEntityFactory:
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = {
-            "message_count": 5,
-            "conversation_history": [{"role": "user", "content": "test"}],
-            "last_response": "Test",
+            "messageCount": 5,
+            "conversationHistory": [{"role": "user", "content": "test"}],
+            "lastResponse": "Test",
         }
 
         # Execute entity function
@@ -500,9 +500,9 @@ class TestAgentEntityFactory:
 
         # Mock context with existing state
         existing_state = {
-            "message_count": 3,
-            "conversation_history": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
-            "last_response": "resp1",
+            "messageCount": 3,
+            "conversationHistory": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
+            "lastResponse": "resp1",
         }
 
         mock_context = Mock()

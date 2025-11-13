@@ -23,6 +23,7 @@ from ._durable_agent_state import (
     DurableAgentStateData,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
+    DurableAgentStateMessage
 )
 from ._models import AgentResponse, RunRequest
 
@@ -96,22 +97,22 @@ class AgentEntity:
 
         message = run_request.message
         thread_id = run_request.thread_id
-        correlation_id = run_request.correlation_id
+        correlationId = run_request.correlation_id
         if not thread_id:
             raise ValueError("RunRequest must include a thread_id")
-        if not correlation_id:
-            raise ValueError("RunRequest must include a correlation_id")
+        if not correlationId:
+            raise ValueError("RunRequest must include a correlationId")
         role = run_request.role or Role.USER
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
         # Store request in pending (will be combined with response later)
         state_request = DurableAgentStateRequest.from_run_request(run_request)
-        self._pending_requests[correlation_id] = state_request
+        self._pending_requests[correlationId] = state_request
 
         logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
         logger.debug(f"[AgentEntity.run_agent] Thread ID: {thread_id}")
-        logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlation_id}")
+        logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlationId}")
         logger.debug(f"[AgentEntity.run_agent] Role: {role.value}")
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
@@ -124,7 +125,7 @@ class AgentEntity:
             # Build messages from conversation history plus the current request
             chat_messages = [
                 m.to_chat_message()
-                for entry in self.state.data.conversation_history
+                for entry in self.state.data.conversationHistory
                 for m in entry.messages
             ]
             # Add the current request message
@@ -145,7 +146,7 @@ class AgentEntity:
 
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
-                correlation_id=correlation_id,
+                correlation_id=correlationId,
                 thread_id=thread_id,
                 request_message=message,
             )
@@ -156,15 +157,15 @@ class AgentEntity:
             )
 
             # Convert response into DurableAgentStateResponse and combine with request
-            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
+            state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
 
             # Get the pending request and combine its messages with the response messages
-            pending_request = self._pending_requests.pop(correlation_id, None)
+            pending_request = self._pending_requests.pop(correlationId, None)
             if pending_request:
                 # Combine request and response messages into a single entry
                 state_response.messages = pending_request.messages + state_response.messages
 
-            self.state.data.conversation_history.append(state_response)
+            self.state.data.conversationHistory.append(state_response)
 
             response_text = None
             structured_response = None
@@ -196,13 +197,13 @@ class AgentEntity:
                 message=str(message),
                 thread_id=str(thread_id),
                 status="success",
-                message_count=len(self.state.data.conversation_history),
+                message_count=len(self.state.data.conversationHistory),
                 structured_response=structured_response,
             )
             result = agent_response.to_dict()
 
             content = json.dumps(structured_response) if structured_response else (response_text or "")
-            self.state.add_assistant_message(content, agent_run_response, correlation_id)
+            self.state.add_assistant_message(content, agent_run_response, correlationId)
             logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
 
             return result
@@ -220,11 +221,11 @@ class AgentEntity:
             from agent_framework import ChatMessage, ErrorContent
 
             # Get the pending request
-            pending_request = self._pending_requests.pop(correlation_id, None)
+            pending_request = self._pending_requests.pop(correlationId, None)
 
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(
-                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
+                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), errorCode=type(exc).__name__)])
             )
 
             # Combine request and error response messages
@@ -235,20 +236,20 @@ class AgentEntity:
 
             # Create and store error response in conversation history
             error_state_response = DurableAgentStateResponse(
-                correlation_id=correlation_id,
-                created_at=datetime.now(tz=timezone.utc),
+                correlationId=correlationId,
+                createdAt=datetime.now(tz=timezone.utc),
                 messages=messages,
-                extension_data=None,
+                extensionData=None,
                 usage=None
             )
-            self.state.data.conversation_history.append(error_state_response)
+            self.state.data.conversationHistory.append(error_state_response)
 
             error_response = AgentResponse(
                 response=f"Error: {exc!s}",
                 message=str(message),
                 thread_id=str(thread_id),
                 status="error",
-                message_count=len(self.state.data.conversation_history),
+                message_count=len(self.state.data.conversationHistory),
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
@@ -395,7 +396,7 @@ class AgentEntity:
     def reset(self, context: df.DurableEntityContext) -> None:
         """Reset the entity state (clear conversation history)."""
         logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.data = DurableAgentStateData(conversation_history=[])
+        self.state.data = DurableAgentStateData(conversationHistory=[])
         logger.debug("[AgentEntity.reset] State reset complete")
 
 
@@ -426,7 +427,7 @@ def create_agent_entity(
             if current_state is not None:
                 entity.state.restore_state(current_state)
                 logger.debug(
-                    "[entity_function] Restored entity from state (message_count: %s)", entity.state.message_count
+                    "[entity_function] Restored entity from state (messageCount: %s)", entity.state.messageCount
                 )
             else:
                 logger.debug("[entity_function] Created new entity instance")
