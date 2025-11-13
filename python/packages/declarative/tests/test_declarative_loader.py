@@ -2,10 +2,11 @@
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
-from agent_framework_declarative._loader import load_yaml_spec
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -33,6 +34,7 @@ from agent_framework_declarative._models import (
     Resource,
     ToolResource,
     WebSearchTool,
+    agent_schema_dispatch,
 )
 
 pytestmark = pytest.mark.skipif(sys.version_info >= (3, 14), reason="Skipping on Python 3.14+")
@@ -286,9 +288,9 @@ kind: approval_mode
         ),
     ],
 )
-def test_load_yaml_spec_all_types(yaml_content, expected_type, expected_attributes):
-    """Test that load_yaml_spec correctly loads all MAML object types."""
-    result = load_yaml_spec(yaml_content)
+def test_agent_schema_dispatch_all_types(yaml_content: str, expected_type: type, expected_attributes: dict[str, Any]):
+    """Test that agent_schema_dispatch correctly loads all MAML object types."""
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
 
     # Check the type is correct
     assert isinstance(result, expected_type), f"Expected {expected_type.__name__}, got {type(result).__name__}"
@@ -301,17 +303,17 @@ def test_load_yaml_spec_all_types(yaml_content, expected_type, expected_attribut
         )
 
 
-def test_load_yaml_spec_unknown_kind():
-    """Test that load_yaml_spec returns None for unknown kind."""
+def test_agent_schema_dispatch_unknown_kind():
+    """Test that agent_schema_dispatch returns None for unknown kind."""
     yaml_content = """
 kind: unknown_type
 name: test
 """
-    result = load_yaml_spec(yaml_content)
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
     assert result is None
 
 
-def test_load_yaml_spec_complex_agent_manifest():
+def test_agent_schema_dispatch_complex_agent_manifest():
     """Test loading a complex agent manifest with nested objects."""
     yaml_content = """
 name: complex-manifest
@@ -338,7 +340,7 @@ resources:
     name: tool1
     id: search
 """
-    result = load_yaml_spec(yaml_content)
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
 
     assert isinstance(result, AgentManifest)
     assert result.name == "complex-manifest"
@@ -350,7 +352,7 @@ resources:
     assert isinstance(result.resources[1], ToolResource)
 
 
-def test_load_yaml_spec_prompt_agent_with_tools():
+def test_agent_schema_dispatch_prompt_agent_with_tools():
     """Test loading a prompt agent with multiple tools."""
     yaml_content = """
 kind: Prompt
@@ -369,7 +371,7 @@ tools:
     name: code
     description: Execute code
 """
-    result = load_yaml_spec(yaml_content)
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
 
     assert isinstance(result, PromptAgent)
     assert result.name == "multi-tool-agent"
@@ -380,20 +382,20 @@ tools:
     assert result.tools[2].kind == "code_interpreter"
 
 
-def test_load_yaml_spec_model_resource():
+def test_agent_schema_dispatch_model_resource():
     """Test loading a model resource."""
     yaml_content = """
 kind: Model
 name: my-model
 id: gpt-4
 """
-    result = load_yaml_spec(yaml_content)
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
 
     assert isinstance(result, ModelResource)
     assert result.id == "gpt-4"
 
 
-def test_load_yaml_spec_property_schema_with_nested_properties():
+def test_agent_schema_dispatch_property_schema_with_nested_properties():
     """Test loading a property schema with nested properties."""
     yaml_content = """
 kind: property_schema
@@ -416,7 +418,7 @@ properties:
     name: tags
     description: User tags
 """
-    result = load_yaml_spec(yaml_content)
+    result = agent_schema_dispatch(yaml.safe_load(yaml_content))
 
     assert isinstance(result, PropertySchema)
     assert result.strict is True
@@ -427,7 +429,7 @@ properties:
     assert result.properties[2].kind == "array"
 
 
-def _get_agent_sample_yaml_files():
+def _get_agent_sample_yaml_files() -> list[tuple[Path, Path]]:
     """Helper function to collect all YAML files from agent-samples directory."""
     current_file = Path(__file__)
     repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
@@ -445,10 +447,10 @@ def _get_agent_sample_yaml_files():
     _get_agent_sample_yaml_files(),
     ids=lambda x: x[0].name if isinstance(x, tuple) else str(x),
 )
-def test_load_yaml_spec_agent_samples(yaml_file: Path, agent_samples_dir: Path):
-    """Test that load_yaml_spec successfully loads a YAML file from agent-samples directory."""
+def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir: Path):
+    """Test that agent_schema_dispatch successfully loads a YAML file from agent-samples directory."""
     with open(yaml_file) as f:
         content = f.read()
-    result = load_yaml_spec(content)
+    result = agent_schema_dispatch(yaml.safe_load(content))
     # Result can be None for unknown kinds, but should not raise exceptions
-    assert result is not None, f"load_yaml_spec returned None for {yaml_file.relative_to(agent_samples_dir)}"
+    assert result is not None, f"agent_schema_dispatch returned None for {yaml_file.relative_to(agent_samples_dir)}"

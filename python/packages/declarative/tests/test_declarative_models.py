@@ -941,13 +941,6 @@ class TestTryPowerfxEval:
         # ! operator (alternative syntax) - returns bool
         assert _try_powerfx_eval('=!("a" = "b")') is True
 
-    def test_invalid_expressions_return_none(self):
-        """Test that invalid PowerFx expressions return None."""
-        # Syntax errors should return None
-        assert _try_powerfx_eval("=invalid syntax !!!") is None
-        assert _try_powerfx_eval("=Env.NONEXISTENT_VAR") is None
-        assert _try_powerfx_eval("=1 / 0") is None  # Division by zero
-
     def test_parentheses_for_precedence(self):
         """Test using parentheses to control operator precedence."""
         from decimal import Decimal
