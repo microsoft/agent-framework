@@ -19,7 +19,6 @@ Content-Type: application/json
 
 
 ### Check the status of the orchestration
-@instanceId =61313ab0a74f4738a1c6552cf8f0b89d
-#<Replace with the instance ID from the response above>
+@instanceId =<Replace with the instance ID from the response above>
 
 GET http://localhost:7071/api/spamdetection/status/{{instanceId}}
