@@ -14,7 +14,7 @@ to search the web for current information and provide grounded responses.
 Prerequisites:
 1. Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME environment variables.
 2. Ensure you have a Bing connection configured in your Azure AI project
-   and set BING_CONNECTION_ID environment variable.
+   and set BING_PROJECT_CONNECTION_ID environment variable.
 
 To get your Bing connection ID:
 - Go to Azure AI Foundry portal (https://ai.azure.com)
