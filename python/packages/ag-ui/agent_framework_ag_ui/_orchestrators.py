@@ -316,43 +316,66 @@ class DefaultOrchestrator(Orchestrator):
                     )
                     continue
 
-                if role_value == "user" and pending_confirm_changes_id:
-                    # Check if this is a confirm_changes response (JSON with "accepted" field)
-                    user_text = ""
-                    for content in msg.contents or []:
-                        if isinstance(content, TextContent):
-                            user_text = content.text
-                            break
+                if role_value == "user":
+                    # Check if this user message is a confirm_changes response (JSON with "accepted" field)
+                    # This must be checked BEFORE injecting synthetic results for pending tool calls
+                    if pending_confirm_changes_id:
+                        user_text = ""
+                        for content in msg.contents or []:
+                            if isinstance(content, TextContent):
+                                user_text = content.text
+                                break
 
-                    try:
-                        parsed = json.loads(user_text)
-                        if "accepted" in parsed:
-                            # This is a confirm_changes response - inject synthetic tool result
-                            logger.info(
-                                f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
-                            )
+                        try:
+                            parsed = json.loads(user_text)
+                            if "accepted" in parsed:
+                                # This is a confirm_changes response - inject synthetic tool result
+                                logger.info(
+                                    f"Injecting synthetic tool result for confirm_changes call_id={pending_confirm_changes_id}"
+                                )
+                                synthetic_result = ChatMessage(
+                                    role="tool",
+                                    contents=[
+                                        FunctionResultContent(
+                                            call_id=pending_confirm_changes_id,
+                                            result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                        )
+                                    ],
+                                )
+                                sanitized.append(synthetic_result)
+                                if pending_tool_call_ids:
+                                    pending_tool_call_ids.discard(pending_confirm_changes_id)
+                                pending_confirm_changes_id = None
+                                # Don't add the user message to sanitized - it's been converted to tool result
+                                continue
+                        except (json.JSONDecodeError, KeyError) as e:
+                            # Failed to parse user message as confirm_changes response; continue normal processing
+                            logger.debug(f"Could not parse user message as confirm_changes response: {e}")
+
+                    # Before processing user message, check if there are pending tool calls without results
+                    # This happens when assistant made multiple tool calls but only some got results
+                    # This is checked AFTER confirm_changes special handling above
+                    if pending_tool_call_ids:
+                        logger.info(
+                            f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - injecting synthetic results"
+                        )
+                        for pending_call_id in pending_tool_call_ids:
+                            logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
                             synthetic_result = ChatMessage(
                                 role="tool",
                                 contents=[
                                     FunctionResultContent(
-                                        call_id=pending_confirm_changes_id,
-                                        result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                        call_id=pending_call_id,
+                                        result="Tool execution skipped - user provided follow-up message",
                                     )
                                 ],
                             )
                             sanitized.append(synthetic_result)
-                            if pending_tool_call_ids:
-                                pending_tool_call_ids.discard(pending_confirm_changes_id)
-                            pending_confirm_changes_id = None
-                            # Don't add the user message to sanitized - it's been converted to tool result
-                            continue
-                    except (json.JSONDecodeError, KeyError) as e:
-                        # Failed to parse user message as confirm_changes response; continue normal processing
-                        logger.debug(f"Could not parse user message as confirm_changes response: {e}")
+                        pending_tool_call_ids = None
+                        pending_confirm_changes_id = None
 
-                    # Not a confirm_changes response, continue normal processing
+                    # Normal user message processing
                     sanitized.append(msg)
-                    pending_tool_call_ids = None
                     pending_confirm_changes_id = None
                     continue
 
@@ -365,6 +388,14 @@ class DefaultOrchestrator(Orchestrator):
                             call_id = str(content.call_id)
                             if call_id in pending_tool_call_ids:
                                 keep = True
+                                # Note: We do NOT remove call_id from pending here.
+                                # This allows duplicate tool results to pass through sanitization
+                                # so the deduplicator can choose the best one (prefer non-empty results).
+                                # We only clear pending_tool_call_ids when a user message arrives.
+                                if call_id == pending_confirm_changes_id:
+                                    # For confirm_changes specifically, we do want to clear it
+                                    # since we only expect one response
+                                    pending_confirm_changes_id = None
                                 break
                     if keep:
                         sanitized.append(msg)

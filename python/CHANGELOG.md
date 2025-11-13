@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **agent-framework-azurefunctions**: Merge Azure Functions feature branch (#1916)
 
+### Fixed
+
+- **agent-framework-ag-ui**: fix tool call id mismatch in ag-ui ([#2166](https://github.com/microsoft/agent-framework/pull/2166))
+
 ## [1.0.0b251112] - 2025-11-12
 
 ### Added
