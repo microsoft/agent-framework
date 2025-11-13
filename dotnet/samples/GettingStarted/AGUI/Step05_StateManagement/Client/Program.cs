@@ -45,7 +45,7 @@ try
     while (true)
     {
         string? message;
-        
+
         if (queries.Length > 0)
         {
             if (queryIndex >= queries.Length)
@@ -173,20 +173,31 @@ static void DisplayState(RecipeState? state)
 
     if (!string.IsNullOrEmpty(state.Title))
     {
-        Console.WriteLine($"\nRecipe:");
+        Console.WriteLine("\nRecipe:");
         Console.WriteLine($"  Title: {state.Title}");
         if (!string.IsNullOrEmpty(state.Cuisine))
+        {
             Console.WriteLine($"  Cuisine: {state.Cuisine}");
+        }
+
         if (!string.IsNullOrEmpty(state.SkillLevel))
+        {
             Console.WriteLine($"  Skill Level: {state.SkillLevel}");
+        }
+
         if (state.PrepTimeMinutes > 0)
+        {
             Console.WriteLine($"  Prep Time: {state.PrepTimeMinutes} minutes");
+        }
+
         if (state.CookTimeMinutes > 0)
+        {
             Console.WriteLine($"  Cook Time: {state.CookTimeMinutes} minutes");
+        }
 
         if (state.Ingredients.Count > 0)
         {
-            Console.WriteLine($"\n  Ingredients:");
+            Console.WriteLine("\n  Ingredients:");
             foreach (var ingredient in state.Ingredients)
             {
                 Console.WriteLine($"    - {ingredient}");
@@ -195,7 +206,7 @@ static void DisplayState(RecipeState? state)
 
         if (state.Steps.Count > 0)
         {
-            Console.WriteLine($"\n  Steps:");
+            Console.WriteLine("\n  Steps:");
             for (int i = 0; i < state.Steps.Count; i++)
             {
                 Console.WriteLine($"    {i + 1}. {state.Steps[i]}");
@@ -245,4 +256,3 @@ internal sealed class RecipeState
 [JsonSerializable(typeof(RecipeState))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class RecipeSerializerContext : JsonSerializerContext;
-

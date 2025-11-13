@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -18,7 +18,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
     public ServerFunctionApprovalAgent(AIAgent innerAgent, JsonSerializerOptions jsonSerializerOptions)
         : base(innerAgent)
     {
-        _jsonSerializerOptions = jsonSerializerOptions;
+        this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
     public override Task<AgentRunResponse> RunAsync(
@@ -27,7 +27,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return RunStreamingAsync(messages, thread, options, cancellationToken)
+        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
             .ToAgentRunResponseAsync(cancellationToken);
     }
 
@@ -38,13 +38,13 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Process and transform incoming approval responses from client, creating a new message list
-        var processedMessages = ProcessIncomingFunctionApprovals(messages, _jsonSerializerOptions);
+        var processedMessages = ProcessIncomingFunctionApprovals(messages, this._jsonSerializerOptions);
 
         // Run the inner agent and intercept any approval requests
-        await foreach (var update in InnerAgent.RunStreamingAsync(
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(
             processedMessages, thread, options, cancellationToken).ConfigureAwait(false))
         {
-            yield return ProcessOutgoingApprovalRequests(update, _jsonSerializerOptions);
+            yield return ProcessOutgoingApprovalRequests(update, this._jsonSerializerOptions);
         }
     }
 
@@ -119,7 +119,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         List<ChatMessage>? result = null;
 
         // Track approval ID to original call ID mapping
-        var approvalIdToCallId = new Dictionary<string, string>();
+        _ = new Dictionary<string, string>();
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         Dictionary<string, FunctionApprovalRequestContent> trackedRequestApprovalToolCalls = new(); // Remote approvals
         for (int messageIndex = 0; messageIndex < messagesList.Count; messageIndex++)
@@ -223,10 +223,8 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
                 ContinuationToken = update.ContinuationToken
             };
         }
-        else
-        {
-            return update;
-        }
+
+        return update;
     }
 }
 

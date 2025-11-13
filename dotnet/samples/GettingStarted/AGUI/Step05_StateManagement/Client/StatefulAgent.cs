@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -11,7 +11,7 @@ namespace RecipeClient;
 /// A delegating agent that manages client-side state and automatically attaches it to requests.
 /// </summary>
 /// <typeparam name="TState">The state type.</typeparam>
-internal sealed class StatefulAgent<TState> : DelegatingAIAgent 
+internal sealed class StatefulAgent<TState> : DelegatingAIAgent
     where TState : class, new()
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions;
@@ -54,7 +54,7 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
     {
         // Add state to messages
         List<ChatMessage> messagesWithState = [.. messages];
-        
+
         // Serialize the state using AgentState wrapper
         byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
             this.State,

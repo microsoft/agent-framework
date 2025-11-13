@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ComponentModel;
 using System.Text.Json.Serialization;
@@ -115,5 +115,3 @@ internal sealed class RestaurantInfo
 [JsonSerializable(typeof(RestaurantSearchRequest))]
 [JsonSerializable(typeof(RestaurantSearchResponse))]
 internal sealed partial class SampleJsonSerializerContext : JsonSerializerContext;
-
-

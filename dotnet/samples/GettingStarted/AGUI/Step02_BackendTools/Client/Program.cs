@@ -36,7 +36,7 @@ try
     while (true)
     {
         string? message;
-        
+
         if (autoMode)
         {
             if (queryIndex >= queries.Count)
@@ -99,7 +99,7 @@ try
                     case FunctionCallContent functionCallContent:
                         Console.ForegroundColor = ConsoleColor.Green;
                         Console.WriteLine($"\n[Function Call - Name: {functionCallContent.Name}]");
-                        
+
                         // Display individual parameters
                         if (functionCallContent.Arguments != null)
                         {
@@ -114,7 +114,7 @@ try
                     case FunctionResultContent functionResultContent:
                         Console.ForegroundColor = ConsoleColor.Magenta;
                         Console.WriteLine($"\n[Function Result - CallId: {functionResultContent.CallId}]");
-                        
+
                         if (functionResultContent.Exception != null)
                         {
                             Console.WriteLine($"  Exception: {functionResultContent.Exception}");
@@ -144,4 +144,3 @@ catch (Exception ex)
 {
     Console.WriteLine($"\nAn error occurred: {ex.Message}");
 }
-

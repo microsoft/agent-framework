@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -8,7 +8,7 @@ using Microsoft.Extensions.AI;
 
 /// <summary>
 /// A delegating agent that handles server function approval requests and responses.
-/// Transforms between FunctionApprovalRequestContent/FunctionApprovalResponseContent 
+/// Transforms between FunctionApprovalRequestContent/FunctionApprovalResponseContent
 /// and the server's request_approval tool call pattern.
 /// </summary>
 internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
@@ -18,7 +18,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
     public ServerFunctionApprovalClientAgent(AIAgent innerAgent, JsonSerializerOptions jsonSerializerOptions)
         : base(innerAgent)
     {
-        _jsonSerializerOptions = jsonSerializerOptions;
+        this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
     public override Task<AgentRunResponse> RunAsync(
@@ -27,7 +27,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return RunStreamingAsync(messages, thread, options, cancellationToken)
+        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
             .ToAgentRunResponseAsync(cancellationToken);
     }
 
@@ -38,13 +38,13 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Process and transform approval messages, creating a new message list
-        var processedMessages = ProcessOutgoingServerFunctionApprovals(messages, _jsonSerializerOptions);
+        var processedMessages = ProcessOutgoingServerFunctionApprovals(messages, this._jsonSerializerOptions);
 
         // Run the inner agent and intercept any approval requests
-        await foreach (var update in InnerAgent.RunStreamingAsync(
+        await foreach (var update in this.InnerAgent.RunStreamingAsync(
             processedMessages, thread, options, cancellationToken).ConfigureAwait(false))
         {
-            yield return ProcessIncomingServerApprovalRequests(update, _jsonSerializerOptions);
+            yield return ProcessIncomingServerApprovalRequests(update, this._jsonSerializerOptions);
         }
     }
 
@@ -137,9 +137,8 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 }
             }
 
-            if (transformedContents != null && transformedContents.Count == 0)
+            if (transformedContents?.Count == 0)
             {
-                transformedContents = null; // Entire message is skipped
                 continue;
             }
             else if (transformedContents != null)
@@ -232,10 +231,8 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 ContinuationToken = update.ContinuationToken,
             };
         }
-        else
-        {
-            return update;
-        }
+
+        return update;
     }
 }
 #pragma warning restore MEAI001

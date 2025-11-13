@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -18,7 +18,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
     }
 
     public override Task<AgentRunResponse> RunAsync(
-        IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -28,7 +28,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
     }
 
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages,
+        IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -80,8 +80,8 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             schemaDescription: "A response containing a recipe with title, skill level, cooking time, ingredients, and instructions");
 
         // Add current state to the conversation - state is already a JsonElement
-        Microsoft.Extensions.AI.ChatMessage stateUpdateMessage = new(
-            Microsoft.Extensions.AI.ChatRole.System,
+        ChatMessage stateUpdateMessage = new(
+            ChatRole.System,
             [
                 new TextContent("Here is the current state in JSON format:"),
                 new TextContent(JsonSerializer.Serialize(state, this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))),
@@ -125,8 +125,8 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
 
         // Second run: Generate user-friendly summary
         var secondRunMessages = messages.Concat(response.Messages).Append(
-            new Microsoft.Extensions.AI.ChatMessage(
-                Microsoft.Extensions.AI.ChatRole.System,
+            new ChatMessage(
+                ChatRole.System,
                 [new TextContent("Please provide a concise summary of the state changes in at most two sentences.")]));
 
         await foreach (var update in this.InnerAgent.RunStreamingAsync(secondRunMessages, thread, options, cancellationToken).ConfigureAwait(false))
