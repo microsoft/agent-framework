@@ -98,7 +98,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                User your knowledge to work with the user to provide the best possible troubleshooting steps.
+                Use your knowledge to work with the user to provide the best possible troubleshooting steps.
 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
                 - If the user reports that the issue persists, then escalate.
@@ -145,7 +145,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                Alaways create a ticket in Azure DevOps.
+                Always create a ticket in Azure DevOps.
 
                 Include the following information in the TicketSummary.
 
@@ -211,7 +211,7 @@ internal sealed class Program
                 """
                 Determine how to route the given issue to the appropriate support team. 
 
-                Choose from the available teams and their fuctions:
+                Choose from the available teams and their functions:
                 - Windows Activation Support: Windows license activation issues
                 - Windows Support: Windows related issues
                 - Azure Support: Azure related issues
@@ -254,7 +254,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                User your knowledge to work with the user to provide the best possible troubleshooting steps
+                Use your knowledge to work with the user to provide the best possible troubleshooting steps
                 for issues related to Windows operating system.
                 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
@@ -358,7 +358,7 @@ internal sealed class Program
                 """
                 You escalate the provided issue to human support team by sending an email if the issue is not resolved.
 
-                Here are some additonal details that might help:
+                Here are some additional details that might help:
                 - TicketId : {{TicketId}}
                 - IssueDescription : {{IssueDescription}}
                 - AttemptedResolutionSteps : {{AttemptedResolutionSteps}}
@@ -420,7 +420,7 @@ internal sealed class Program
                                   "properties": {
                                     "IsComplete": {
                                       "type": "boolean",
-                                      "description": "Has the email has been sent and no more user input is required."
+                                      "description": "Has the email been sent and no more user input is required."
                                     },
                                     "UserMessage": {
                                       "type": "string",
