@@ -325,7 +325,7 @@ internal sealed class Program
                 Resolve the following ticket in Azure DevOps.
                 Always include the resolution details.
 
-                - Ticket ID: {{TicketId}}
+                - Ticket ID: #{{TicketId}}
                 - Resolution Summary: {{ResolutionSummary}}
                 """,
             Tools =

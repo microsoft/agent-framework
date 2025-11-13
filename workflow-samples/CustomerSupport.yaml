@@ -121,10 +121,6 @@ trigger:
                           TicketId: =Local.TicketParameters.TicketId
                           ResolutionSummary: =Local.SupportParameters.ResolutionSummary
 
-                    - kind: SendActivity
-                      id: log_resolution
-                      activity: "Resolved ticket #{Local.TicketParameters.TicketId}"
-
                     - kind: GotoAction
                       id: end_when_solved
                       actionId: all_done
