@@ -16,9 +16,9 @@ Set up the shared prerequisites outlined in `../README.md`, including the virtua
 Submit an email payload:
 
 ```bash
-curl.exe -X POST "http://localhost:7071/api/spamdetection/run" `
-  -H "Content-Type: application/json" `
-  -d '{ "email_id": "email-001", "email_content": "URGENT! You''ve won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!" }'
+curl -X POST "http://localhost:7071/api/spamdetection/run" \
+  -H "Content-Type: application/json" \
+  -d '{"email_id": "email-001", "email_content": "URGENT! You'\''ve won $1,000,000! Click here now to claim your prize! Limited time offer! Don'\''t miss out!"}'
 ```
 
 Poll the returned `statusQueryGetUri` or call the status route directly:
