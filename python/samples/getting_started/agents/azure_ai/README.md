@@ -17,6 +17,8 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_ai_with_hosted_mcp.py`](azure_ai_with_hosted_mcp.py) | Shows how to integrate hosted Model Context Protocol (MCP) tools with Azure AI Agent. |
 | [`azure_ai_with_response_format.py`](azure_ai_with_response_format.py) | Shows how to use structured outputs (response format) with Azure AI agents using Pydantic models to enforce specific response schemas. |
 | [`azure_ai_with_thread.py`](azure_ai_with_thread.py) | Demonstrates thread management with Azure AI agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
+| [`azure_ai_with_image_generation.py`](azure_ai_with_image_generation.py) | Shows how to use the `ImageGenTool` with Azure AI agents to generate images based on text prompts. |
+| [`azure_ai_with_web_search.py`](azure_ai_with_web_search.py) | Shows how to use the `HostedWebSearchTool` with Azure AI agents to perform web searches and retrieve up-to-date information from the internet. |
 
 ## Environment Variables
 
