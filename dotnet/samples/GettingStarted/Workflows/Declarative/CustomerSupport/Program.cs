@@ -255,7 +255,8 @@ internal sealed class Program
             Instructions =
                 """
                 Use your knowledge to work with the user to provide the best possible troubleshooting steps
-                for issues related to Windows operating system.
+                for issues related to Windows operating system.  Utilized the "Attempted Resolutions Steps" as
+                a starting point for your troubleshooting.
                 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
                 - If the user reports that the issue persists, then escalate.
