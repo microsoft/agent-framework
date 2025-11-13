@@ -1,0 +1,305 @@
+/* Shared State Demo Layout */
+.shared-state-layout {
+    display: flex;
+    height: 100%;
+    gap: 16px;
+    padding: 16px;
+    background-color: #f8f9fa;
+}
+
+/* Recipe Panel */
+.recipe-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    background-color: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow-y: auto;
+}
+
+/* Recipe Header */
+.recipe-header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.recipe-title {
+    font-size: 24px;
+    font-weight: 600;
+    border: none;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 8px 0;
+    background: transparent;
+    color: #111827;
+    width: 100%;
+}
+
+.recipe-title:focus {
+    outline: none;
+    border-bottom-color: #3b82f6;
+}
+
+.recipe-meta {
+    display: flex;
+    gap: 16px;
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.meta-icon {
+    font-size: 18px;
+}
+
+.meta-item select {
+    padding: 6px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    background-color: white;
+    font-size: 14px;
+    color: #374151;
+    cursor: pointer;
+}
+
+.meta-item select:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+/* Section Styles */
+.preferences-section,
+.ingredients-section,
+.instructions-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.preferences-section h2,
+.ingredients-section h2,
+.instructions-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+    margin: 0;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* Dietary Preferences */
+.preferences-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.preference-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background-color: #f3f4f6;
+    border-radius: 20px;
+    font-size: 14px;
+    color: #374151;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.preference-item:hover {
+    background-color: #e5e7eb;
+}
+
+.preference-item input[type="checkbox"] {
+    accent-color: #3b82f6;
+}
+
+/* Ingredients */
+.ingredients-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ingredient-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px;
+    background-color: #f9fafb;
+    border-radius: 8px;
+}
+
+.ingredient-icon {
+    font-size: 20px;
+    width: 32px;
+    text-align: center;
+}
+
+.ingredient-inputs {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+}
+
+.ingredient-inputs input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #374151;
+}
+
+.ingredient-inputs input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+/* Instructions */
+.instructions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.instruction-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px;
+    background-color: #f9fafb;
+    border-radius: 8px;
+}
+
+.step-number {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #3b82f6;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.instruction-row input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #374151;
+}
+
+.instruction-row input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+/* Buttons */
+.add-button {
+    padding: 6px 12px;
+    background-color: #e5e7eb;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #374151;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.add-button:hover {
+    background-color: #d1d5db;
+}
+
+.remove-button {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 18px;
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.remove-button:hover {
+    background-color: #fef2f2;
+    border-color: #fca5a5;
+    color: #ef4444;
+}
+
+.improve-button {
+    padding: 12px 24px;
+    background-color: #3b82f6;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    margin-top: auto;
+}
+
+.improve-button:hover:not(:disabled) {
+    background-color: #2563eb;
+}
+
+.improve-button:disabled {
+    background-color: #93c5fd;
+    cursor: not-allowed;
+}
+
+/* Chat Panel */
+.chat-panel {
+    width: 400px;
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.chat-header {
+    padding: 16px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.chat-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #111827;
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+}
+
+.chat-input-container {
+    padding: 16px;
+    border-top: 1px solid #e5e7eb;
+}

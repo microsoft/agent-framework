@@ -1,0 +1,44 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using AGUIDojoClient.Components.Shared
+@inject DemoService DemoService
+@inject NavigationManager Nav
+
+<div class="demo-sidebar">
+    <div class="demo-sidebar-header">
+        <h1>AG-UI Dojo</h1>
+        <p>Microsoft Agent Framework (.NET)</p>
+    </div>
+    <div class="demo-sidebar-list">
+        @foreach (DemoScenario scenario in DemoService.AllScenarios)
+        {
+            <button class="demo-item @(IsSelected(scenario.Id) ? "selected" : "")"
+                    @onclick="@(() => NavigateToScenario(scenario.Id))">
+                <div class="demo-icon">@scenario.Icon</div>
+                <div class="demo-content">
+                    <div class="demo-title">@scenario.Title</div>
+                    <div class="demo-description">@scenario.Description</div>
+                    <div class="demo-tags">
+                        @foreach (string tag in scenario.Tags)
+                        {
+                            <span class="demo-tag">@tag</span>
+                        }
+                    </div>
+                </div>
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// Gets or sets the currently selected scenario ID.
+    /// </summary>
+    [Parameter]
+    public string? CurrentScenarioId { get; set; }
+
+    private bool IsSelected(string scenarioId)
+        => CurrentScenarioId?.Equals(scenarioId, StringComparison.OrdinalIgnoreCase) ?? false;
+
+    private void NavigateToScenario(string scenarioId)
+        => Nav.NavigateTo($"/microsoft-agent-framework/feature/{scenarioId}");
+}

@@ -1,0 +1,280 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@using System.Text.Json
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>Shared State</PageTitle>
+
+<div class="shared-state-layout">
+    <AgentBoundary Agent="@agent" OnContextCreated="@OnContextCreated">
+        <AgentState TState="Recipe"
+                    CurrentState="@currentRecipe"
+                    OnSnapshot="@DeserializeRecipe"
+                    CurrentStateChanged="@OnRecipeChanged">
+            <div class="recipe-panel">
+                <div class="recipe-header">
+                    <input type="text" class="recipe-title" @bind="currentRecipe.Title" @bind:event="oninput" placeholder="Recipe name" />
+                    <div class="recipe-meta">
+                        <div class="meta-item">
+                            <span class="meta-icon">🕒</span>
+                            <select @bind="currentRecipe.CookingTime">
+                                <option value="5 min">5 min</option>
+                                <option value="15 min">15 min</option>
+                                <option value="30 min">30 min</option>
+                                <option value="45 min">45 min</option>
+                                <option value="60+ min">60+ min</option>
+                            </select>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-icon">🏆</span>
+                            <select @bind="currentRecipe.SkillLevel">
+                                <option value="Beginner">Beginner</option>
+                                <option value="Intermediate">Intermediate</option>
+                                <option value="Advanced">Advanced</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="preferences-section">
+                    <h2>Dietary Preferences</h2>
+                    <div class="preferences-grid">
+                        @foreach (var pref in dietaryPreferences)
+                        {
+                            <label class="preference-item">
+                                <input type="checkbox" 
+                                       checked="@currentRecipe.SpecialPreferences.Contains(pref)"
+                                       @onchange="@(e => TogglePreference(pref, (bool?)e.Value ?? false))" />
+                                <span>@pref</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="ingredients-section">
+                    <div class="section-header">
+                        <h2>Ingredients</h2>
+                        <button class="add-button" @onclick="AddIngredient">+ Add Ingredient</button>
+                    </div>
+                    <div class="ingredients-list">
+                        @for (int i = 0; i < currentRecipe.Ingredients.Count; i++)
+                        {
+                            var index = i;
+                            var ingredient = currentRecipe.Ingredients[index];
+                            <div class="ingredient-row">
+                                <span class="ingredient-icon">@ingredient.Icon</span>
+                                <div class="ingredient-inputs">
+                                    <input type="text" placeholder="Ingredient name"
+                                           value="@ingredient.Name"
+                                           @onchange="@(e => UpdateIngredientName(index, e.Value?.ToString() ?? ""))" />
+                                    <input type="text" placeholder="Amount"
+                                           value="@ingredient.Amount"
+                                           @onchange="@(e => UpdateIngredientAmount(index, e.Value?.ToString() ?? ""))" />
+                                </div>
+                                <button class="remove-button" @onclick="@(() => RemoveIngredient(index))">×</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="instructions-section">
+                    <div class="section-header">
+                        <h2>Instructions</h2>
+                        <button class="add-button" @onclick="AddInstruction">+ Add Step</button>
+                    </div>
+                    <div class="instructions-list">
+                        @for (int i = 0; i < currentRecipe.Instructions.Count; i++)
+                        {
+                            var index = i;
+                            <div class="instruction-row">
+                                <span class="step-number">@(index + 1)</span>
+                                <input type="text"
+                                       value="@currentRecipe.Instructions[index]"
+                                       @onchange="@(e => UpdateInstruction(index, e.Value?.ToString() ?? ""))" />
+                                <button class="remove-button" @onclick="@(() => RemoveInstruction(index))">×</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <button class="improve-button" @onclick="ImproveWithAI" disabled="@isProcessing">
+                    @(isProcessing ? "Please Wait..." : "Improve with AI")
+                </button>
+            </div>
+
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <span class="chat-title">AI Recipe Assistant</span>
+                </div>
+                <div class="chat-messages">
+                    <Messages>
+                        <ContentTemplates>
+                            <TextTemplate />
+                        </ContentTemplates>
+                    </Messages>
+                </div>
+                <div class="chat-input-container">
+                    <AgentInput Placeholder="Ask about your recipe..." />
+                </div>
+            </div>
+        </AgentState>
+    </AgentBoundary>
+</div>
+
+@code {
+    private AIAgent? agent;
+    private IAgentBoundaryContext? boundaryContext;
+    private Recipe currentRecipe = CreateDefaultRecipe();
+    private bool isProcessing;
+
+    private static readonly string[] dietaryPreferences = [
+        "High Protein", "Low Carb", "Spicy", "Budget-Friendly", 
+        "One-Pot Meal", "Vegetarian", "Vegan"
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "shared_state";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("shared-state");
+    }
+
+    private void OnContextCreated(IAgentBoundaryContext context)
+    {
+        boundaryContext = context;
+    }
+
+    private static Recipe CreateDefaultRecipe() => new()
+    {
+        Title = "Make Your Recipe",
+        SkillLevel = "Intermediate",
+        CookingTime = "45 min",
+        SpecialPreferences = [],
+        Ingredients =
+        [
+            new Ingredient { Icon = "🥕", Name = "Carrots", Amount = "3 large, grated" },
+            new Ingredient { Icon = "🌾", Name = "All-Purpose Flour", Amount = "2 cups" }
+        ],
+        Instructions =
+        [
+            "Preheat oven to 350°F (175°C)"
+        ]
+    };
+
+    private Recipe? DeserializeRecipe(ReadOnlyMemory<byte> data)
+    {
+        try
+        {
+            var response = JsonSerializer.Deserialize<RecipeResponse>(data.Span);
+            return response?.Recipe;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void OnRecipeChanged(Recipe? recipe)
+    {
+        if (recipe is not null)
+        {
+            currentRecipe = recipe;
+            isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ImproveWithAI()
+    {
+        if (boundaryContext is null)
+        {
+            return;
+        }
+
+        isProcessing = true;
+        StateHasChanged();
+
+        // Serialize current recipe state with wrapper
+        var stateWrapper = new { recipe = currentRecipe };
+        byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(stateWrapper, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        });
+
+        // Create message with state attached as DataContent
+        var message = new ChatMessage(ChatRole.User,
+        [
+            new TextContent("Improve the recipe"),
+            new DataContent(stateBytes, "application/json")
+        ]);
+
+        await boundaryContext.SendAsync(message);
+    }
+
+    private void TogglePreference(string preference, bool isChecked)
+    {
+        if (isChecked && !currentRecipe.SpecialPreferences.Contains(preference))
+        {
+            currentRecipe.SpecialPreferences.Add(preference);
+        }
+        else if (!isChecked)
+        {
+            currentRecipe.SpecialPreferences.Remove(preference);
+        }
+    }
+
+    private void AddIngredient()
+    {
+        currentRecipe.Ingredients.Add(new Ingredient { Icon = "🥄", Name = "", Amount = "" });
+    }
+
+    private void RemoveIngredient(int index)
+    {
+        if (index >= 0 && index < currentRecipe.Ingredients.Count)
+        {
+            currentRecipe.Ingredients.RemoveAt(index);
+        }
+    }
+
+    private void UpdateIngredientName(int index, string name)
+    {
+        if (index >= 0 && index < currentRecipe.Ingredients.Count)
+        {
+            currentRecipe.Ingredients[index].Name = name;
+        }
+    }
+
+    private void UpdateIngredientAmount(int index, string amount)
+    {
+        if (index >= 0 && index < currentRecipe.Ingredients.Count)
+        {
+            currentRecipe.Ingredients[index].Amount = amount;
+        }
+    }
+
+    private void AddInstruction()
+    {
+        currentRecipe.Instructions.Add("");
+    }
+
+    private void RemoveInstruction(int index)
+    {
+        if (index >= 0 && index < currentRecipe.Instructions.Count)
+        {
+            currentRecipe.Instructions.RemoveAt(index);
+        }
+    }
+
+    private void UpdateInstruction(int index, string instruction)
+    {
+        if (index >= 0 && index < currentRecipe.Instructions.Count)
+        {
+            currentRecipe.Instructions[index] = instruction;
+        }
+    }
+}

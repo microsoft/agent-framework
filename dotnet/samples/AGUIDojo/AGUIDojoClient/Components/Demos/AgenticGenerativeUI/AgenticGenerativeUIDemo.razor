@@ -1,0 +1,106 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@using System.Text.Json
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>Agentic Generative UI</PageTitle>
+
+<div class="chat-layout">
+    <div class="chat-header">
+        <div class="chat-title">Agentic Generative UI</div>
+        <button class="new-chat-button" @onclick="ResetConversation">
+            <span class="button-icon">+</span> New chat
+        </button>
+    </div>
+
+    <AgentBoundary Agent="@agent">
+        <AgentState TState="Plan" 
+                    CurrentState="@currentPlan"
+                    OnSnapshot="@DeserializePlan"
+                    OnDelta="@ApplyPlanDelta"
+                    CurrentStateChanged="@OnPlanChanged">
+            <div class="chat-content">
+                <Messages>
+                    <ContentTemplates>
+                        <TaskProgressTemplate />
+                        <TextTemplate />
+                    </ContentTemplates>
+                </Messages>
+            </div>
+            
+            <div class="chat-input-container">
+                <AgentSuggestions Suggestions="@suggestions" />
+                <AgentInput Placeholder="Ask me to plan something..." />
+            </div>
+        </AgentState>
+    </AgentBoundary>
+</div>
+
+@code {
+    private AIAgent? agent;
+    private Plan? currentPlan;
+    
+    private Suggestion[] suggestions = [
+        new Suggestion("Simple plan", new ChatMessage(ChatRole.User, "Please build a plan to go to mars in 5 steps.")),
+        new Suggestion("Complex plan", new ChatMessage(ChatRole.User, "Please build a plan to make pizza in 10 steps."))
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "agentic_generative_ui";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("agentic-generative-ui");
+    }
+
+    private Plan? DeserializePlan(ReadOnlyMemory<byte> data)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<Plan>(data.Span);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private Plan? ApplyPlanDelta(Plan? current, ReadOnlyMemory<byte> deltaData)
+    {
+        if (current is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var operations = JsonSerializer.Deserialize<List<JsonPatchOperation>>(deltaData.Span);
+            if (operations is not null)
+            {
+                PlanPatcher.Apply(current, operations);
+            }
+        }
+        catch
+        {
+            // Ignore deserialization errors
+        }
+
+        return current;
+    }
+
+    private void OnPlanChanged(Plan? plan)
+    {
+        currentPlan = plan;
+        StateHasChanged();
+    }
+
+    private void ResetConversation()
+    {
+        currentPlan = null;
+        StateHasChanged();
+    }
+}

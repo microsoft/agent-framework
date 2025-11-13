@@ -1,0 +1,125 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+
+.demo-sidebar {
+    width: 320px;
+    height: 100vh;
+    background-color: #f5f5f5;
+    border-right: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.demo-sidebar-header {
+    padding: 24px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    background-color: #ffffff;
+}
+
+.demo-sidebar-header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #212121;
+}
+
+.demo-sidebar-header p {
+    margin: 4px 0 0 0;
+    font-size: 13px;
+    color: #666666;
+}
+
+.demo-sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.demo-item {
+    width: 100%;
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+}
+
+.demo-item:hover {
+    background-color: #fafafa;
+    border-color: #0078d4;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.demo-item.selected {
+    background-color: #e6f2ff;
+    border-color: #0078d4;
+    box-shadow: 0 2px 4px rgba(0, 120, 212, 0.2);
+}
+
+.demo-icon {
+    font-size: 24px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.demo-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.demo-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #212121;
+    margin-bottom: 4px;
+}
+
+.demo-description {
+    font-size: 12px;
+    color: #666666;
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
+.demo-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.demo-tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    background-color: #e8e8e8;
+    border-radius: 3px;
+    color: #424242;
+}
+
+.demo-item.selected .demo-tag {
+    background-color: #cce4ff;
+    color: #004578;
+}
+
+/* Scrollbar styling */
+.demo-sidebar-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.demo-sidebar-list::-webkit-scrollbar-track {
+    background: #f5f5f5;
+}
+
+.demo-sidebar-list::-webkit-scrollbar-thumb {
+    background: #c0c0c0;
+    border-radius: 4px;
+}
+
+.demo-sidebar-list::-webkit-scrollbar-thumb:hover {
+    background: #a0a0a0;
+}

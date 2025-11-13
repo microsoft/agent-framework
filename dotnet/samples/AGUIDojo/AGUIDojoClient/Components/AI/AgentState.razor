@@ -1,0 +1,93 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@namespace Microsoft.AspNetCore.Components.AI
+@using Microsoft.Extensions.AI
+@typeparam TState
+@implements IDisposable
+
+<CascadingValue Value="@CurrentState" IsFixed="false">
+    @ChildContent
+</CascadingValue>
+
+@code {
+    private ResponseUpdateSubscription? _subscription;
+
+    /// <summary>
+    /// The agent boundary context to subscribe to for state updates.
+    /// </summary>
+    [CascadingParameter]
+    public IAgentBoundaryContext? BoundaryContext { get; set; }
+
+    /// <summary>
+    /// The current state value. Can be set initially and will be updated by state events.
+    /// </summary>
+    [Parameter]
+    public TState? CurrentState { get; set; }
+
+    /// <summary>
+    /// Callback to deserialize a STATE_SNAPSHOT (application/json) into TState.
+    /// </summary>
+    [Parameter]
+    public Func<ReadOnlyMemory<byte>, TState?>? OnSnapshot { get; set; }
+
+    /// <summary>
+    /// Callback to apply a STATE_DELTA (application/json-patch+json) to the current state.
+    /// Returns the updated state.
+    /// </summary>
+    [Parameter]
+    public Func<TState?, ReadOnlyMemory<byte>, TState?>? OnDelta { get; set; }
+
+    /// <summary>
+    /// Optional callback invoked whenever state changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<TState?> CurrentStateChanged { get; set; }
+
+    /// <summary>
+    /// Child content that will receive the cascaded state.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    protected override void OnInitialized()
+    {
+        if (BoundaryContext is not null)
+        {
+            _subscription = BoundaryContext.SubscribeToResponseUpdates(OnResponseUpdate);
+        }
+    }
+
+    private void OnResponseUpdate()
+    {
+        var update = BoundaryContext?.CurrentUpdate;
+        if (update?.Contents is null)
+        {
+            return;
+        }
+
+        foreach (var content in update.Contents)
+        {
+            if (content is DataContent dataContent)
+            {
+                if (string.Equals(dataContent.MediaType, "application/json", StringComparison.OrdinalIgnoreCase) && OnSnapshot is not null)
+                {
+                    // STATE_SNAPSHOT - let app deserialize
+                    CurrentState = OnSnapshot(dataContent.Data);
+                    _ = CurrentStateChanged.InvokeAsync(CurrentState);
+                    InvokeAsync(StateHasChanged);
+                }
+                else if (string.Equals(dataContent.MediaType, "application/json-patch+json", StringComparison.OrdinalIgnoreCase) && OnDelta is not null)
+                {
+                    // STATE_DELTA - let app apply the patch
+                    CurrentState = OnDelta(CurrentState, dataContent.Data);
+                    _ = CurrentStateChanged.InvokeAsync(CurrentState);
+                    InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _subscription?.Dispose();
+    }
+}

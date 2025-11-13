@@ -1,0 +1,52 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+
+.demo-view-tabs {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background-color: #ffffff;
+}
+
+.tabs-header {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid #e0e0e0;
+    background-color: #fafafa;
+    padding: 0 20px;
+}
+
+.tab-button {
+    padding: 12px 24px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 14px;
+    font-weight: 500;
+    color: #666666;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.tab-button:hover {
+    color: #0078d4;
+    background-color: #f0f0f0;
+}
+
+.tab-button.active {
+    color: #0078d4;
+    border-bottom-color: #0078d4;
+    background-color: #ffffff;
+}
+
+.tab-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+.tab-panel {
+    height: 100%;
+    width: 100%;
+    overflow: auto;
+}

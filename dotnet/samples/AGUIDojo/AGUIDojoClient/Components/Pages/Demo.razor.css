@@ -1,0 +1,51 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+
+.dojo-container {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+}
+
+.dojo-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.preview-panel,
+.code-panel,
+.docs-panel {
+    height: 100%;
+    overflow: auto;
+}
+
+.placeholder-content {
+    padding: 40px;
+    max-width: 800px;
+}
+
+.placeholder-content h2 {
+    margin-top: 0;
+    color: #212121;
+}
+
+.placeholder-content p {
+    color: #666666;
+    line-height: 1.6;
+}
+
+.placeholder-content ul {
+    color: #666666;
+    line-height: 1.8;
+}
+
+.error-panel {
+    padding: 40px;
+    text-align: center;
+}
+
+.error-panel h2 {
+    color: #d13438;
+}

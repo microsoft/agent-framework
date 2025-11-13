@@ -1,0 +1,244 @@
+.plan-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 16px;
+    padding: 20px;
+    color: white;
+    max-width: 420px;
+    box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.plan-card.plan-active {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.plan-card.plan-completed {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+.plan-card.plan-rejected {
+    background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+}
+
+.plan-card.plan-loading {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.plan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.plan-header h3 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.plan-progress .progress-count {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.completion-badge,
+.rejection-badge {
+    font-size: 0.9rem;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.completion-badge {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.rejection-badge {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.plan-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.plan-step {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+
+.plan-step.step-selected {
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+.plan-step.step-completed {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.step-checkbox-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.step-checkbox {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.checkmark {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(255, 255, 255, 0.6);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.step-checkbox:checked + .checkmark {
+    background: rgba(255, 255, 255, 0.3);
+    border-color: white;
+}
+
+.checkmark-completed {
+    background: rgba(255, 255, 255, 0.3);
+    border-color: white;
+}
+
+.check-icon {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.step-description {
+    flex: 1;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+.description-completed {
+    opacity: 0.7;
+    text-decoration: line-through;
+}
+
+.step-status {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-pending {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.status-completed {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.plan-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.plan-button {
+    flex: 1;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.plan-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.plan-button-confirm {
+    background: rgba(255, 255, 255, 0.25);
+    color: white;
+}
+
+.plan-button-confirm:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.35);
+    transform: translateY(-1px);
+}
+
+.plan-button-reject {
+    background: rgba(0, 0, 0, 0.15);
+    color: white;
+}
+
+.plan-button-reject:hover {
+    background: rgba(0, 0, 0, 0.25);
+    transform: translateY(-1px);
+}
+
+.plan-button-skeleton {
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Loading/Skeleton state */
+.skeleton-text {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.2) 25%, rgba(255, 255, 255, 0.4) 50%, rgba(255, 255, 255, 0.2) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.skeleton-progress {
+    width: 100px;
+    height: 1rem;
+}
+
+.skeleton-step {
+    padding: 14px 12px;
+}
+
+.skeleton-checkbox {
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.2) 25%, rgba(255, 255, 255, 0.4) 50%, rgba(255, 255, 255, 0.2) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 6px;
+    flex-shrink: 0;
+}
+
+.skeleton-description {
+    width: 200px;
+    height: 1rem;
+}
+
+@keyframes skeleton-shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}

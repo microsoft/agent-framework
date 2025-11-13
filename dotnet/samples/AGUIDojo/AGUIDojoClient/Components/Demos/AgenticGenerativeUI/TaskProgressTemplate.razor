@@ -1,0 +1,42 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+
+@if (Plan is not null && Plan.Steps.Count > 0)
+{
+    <div class="task-progress-card @(Plan.IsComplete ? "completed" : "in-progress")">
+        <div class="task-header">
+            <h3>Task Progress</h3>
+            <span class="task-counter">@Plan.CompletedCount/@Plan.TotalCount Complete</span>
+        </div>
+        <div class="task-steps">
+            @for (int i = 0; i < Plan.Steps.Count; i++)
+            {
+                var step = Plan.Steps[i];
+                var isCurrentStep = !step.IsCompleted && 
+                    (i == 0 || Plan.Steps[i - 1].IsCompleted);
+                
+                <div class="task-step @(step.IsCompleted ? "step-completed" : isCurrentStep ? "step-current" : "step-pending")">
+                    <span class="step-icon">
+                        @if (step.IsCompleted)
+                        {
+                            <span class="check-icon">✓</span>
+                        }
+                        else if (isCurrentStep)
+                        {
+                            <span class="current-icon">●</span>
+                        }
+                        else
+                        {
+                            <span class="pending-icon">○</span>
+                        }
+                    </span>
+                    <span class="step-description">@step.Description</span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter]
+    public Plan? Plan { get; set; }
+}

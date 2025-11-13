@@ -1,0 +1,76 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+
+<div class="demo-view-tabs">
+    <div class="tabs-header">
+        <button class="tab-button @(CurrentTab == "preview" ? "active" : "")"
+                @onclick="@(() => OnTabChanged("preview"))">
+            Preview
+        </button>
+        <button class="tab-button @(CurrentTab == "code" ? "active" : "")"
+                @onclick="@(() => OnTabChanged("code"))">
+            Code
+        </button>
+        <button class="tab-button @(CurrentTab == "docs" ? "active" : "")"
+                @onclick="@(() => OnTabChanged("docs"))">
+            Docs
+        </button>
+    </div>
+    <div class="tab-content">
+        @if (CurrentTab == "preview")
+        {
+            <div class="tab-panel">
+                @PreviewContent
+            </div>
+        }
+        else if (CurrentTab == "code")
+        {
+            <div class="tab-panel">
+                @CodeContent
+            </div>
+        }
+        else if (CurrentTab == "docs")
+        {
+            <div class="tab-panel">
+                @DocsContent
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// Gets or sets the currently active tab.
+    /// </summary>
+    [Parameter]
+    public string CurrentTab { get; set; } = "preview";
+
+    /// <summary>
+    /// Gets or sets the callback for tab changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<string> OnTabChange { get; set; }
+
+    /// <summary>
+    /// Gets or sets the content for the Preview tab.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? PreviewContent { get; set; }
+
+    /// <summary>
+    /// Gets or sets the content for the Code tab.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? CodeContent { get; set; }
+
+    /// <summary>
+    /// Gets or sets the content for the Docs tab.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? DocsContent { get; set; }
+
+    private async Task OnTabChanged(string tab)
+    {
+        CurrentTab = tab;
+        await OnTabChange.InvokeAsync(tab);
+    }
+}

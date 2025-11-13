@@ -1,0 +1,157 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@using System.Text.Json
+@using System.ComponentModel
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>Human in the Loop</PageTitle>
+
+<div class="chat-layout">
+    <div class="chat-header">
+        <div class="chat-title">Human in the Loop</div>
+        <button class="new-chat-button" @onclick="ResetConversation">
+            <span class="button-icon">+</span> New chat
+        </button>
+    </div>
+
+    <AgentBoundary Agent="@agent" OnContextCreated="OnContextCreated">
+        <div class="chat-content">
+            <Messages>
+                <ContentTemplates>
+                    <CreatePlanCallTemplate />
+                    <TextTemplate />
+                </ContentTemplates>
+            </Messages>
+        </div>
+        
+        <div class="chat-input-container">
+            <AgentSuggestions Suggestions="@suggestions" />
+            <AgentInput Placeholder="Ask for a plan..." />
+        </div>
+    </AgentBoundary>
+</div>
+
+@code {
+    private AIAgent? agent;
+    private IAgentBoundaryContext? boundaryContext;
+    private Plan? currentPlan;
+    
+    private Suggestion[] suggestions = [
+        new Suggestion("Simple plan", new ChatMessage(ChatRole.User, "Create a simple 5-step plan for organizing a birthday party")),
+        new Suggestion("Complex plan", new ChatMessage(ChatRole.User, "Create a detailed 10-step plan for launching a new product"))
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "human_in_the_loop";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("human-in-the-loop");
+    }
+
+    private void OnContextCreated(IAgentBoundaryContext context)
+    {
+        boundaryContext = context;
+        
+        // Register all three frontend tools for the human-in-the-loop scenario
+        
+        // 1. create_plan - creates a plan and stores it
+        var createPlanTool = AIFunctionFactory.Create(
+            (List<string> steps) => CreatePlan(steps),
+            "create_plan",
+            "Create a plan with multiple steps. Call this first before confirm_plan.");
+        
+        // 2. confirm_plan - waits for user confirmation via UI, receives the plan to display
+        var confirmPlanTool = AIFunctionFactory.Create(
+            (Plan plan) => ConfirmPlanAsync(context, plan),
+            "confirm_plan",
+            "Present the plan to the user for confirmation. The user can select which steps to proceed with. Pass the plan returned from create_plan.");
+        
+        // 3. update_plan_step - updates a step's status
+        var updatePlanStepTool = AIFunctionFactory.Create(
+            (int index, string? description, string? status) => UpdatePlanStep(index, description, status),
+            "update_plan_step",
+            "Update a step in the plan with new description or status. Use status 'completed' to mark a step as done.");
+        
+        context.RegisterTools(createPlanTool, confirmPlanTool, updatePlanStepTool);
+    }
+
+    /// <summary>
+    /// Frontend tool that creates a plan with the given steps.
+    /// </summary>
+    [Description("Create a plan with multiple steps.")]
+    private Plan CreatePlan([Description("List of step descriptions to create the plan.")] List<string> steps)
+    {
+        currentPlan = new Plan
+        {
+            Steps = [.. steps.Select(s => new Step { Description = s, Status = "pending" })]
+        };
+        return currentPlan;
+    }
+
+    /// <summary>
+    /// Frontend tool that waits for user confirmation via the UI.
+    /// The PlanCard component will call ProvideResponse when the user confirms/rejects.
+    /// </summary>
+    [Description("Present the plan to the user for confirmation.")]
+    private static async Task<PlanConfirmationResult> ConfirmPlanAsync(
+        IAgentBoundaryContext context,
+        [Description("The plan to present to the user for confirmation.")] Plan plan)
+    {
+        // The plan parameter is received and will be accessible via InvocationContext in the PlanCard
+        // Wait for the PlanCard component to provide the response
+        var response = await context.WaitForResponse("confirm_plan");
+        return (PlanConfirmationResult)response;
+    }
+
+    /// <summary>
+    /// Frontend tool that updates a step in the plan.
+    /// </summary>
+    [Description("Update a step in the plan with new description or status.")]
+    private List<JsonPatchOperation> UpdatePlanStep(
+        [Description("The index of the step to update.")] int index,
+        [Description("The new description for the step (optional).")] string? description = null,
+        [Description("The new status for the step: 'pending' or 'completed'.")] string? status = null)
+    {
+        var changes = new List<JsonPatchOperation>();
+
+        if (currentPlan is null || index < 0 || index >= currentPlan.Steps.Count)
+        {
+            return changes;
+        }
+
+        if (description is not null)
+        {
+            currentPlan.Steps[index].Description = description;
+            changes.Add(new JsonPatchOperation
+            {
+                Op = "replace",
+                Path = $"/steps/{index}/description",
+                Value = description
+            });
+        }
+
+        if (status is not null)
+        {
+            currentPlan.Steps[index].Status = status.ToLowerInvariant();
+            changes.Add(new JsonPatchOperation
+            {
+                Op = "replace",
+                Path = $"/steps/{index}/status",
+                Value = status.ToLowerInvariant()
+            });
+        }
+
+        return changes;
+    }
+
+    private void ResetConversation()
+    {
+        currentPlan = null;
+        StateHasChanged();
+    }
+}

@@ -1,0 +1,366 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.Logging
+@using System.Text.Json
+@implements IDisposable
+@inject ILogger<PlanCard> Logger
+
+@if (IsWaitingForPlan)
+{
+    <div class="plan-card plan-loading">
+        <div class="plan-header">
+            <h3>Loading Plan...</h3>
+            <div class="plan-progress">
+                <span class="skeleton-text skeleton-progress"></span>
+            </div>
+        </div>
+        <div class="plan-steps">
+            @for (int i = 0; i < 3; i++)
+            {
+                <div class="plan-step skeleton-step">
+                    <span class="step-checkbox skeleton-checkbox"></span>
+                    <span class="step-description skeleton-text skeleton-description"></span>
+                </div>
+            }
+        </div>
+        <div class="plan-actions">
+            <button class="plan-button plan-button-skeleton" disabled>Loading...</button>
+        </div>
+    </div>
+}
+else if (CurrentPlan is not null && AwaitingConfirmation)
+{
+    <div class="plan-card plan-active">
+        <div class="plan-header">
+            <h3>Plan Confirmation</h3>
+            <div class="plan-progress">
+                <span class="progress-count">@CurrentPlan.CompletedCount / @CurrentPlan.TotalCount completed</span>
+            </div>
+        </div>
+        <div class="plan-steps">
+            @for (int i = 0; i < CurrentPlan.Steps.Count; i++)
+            {
+                var step = CurrentPlan.Steps[i];
+                var index = i;
+                <div class="plan-step @(step.IsCompleted ? "step-completed" : "step-pending") @(selectedSteps.Contains(index) ? "step-selected" : "")">
+                    <label class="step-checkbox-label">
+                        <input type="checkbox" 
+                               class="step-checkbox" 
+                               checked="@selectedSteps.Contains(index)"
+                               disabled="@step.IsCompleted"
+                               @onchange="() => ToggleStepSelection(index)" />
+                        <span class="checkmark @(step.IsCompleted || selectedSteps.Contains(index) ? "checkmark-completed" : "")">
+                            @if (step.IsCompleted || selectedSteps.Contains(index))
+                            {
+                                <span class="check-icon">✓</span>
+                            }
+                        </span>
+                    </label>
+                    <span class="step-description @(step.IsCompleted ? "description-completed" : "")">@step.Description</span>
+                    <span class="step-status @(step.IsCompleted ? "status-completed" : "status-pending")">
+                        @(step.IsCompleted ? "Done" : "Pending")
+                    </span>
+                </div>
+            }
+        </div>
+        <div class="plan-actions">
+            <button class="plan-button plan-button-confirm" @onclick="ConfirmPlan" disabled="@(selectedSteps.Count == 0)">
+                Confirm Selected (@selectedSteps.Count)
+            </button>
+            <button class="plan-button plan-button-reject" @onclick="RejectPlan">
+                Reject
+            </button>
+        </div>
+    </div>
+}
+else if (CurrentPlan is not null && !AwaitingConfirmation && !WasRejected)
+{
+    <div class="plan-card @(CurrentPlan.IsComplete ? "plan-completed" : "plan-executing")">
+        <div class="plan-header">
+            <h3>@(CurrentPlan.IsComplete ? "Plan Completed" : "Executing Plan")</h3>
+            @if (CurrentPlan.IsComplete)
+            {
+                <span class="completion-badge">✓ All Done</span>
+            }
+            else
+            {
+                <div class="plan-progress">
+                    <span class="progress-count">@CurrentPlan.CompletedCount / @CurrentPlan.TotalCount completed</span>
+                </div>
+            }
+        </div>
+        <div class="plan-steps">
+            @foreach (var step in CurrentPlan.Steps)
+            {
+                <div class="plan-step @(step.IsCompleted ? "step-completed" : "step-pending")">
+                    <span class="checkmark @(step.IsCompleted ? "checkmark-completed" : "")">
+                        @if (step.IsCompleted)
+                        {
+                            <span class="check-icon">✓</span>
+                        }
+                    </span>
+                    <span class="step-description @(step.IsCompleted ? "description-completed" : "")">@step.Description</span>
+                    <span class="step-status @(step.IsCompleted ? "status-completed" : "status-pending")">
+                        @(step.IsCompleted ? "Done" : "Pending")
+                    </span>
+                </div>
+            }
+        </div>
+    </div>
+}
+else if (WasRejected)
+{
+    <div class="plan-card plan-rejected">
+        <div class="plan-header">
+            <h3>Plan Rejected</h3>
+            <span class="rejection-badge">✗ Cancelled</span>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter]
+    public InvocationContext Invocation { get; set; } = default!;
+
+    [CascadingParameter]
+    public MessageListContext? MessageListContext { get; set; }
+
+    [CascadingParameter]
+    public IAgentBoundaryContext? BoundaryContext { get; set; }
+
+    private Plan? CurrentPlan;
+    private HashSet<int> selectedSteps = new();
+    private bool AwaitingConfirmation;
+    private bool WasRejected;
+    private bool IsWaitingForPlan => CurrentPlan is null && !WasRejected;
+    private ResponseUpdateSubscription? _responseSubscription;
+    private string? _confirmPlanCallId;
+
+    protected override void OnInitialized()
+    {
+        Logger.LogInformation("PlanCard OnInitialized called");
+        Logger.LogInformation("BoundaryContext is {Status}", BoundaryContext is null ? "NULL" : "present");
+        Logger.LogInformation("Invocation is {Status}, HasResult: {HasResult}", 
+            Invocation is null ? "NULL" : "present",
+            Invocation?.HasResult ?? false);
+
+        // The plan comes from the create_plan function result
+        if (Invocation?.HasResult == true)
+        {
+            Logger.LogInformation("Invocation already has result, parsing plan");
+            TryParsePlanFromResult();
+        }
+        else if (Invocation is not null)
+        {
+            Logger.LogInformation("Subscribing to Invocation.ResultArrived");
+            // Subscribe to wait for the result
+            Invocation.ResultArrived += OnCreatePlanResultArrived;
+        }
+
+        // Subscribe to response updates to detect confirm_plan and update_plan_step calls
+        if (BoundaryContext is not null)
+        {
+            Logger.LogInformation("Subscribing to response updates");
+            _responseSubscription = BoundaryContext.SubscribeToResponseUpdates(OnResponseUpdate);
+        }
+        else
+        {
+            Logger.LogWarning("BoundaryContext is null, cannot subscribe to response updates!");
+        }
+    }
+
+    private void OnCreatePlanResultArrived()
+    {
+        Logger.LogInformation("OnCreatePlanResultArrived called");
+        TryParsePlanFromResult();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void TryParsePlanFromResult()
+    {
+        var plan = Invocation?.GetResult<Plan>();
+        Logger.LogInformation("TryParsePlanFromResult: plan is {Status}", plan is null ? "NULL" : $"present with {plan.Steps.Count} steps");
+        if (plan is not null)
+        {
+            CurrentPlan = plan;
+            InitializeSelectedSteps();
+        }
+    }
+
+    private void InitializeSelectedSteps()
+    {
+        // Select all pending steps by default
+        if (CurrentPlan is not null)
+        {
+            selectedSteps.Clear();
+            for (int i = 0; i < CurrentPlan.Steps.Count; i++)
+            {
+                if (!CurrentPlan.Steps[i].IsCompleted)
+                {
+                    selectedSteps.Add(i);
+                }
+            }
+            Logger.LogInformation("InitializeSelectedSteps: selected {Count} steps", selectedSteps.Count);
+        }
+    }
+
+    private void OnResponseUpdate()
+    {
+        Logger.LogInformation("OnResponseUpdate called");
+        
+        // Check the current update for tool calls
+        var update = BoundaryContext?.CurrentUpdate;
+        if (update is null)
+        {
+            Logger.LogInformation("CurrentUpdate is null");
+            return;
+        }
+
+        Logger.LogInformation("CurrentUpdate has {Count} contents", update.Contents?.Count ?? 0);
+        
+        if (update.Contents is not null)
+        {
+            foreach (var content in update.Contents)
+            {
+                Logger.LogInformation("Content type: {Type}", content.GetType().Name);
+                
+                if (content is FunctionCallContent call)
+                {
+                    Logger.LogInformation("Found FunctionCallContent: {Name}, CallId: {CallId}", call.Name, call.CallId);
+                    
+                    if (string.Equals(call.Name, "confirm_plan", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.LogInformation("Detected confirm_plan call!");
+                        HandleConfirmPlanCall(call);
+                    }
+                    else if (string.Equals(call.Name, "update_plan_step", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.LogInformation("Detected update_plan_step call!");
+                        HandleUpdatePlanStepCall(call);
+                    }
+                }
+            }
+        }
+        
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleConfirmPlanCall(FunctionCallContent call)
+    {
+        Logger.LogInformation("HandleConfirmPlanCall: AwaitingConfirmation={Awaiting}, WasRejected={Rejected}, _confirmPlanCallId={CallId}",
+            AwaitingConfirmation, WasRejected, _confirmPlanCallId);
+            
+        // When confirm_plan is called, show the confirmation UI
+        if (!AwaitingConfirmation && !WasRejected && _confirmPlanCallId is null)
+        {
+            _confirmPlanCallId = call.CallId;
+            AwaitingConfirmation = true;
+            Logger.LogInformation("Set AwaitingConfirmation to true, _confirmPlanCallId={CallId}", _confirmPlanCallId);
+        }
+    }
+
+    private void HandleUpdatePlanStepCall(FunctionCallContent call)
+    {
+        if (CurrentPlan is null)
+        {
+            Logger.LogWarning("HandleUpdatePlanStepCall: CurrentPlan is null");
+            return;
+        }
+
+        // Get the index and status from arguments
+        if (call.Arguments is null)
+        {
+            Logger.LogWarning("HandleUpdatePlanStepCall: Arguments is null");
+            return;
+        }
+
+        int? index = null;
+        string? status = null;
+        string? description = null;
+
+        if (call.Arguments.TryGetValue("index", out var indexObj))
+        {
+            if (indexObj is int i) index = i;
+            else if (indexObj is long l) index = (int)l;
+            else if (indexObj is JsonElement je && je.ValueKind == JsonValueKind.Number) index = je.GetInt32();
+        }
+
+        if (call.Arguments.TryGetValue("status", out var statusObj))
+        {
+            if (statusObj is string s) status = s;
+            else if (statusObj is JsonElement je && je.ValueKind == JsonValueKind.String) status = je.GetString();
+        }
+
+        if (call.Arguments.TryGetValue("description", out var descObj))
+        {
+            if (descObj is string s) description = s;
+            else if (descObj is JsonElement je && je.ValueKind == JsonValueKind.String) description = je.GetString();
+        }
+
+        Logger.LogInformation("HandleUpdatePlanStepCall: index={Index}, status={Status}, description={Description}",
+            index, status, description);
+
+        // Apply the update
+        if (index.HasValue && index.Value >= 0 && index.Value < CurrentPlan.Steps.Count)
+        {
+            if (status is not null)
+            {
+                CurrentPlan.Steps[index.Value].Status = status.ToLowerInvariant();
+            }
+            if (description is not null)
+            {
+                CurrentPlan.Steps[index.Value].Description = description;
+            }
+            Logger.LogInformation("Updated step {Index}", index.Value);
+        }
+    }
+
+    private void ToggleStepSelection(int index)
+    {
+        if (selectedSteps.Contains(index))
+        {
+            selectedSteps.Remove(index);
+        }
+        else
+        {
+            selectedSteps.Add(index);
+        }
+        StateHasChanged();
+    }
+
+    private void ConfirmPlan()
+    {
+        Logger.LogInformation("ConfirmPlan called with {Count} selected steps", selectedSteps.Count);
+        AwaitingConfirmation = false;
+        var result = new PlanConfirmationResult
+        {
+            Confirmed = true,
+            SelectedStepIndices = selectedSteps.ToList()
+        };
+        BoundaryContext?.ProvideResponse("confirm_plan", result);
+    }
+
+    private void RejectPlan()
+    {
+        Logger.LogInformation("RejectPlan called");
+        WasRejected = true;
+        AwaitingConfirmation = false;
+        var result = new PlanConfirmationResult
+        {
+            Confirmed = false,
+            SelectedStepIndices = []
+        };
+        BoundaryContext?.ProvideResponse("confirm_plan", result);
+    }
+
+    public void Dispose()
+    {
+        Logger.LogInformation("PlanCard Dispose called");
+        if (Invocation is not null)
+        {
+            Invocation.ResultArrived -= OnCreatePlanResultArrived;
+        }
+        _responseSubscription?.Dispose();
+    }
+}

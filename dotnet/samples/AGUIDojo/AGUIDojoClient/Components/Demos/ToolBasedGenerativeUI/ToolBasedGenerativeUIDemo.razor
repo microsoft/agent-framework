@@ -1,0 +1,113 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@using System.ComponentModel
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>Tool Based Generative UI</PageTitle>
+
+<div class="tool-generative-ui-layout">
+    <div class="main-display">
+        <HaikuCarousel @ref="carouselRef" Haikus="@haikus" />
+    </div>
+
+    <div class="chat-panel">
+        <div class="chat-header">
+            <div class="chat-title">Haiku Generator</div>
+            <button class="new-chat-button" @onclick="ResetConversation">
+                <span class="button-icon">+</span> New chat
+            </button>
+        </div>
+
+        <AgentBoundary Agent="@agent" OnContextCreated="OnContextCreated">
+            <div class="chat-content">
+                <Messages>
+                    <ContentTemplates>
+                        <HaikuCallTemplate />
+                        <TextTemplate />
+                    </ContentTemplates>
+                </Messages>
+            </div>
+            
+            <div class="chat-input-container">
+                <AgentSuggestions Suggestions="@suggestions" />
+                <AgentInput Placeholder="Ask for a haiku..." />
+            </div>
+        </AgentBoundary>
+    </div>
+</div>
+
+@code {
+    private AIAgent? agent;
+    private HaikuCarousel? carouselRef;
+    private List<Haiku> haikus = [Haiku.CreatePlaceholder()];
+    
+    private Suggestion[] suggestions = [
+        new Suggestion("Nature Haiku", new ChatMessage(ChatRole.User, "Write me a haiku about nature.")),
+        new Suggestion("Ocean Haiku", new ChatMessage(ChatRole.User, "Create a haiku about the ocean.")),
+        new Suggestion("Spring Haiku", new ChatMessage(ChatRole.User, "Generate a haiku about spring."))
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "tool_based_generative_ui";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("tool-based-generative-ui");
+    }
+
+    private void OnContextCreated(IAgentBoundaryContext context)
+    {
+        // Register the generate_haiku tool as a frontend tool
+        var generateHaikuTool = AIFunctionFactory.Create(
+            (string[] japanese, string[] english, string? image_name, string? gradient) => 
+                GenerateHaiku(japanese, english, image_name, gradient),
+            "generate_haiku",
+            $"Generate a haiku with Japanese text, English translation, and an optional image. Valid image names: {string.Join(", ", Haiku.ValidImageNames)}");
+        
+        context.RegisterTool(generateHaikuTool);
+    }
+
+    /// <summary>
+    /// Frontend tool handler that creates a new haiku and adds it to the carousel.
+    /// </summary>
+    [Description("Generate a haiku with Japanese and English text, plus an optional image.")]
+    private Haiku GenerateHaiku(
+        [Description("3 lines of haiku in Japanese")] string[] japanese,
+        [Description("3 lines of haiku translated to English")] string[] english,
+        [Description("One relevant image name from the valid list")] string? image_name,
+        [Description("CSS Gradient color for the background")] string? gradient)
+    {
+        var newHaiku = new Haiku
+        {
+            Japanese = japanese ?? [],
+            English = english ?? [],
+            ImageName = image_name,
+            Gradient = gradient ?? string.Empty
+        };
+
+        // Add to beginning of list (newest first), removing placeholder if present
+        var updatedHaikus = new List<Haiku> { newHaiku };
+        updatedHaikus.AddRange(haikus.Where(h => h.English.Count == 0 || h.English[0] != "A placeholder verse—"));
+        haikus = updatedHaikus;
+
+        // Reset carousel to show the new haiku
+        InvokeAsync(() =>
+        {
+            carouselRef?.ResetToFirst();
+            StateHasChanged();
+        });
+
+        return newHaiku;
+    }
+
+    private void ResetConversation()
+    {
+        haikus = [Haiku.CreatePlaceholder()];
+        carouselRef?.ResetToFirst();
+        StateHasChanged();
+    }
+}

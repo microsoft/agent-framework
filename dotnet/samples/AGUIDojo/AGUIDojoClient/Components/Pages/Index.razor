@@ -1,0 +1,20 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@page "/"
+@using AGUIDojoClient.Components.Shared
+@inject DemoService DemoService
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Redirect to the first demo scenario
+            DemoScenario? firstScenario = DemoService.AllScenarios.FirstOrDefault();
+            if (firstScenario is not null)
+            {
+                Nav.NavigateTo($"/microsoft-agent-framework/feature/{firstScenario.Id}", replace: true);
+            }
+        }
+    }
+}

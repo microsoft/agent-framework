@@ -1,0 +1,112 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+
+<div class="haiku-card @(IsLoading ? "haiku-loading" : "")" style="@GetBackgroundStyle()">
+    @if (IsLoading)
+    {
+        <div class="haiku-content">
+            <div class="haiku-lines">
+                <div class="haiku-line skeleton-line"></div>
+                <div class="haiku-line skeleton-line"></div>
+                <div class="haiku-line skeleton-line"></div>
+            </div>
+        </div>
+    }
+    else if (CurrentHaiku is not null)
+    {
+        <div class="haiku-content">
+            <div class="haiku-lines">
+                @for (int i = 0; i < CurrentHaiku.Japanese.Count && i < 3; i++)
+                {
+                    var index = i;
+                    <div class="haiku-line" style="animation-delay: @(index * 100)ms">
+                        <p class="japanese-text" data-testid="haiku-japanese-line">@CurrentHaiku.Japanese[index]</p>
+                        @if (index < CurrentHaiku.English.Count)
+                        {
+                            <p class="english-text" data-testid="haiku-english-line">@CurrentHaiku.English[index]</p>
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (!string.IsNullOrEmpty(CurrentHaiku.ImageName))
+            {
+                <div class="haiku-image-container">
+                    <img src="images/@CurrentHaiku.ImageName" 
+                         alt="@CurrentHaiku.ImageName" 
+                         class="haiku-image"
+                         data-testid="haiku-image" />
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>
+    /// Gets the haiku to display from the cascaded InvocationContext.
+    /// </summary>
+    [CascadingParameter]
+    public InvocationContext? Invocation { get; set; }
+
+    /// <summary>
+    /// Gets or sets the haiku to display directly (used when not rendering from a tool call).
+    /// </summary>
+    [Parameter]
+    public Haiku? Haiku { get; set; }
+
+    private Haiku? CurrentHaiku => Haiku ?? GetHaikuFromInvocation();
+    private bool IsLoading => CurrentHaiku is null;
+
+    protected override void OnInitialized()
+    {
+        if (Invocation is not null && !Invocation.HasResult)
+        {
+            Invocation.ResultArrived += OnResultArrived;
+        }
+    }
+
+    private void OnResultArrived()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private Haiku? GetHaikuFromInvocation()
+    {
+        if (Invocation?.HasResult == true)
+        {
+            return Invocation.GetResult<Haiku>();
+        }
+
+        // Try to get partial data from arguments while streaming
+        if (Invocation is not null)
+        {
+            var japanese = Invocation.GetArgument<string[]>("japanese");
+            var english = Invocation.GetArgument<string[]>("english");
+            var imageName = Invocation.GetArgument<string>("image_name");
+            var gradient = Invocation.GetArgument<string>("gradient");
+
+            if (japanese is not null && japanese.Length > 0)
+            {
+                return new Haiku
+                {
+                    Japanese = japanese,
+                    English = english ?? [],
+                    ImageName = imageName,
+                    Gradient = gradient ?? string.Empty
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private string GetBackgroundStyle()
+    {
+        if (!string.IsNullOrEmpty(CurrentHaiku?.Gradient))
+        {
+            return $"background: {CurrentHaiku.Gradient};";
+        }
+        return string.Empty;
+    }
+}

@@ -1,0 +1,11 @@
+<Solution>
+  <Project Path="../../src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI.AGUI/Microsoft.Agents.AI.AGUI.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
+  <Project Path="../../src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
+  <Project Path="AGUIDojoClient/AGUIDojoClient.csproj" />
+  <Project Path="AGUIDojoServer/AGUIDojoServer.csproj" />
+</Solution>

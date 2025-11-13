@@ -1,0 +1,136 @@
+/* Tool Based Generative UI Demo Layout */
+.tool-generative-ui-layout {
+    display: grid;
+    grid-template-columns: 1fr 400px;
+    height: 100%;
+    background: linear-gradient(170deg, #e9ecef 0%, #ced4da 100%);
+}
+
+/* Main Display Area (Carousel) */
+.main-display {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    overflow: auto;
+}
+
+/* Chat Panel */
+.chat-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: white;
+    border-left: 1px solid #e2e8f0;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.05);
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+.chat-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.new-chat-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    color: #64748b;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.new-chat-button:hover {
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.button-icon {
+    font-size: 1rem;
+    font-weight: bold;
+}
+
+.chat-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.chat-input-container {
+    padding: 1rem;
+    border-top: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+/* Override agent suggestions for this demo */
+::deep .agent-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+::deep .suggestion-button {
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 1px solid #ff6f61;
+    border-radius: 20px;
+    color: #ff6f61;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+::deep .suggestion-button:hover {
+    background: #ff6f61;
+    color: white;
+}
+
+/* Responsive Layout */
+@media (max-width: 1024px) {
+    .tool-generative-ui-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+    }
+
+    .chat-panel {
+        border-left: none;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .main-display {
+        padding: 1rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .tool-generative-ui-layout {
+        grid-template-rows: auto 1fr;
+    }
+
+    .main-display {
+        max-height: 50vh;
+    }
+
+    .chat-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .chat-title {
+        font-size: 1rem;
+    }
+}

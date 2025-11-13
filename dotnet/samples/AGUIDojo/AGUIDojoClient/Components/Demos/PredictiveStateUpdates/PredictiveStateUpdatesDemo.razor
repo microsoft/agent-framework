@@ -1,0 +1,247 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@using System.Text.Json
+@using System.ComponentModel
+@using Microsoft.Extensions.Logging
+@implements IDisposable
+@inject IServiceProvider ServiceProvider
+@inject ILogger<PredictiveStateUpdatesDemo> Logger
+
+<PageTitle>AI Document Editor</PageTitle>
+
+<div class="predictive-state-layout">
+    @* Left panel: Document editor *@
+    <div class="document-panel">
+        <div class="document-header">
+            <h2>Document Editor</h2>
+            @if (isStreaming)
+            {
+                <span class="streaming-indicator">
+                    <span class="streaming-dot"></span>
+                    Writing...
+                </span>
+            }
+        </div>
+        <div class="document-content">
+            @if (string.IsNullOrWhiteSpace(currentDocument))
+            {
+                <div class="document-placeholder">
+                    Write whatever you want here in Markdown format...
+                </div>
+            }
+            else
+            {
+                <pre class="document-text">@currentDocument</pre>
+            }
+        </div>
+    </div>
+
+    @* Right panel: Chat sidebar *@
+    <div class="chat-panel">
+        <div class="chat-header">
+            <div class="chat-title">AI Document Editor</div>
+            <button class="new-chat-button" @onclick="ResetConversation">
+                <span class="button-icon">+</span> New chat
+            </button>
+        </div>
+
+        <AgentBoundary Agent="@agent" OnContextCreated="OnContextCreated">
+            <div class="chat-content">
+                <Messages>
+                    <ContentTemplates>
+                        <TextTemplate />
+                    </ContentTemplates>
+                </Messages>
+            </div>
+            
+            <AgentState TState="DocumentState"
+                        CurrentState="@currentDocumentState"
+                        OnSnapshot="@DeserializeDocumentState"
+                        CurrentStateChanged="@OnDocumentStateChanged" />
+
+            <div class="chat-input-container">
+                <AgentSuggestions Suggestions="@suggestions" />
+                <AgentInput Placeholder="Ask the AI to write or edit..." />
+            </div>
+        </AgentBoundary>
+    </div>
+</div>
+
+@* Confirmation modal *@
+@if (awaitingConfirmation)
+{
+    <div class="confirmation-overlay">
+        <div class="confirmation-modal">
+            <h3>Confirm Changes</h3>
+            <p>Do you want to accept the changes?</p>
+            <div class="confirmation-actions">
+                <button class="confirm-button reject" @onclick="RejectChanges">
+                    Reject
+                </button>
+                <button class="confirm-button accept" @onclick="ConfirmChanges">
+                    Confirm
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private AIAgent? agent;
+    private IAgentBoundaryContext? boundaryContext;
+    private ResponseUpdateSubscription? responseSubscription;
+    
+    private DocumentState? currentDocumentState;
+    private string currentDocument = string.Empty;
+    private string previousDocument = string.Empty;
+    private bool isStreaming;
+    private bool awaitingConfirmation;
+    
+    private Suggestion[] suggestions = [
+        new Suggestion("Write a pirate story", new ChatMessage(ChatRole.User, "Please write a story about a pirate named Candy Beard")),
+        new Suggestion("Write a mermaid story", new ChatMessage(ChatRole.User, "Please write a story about a mermaid named Pearl")),
+        new Suggestion("Add character", new ChatMessage(ChatRole.User, "Add a new character to the story"))
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "predictive_state_updates";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("predictive-state-updates");
+    }
+
+    private void OnContextCreated(IAgentBoundaryContext context)
+    {
+        boundaryContext = context;
+        
+        // Register the confirm_changes frontend tool
+        var confirmChangesTool = AIFunctionFactory.Create(
+            () => ConfirmChangesAsync(context),
+            "confirm_changes",
+            "Ask the user to confirm or reject the document changes.");
+        
+        context.RegisterTools(confirmChangesTool);
+        
+        // Subscribe to response updates to detect when streaming starts/stops
+        responseSubscription = context.SubscribeToResponseUpdates(OnResponseUpdate);
+    }
+
+    private void OnResponseUpdate()
+    {
+        var update = boundaryContext?.CurrentUpdate;
+        if (update is null)
+        {
+            return;
+        }
+
+        // Check for function calls to detect confirm_changes
+        if (update.Contents is not null)
+        {
+            foreach (var content in update.Contents)
+            {
+                if (content is FunctionCallContent call && 
+                    string.Equals(call.Name, "confirm_changes", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Show confirmation dialog when confirm_changes is called
+                    Logger.LogInformation("Detected confirm_changes call, showing confirmation dialog");
+                    awaitingConfirmation = true;
+                    isStreaming = false;
+                }
+            }
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private DocumentState? DeserializeDocumentState(ReadOnlyMemory<byte> data)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<DocumentState>(data.Span);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void OnDocumentStateChanged(DocumentState? state)
+    {
+        if (state is null)
+        {
+            return;
+        }
+
+        currentDocumentState = state;
+
+        // Store the previous document before updating (for reject functionality)
+        if (string.IsNullOrEmpty(previousDocument) && !string.IsNullOrEmpty(currentDocument))
+        {
+            previousDocument = currentDocument;
+        }
+        
+        // Check if we're starting to stream (document changed)
+        if (currentDocument != state.Document)
+        {
+            isStreaming = true;
+        }
+        
+        currentDocument = state.Document;
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Frontend tool that waits for user confirmation via the UI.
+    /// </summary>
+    [Description("Ask the user to confirm or reject the document changes.")]
+    private static async Task<ConfirmChangesResult> ConfirmChangesAsync(IAgentBoundaryContext context)
+    {
+        // Wait for the user to click Confirm or Reject
+        var response = await context.WaitForResponse("confirm_changes");
+        return (ConfirmChangesResult)response;
+    }
+
+    private void ConfirmChanges()
+    {
+        awaitingConfirmation = false;
+        isStreaming = false;
+        
+        // Update the previous document to the current one (changes accepted)
+        previousDocument = currentDocument;
+        
+        boundaryContext?.ProvideResponse("confirm_changes", new ConfirmChangesResult { Confirmed = true });
+        StateHasChanged();
+    }
+
+    private void RejectChanges()
+    {
+        awaitingConfirmation = false;
+        isStreaming = false;
+        
+        // Revert to the previous document
+        currentDocument = previousDocument;
+        
+        boundaryContext?.ProvideResponse("confirm_changes", new ConfirmChangesResult { Confirmed = false });
+        StateHasChanged();
+    }
+
+    private void ResetConversation()
+    {
+        currentDocument = string.Empty;
+        previousDocument = string.Empty;
+        currentDocumentState = null;
+        isStreaming = false;
+        awaitingConfirmation = false;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        responseSubscription?.Dispose();
+    }
+}

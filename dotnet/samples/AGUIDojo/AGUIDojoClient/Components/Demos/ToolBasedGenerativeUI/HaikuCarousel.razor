@@ -1,0 +1,104 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+
+<div class="haiku-carousel-container" data-testid="haiku-carousel">
+    @if (Haikus.Count > 1)
+    {
+        <button class="carousel-button carousel-prev" @onclick="PreviousHaiku" disabled="@(currentIndex == 0)">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+        </button>
+    }
+
+    <div class="carousel-content">
+        @if (Haikus.Count > 0 && currentIndex < Haikus.Count)
+        {
+            <div class="carousel-item" data-testid="carousel-item-@currentIndex">
+                <HaikuCard Haiku="@Haikus[currentIndex]" />
+            </div>
+        }
+    </div>
+
+    @if (Haikus.Count > 1)
+    {
+        <button class="carousel-button carousel-next" @onclick="NextHaiku" disabled="@(currentIndex >= Haikus.Count - 1)">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+        </button>
+    }
+</div>
+
+@if (Haikus.Count > 1)
+{
+    <div class="carousel-indicators">
+        @for (int i = 0; i < Haikus.Count; i++)
+        {
+            var index = i;
+            <button class="indicator @(index == currentIndex ? "active" : "")" 
+                    @onclick="() => GoToHaiku(index)">
+            </button>
+        }
+    </div>
+}
+
+@code {
+    private int currentIndex = 0;
+
+    /// <summary>
+    /// Gets or sets the list of haikus to display in the carousel.
+    /// </summary>
+    [Parameter]
+    public IReadOnlyList<Haiku> Haikus { get; set; } = [];
+
+    /// <summary>
+    /// Event callback when the current haiku index changes.
+    /// </summary>
+    [Parameter]
+    public EventCallback<int> OnIndexChanged { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // Reset to first haiku when new haiku is added at the beginning
+        if (Haikus.Count > 0 && currentIndex >= Haikus.Count)
+        {
+            currentIndex = 0;
+        }
+    }
+
+    private async Task NextHaiku()
+    {
+        if (currentIndex < Haikus.Count - 1)
+        {
+            currentIndex++;
+            await OnIndexChanged.InvokeAsync(currentIndex);
+        }
+    }
+
+    private async Task PreviousHaiku()
+    {
+        if (currentIndex > 0)
+        {
+            currentIndex--;
+            await OnIndexChanged.InvokeAsync(currentIndex);
+        }
+    }
+
+    private async Task GoToHaiku(int index)
+    {
+        if (index >= 0 && index < Haikus.Count)
+        {
+            currentIndex = index;
+            await OnIndexChanged.InvokeAsync(currentIndex);
+        }
+    }
+
+    /// <summary>
+    /// Resets the carousel to show the first (newest) haiku.
+    /// </summary>
+    public void ResetToFirst()
+    {
+        currentIndex = 0;
+        StateHasChanged();
+    }
+}

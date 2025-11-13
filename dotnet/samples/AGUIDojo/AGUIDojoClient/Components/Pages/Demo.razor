@@ -1,0 +1,163 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@page "/microsoft-agent-framework/feature/{scenarioId}"
+@using AGUIDojoClient.Components.Shared
+@using AGUIDojoClient.Components.Demos.AgenticChat
+@using AGUIDojoClient.Components.Demos.AgenticGenerativeUI
+@using AGUIDojoClient.Components.Demos.BackendToolRendering
+@using AGUIDojoClient.Components.Demos.HumanInTheLoop
+@using AGUIDojoClient.Components.Demos.SharedState
+@using AGUIDojoClient.Components.Demos.PredictiveStateUpdates
+@using AGUIDojoClient.Components.Demos.ToolBasedGenerativeUI
+@rendermode InteractiveServer
+@inject DemoService DemoService
+@inject NavigationManager Nav
+
+<PageTitle>@(scenario?.Title ?? "AG-UI Dojo")</PageTitle>
+
+<div class="dojo-container">
+    <DemoSidebar CurrentScenarioId="@ScenarioId" />
+    <div class="dojo-main">
+        @if (scenario is not null)
+        {
+            <DemoViewTabs CurrentTab="@currentTab" OnTabChange="@OnTabChanged">
+                <PreviewContent>
+                    <div class="preview-panel">
+                        @RenderScenarioDemo()
+                    </div>
+                </PreviewContent>
+                <CodeContent>
+                    <div class="code-panel">
+                        <div class="placeholder-content">
+                            <h2>Code</h2>
+                            <p>Code view for <strong>@scenario.Title</strong> will be available soon.</p>
+                            <p>This will show the relevant source code for this scenario.</p>
+                        </div>
+                    </div>
+                </CodeContent>
+                <DocsContent>
+                    <div class="docs-panel">
+                        <div class="placeholder-content">
+                            <h2>Documentation</h2>
+                            <p>Documentation for <strong>@scenario.Title</strong> will be available soon.</p>
+                            <p>This will include:</p>
+                            <ul>
+                                <li>Overview of the scenario</li>
+                                <li>Key concepts</li>
+                                <li>How to use the demo</li>
+                                <li>Links to related documentation</li>
+                            </ul>
+                        </div>
+                    </div>
+                </DocsContent>
+            </DemoViewTabs>
+        }
+        else
+        {
+            <div class="error-panel">
+                <h2>Scenario Not Found</h2>
+                <p>The scenario "@ScenarioId" could not be found.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private DemoScenario? scenario;
+    private string currentTab = "preview";
+
+    /// <summary>
+    /// Gets or sets the scenario ID from the route.
+    /// </summary>
+    [Parameter]
+    public string ScenarioId { get; set; } = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        scenario = DemoService.GetScenario(ScenarioId);
+        if (scenario is null)
+        {
+            // Redirect to first scenario if not found
+            DemoScenario? firstScenario = DemoService.AllScenarios.FirstOrDefault();
+            if (firstScenario is not null)
+            {
+                Nav.NavigateTo($"/microsoft-agent-framework/feature/{firstScenario.Id}", replace: true);
+            }
+        }
+    }
+
+    private void OnTabChanged(string tab)
+    {
+        currentTab = tab;
+    }
+
+    private RenderFragment RenderScenarioDemo() => builder =>
+    {
+        if (scenario is null)
+        {
+            return;
+        }
+
+        // For now, we only have AgenticChatDemo implemented
+        // Other scenarios will be added later
+        switch (scenario.Id.ToLowerInvariant())
+        {
+            case "agentic_chat":
+                builder.OpenComponent<AgenticChatDemo>(0);
+                builder.AddAttribute(1, nameof(AgenticChatDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "backend_tool_rendering":
+                builder.OpenComponent<BackendToolRenderingDemo>(0);
+                builder.AddAttribute(1, nameof(BackendToolRenderingDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "human_in_the_loop":
+                builder.OpenComponent<HumanInTheLoopDemo>(0);
+                builder.AddAttribute(1, nameof(HumanInTheLoopDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "tool_based_generative_ui":
+                builder.OpenComponent<ToolBasedGenerativeUIDemo>(0);
+                builder.AddAttribute(1, nameof(ToolBasedGenerativeUIDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "agentic_generative_ui":
+                builder.OpenComponent<AgenticGenerativeUIDemo>(0);
+                builder.AddAttribute(1, nameof(AgenticGenerativeUIDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "shared_state":
+                builder.OpenComponent<SharedStateDemo>(0);
+                builder.AddAttribute(1, nameof(SharedStateDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            case "predictive_state_updates":
+                builder.OpenComponent<PredictiveStateUpdatesDemo>(0);
+                builder.AddAttribute(1, nameof(PredictiveStateUpdatesDemo.ScenarioId), scenario.Id);
+                builder.CloseComponent();
+                break;
+
+            default:
+                // Placeholder for unimplemented scenarios
+                builder.OpenElement(0, "div");
+                builder.AddAttribute(1, "class", "placeholder-content");
+                builder.OpenElement(2, "h2");
+                builder.AddContent(3, scenario.Title);
+                builder.CloseElement();
+                builder.OpenElement(4, "p");
+                builder.AddContent(5, scenario.Description);
+                builder.CloseElement();
+                builder.OpenElement(6, "p");
+                builder.AddContent(7, "This demo will be available soon.");
+                builder.CloseElement();
+                builder.CloseElement();
+                break;
+        }
+    };
+}

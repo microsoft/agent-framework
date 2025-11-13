@@ -1,0 +1,56 @@
+@* Copyright (c) Microsoft. All rights reserved. *@
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Agents.AI
+@using Microsoft.Extensions.AI
+@using Microsoft.Extensions.DependencyInjection
+@using AGUIDojoClient.Components.Shared
+@inject IServiceProvider ServiceProvider
+
+<PageTitle>Backend Tool Rendering</PageTitle>
+
+<div class="chat-layout">
+    <div class="chat-header">
+        <div class="chat-title">Backend Tool Rendering</div>
+        <button class="new-chat-button" @onclick="ResetConversation">
+            <span class="button-icon">+</span> New chat
+        </button>
+    </div>
+
+    <AgentBoundary Agent="@agent">
+        <div class="chat-content">
+            <Messages>
+                <ContentTemplates>
+                    <WeatherCallTemplate />
+                </ContentTemplates>
+            </Messages>
+        </div>
+        
+        <div class="chat-input-container">
+            <AgentSuggestions Suggestions="@suggestions" />
+            <AgentInput Placeholder="Ask about the weather..." />
+        </div>
+    </AgentBoundary>
+</div>
+
+@code {
+    private AIAgent? agent;
+    private Suggestion[] suggestions = [
+        new Suggestion("Weather in San Francisco", new ChatMessage(ChatRole.User, "What's the weather like in San Francisco?")),
+        new Suggestion("Weather in New York", new ChatMessage(ChatRole.User, "What's the weather like in New York?")),
+        new Suggestion("Weather in Tokyo", new ChatMessage(ChatRole.User, "What's the weather like in Tokyo?"))
+    ];
+
+    [Parameter]
+    public string ScenarioId { get; set; } = "backend_tool_rendering";
+
+    protected override void OnInitialized()
+    {
+        agent = ServiceProvider.GetRequiredKeyedService<AIAgent>("backend-tool-rendering");
+    }
+
+    private void ResetConversation()
+    {
+        // Reset would need to be implemented - for now just trigger re-render
+        StateHasChanged();
+    }
+}
