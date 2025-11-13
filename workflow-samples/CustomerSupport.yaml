@@ -113,7 +113,7 @@ trigger:
             - kind: SetVariable
               id: capture_support_resolution
               variable: Local.ResolutionSteps
-              value: =Local.ServiceParameters.ResolutionSummary
+              value: =Local.SupportParameters.ResolutionSummary
 
             # Check if the issue was resolved by support.
             - kind: ConditionGroup
