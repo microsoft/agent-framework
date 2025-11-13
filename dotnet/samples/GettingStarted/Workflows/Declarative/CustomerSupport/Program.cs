@@ -305,7 +305,7 @@ internal sealed class Program
                                     },
                                     "ResolutionSummary": {
                                       "type": "string",
-                                      "description": "The summary of the steps lead to resolution."
+                                      "description": "The summary of the steps that led to resolution."
                                     }
                                   },
                                   "required": ["IsResolved", "NeedsEscalation", "ResolutionSummary"],
