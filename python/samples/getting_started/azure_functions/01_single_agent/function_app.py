@@ -8,13 +8,14 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAM
 
 from typing import Any
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.anthropic import AnthropicClient
+
 # 1. Instantiate the agent with the chosen deployment and instructions.
 def _create_agent() -> Any:
     """Create the Joker agent."""
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+    return AnthropicClient().create_agent(
         name="Joker",
         instructions="You are good at telling jokes.",
     )
