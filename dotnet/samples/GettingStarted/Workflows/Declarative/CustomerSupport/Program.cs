@@ -254,7 +254,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                User your knowledge to work with the user to provide the best possible troubleshooting steps
+                Use your knowledge to work with the user to provide the best possible troubleshooting steps
                 for issues related to Windows operating system.
                 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
