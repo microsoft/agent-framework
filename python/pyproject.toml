@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251105"
+version = "1.0.0b251112.post1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -28,6 +28,7 @@ dependencies = [
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
+    "agent-framework-azurefunctions",
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
@@ -39,7 +40,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv>=0.8.2,<0.10.0",
+    "uv>=0.9,<1.0.0",
     "flit>=3.12.0",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
@@ -93,6 +94,7 @@ agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
+agent-framework-azurefunctions = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-lab = { workspace = true }
@@ -246,6 +248,7 @@ pytest --import-mode=importlib
 --cov=agent_framework_a2a
 --cov=agent_framework_ag_ui
 --cov=agent_framework_azure_ai
+--cov=agent_framework_azurefunctions
 --cov=agent_framework_chatkit
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
@@ -254,6 +257,7 @@ pytest --import-mode=importlib
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
+-rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
 """
@@ -263,6 +267,7 @@ cmd = """
 pytest --import-mode=importlib
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
+-rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
 """

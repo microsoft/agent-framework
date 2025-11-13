@@ -2,10 +2,12 @@
 
 from agent_framework_copilotstudio import CopilotStudioAgent, __version__, acquire_token
 from agent_framework_purview import (
+    CacheProvider,
     PurviewAppLocation,
     PurviewAuthenticationError,
     PurviewChatPolicyMiddleware,
     PurviewLocationType,
+    PurviewPaymentRequiredError,
     PurviewPolicyMiddleware,
     PurviewRateLimitError,
     PurviewRequestError,
@@ -14,11 +16,13 @@ from agent_framework_purview import (
 )
 
 __all__ = [
+    "CacheProvider",
     "CopilotStudioAgent",
     "PurviewAppLocation",
     "PurviewAuthenticationError",
     "PurviewChatPolicyMiddleware",
     "PurviewLocationType",
+    "PurviewPaymentRequiredError",
     "PurviewPolicyMiddleware",
     "PurviewRateLimitError",
     "PurviewRequestError",

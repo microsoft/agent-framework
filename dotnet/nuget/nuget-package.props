@@ -2,9 +2,9 @@
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
     <VersionPrefix>1.0.0</VersionPrefix>
-    <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).251105.1</PackageVersion>
-    <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)-preview.251105.1</PackageVersion>
-    <GitTag>1.0.0-preview.251105.1</GitTag>
+    <PackageVersion Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).251112.1</PackageVersion>
+    <PackageVersion Condition="'$(VersionSuffix)' == ''">$(VersionPrefix)-preview.251112.1</PackageVersion>
+    <GitTag>1.0.0-preview.251112.1</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>

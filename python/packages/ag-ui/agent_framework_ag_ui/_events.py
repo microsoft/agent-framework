@@ -85,6 +85,7 @@ class AgentFrameworkEventBridge:
         self.input_messages = input_messages or []
         self.pending_tool_calls: list[dict[str, Any]] = []  # Track tool calls for assistant message
         self.tool_results: list[dict[str, Any]] = []  # Track tool results
+        self.tool_calls_ended: set[str] = set()  # Track which tool calls have had ToolCallEndEvent emitted
 
     async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
         """
@@ -107,7 +108,7 @@ class AgentFrameworkEventBridge:
                 # Skip text content if we're about to emit confirm_changes
                 # The summary should only appear after user confirms
                 if self.should_stop_after_confirm:
-                    logger.debug("  >>> Skipping text content - waiting for confirm_changes response")
+                    logger.debug("Skipping text content - waiting for confirm_changes response")
                     # Save the summary text to show after confirmation
                     self.suppressed_summary += content.text
                     continue
@@ -118,12 +119,14 @@ class AgentFrameworkEventBridge:
                         message_id=self.current_message_id,
                         role="assistant",
                     )
+                    logger.debug(f"Emitting TextMessageStartEvent with message_id={self.current_message_id}")
                     events.append(start_event)
 
                 event = TextMessageContentEvent(
                     message_id=self.current_message_id,
                     delta=content.text,
                 )
+                logger.debug(f"Emitting TextMessageContentEvent with delta: {content.text}")
                 events.append(event)
 
             elif isinstance(content, FunctionCallContent):
@@ -156,7 +159,7 @@ class AgentFrameworkEventBridge:
                         tool_call_name=content.name,
                         parent_message_id=self.current_message_id,
                     )
-                    logger.info(f"  >>> Emitting ToolCallStartEvent with name='{content.name}', id='{tool_call_id}'")
+                    logger.info(f"Emitting ToolCallStartEvent with name='{content.name}', id='{tool_call_id}'")
                     events.append(tool_start_event)
 
                     # Track tool call for MessagesSnapshotEvent
@@ -186,7 +189,7 @@ class AgentFrameworkEventBridge:
                         # If it's a dict, convert to JSON
                         delta_str = json.dumps(content.arguments)
 
-                    logger.info(f"  >>> Emitting ToolCallArgsEvent with delta: {delta_str!r}..., id='{tool_call_id}'")
+                    logger.info(f"Emitting ToolCallArgsEvent with delta: {delta_str!r}..., id='{tool_call_id}'")
                     args_event = ToolCallArgsEvent(
                         tool_call_id=tool_call_id,
                         delta=delta_str,
@@ -211,7 +214,7 @@ class AgentFrameworkEventBridge:
                             self.streaming_tool_args += json.dumps(content.arguments)
 
                         logger.debug(
-                            f"  >>> Predictive state: accumulated {len(self.streaming_tool_args)} chars for tool '{self.current_tool_call_name}'"
+                            f"Predictive state: accumulated {len(self.streaming_tool_args)} chars for tool '{self.current_tool_call_name}'"
                         )
 
                         # Try to parse accumulated arguments (may be incomplete JSON)
@@ -262,11 +265,11 @@ class AgentFrameworkEventBridge:
                                                     else str(partial_value)
                                                 )
                                                 logger.info(
-                                                    f"  >>> StateDeltaEvent #{self.state_delta_count} for '{state_key}': "
+                                                    f"StateDeltaEvent #{self.state_delta_count} for '{state_key}': "
                                                     f"op=replace, path=/{state_key}, value={value_preview}"
                                                 )
                                             elif self.state_delta_count % 100 == 0:
-                                                logger.info(f"  >>> StateDeltaEvent #{self.state_delta_count} emitted")
+                                                logger.info(f"StateDeltaEvent #{self.state_delta_count} emitted")
 
                                             events.append(state_delta_event)
                                             self.last_emitted_state[state_key] = partial_value
@@ -312,11 +315,11 @@ class AgentFrameworkEventBridge:
                                                 else str(state_value)
                                             )
                                             logger.info(
-                                                f"  >>> StateDeltaEvent #{self.state_delta_count} for '{state_key}': "
+                                                f"StateDeltaEvent #{self.state_delta_count} for '{state_key}': "
                                                 f"op=replace, path=/{state_key}, value={value_preview}"
                                             )
                                         elif self.state_delta_count % 100 == 0:  # Also log every 100th
-                                            logger.info(f"  >>> StateDeltaEvent #{self.state_delta_count} emitted")
+                                            logger.info(f"StateDeltaEvent #{self.state_delta_count} emitted")
 
                                         events.append(state_delta_event)
 
@@ -360,7 +363,7 @@ class AgentFrameworkEventBridge:
                                         ],
                                     )
                                     logger.info(
-                                        f"  >>> Emitting StateDeltaEvent for key '{state_key}', value type: {type(state_value)}"
+                                        f"Emitting StateDeltaEvent for key '{state_key}', value type: {type(state_value)}"
                                     )
                                     events.append(state_delta_event)
 
@@ -376,13 +379,14 @@ class AgentFrameworkEventBridge:
                     end_event = ToolCallEndEvent(
                         tool_call_id=content.call_id,
                     )
-                    logger.info(f"  >>> Emitting ToolCallEndEvent for completed tool call '{content.call_id}'")
+                    logger.info(f"Emitting ToolCallEndEvent for completed tool call '{content.call_id}'")
                     events.append(end_event)
+                    self.tool_calls_ended.add(content.call_id)  # Track that we emitted end event
 
                     # Log total StateDeltaEvent count for this tool call
                     if self.state_delta_count > 0:
                         logger.info(
-                            f"  >>> Tool call '{content.call_id}' complete: emitted {self.state_delta_count} StateDeltaEvents total"
+                            f"Tool call '{content.call_id}' complete: emitted {self.state_delta_count} StateDeltaEvents total"
                         )
 
                     # Reset streaming accumulator and counter for next tool call
@@ -410,11 +414,13 @@ class AgentFrameworkEventBridge:
                 events.append(result_event)
 
                 # Track tool result for MessagesSnapshotEvent
+                # AG-UI protocol expects: { role: "tool", toolCallId: ..., content: ... }
+                # Use camelCase for Pydantic's alias_generator=to_camel
                 self.tool_results.append(
                     {
                         "id": result_message_id,
                         "role": "tool",
-                        "tool_call_id": content.call_id,
+                        "toolCallId": content.call_id,
                         "content": result_content,
                     }
                 )
@@ -422,6 +428,9 @@ class AgentFrameworkEventBridge:
                 # Emit MessagesSnapshotEvent with the complete conversation including tool calls and results
                 # This is required for CopilotKit's useCopilotAction to detect tool result
                 if self.pending_tool_calls and self.tool_results:
+                    # Import message adapter
+                    from ._message_adapters import agent_framework_messages_to_agui
+
                     # Build assistant message with tool_calls
                     assistant_message = {
                         "id": generate_event_id(),
@@ -429,14 +438,19 @@ class AgentFrameworkEventBridge:
                         "tool_calls": self.pending_tool_calls.copy(),  # Copy the accumulated tool calls
                     }
 
+                    # Convert Agent Framework messages to AG-UI format (adds required 'id' field)
+                    converted_input_messages = agent_framework_messages_to_agui(self.input_messages)
+
                     # Build complete messages array: input messages + assistant message + tool results
-                    all_messages = list(self.input_messages) + [assistant_message] + self.tool_results.copy()
+                    all_messages = converted_input_messages + [assistant_message] + self.tool_results.copy()
 
                     # Emit MessagesSnapshotEvent using the proper event type
+                    # Note: messages are dict[str, Any] but Pydantic will validate them as Message types
                     messages_snapshot_event = MessagesSnapshotEvent(
-                        type=EventType.MESSAGES_SNAPSHOT, messages=all_messages
+                        type=EventType.MESSAGES_SNAPSHOT,
+                        messages=all_messages,  # type: ignore[arg-type]
                     )
-                    logger.info(f"  >>> Emitting MessagesSnapshotEvent with {len(all_messages)} messages")
+                    logger.info(f"Emitting MessagesSnapshotEvent with {len(all_messages)} messages")
                     events.append(messages_snapshot_event)
 
                 # After tool execution, emit StateSnapshotEvent if we have pending state updates
@@ -466,7 +480,7 @@ class AgentFrameworkEventBridge:
                     # If so, emit a confirm_changes tool call for the UI modal
                     tool_was_predictive = False
                     logger.debug(
-                        f"  >>> Checking predictive state: current_tool='{self.current_tool_call_name}', "
+                        f"Checking predictive state: current_tool='{self.current_tool_call_name}', "
                         f"predict_config={list(self.predict_state_config.keys()) if self.predict_state_config else 'None'}"
                     )
                     for state_key, config in self.predict_state_config.items():
@@ -474,7 +488,7 @@ class AgentFrameworkEventBridge:
                         # We need to match against self.current_tool_call_name
                         if self.current_tool_call_name and config["tool"] == self.current_tool_call_name:
                             logger.info(
-                                f"  >>> Tool '{self.current_tool_call_name}' matches predictive config for state key '{state_key}'"
+                                f"Tool '{self.current_tool_call_name}' matches predictive config for state key '{state_key}'"
                             )
                             tool_was_predictive = True
                             break
@@ -483,7 +497,7 @@ class AgentFrameworkEventBridge:
                         # Emit confirm_changes tool call sequence
                         confirm_call_id = generate_event_id()
 
-                        logger.info("  >>> Emitting confirm_changes tool call for predictive update")
+                        logger.info("Emitting confirm_changes tool call for predictive update")
 
                         # Track confirm_changes tool call for MessagesSnapshotEvent (so it persists after RUN_FINISHED)
                         self.pending_tool_calls.append(
@@ -518,6 +532,9 @@ class AgentFrameworkEventBridge:
                         events.append(confirm_end)
 
                         # Emit MessagesSnapshotEvent so confirm_changes persists after RUN_FINISHED
+                        # Import message adapter
+                        from ._message_adapters import agent_framework_messages_to_agui
+
                         # Build assistant message with pending confirm_changes tool call
                         assistant_message = {
                             "id": generate_event_id(),
@@ -525,23 +542,28 @@ class AgentFrameworkEventBridge:
                             "tool_calls": self.pending_tool_calls.copy(),  # Includes confirm_changes
                         }
 
+                        # Convert Agent Framework messages to AG-UI format (adds required 'id' field)
+                        converted_input_messages = agent_framework_messages_to_agui(self.input_messages)
+
                         # Build complete messages array: input messages + assistant message + any tool results
-                        all_messages = list(self.input_messages) + [assistant_message] + self.tool_results.copy()
+                        all_messages = converted_input_messages + [assistant_message] + self.tool_results.copy()
 
                         # Emit MessagesSnapshotEvent
+                        # Note: messages are dict[str, Any] but Pydantic will validate them as Message types
                         messages_snapshot_event = MessagesSnapshotEvent(
-                            type=EventType.MESSAGES_SNAPSHOT, messages=all_messages
+                            type=EventType.MESSAGES_SNAPSHOT,
+                            messages=all_messages,  # type: ignore[arg-type]
                         )
                         logger.info(
-                            f"  >>> Emitting MessagesSnapshotEvent for confirm_changes with {len(all_messages)} messages"
+                            f"Emitting MessagesSnapshotEvent for confirm_changes with {len(all_messages)} messages"
                         )
                         events.append(messages_snapshot_event)
 
                         # Set flag to stop the run after this - we're waiting for user response
                         self.should_stop_after_confirm = True
-                        logger.info("  >>> Set flag to stop run after confirm_changes")
+                        logger.info("Set flag to stop run after confirm_changes")
                     elif tool_was_predictive:
-                        logger.info("  >>> Skipping confirm_changes - require_confirmation is False")
+                        logger.info("Skipping confirm_changes - require_confirmation is False")
 
                     # Clear pending updates and reset tool name tracker
                     self.pending_state_updates.clear()
@@ -580,7 +602,7 @@ class AgentFrameworkEventBridge:
                             # Update current state
                             self.current_state[state_key] = state_value
                             logger.info(
-                                f"  >>> Emitting StateSnapshotEvent for key '{state_key}', value type: {type(state_value)}"
+                                f"Emitting StateSnapshotEvent for key '{state_key}', value type: {type(state_value)}"
                             )
 
                             # Emit state snapshot
@@ -596,9 +618,10 @@ class AgentFrameworkEventBridge:
                         tool_call_id=content.function_call.call_id,
                     )
                     logger.info(
-                        f"  >>> Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'"
+                        f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'"
                     )
                     events.append(end_event)
+                    self.tool_calls_ended.add(content.function_call.call_id)  # Track that we emitted end event
 
                 # Emit custom event for approval request
                 # Note: In AG-UI protocol, the frontend handles interrupts automatically
@@ -615,7 +638,7 @@ class AgentFrameworkEventBridge:
                         },
                     },
                 )
-                logger.info(f"  >>> Emitting function_approval_request custom event for '{content.function_call.name}'")
+                logger.info(f"Emitting function_approval_request custom event for '{content.function_call.name}'")
                 events.append(approval_event)
 
         return events

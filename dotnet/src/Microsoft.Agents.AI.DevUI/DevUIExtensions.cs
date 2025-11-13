@@ -10,31 +10,30 @@ namespace Microsoft.Agents.AI.DevUI;
 public static class DevUIExtensions
 {
     /// <summary>
-    /// Adds the necessary services for the DevUI to the application builder.
-    /// </summary>
-    public static IHostApplicationBuilder AddDevUI(this IHostApplicationBuilder builder)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        builder.Services.AddOpenAIConversations();
-        builder.Services.AddOpenAIResponses();
-
-        return builder;
-    }
-
-    /// <summary>
     /// Maps an endpoint that serves the DevUI from the '/devui' path.
     /// </summary>
+    /// <remarks>
+    /// DevUI requires the OpenAI Responses and Conversations services to be registered with
+    /// <see cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIResponses(IServiceCollection)"/> and
+    /// <see cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIConversations(IServiceCollection)"/>,
+    /// and the corresponding endpoints to be mapped using
+    /// <see cref="MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses(IEndpointRouteBuilder)"/> and
+    /// <see cref="MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIConversations(IEndpointRouteBuilder)"/>.
+    /// </remarks>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the endpoint to.</param>
     /// <returns>A <see cref="IEndpointConventionBuilder"/> that can be used to add authorization or other endpoint configuration.</returns>
+    /// <seealso cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIResponses(IServiceCollection)"/>
+    /// <seealso cref="MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions.AddOpenAIConversations(IServiceCollection)"/>
+    /// <seealso cref="MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIResponses(IEndpointRouteBuilder)"/>
+    /// <seealso cref="MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExtensions.MapOpenAIConversations(IEndpointRouteBuilder)"/>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="endpoints"/> is null.</exception>
     public static IEndpointConventionBuilder MapDevUI(
         this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("");
         group.MapDevUI(pattern: "/devui");
+        group.MapMeta();
         group.MapEntities();
-        group.MapOpenAIConversations();
-        group.MapOpenAIResponses();
         return group;
     }
 

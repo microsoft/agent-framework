@@ -1,0 +1,30 @@
+name: AgentWithTextSearchRag
+displayName: "Text Search RAG Agent"
+description: >
+  An AI agent that uses TextSearchProvider for retrieval augmented generation (RAG) capabilities.
+  The agent runs searches against an external knowledge base before each model invocation and
+  injects the results into the model context. It can answer questions about Contoso Outdoors
+  policies and products, including return policies, refunds, shipping options, and product care
+  instructions such as tent maintenance.
+metadata:
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Microsoft Agent Framework
+    - Retrieval-Augmented Generation
+    - RAG
+template:
+  kind: hosted
+  name: AgentWithTextSearchRag
+  protocols:
+    - protocol: responses
+      version: v1
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: gpt-4o-mini
+resources:
+  - name: "gpt-4o-mini"
+    kind: model
+    id: gpt-4o-mini

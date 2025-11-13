@@ -21,20 +21,20 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/azure_ai/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
-| [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_file_search.py`](./getting_started/agents/azure_ai/azure_ai_with_file_search.py) | Azure AI agent with File Search capabilities |
-| [`getting_started/agents/azure_ai/azure_ai_with_function_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_function_tools.py) | Azure AI Agent with Function Tools Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py`](./getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py) | Azure AI Agent with Hosted MCP Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_local_mcp.py`](./getting_started/agents/azure_ai/azure_ai_with_local_mcp.py) | Azure AI Agent with Local MCP Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_multiple_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_multiple_tools.py) | Azure AI Agent with Multiple Tools Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
-| [`getting_started/agents/azure_ai/azure_ai_with_thread.py`](./getting_started/agents/azure_ai/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_file_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_file_search.py) | Azure AI agent with File Search capabilities |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_function_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_function_tools.py) | Azure AI Agent with Function Tools Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_hosted_mcp.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_hosted_mcp.py) | Azure AI Agent with Hosted MCP Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_local_mcp.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_local_mcp.py) | Azure AI Agent with Local MCP Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py) | Azure AI Agent with Multiple Tools Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
 
 ### Azure OpenAI
 
@@ -193,6 +193,18 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/multimodal_input/azure_responses_multimodal.py`](./getting_started/multimodal_input/azure_responses_multimodal.py) | Azure OpenAI Responses with multimodal (image) input example |
 | [`getting_started/multimodal_input/openai_chat_multimodal.py`](./getting_started/multimodal_input/openai_chat_multimodal.py) | OpenAI Chat with multimodal (image) input example |
 
+## Azure Functions
+
+| Sample | Description |
+|--------|-------------|
+| [`getting_started/azure_functions/01_single_agent/`](./getting_started/azure_functions/01_single_agent/) | Host a single agent in Azure Functions with Durable Extension HTTP endpoints and per-session state. |
+| [`getting_started/azure_functions/02_multi_agent/`](./getting_started/azure_functions/02_multi_agent/) | Register multiple agents in one function app with dedicated run routes and a health check endpoint. |
+| [`getting_started/azure_functions/03_callbacks/`](./getting_started/azure_functions/03_callbacks/) | Capture streaming response telemetry via Durable Extension callbacks exposed through HTTP APIs. |
+| [`getting_started/azure_functions/04_single_agent_orchestration_chaining/`](./getting_started/azure_functions/04_single_agent_orchestration_chaining/) | Chain sequential agent executions inside a durable orchestration while preserving the shared thread context. |
+| [`getting_started/azure_functions/05_multi_agent_orchestration_concurrency/`](./getting_started/azure_functions/05_multi_agent_orchestration_concurrency/) | Run two agents concurrently within a durable orchestration and combine their domain-specific outputs. |
+| [`getting_started/azure_functions/06_multi_agent_orchestration_conditionals/`](./getting_started/azure_functions/06_multi_agent_orchestration_conditionals/) | Route orchestration logic based on structured agent responses for spam detection and reply drafting. |
+| [`getting_started/azure_functions/07_single_agent_orchestration_hitl/`](./getting_started/azure_functions/07_single_agent_orchestration_hitl/) | Implement a human-in-the-loop approval loop that iterates on agent output inside a durable orchestration. |
+
 ## Observability
 
 | File | Description |
@@ -281,6 +293,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py`](./getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py) | Sample: Human in the loop guessing game |
+| [`getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py`](./getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py) | Sample: Agents with Approval Requests in Workflows |
 
 ### Observability
 
@@ -299,6 +312,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/workflows/orchestration/group_chat_simple_selector.py`](./getting_started/workflows/orchestration/group_chat_simple_selector.py) | Sample: Group Chat Orchestration with function-based speaker selector |
 | [`getting_started/workflows/orchestration/handoff_simple.py`](./getting_started/workflows/orchestration/handoff_simple.py) | Sample: Handoff Orchestration with simple agent handoff pattern |
 | [`getting_started/workflows/orchestration/handoff_specialist_to_specialist.py`](./getting_started/workflows/orchestration/handoff_specialist_to_specialist.py) | Sample: Handoff Orchestration with specialist-to-specialist routing |
+| [`getting_started/workflows/orchestration/handoff_return_to_previous`](./getting_started/workflows/orchestration/handoff_return_to_previous.py) | Return-to-previous routing: after user input, routes back to the previous specialist instead of coordinator using `.enable_return_to_previous()` |
 | [`getting_started/workflows/orchestration/magentic.py`](./getting_started/workflows/orchestration/magentic.py) | Sample: Magentic Orchestration (agentic task planning with multi-agent execution) |
 | [`getting_started/workflows/orchestration/magentic_checkpoint.py`](./getting_started/workflows/orchestration/magentic_checkpoint.py) | Sample: Magentic Orchestration with Checkpointing |
 | [`getting_started/workflows/orchestration/magentic_human_plan_update.py`](./getting_started/workflows/orchestration/magentic_human_plan_update.py) | Sample: Magentic Orchestration with Human Plan Review |

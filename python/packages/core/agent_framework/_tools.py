@@ -1525,6 +1525,12 @@ def _handle_function_calls_response(
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
+
+            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
+            tools = _extract_tools(kwargs)
+            if tools and kwargs.get("tool_choice") is None:
+                kwargs["tool_choice"] = "auto"
+
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
@@ -1630,7 +1636,7 @@ def _handle_function_calls_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
@@ -1833,7 +1839,7 @@ def _handle_function_calls_streaming_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:

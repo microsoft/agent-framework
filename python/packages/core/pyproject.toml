@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251105"
+version = "1.0.0b251112.post1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -42,13 +42,14 @@ dependencies = [
 [project.optional-dependencies]
 all = [
     "agent-framework-a2a",
+    "agent-framework-ag-ui",
+    "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
-    "agent-framework-mem0",
-    "agent-framework-redis",
     "agent-framework-devui",
+    "agent-framework-mem0",
     "agent-framework-purview",
-    "agent-framework-anthropic",
+    "agent-framework-redis",
 ]
 
 [tool.uv]

@@ -8,11 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   merge_group:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -151,6 +151,14 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+        # This setup action is required for both Durable Task and Azure Functions integration tests.
+        # We only run it on Ubuntu since the Durable Task and Azure Functions features are not available
+        # on .NET Framework (net472) which is what we use the Windows runner for.
+      - name: Set up Durable Task and Azure Functions Integration Test Emulators
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
+
       - name: Run Integration Tests
         shell: bash
         if: github.event_name != 'pull_request' && matrix.integration-tests
@@ -172,6 +180,9 @@ jobs:
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
           OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}
+          # Azure OpenAI Models
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
           # Azure AI Foundry
           AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
           AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}

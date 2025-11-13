@@ -8,6 +8,7 @@ import type {
   AgentSource,
   Conversation,
   HealthResponse,
+  MetaResponse,
   RunAgentRequest,
   RunWorkflowRequest,
   WorkflowInfo,
@@ -32,9 +33,13 @@ interface BackendEntityInfo {
   tools?: (string | Record<string, unknown>)[];
   metadata: Record<string, unknown>;
   source?: string;
+  required_env_vars?: import("@/types").EnvVarRequirement[];
+  // Deployment support
+  deployment_supported?: boolean;
+  deployment_reason?: string;
   // Agent-specific fields (present when type === "agent")
   instructions?: string;
-  model?: string;
+  model_id?: string;
   chat_client_type?: string;
   context_providers?: string[];
   middleware?: string[];
@@ -61,22 +66,16 @@ interface ConversationApiResponse {
 const DEFAULT_API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL !== undefined
     ? import.meta.env.VITE_API_BASE_URL
-    : "http://localhost:8080";
+    : ""; // Default to relative URLs (same host as frontend)
 
 // Retry configuration for streaming
-const RETRY_INTERVAL_MS = 1000; // Retry every second
-const MAX_RETRY_ATTEMPTS = 600; // Max 600 retries (10 minutes total)
+const RETRY_INTERVAL_MS = 1000; // Base retry interval (will use exponential backoff)
+const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential backoff)
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
   const stored = localStorage.getItem("devui_backend_url");
   if (stored) return stored;
-  
-  // If VITE_API_BASE_URL is explicitly set to empty string, use relative path
-  // This allows the frontend to call the same host it's served from
-  if (import.meta.env.VITE_API_BASE_URL === "") {
-    return "";
-  }
   
   return DEFAULT_API_BASE_URL;
 }
@@ -88,9 +87,12 @@ function sleep(ms: number): Promise<void> {
 
 class ApiClient {
   private baseUrl: string;
+  private authToken: string | null = null;
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getBackendUrl();
+    // Load auth token from localStorage on initialization
+    this.authToken = localStorage.getItem("devui_auth_token");
   }
 
   // Allow updating the base URL at runtime
@@ -102,27 +104,68 @@ class ApiClient {
     return this.baseUrl;
   }
 
+  // Set auth token and persist to localStorage
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+    if (token) {
+      localStorage.setItem("devui_auth_token", token);
+    } else {
+      localStorage.removeItem("devui_auth_token");
+    }
+  }
+
+  // Get current auth token
+  getAuthToken(): string | null {
+    return this.authToken;
+  }
+
+  // Clear auth token
+  clearAuthToken(): void {
+    this.setAuthToken(null);
+  }
+
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
+    // Build headers with auth token if available
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(options.headers as Record<string, string>),
+    };
+
+    if (this.authToken) {
+      headers["Authorization"] = `Bearer ${this.authToken}`;
+    }
+
     const response = await fetch(url, {
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
       ...options,
+      headers,
     });
 
     if (!response.ok) {
+      // Handle 401 Unauthorized - clear invalid token
+      if (response.status === 401) {
+        this.clearAuthToken();
+        throw new Error("UNAUTHORIZED");
+      }
+
       // Try to extract error message from response body
       let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
       try {
         const errorData = await response.json();
+        // Handle detail as string or object
         if (errorData.detail) {
-          errorMessage = errorData.detail;
+          if (typeof errorData.detail === "string") {
+            errorMessage = errorData.detail;
+          } else if (typeof errorData.detail === "object" && errorData.detail.error?.message) {
+            // Backend returns detail: { error: { message: "...", type: "...", code: "..." } }
+            errorMessage = errorData.detail.error.message;
+          }
+        } else if (errorData.error?.message) {
+          errorMessage = errorData.error.message;
         }
       } catch {
         // If parsing fails, use default message
@@ -138,6 +181,11 @@ class ApiClient {
     return this.request<HealthResponse>("/health");
   }
 
+  // Server metadata
+  async getMeta(): Promise<MetaResponse> {
+    return this.request<MetaResponse>("/meta");
+  }
+
   // Entity discovery using new unified endpoint
   async getEntities(): Promise<{
     entities: (AgentInfo | WorkflowInfo)[];
@@ -146,64 +194,83 @@ class ApiClient {
   }> {
     const response = await this.request<DiscoveryResponse>("/v1/entities");
 
-    // Separate agents and workflows
-    const agents: AgentInfo[] = [];
-    const workflows: WorkflowInfo[] = [];
-
-    response.entities.forEach((entity) => {
+    // Transform entities while preserving backend order
+    const entities: (AgentInfo | WorkflowInfo)[] = response.entities.map((entity) => {
       if (entity.type === "agent") {
-        agents.push({
+        return {
           id: entity.id,
           name: entity.name,
           description: entity.description,
-          type: "agent",
+          type: "agent" as const,
           source: (entity.source as AgentSource) || "directory",
           tools: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
-          has_env: false, // Default value
+          has_env: !!(entity.required_env_vars && entity.required_env_vars.length > 0),
           module_path:
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          required_env_vars: entity.required_env_vars,
           metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
+          // Deployment support
+          deployment_supported: entity.deployment_supported,
+          deployment_reason: entity.deployment_reason,
           // Agent-specific fields
           instructions: entity.instructions,
-          model: entity.model,
+          model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
           context_providers: entity.context_providers,
           middleware: entity.middleware,
-        });
-      } else if (entity.type === "workflow") {
-        const firstTool = entity.tools?.[0];
-        const startExecutorId = typeof firstTool === "string" ? firstTool : "";
-
-        workflows.push({
+        };
+      } else {
+        // Workflow - prefer executors field, fall back to tools for backward compatibility
+        const executorList = entity.executors || entity.tools || [];
+        
+        // Determine start_executor_id: use entity value, or first executor if it's a string
+        let startExecutorId = entity.start_executor_id || "";
+        if (!startExecutorId && executorList.length > 0) {
+          const firstExecutor = executorList[0];
+          if (typeof firstExecutor === "string") {
+            startExecutorId = firstExecutor;
+          }
+        }
+        
+        return {
           id: entity.id,
           name: entity.name,
           description: entity.description,
-          type: "workflow",
+          type: "workflow" as const,
           source: (entity.source as AgentSource) || "directory",
-          executors: (entity.tools || []).map((tool) =>
-            typeof tool === "string" ? tool : JSON.stringify(tool)
+          executors: executorList.map((executor) =>
+            typeof executor === "string" ? executor : JSON.stringify(executor)
           ),
-          has_env: false,
+          has_env: !!(entity.required_env_vars && entity.required_env_vars.length > 0),
           module_path:
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          required_env_vars: entity.required_env_vars,
           metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
+          // Deployment support
+          deployment_supported: entity.deployment_supported,
+          deployment_reason: entity.deployment_reason,
           input_schema:
             (entity.input_schema as unknown as import("@/types").JSONSchema) || {
               type: "string",
             }, // Default schema
           input_type_name: entity.input_type_name || "Input",
           start_executor_id: startExecutorId,
-        });
+          tools: [],
+        };
       }
     });
 
-    return { entities: [...agents, ...workflows], agents, workflows };
+    // Create filtered arrays for backward compatibility
+    const agents = entities.filter((e): e is AgentInfo => e.type === "agent");
+    const workflows = entities.filter((e): e is WorkflowInfo => e.type === "workflow");
+
+    return { entities, agents, workflows };
   }
 
   // Legacy methods for compatibility
@@ -219,7 +286,7 @@ class ApiClient {
 
   async getAgentInfo(agentId: string): Promise<AgentInfo> {
     // Get detailed entity info from unified endpoint
-    return this.request<AgentInfo>(`/v1/entities/${agentId}/info`);
+    return this.request<AgentInfo>(`/v1/entities/${agentId}/info?type=agent`);
   }
 
   async getWorkflowInfo(
@@ -227,7 +294,17 @@ class ApiClient {
   ): Promise<import("@/types").WorkflowInfo> {
     // Get detailed entity info from unified endpoint
     return this.request<import("@/types").WorkflowInfo>(
-      `/v1/entities/${workflowId}/info`
+      `/v1/entities/${workflowId}/info?type=workflow`
+    );
+  }
+
+  async reloadEntity(entityId: string): Promise<{ success: boolean; message: string }> {
+    // Hot reload entity - clears cache and forces reimport on next access
+    return this.request<{ success: boolean; message: string }>(
+      `/v1/entities/${entityId}/reload`,
+      {
+        method: "POST",
+      }
     );
   }
 
@@ -238,10 +315,23 @@ class ApiClient {
   async createConversation(
     metadata?: Record<string, string>
   ): Promise<Conversation> {
+    // Check if OAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    const headers: Record<string, string> = {};
+
+    // Add proxy mode header if enabled
+    if (oaiMode.enabled) {
+      headers["X-Proxy-Backend"] = "openai";
+    }
+
     const response = await this.request<ConversationApiResponse>(
       "/v1/conversations",
       {
         method: "POST",
+        headers,
         body: JSON.stringify({ metadata }),
       }
     );
@@ -321,6 +411,19 @@ class ApiClient {
     return this.request<{ data: unknown[]; has_more: boolean }>(url);
   }
 
+  async deleteConversationItem(
+    conversationId: string,
+    itemId: string
+  ): Promise<void> {
+    const response = await fetch(
+      `${this.baseUrl}/v1/conversations/${conversationId}/items/${itemId}`,
+      { method: "DELETE" }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to delete item: ${response.statusText}`);
+    }
+  }
+
   // OpenAI-compatible streaming methods using /v1/responses endpoint
 
   // Private helper method that handles the actual streaming with retry logic
@@ -329,6 +432,35 @@ class ApiClient {
     conversationId?: string,
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
+    // Check if OpenAI proxy mode is enabled
+    const { oaiMode } = await import("@/stores").then((m) => ({
+      oaiMode: m.useDevUIStore.getState().oaiMode,
+    }));
+
+    // Modify request if OAI mode is enabled
+    if (oaiMode.enabled) {
+      // Override model with OAI model
+      openAIRequest.model = oaiMode.model;
+
+      // Merge optional OpenAI parameters
+      if (oaiMode.temperature !== undefined) {
+        openAIRequest.temperature = oaiMode.temperature;
+      }
+      if (oaiMode.max_output_tokens !== undefined) {
+        openAIRequest.max_output_tokens = oaiMode.max_output_tokens;
+      }
+      if (oaiMode.top_p !== undefined) {
+        openAIRequest.top_p = oaiMode.top_p;
+      }
+      if (oaiMode.instructions !== undefined) {
+        openAIRequest.instructions = oaiMode.instructions;
+      }
+      // Reasoning parameters (for o-series models)
+      if (oaiMode.reasoning_effort !== undefined) {
+        openAIRequest.reasoning = { effort: oaiMode.reasoning_effort };
+      }
+    }
+
     let lastSequenceNumber = -1;
     let retryCount = 0;
     let hasYieldedAnyEvent = false;
@@ -373,26 +505,68 @@ class ApiClient {
             params.set("starting_after", lastSequenceNumber.toString());
           }
           const url = `${this.baseUrl}/v1/responses/${currentResponseId}?${params.toString()}`;
+
+          const headers: Record<string, string> = {
+            Accept: "text/event-stream",
+          };
+
+          // Add auth token if available
+          if (this.authToken) {
+            headers["Authorization"] = `Bearer ${this.authToken}`;
+          }
+
           response = await fetch(url, {
             method: "GET",
-            headers: {
-              Accept: "text/event-stream",
-            },
+            headers,
           });
         } else {
           const url = `${this.baseUrl}/v1/responses`;
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          };
+
+          // Add proxy header if OAI mode is enabled
+          if (oaiMode.enabled) {
+            headers["X-Proxy-Backend"] = "openai";
+          }
+
+          // Add auth token if available
+          if (this.authToken) {
+            headers["Authorization"] = `Bearer ${this.authToken}`;
+          }
+
           response = await fetch(url, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "text/event-stream",
-            },
+            headers,
             body: JSON.stringify(openAIRequest),
           });
         }
 
         if (!response.ok) {
-          // Try to extract detailed error message from response body
+          // Handle authentication errors - don't retry these
+          if (response.status === 401) {
+            this.clearAuthToken(); // Clear invalid token
+            throw new Error("UNAUTHORIZED"); // Special error that won't be retried
+          }
+
+          // Handle other client errors (400-499) - don't retry these either
+          if (response.status >= 400 && response.status < 500) {
+            let errorMessage = `Client error ${response.status}`;
+            try {
+              const errorBody = await response.json();
+              if (errorBody.error && errorBody.error.message) {
+                errorMessage = errorBody.error.message;
+              } else if (errorBody.detail) {
+                errorMessage = errorBody.detail;
+              }
+            } catch {
+              // Fallback to generic message
+            }
+            throw new Error(`CLIENT_ERROR: ${errorMessage}`);
+          }
+
+          // Server errors (500-599) - these can be retried
           let errorMessage = `Request failed with status ${response.status}`;
           try {
             const errorBody = await response.json();
@@ -525,18 +699,26 @@ class ApiClient {
           reader.releaseLock();
         }
       } catch (error) {
-        // Network error occurred - prepare to retry
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Don't retry on auth errors or client errors
+        if (errorMessage === "UNAUTHORIZED" || errorMessage.startsWith("CLIENT_ERROR:")) {
+          throw error; // Re-throw without retrying
+        }
+
+        // Network error or server error occurred - prepare to retry
         retryCount++;
 
         if (retryCount > MAX_RETRY_ATTEMPTS) {
           // Max retries exceeded - give up
           throw new Error(
-            `Connection failed after ${MAX_RETRY_ATTEMPTS} retry attempts: ${error instanceof Error ? error.message : String(error)}`
+            `Connection failed after ${MAX_RETRY_ATTEMPTS} retry attempts: ${errorMessage}`
           );
         }
 
-        // Wait before retrying
-        await sleep(RETRY_INTERVAL_MS);
+        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+        const retryDelay = Math.min(RETRY_INTERVAL_MS * Math.pow(2, retryCount - 1), 30000);
+        await sleep(retryDelay);
         // Loop will retry with GET if we have response_id, otherwise POST
       }
     }
@@ -549,7 +731,7 @@ class ApiClient {
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     const openAIRequest: AgentFrameworkRequest = {
-      model: agentId, // Model IS the entity_id (simplified routing!)
+      metadata: { entity_id: agentId }, // Entity ID in metadata for routing
       input: request.input, // Direct OpenAI ResponseInputParam
       stream: true,
       conversation: request.conversation_id, // OpenAI standard conversation param
@@ -565,6 +747,7 @@ class ApiClient {
     conversationId?: string,
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
+    // Proxy mode handling is now inside streamOpenAIResponse
     yield* this.streamOpenAIResponse(openAIRequest, conversationId, resumeResponseId);
   }
 
@@ -573,12 +756,15 @@ class ApiClient {
     workflowId: string,
     request: RunWorkflowRequest
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
-    // Convert to OpenAI format - use model field for entity_id (same as agents)
+    // Convert to OpenAI format - use metadata.entity_id for routing
     const openAIRequest: AgentFrameworkRequest = {
-      model: workflowId, // Use workflow ID in model field (matches agent pattern)
-      input: request.input_data || "", // Send dict directly, no stringification needed
+      metadata: { entity_id: workflowId }, // Entity ID in metadata for routing
+      input: JSON.stringify(request.input_data || {}), // Serialize workflow input as JSON string
       stream: true,
       conversation: request.conversation_id, // Include conversation if present
+      extra_body: request.checkpoint_id
+        ? { entity_id: workflowId, checkpoint_id: request.checkpoint_id }
+        : undefined, // Pass checkpoint_id if provided
     };
 
     yield* this.streamOpenAIResponse(openAIRequest, request.conversation_id);
@@ -619,6 +805,139 @@ class ApiClient {
   clearStreamingState(conversationId: string): void {
     clearStreamingState(conversationId);
   }
+
+  // Deployment methods
+  async* streamDeployment(config: {
+    entity_id: string;
+    resource_group: string;
+    app_name: string;
+    region?: string;
+    ui_mode?: string;
+  }): AsyncGenerator<{
+    type: string;
+    message: string;
+    url?: string;
+    auth_token?: string;
+  }> {
+    const response = await fetch(`${this.baseUrl}/v1/deployments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ...config, stream: true }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Deployment failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6);
+            if (data === "[DONE]") return;
+            try {
+              yield JSON.parse(data);
+            } catch (e) {
+              // Emit error event for parsing failures
+              yield {
+                type: "deploy.error",
+                message: `Failed to parse deployment event: ${e instanceof Error ? e.message : "Unknown error"}`,
+              };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      // Emit error event before throwing
+      yield {
+        type: "deploy.failed",
+        message: `Stream interrupted: ${error instanceof Error ? error.message : "Unknown error"}`,
+      };
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // ============================================================================
+  // Workflow Session Management (uses /conversations API)
+  // ============================================================================
+
+  async listWorkflowSessions(entityId: string): Promise<{ data: import("@/types").WorkflowSession[] }> {
+    // Workflow sessions are conversations with entity_id and type metadata
+    const url = `/v1/conversations?entity_id=${encodeURIComponent(entityId)}&type=workflow_session`;
+    const response = await this.request<{
+      object: "list";
+      data: ConversationApiResponse[];
+      has_more: boolean;
+    }>(url);
+
+    // Transform conversations to WorkflowSession format (no checkpoint counting)
+    const sessions = response.data.map((conv) => ({
+      conversation_id: conv.id,
+      entity_id: conv.metadata?.entity_id || entityId,
+      created_at: conv.created_at,
+      metadata: {
+        name: conv.metadata?.name || `Session ${new Date(conv.created_at * 1000).toLocaleString()}`,
+        description: conv.metadata?.description,
+        type: "workflow_session" as const,
+      },
+    }));
+
+    return { data: sessions };
+  }
+
+  async createWorkflowSession(
+    entityId: string,
+    params?: { name?: string; description?: string }
+  ): Promise<import("@/types").WorkflowSession> {
+    // Create conversation with workflow session metadata
+    const metadata = {
+      entity_id: entityId,
+      type: "workflow_session" as const,
+      name: params?.name || `Session ${new Date().toLocaleString()}`,
+      ...(params?.description && { description: params.description }),
+    };
+
+    const conversation = await this.createConversation(metadata);
+
+    return {
+      conversation_id: conversation.id,
+      entity_id: entityId,
+      created_at: conversation.created_at,
+      metadata: {
+        name: metadata.name,
+        description: metadata.description,
+        type: "workflow_session" as const,
+      },
+    };
+  }
+
+  async deleteWorkflowSession(_entityId: string, conversationId: string): Promise<void> {
+    // Delete conversation (this also deletes all associated items/checkpoints)
+    const success = await this.deleteConversation(conversationId);
+    if (!success) {
+      throw new Error("Failed to delete workflow session");
+    }
+  }
+
+  // Checkpoint operations now handled through standard conversation items API
+  // Checkpoints are conversation items with type="checkpoint"
 }
 
 // Export singleton instance
