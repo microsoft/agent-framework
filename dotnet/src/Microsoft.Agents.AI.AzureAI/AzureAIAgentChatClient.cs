@@ -127,6 +127,7 @@ internal sealed class AzureAIAgentChatClient : DelegatingChatClient
         agentEnabledChatOptions.Temperature = null;
         agentEnabledChatOptions.TopP = null;
         agentEnabledChatOptions.PresencePenalty = null;
+        agentEnabledChatOptions.ResponseFormat = null;
 
         // Use the conversation from the request, or the one defined at the client level.
         agentEnabledChatOptions.ConversationId = options?.ConversationId ?? this._chatOptions?.ConversationId;

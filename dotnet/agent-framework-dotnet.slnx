@@ -98,6 +98,24 @@
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/FoundryAgents/">
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.1_Basics/FoundryAgents_Step01.1_Basics.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.2_Running/FoundryAgents_Step01.2_Running.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step02_MultiturnConversation/FoundryAgents_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step03.1_UsingFunctionTools/FoundryAgents_Step03.1_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step03.2_UsingFunctionTools_FromOpenAPI/FoundryAgents_Step03.2_UsingFunctionTools_FromOpenAPI.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step04_UsingFunctionToolsWithApprovals/FoundryAgents_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step05_StructuredOutput/FoundryAgents_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step06_PersistedConversations/FoundryAgents_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step07_Observability/FoundryAgents_Step07_Observability.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step08_DependencyInjection/FoundryAgents_Step08_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step09_UsingMcpClientAsTools/FoundryAgents_Step09_UsingMcpClientAsTools.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step10_UsingImages/FoundryAgents_Step10_UsingImages.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step11_AsFunctionTool/FoundryAgents_Step11_AsFunctionTool.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step12_Middleware/FoundryAgents_Step12_Middleware.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <File Path="samples/GettingStarted/ModelContextProtocol/README.md" />
     <Project Path="samples/GettingStarted/ModelContextProtocol/Agent_MCP_Server/Agent_MCP_Server.csproj" />
@@ -181,8 +199,8 @@
   </Folder>
   <Folder Name="/Samples/HostedAgents/">
     <Project Path="samples/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
-    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
     <Project Path="samples/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
+    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />

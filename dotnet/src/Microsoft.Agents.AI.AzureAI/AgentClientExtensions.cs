@@ -2,6 +2,12 @@
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -17,7 +23,7 @@ namespace Azure.AI.Agents;
 /// <summary>
 /// Provides extension methods for <see cref="AgentClient"/>.
 /// </summary>
-public static class AgentClientExtensions
+public static partial class AgentClientExtensions
 {
     /// <summary>
     /// Retrieves an existing server side agent, wrapped as a <see cref="ChatClientAgent"/> using the provided <see cref="AgentClient"/>.
@@ -45,6 +51,7 @@ public static class AgentClientExtensions
     {
         Throw.IfNull(agentClient);
         Throw.IfNull(agentReference);
+        ThrowIfInvalidAgentName(agentReference.Name);
 
         return CreateChatClientAgent(
             agentClient,
@@ -84,7 +91,7 @@ public static class AgentClientExtensions
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
+        ThrowIfInvalidAgentName(name);
 
         AgentRecord agentRecord = GetAgentRecordByName(agentClient, name, cancellationToken);
 
@@ -121,7 +128,7 @@ public static class AgentClientExtensions
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
+        ThrowIfInvalidAgentName(name);
 
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(agentClient, name, cancellationToken).ConfigureAwait(false);
 
@@ -229,6 +236,8 @@ public static class AgentClientExtensions
             throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
         }
 
+        ThrowIfInvalidAgentName(options.Name);
+
         AgentRecord agentRecord = GetAgentRecordByName(agentClient, options.Name, cancellationToken);
         var agentVersion = agentRecord.Versions.Latest;
 
@@ -269,6 +278,8 @@ public static class AgentClientExtensions
         {
             throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
         }
+
+        ThrowIfInvalidAgentName(options.Name);
 
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(agentClient, options.Name, cancellationToken).ConfigureAwait(false);
         var agentVersion = agentRecord.Versions.Latest;
@@ -314,7 +325,7 @@ public static class AgentClientExtensions
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
+        ThrowIfInvalidAgentName(name);
         Throw.IfNullOrWhitespace(model);
         Throw.IfNullOrWhitespace(instructions);
 
@@ -359,7 +370,7 @@ public static class AgentClientExtensions
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
+        ThrowIfInvalidAgentName(name);
         Throw.IfNullOrWhitespace(model);
         Throw.IfNullOrWhitespace(instructions);
 
@@ -406,10 +417,21 @@ public static class AgentClientExtensions
             throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
         }
 
+        ThrowIfInvalidAgentName(options.Name);
+
         PromptAgentDefinition agentDefinition = new(model)
         {
             Instructions = options.Instructions,
+            Temperature = options.ChatOptions?.Temperature,
+            TopP = options.ChatOptions?.TopP,
+            TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
         };
+
+        // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        {
+            agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
+        }
 
         ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
 
@@ -464,10 +486,21 @@ public static class AgentClientExtensions
             throw new ArgumentException("Agent name must be provided in the options.Name property", nameof(options));
         }
 
+        ThrowIfInvalidAgentName(options.Name);
+
         PromptAgentDefinition agentDefinition = new(model)
         {
             Instructions = options.Instructions,
+            Temperature = options.ChatOptions?.Temperature,
+            TopP = options.ChatOptions?.TopP,
+            TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
         };
+
+        // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        {
+            agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
+        }
 
         ApplyToolsToAgentDefinition(agentDefinition, options.ChatOptions?.Tools);
 
@@ -514,7 +547,7 @@ public static class AgentClientExtensions
         CancellationToken cancellationToken = default)
     {
         Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
+        ThrowIfInvalidAgentName(name);
         Throw.IfNull(creationOptions);
 
         return CreateAIAgent(
@@ -552,8 +585,8 @@ public static class AgentClientExtensions
         OpenAIClientOptions? openAIClientOptions = null,
         CancellationToken cancellationToken = default)
     {
-        Throw.IfNullOrWhitespace(name);
         Throw.IfNull(agentClient);
+        ThrowIfInvalidAgentName(name);
         Throw.IfNull(creationOptions);
 
         return CreateAIAgentAsync(
@@ -619,10 +652,6 @@ public static class AgentClientExtensions
         IServiceProvider? services,
         CancellationToken cancellationToken)
     {
-        Throw.IfNull(agentClient);
-        Throw.IfNullOrWhitespace(name);
-        Throw.IfNull(creationOptions);
-
         var allowDeclarativeMode = tools is not { Count: > 0 };
 
         if (!allowDeclarativeMode)
@@ -652,10 +681,6 @@ public static class AgentClientExtensions
         IServiceProvider? services,
         CancellationToken cancellationToken)
     {
-        Throw.IfNullOrWhitespace(name);
-        Throw.IfNull(agentClient);
-        Throw.IfNull(creationOptions);
-
         var allowDeclarativeMode = tools is not { Count: > 0 };
 
         if (!allowDeclarativeMode)
@@ -912,5 +937,140 @@ public static class AgentClientExtensions
         }
     }
 
+    private static ResponseTextFormat? ToOpenAIResponseTextFormat(ChatResponseFormat? format, ChatOptions? options = null) =>
+        format switch
+        {
+            ChatResponseFormatText => ResponseTextFormat.CreateTextFormat(),
+
+            ChatResponseFormatJson jsonFormat when StrictSchemaTransformCache.GetOrCreateTransformedSchema(jsonFormat) is { } jsonSchema =>
+                ResponseTextFormat.CreateJsonSchemaFormat(
+                    jsonFormat.SchemaName ?? "json_schema",
+                    BinaryData.FromBytes(JsonSerializer.SerializeToUtf8Bytes(jsonSchema, AgentClientJsonContext.Default.JsonElement)),
+                    jsonFormat.SchemaDescription,
+                    HasStrict(options?.AdditionalProperties)),
+
+            ChatResponseFormatJson => ResponseTextFormat.CreateJsonObjectFormat(),
+
+            _ => null,
+        };
+
+    /// <summary>Key into AdditionalProperties used to store a strict option.</summary>
+    private const string StrictKey = "strictJsonSchema";
+
+    /// <summary>Gets whether the properties specify that strict schema handling is desired.</summary>
+    private static bool? HasStrict(IReadOnlyDictionary<string, object?>? additionalProperties) =>
+        additionalProperties?.TryGetValue(StrictKey, out object? strictObj) is true &&
+        strictObj is bool strictValue ?
+        strictValue : null;
+
+    /// <summary>
+    /// Gets the JSON schema transformer cache conforming to OpenAI <b>strict</b> / structured output restrictions per
+    /// https://platform.openai.com/docs/guides/structured-outputs?api-mode=responses#supported-schemas.
+    /// </summary>
+    private static AIJsonSchemaTransformCache StrictSchemaTransformCache { get; } = new(new()
+    {
+        DisallowAdditionalProperties = true,
+        ConvertBooleanSchemas = true,
+        MoveDefaultKeywordToDescription = true,
+        RequireAllProperties = true,
+        TransformSchemaNode = (ctx, node) =>
+        {
+            // Move content from common but unsupported properties to description. In particular, we focus on properties that
+            // the AIJsonUtilities schema generator might produce and/or that are explicitly mentioned in the OpenAI documentation.
+
+            if (node is JsonObject schemaObj)
+            {
+                StringBuilder? additionalDescription = null;
+
+                ReadOnlySpan<string> unsupportedProperties =
+                [
+                    // Produced by AIJsonUtilities but not in allow list at https://platform.openai.com/docs/guides/structured-outputs#supported-properties:
+                    "contentEncoding", "contentMediaType", "not",
+
+                    // Explicitly mentioned at https://platform.openai.com/docs/guides/structured-outputs?api-mode=responses#key-ordering as being unsupported with some models:
+                    "minLength", "maxLength", "pattern", "format",
+                    "minimum", "maximum", "multipleOf",
+                    "patternProperties",
+                    "minItems", "maxItems",
+
+                    // Explicitly mentioned at https://learn.microsoft.com/azure/ai-services/openai/how-to/structured-outputs?pivots=programming-language-csharp&tabs=python-secure%2Cdotnet-entra-id#unsupported-type-specific-keywords
+                    // as being unsupported with Azure OpenAI:
+                    "unevaluatedProperties", "propertyNames", "minProperties", "maxProperties",
+                    "unevaluatedItems", "contains", "minContains", "maxContains", "uniqueItems",
+                ];
+
+                foreach (string propName in unsupportedProperties)
+                {
+                    if (schemaObj[propName] is { } propNode)
+                    {
+                        _ = schemaObj.Remove(propName);
+                        AppendLine(ref additionalDescription, propName, propNode);
+                    }
+                }
+
+                if (additionalDescription is not null)
+                {
+                    schemaObj["description"] = schemaObj["description"] is { } descriptionNode && descriptionNode.GetValueKind() == JsonValueKind.String ?
+                        $"{descriptionNode.GetValue<string>()}{Environment.NewLine}{additionalDescription}" :
+                        additionalDescription.ToString();
+                }
+
+                return node;
+
+                static void AppendLine(ref StringBuilder? sb, string propName, JsonNode propNode)
+                {
+                    sb ??= new();
+
+                    if (sb.Length > 0)
+                    {
+                        _ = sb.AppendLine();
+                    }
+
+                    _ = sb.Append(propName).Append(": ").Append(propNode);
+                }
+            }
+
+            return node;
+        },
+    });
+
+    /// <summary>
+    /// This class is a no-op implementation of <see cref="IChatClient"/> to be used to honor the argument passed
+    /// while triggering <see cref="ChatOptions.RawRepresentationFactory"/> avoiding any unexpected exception on the caller implementation.
+    /// </summary>
+    private sealed class NoOpChatClient : IChatClient
+    {
+        public void Dispose() { }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(new ChatResponse());
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new ChatResponseUpdate();
+        }
+    }
     #endregion
+
+#if NET
+    [GeneratedRegex("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")]
+    private static partial Regex AgentNameValidationRegex();
+#else
+    private static Regex AgentNameValidationRegex() => new("^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$");
+#endif
+
+    private static string ThrowIfInvalidAgentName(string? name)
+    {
+        Throw.IfNullOrWhitespace(name);
+        if (!AgentNameValidationRegex().IsMatch(name))
+        {
+            throw new ArgumentException("Agent name must be 1-63 characters long, start and end with an alphanumeric character, and can only contain alphanumeric characters or hyphens.", nameof(name));
+        }
+        return name;
+    }
 }
+
+[JsonSerializable(typeof(JsonElement))]
+internal sealed partial class AgentClientJsonContext : JsonSerializerContext;

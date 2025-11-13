@@ -1629,6 +1629,217 @@ public sealed class AgentClientExtensionsTests
 
     #endregion
 
+    #region AgentName Validation Tests
+
+    /// <summary>
+    /// Verify that GetAIAgent throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void GetAIAgent_ByName_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            mockClient.Object.GetAIAgent(invalidName));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public async Task GetAIAgentAsync_ByName_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            mockClient.Object.GetAIAgentAsync(invalidName));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with ChatClientAgentOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void GetAIAgent_WithOptions_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var options = new ChatClientAgentOptions { Name = invalidName };
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.GetAIAgent(options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with ChatClientAgentOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public async Task GetAIAgentAsync_WithOptions_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var options = new ChatClientAgentOptions { Name = invalidName };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.GetAIAgentAsync(options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void CreateAIAgent_WithBasicParams_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            mockClient.Object.CreateAIAgent(invalidName, "model", "instructions"));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public async Task CreateAIAgentAsync_WithBasicParams_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            mockClient.Object.CreateAIAgentAsync(invalidName, "model", "instructions"));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with AgentVersionCreationOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void CreateAIAgent_WithAgentDefinition_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+        var definition = new PromptAgentDefinition("test-model");
+        var options = new AgentVersionCreationOptions(definition);
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            mockClient.Object.CreateAIAgent(invalidName, options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with AgentVersionCreationOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public async Task CreateAIAgentAsync_WithAgentDefinition_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+        var definition = new PromptAgentDefinition("test-model");
+        var options = new AgentVersionCreationOptions(definition);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            mockClient.Object.CreateAIAgentAsync(invalidName, options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with ChatClientAgentOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void CreateAIAgent_WithOptions_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var options = new ChatClientAgentOptions { Name = invalidName };
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            client.CreateAIAgent("test-model", options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with ChatClientAgentOptions throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public async Task CreateAIAgentAsync_WithOptions_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
+    {
+        // Arrange
+        AgentClient client = this.CreateTestAgentClient();
+        var options = new ChatClientAgentOptions { Name = invalidName };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            client.CreateAIAgentAsync("test-model", options));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with AgentReference throws ArgumentException when agent name is invalid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
+    public void GetAIAgent_WithAgentReference_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    {
+        // Arrange
+        var mockClient = new Mock<AgentClient>();
+        var agentReference = new AgentReference(invalidName) { Version = "1" };
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() =>
+            mockClient.Object.GetAIAgent(agentReference));
+
+        Assert.Equal("name", exception.ParamName);
+        Assert.Contains("Agent name must be 1-63 characters long", exception.Message);
+    }
+
+    #endregion
+
     #region AzureAIChatClient Behavior Tests
 
     /// <summary>
@@ -2541,5 +2752,52 @@ public sealed class AgentClientExtensionsTests
             System.Reflection.BindingFlags.Instance);
 
         return chatOptionsProperty?.GetValue(agent) as ChatOptions;
+    }
+}
+
+/// <summary>
+/// Provides test data for invalid agent name validation tests.
+/// </summary>
+internal static class InvalidAgentNameTestData
+{
+    /// <summary>
+    /// Gets a collection of invalid agent names for theory-based testing.
+    /// </summary>
+    /// <returns>Collection of invalid agent name test cases.</returns>
+    public static IEnumerable<object[]> GetInvalidAgentNames()
+    {
+        yield return new object[] { "-agent" };
+        yield return new object[] { "agent-" };
+        yield return new object[] { "agent_name" };
+        yield return new object[] { "agent name" };
+        yield return new object[] { "agent@name" };
+        yield return new object[] { "agent#name" };
+        yield return new object[] { "agent$name" };
+        yield return new object[] { "agent%name" };
+        yield return new object[] { "agent&name" };
+        yield return new object[] { "agent*name" };
+        yield return new object[] { "agent.name" };
+        yield return new object[] { "agent/name" };
+        yield return new object[] { "agent\\name" };
+        yield return new object[] { "agent:name" };
+        yield return new object[] { "agent;name" };
+        yield return new object[] { "agent,name" };
+        yield return new object[] { "agent<name" };
+        yield return new object[] { "agent>name" };
+        yield return new object[] { "agent?name" };
+        yield return new object[] { "agent!name" };
+        yield return new object[] { "agent~name" };
+        yield return new object[] { "agent`name" };
+        yield return new object[] { "agent^name" };
+        yield return new object[] { "agent|name" };
+        yield return new object[] { "agent[name" };
+        yield return new object[] { "agent]name" };
+        yield return new object[] { "agent{name" };
+        yield return new object[] { "agent}name" };
+        yield return new object[] { "agent(name" };
+        yield return new object[] { "agent)name" };
+        yield return new object[] { "agent+name" };
+        yield return new object[] { "agent=name" };
+        yield return new object[] { "a" + new string('b', 63) };
     }
 }
