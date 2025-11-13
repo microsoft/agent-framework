@@ -3,6 +3,7 @@
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Purview.Models.Common;
+
 /// <summary>
 /// Represents metadata for a protected application that is integrated with Purview.
 /// </summary>
