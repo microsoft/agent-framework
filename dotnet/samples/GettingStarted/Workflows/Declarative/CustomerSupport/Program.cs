@@ -211,7 +211,7 @@ internal sealed class Program
                 """
                 Determine how to route the given issue to the appropriate support team. 
 
-                Choose from the available teams and their fuctions:
+                Choose from the available teams and their functions:
                 - Windows Activation Support: Windows license activation issues
                 - Windows Support: Windows related issues
                 - Azure Support: Azure related issues
