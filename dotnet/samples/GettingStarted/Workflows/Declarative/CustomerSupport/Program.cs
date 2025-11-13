@@ -98,7 +98,7 @@ internal sealed class Program
         {
             Instructions =
                 """
-                User your knowledge to work with the user to provide the best possible troubleshooting steps.
+                Use your knowledge to work with the user to provide the best possible troubleshooting steps.
 
                 - If the user confirms that the issue is resolved, then the issue is resolved. 
                 - If the user reports that the issue persists, then escalate.
