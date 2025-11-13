@@ -350,12 +350,13 @@ class AgentFunctionApp(DFAppBase):
                     thread_id,
                     correlation_id,
                 )
-                logger.debug("Signalling entity %s with request: %s", entity_instance_id, run_request)
+                logger.info("Signalling entity %s with request: %s", entity_instance_id, run_request)
                 await client.signal_entity(entity_instance_id, "run_agent", run_request)
 
-                logger.debug(f"[HTTP Trigger] Signal sent to entity {session_id}")
+                logger.info(f"[HTTP Trigger] Signal sent to entity {session_id}. This is wait_for_response: {wait_for_response}")
 
                 if wait_for_response:
+                    logger.info("[HTTP Trigger] wait_for_response enabled; polling for result...")
                     result = await self._get_response_from_entity(
                         client=client,
                         entity_instance_id=entity_instance_id,
@@ -364,7 +365,7 @@ class AgentFunctionApp(DFAppBase):
                         thread_id=thread_id,
                     )
 
-                    logger.debug(f"[HTTP Trigger] Result status: {result.get('status', 'unknown')}")
+                    logger.info(f"[HTTP Trigger] Result status: {result.get('status', 'unknown')}")
                     return self._create_http_response(
                         payload=result,
                         status_code=200 if result.get("status") == "success" else 500,
@@ -372,7 +373,7 @@ class AgentFunctionApp(DFAppBase):
                         thread_id=thread_id,
                     )
 
-                logger.debug("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
+                logger.info("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
 
                 accepted_response = self._build_accepted_response(
                     message=message, thread_id=thread_id, correlation_id=correlation_id
@@ -513,39 +514,56 @@ class AgentFunctionApp(DFAppBase):
         thread_id: str,
     ) -> dict[str, Any]:
         """Poll the entity state until a response is available or timeout occurs."""
-        import asyncio
+        try:
+            import asyncio
 
-        max_retries = self.max_poll_retries
-        interval = self.poll_interval_seconds
-        retry_count = 0
-        result: dict[str, Any] | None = None
+            max_retries = self.max_poll_retries
+            interval = self.poll_interval_seconds
+            retry_count = 0
+            result: dict[str, Any] | None = None
 
-        logger.debug(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
+            logger.info(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
 
-        while retry_count < max_retries:
-            await asyncio.sleep(interval)
+            while retry_count < max_retries:
+                import time
+                logger.info("Sleeping for %.2f seconds before next poll...", interval)
+                time.sleep(interval)
+                logger.info("Polling for response (attempt %d/%d)...", retry_count, max_retries)
 
-            result = await self._poll_entity_for_response(
-                client=client,
-                entity_instance_id=entity_instance_id,
-                correlation_id=correlation_id,
-                message=message,
-                thread_id=thread_id,
-            )
+                result = await self._poll_entity_for_response(
+                    client=client,
+                    entity_instance_id=entity_instance_id,
+                    correlation_id=correlation_id,
+                    message=message,
+                    thread_id=thread_id,
+                )
+                logger.info("This is our poll result: %s", result)
+                if result is not None:
+                    logger.info(f"[HTTP Trigger] Response found on attempt {retry_count}")
+                    break
+
+                logger.info(f"[HTTP Trigger] Response not available yet (retry {retry_count})")
+                retry_count += 1
+
+            logger.info("Breaking out of our polling loop...")
             if result is not None:
-                break
+                logger.info(f"[HTTP Trigger] Response received for correlation ID: {correlation_id}")
+                return result
 
-            logger.debug(f"[HTTP Trigger] Response not available yet (retry {retry_count})")
-            retry_count += 1
-
-        if result is not None:
-            return result
-
-        logger.warning(
-            f"[HTTP Trigger] Response with correlation ID {correlation_id} "
-            f"not found in time (waited {max_retries * interval} seconds)"
-        )
-        return await self._build_timeout_result(message=message, thread_id=thread_id, correlation_id=correlation_id)
+            logger.info(
+                f"[HTTP Trigger] Response with correlation ID {correlation_id} "
+                f"not found in time (waited {max_retries * interval} seconds)"
+            )
+            return await self._build_timeout_result(message=message, thread_id=thread_id, correlation_id=correlation_id)
+        except Exception as exc:
+            logger.error(f"[HTTP Trigger] Error while polling for response: {exc!s}", exc_info=True)
+            return {
+                "error": str(exc),
+                "message": message,
+                THREAD_ID_FIELD: thread_id,
+                "status": "error",
+                "correlation_id": correlation_id,
+            }  
 
     async def _poll_entity_for_response(
         self,
@@ -557,12 +575,17 @@ class AgentFunctionApp(DFAppBase):
     ) -> dict[str, Any] | None:
         result: dict[str, Any] | None = None
         try:
+            logger.info(f"[HTTP Trigger] Reading entity state for {entity_instance_id}...")
             state = await self._read_cached_state(client, entity_instance_id)
+            logger.info(f"[HTTP Trigger] Entity state read complete for {entity_instance_id}")
 
             if state is None:
+                logger.info(f"[HTTP Trigger] No state found for entity {entity_instance_id}")
                 return None
 
+            logger.info(f"[HTTP Trigger] Checking for response with correlation ID: {correlation_id}")
             agent_response = state.try_get_agent_response(correlation_id)
+            logger.info(f"[HTTP Trigger] Agent response: {agent_response}")
             if agent_response:
                 result = self._build_success_result(
                     response_data=agent_response,
@@ -571,11 +594,12 @@ class AgentFunctionApp(DFAppBase):
                     correlation_id=correlation_id,
                     state=state,
                 )
-                logger.debug(f"[HTTP Trigger] Found response for correlation ID: {correlation_id}")
+                logger.info(f"[HTTP Trigger] Found response for correlation ID: {correlation_id}")
 
         except Exception as exc:
             logger.warning(f"[HTTP Trigger] Error reading entity state: {exc}")
 
+        logger.info(f"[HTTP Trigger] Returning poll result: {result}")
         return result
 
     async def _build_timeout_result(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:

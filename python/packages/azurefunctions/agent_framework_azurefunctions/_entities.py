@@ -87,6 +87,7 @@ class AgentEntity:
             The agent returns an AgentRunResponse object which is stored in state.
             This method extracts the text/structured response and returns an AgentResponse dict.
         """
+        logger.info("[AgentEntity.run_agent] Running agent with provided request")
         # Convert string or dict to RunRequest
         if isinstance(request, str):
             run_request = RunRequest(message=request, role=Role.USER)
@@ -105,7 +106,7 @@ class AgentEntity:
         role = run_request.role or Role.USER
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
-
+        logger.info(f"[AgentEntity.run_agent] Prepared RunRequest for thread ID: {thread_id}")
         # Store request in pending (will be combined with response later)
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self._pending_requests[correlationId] = state_request
@@ -117,10 +118,10 @@ class AgentEntity:
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
         logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
-        logger.debug("[AgentEntity.run_agent] Executing agent...")
+        logger.info("[AgentEntity.run_agent] Executing agent...")
 
         try:
-            logger.debug("[AgentEntity.run_agent] Starting agent invocation")
+            logger.info("[AgentEntity.run_agent] Starting agent invocation")
 
             # Build messages from conversation history plus the current request
             chat_messages = [
@@ -128,9 +129,12 @@ class AgentEntity:
                 for entry in self.state.data.conversationHistory
                 for m in entry.messages
             ]
+            logger.info("[AgentEntity.run_agent] Compiled %d historical messages", len(chat_messages))
             # Add the current request message
             for m in state_request.messages:
                 chat_messages.append(m.to_chat_message())
+
+            logger.info("[AgentEntity.run_agent] Added current request messages: %d", len(state_request.messages))
 
             # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
             # Azure OpenAI doesn't support the 'metadata' field in messages
@@ -144,6 +148,8 @@ class AgentEntity:
             if response_format:
                 run_kwargs["response_format"] = response_format
 
+            logger.info(f"[AgentEntity.run_agent] Running agent with run_kwargs: {run_kwargs}")
+
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
                 correlation_id=correlationId,
@@ -151,13 +157,14 @@ class AgentEntity:
                 request_message=message,
             )
 
-            logger.debug(
+            logger.info(
                 "[AgentEntity.run_agent] Agent invocation completed - response type: %s",
                 type(agent_run_response).__name__,
             )
 
             # Convert response into DurableAgentStateResponse and combine with request
             state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
+            logger.info("[AgentEntity.run_agent] Converted AgentRunResponse to DurableAgentStateResponse")
 
             # Get the pending request and combine its messages with the response messages
             pending_request = self._pending_requests.pop(correlationId, None)
@@ -166,10 +173,11 @@ class AgentEntity:
                 state_response.messages = pending_request.messages + state_response.messages
 
             self.state.data.conversationHistory.append(state_response)
+            logger.info("[AgentEntity.run_agent] Stored DurableAgentStateResponse in conversation history")
 
             response_text = None
             structured_response = None
-
+            logger.info("[AgentEntity.run_agent] Extracting response content")
             response_str: str | None = None
             try:
                 if response_format:
@@ -203,12 +211,14 @@ class AgentEntity:
             result = agent_response.to_dict()
 
             content = json.dumps(structured_response) if structured_response else (response_text or "")
+            logger.info("[AgentEntity.run_agent] Created AgentResponse")
             self.state.add_assistant_message(content, agent_run_response, correlationId)
-            logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
+            logger.info(f"[AgentEntity.run_agent] AgentRunResponse stored in conversation history. This is the result: {result}")
 
             return result
 
         except Exception as exc:
+            logger.info("[AgentEntity.run_agent] Exception during agent execution. Exception: %s", exc)
             import traceback
 
             error_traceback = traceback.format_exc()
@@ -216,6 +226,7 @@ class AgentEntity:
             logger.error(f"Error: {exc!s}")
             logger.error(f"Error type: {type(exc).__name__}")
             logger.error(f"Full traceback:\n{error_traceback}")
+            logger.error(f"This is the chat history at the time of error: {self.state.data.conversationHistory[4].messages}")
 
             # Create error response and store it in conversation history so polling can find it
             from agent_framework import ChatMessage, ErrorContent
@@ -329,6 +340,7 @@ class AgentEntity:
         if run_callable is None or not callable(run_callable):
             raise AttributeError("Agent does not implement run() method")
 
+        logger.info("run_kwargs: %s, run_callable: %s", run_kwargs, run_callable)
         result = run_callable(**run_kwargs)
         if inspect.isawaitable(result):
             result = await result
