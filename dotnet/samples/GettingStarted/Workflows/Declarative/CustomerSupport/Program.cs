@@ -358,7 +358,7 @@ internal sealed class Program
                 """
                 You escalate the provided issue to human support team by sending an email if the issue is not resolved.
 
-                Here are some additonal details that might help:
+                Here are some additional details that might help:
                 - TicketId : {{TicketId}}
                 - IssueDescription : {{IssueDescription}}
                 - AttemptedResolutionSteps : {{AttemptedResolutionSteps}}
