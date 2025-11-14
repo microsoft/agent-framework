@@ -24,26 +24,8 @@ The agent responds to product launch strategy inquiries by concurrently leveragi
 
 Follow the `.env.example` file to set up the necessary environment variables for OpenAI.
 
-## Docker Deployment
-
-Build and run using Docker:
-
-```bash
-# Build the Docker image
-docker build -t hosted-agent-workflow .
-
-# Run the container
-docker run -p 8088:8088 hosted-agent-workflow
-```
+## Testing the Agent
 
 > If you update the environment variables in the `.env` file or change the code or the dockerfile, make sure to rebuild the Docker image to apply the changes.
 
-## Testing the Agent
-
-Once the agent is running, you can test it by sending queries that contain the trigger keywords. For example:
-
-```bash
-curl -sS -H "Content-Type: application/json" -X POST http://localhost:8088/responses -d '{"input": "We are launching a new budget-friendly electric bike for urban commuters.","stream":false}'
-```
-
-> Expected response is not shown here for brevity. The response will include insights from the researcher, marketer, and legal agents based on the input prompt.
+Coming soon!

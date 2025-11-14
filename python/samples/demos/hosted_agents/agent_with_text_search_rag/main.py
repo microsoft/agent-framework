@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import ChatMessage, Context, ContextProvider, Role
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
+from azure.identity import DefaultAzureCredential
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -92,7 +93,7 @@ class TextSearchContextProvider(ContextProvider):
 
 def main():
     # Create an Agent using the OpenAI Chat Client
-    agent = OpenAIChatClient().create_agent(
+    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).create_agent(
         name="SupportSpecialist",
         instructions=(
             "You are a helpful support specialist for Contoso Outdoors. "
