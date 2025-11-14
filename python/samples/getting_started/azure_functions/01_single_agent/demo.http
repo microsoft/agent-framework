@@ -1,0 +1,22 @@
+### Joker Agent Sample Interactions
+@baseUrl = http://localhost:7071
+@agentName = Joker
+@agentRoute = {{baseUrl}}/api/agents/{{agentName}}
+@healthRoute = {{baseUrl}}/api/health
+
+### Health Check
+GET {{healthRoute}}
+
+### Ask for a joke (JSON payload)
+POST {{agentRoute}}/run
+Content-Type: application/json
+
+{
+  "message": "Add a security element to it.",
+  "thread_id": "thread-001"
+}
+
+### Ask for a joke (plain text payload)
+POST {{agentRoute}}/run
+
+Give me a programming joke about race conditions.

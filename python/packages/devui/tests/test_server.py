@@ -280,18 +280,14 @@ async def test_api_restrictions_in_user_mode():
     assert dev_client.get("/v1/entities").status_code == 200
     assert user_client.get("/v1/entities").status_code == 200
 
-    # Test 4: Entity info should be restricted in user mode
+    # Test 4: Entity info should be accessible in both modes (UI needs this)
     dev_response = dev_client.get("/v1/entities/test_agent/info")
     assert dev_response.status_code in [200, 404, 500]  # Not 403
 
     user_response = user_client.get("/v1/entities/test_agent/info")
-    assert user_response.status_code == 403
-    error_data = user_response.json()
-    # FastAPI wraps HTTPException detail in 'detail' field
-    error = error_data.get("detail", {}).get("error") or error_data.get("error")
-    assert error is not None
-    assert "developer mode" in error["message"].lower()
-    assert error["code"] == "developer_mode_required"
+    # Should return 404 (entity doesn't exist) or 500 (other error), but NOT 403 (forbidden)
+    # User mode needs entity info to display workflows/agents in the UI
+    assert user_response.status_code in [200, 404, 500]  # Not 403
 
     # Test 5: Hot reload should be restricted in user mode
     dev_response = dev_client.post("/v1/entities/test_agent/reload")
@@ -329,10 +325,11 @@ async def test_api_restrictions_in_user_mode():
     # Test 8: Chat endpoint should work in both modes
     chat_payload = {"model": "test_agent", "input": "Hello"}
     dev_response = dev_client.post("/v1/responses", json=chat_payload)
-    assert dev_response.status_code in [200, 404]  # 404 if agent doesn't exist
+    # 200=success, 400=missing entity_id in metadata, 404=entity not found
+    assert dev_response.status_code in [200, 400, 404]
 
     user_response = user_client.post("/v1/responses", json=chat_payload)
-    assert user_response.status_code in [200, 404]
+    assert user_response.status_code in [200, 400, 404]
 
 
 if __name__ == "__main__":

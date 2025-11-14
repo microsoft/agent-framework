@@ -5,7 +5,7 @@
 from enum import Enum
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 from pydantic import BaseModel, Field
 
 from agent_framework_ag_ui import AgentFrameworkAgent, RecipeConfirmationStrategy
@@ -67,10 +67,7 @@ def update_recipe(recipe: Recipe) -> str:
     return "Recipe updated."
 
 
-# Create the recipe agent using tool-based approach for streaming
-agent = ChatAgent(
-    name="recipe_agent",
-    instructions="""You are a helpful recipe assistant that creates and modifies recipes.
+_RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and modifies recipes.
 
     CRITICAL RULES:
     1. You will receive the current recipe state in the system context
@@ -103,20 +100,34 @@ agent = ChatAgent(
     - Add aromatics: garlic, shallots
     - Add finishing touches: lemon zest, fresh parsley
     - Make instructions more detailed and professional
-    """,
-    chat_client=AzureOpenAIChatClient(),
-    tools=[update_recipe],
-)
+    """
 
-recipe_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="RecipeAgent",
-    description="Creates and modifies recipes with streaming state updates",
-    state_schema={
-        "recipe": {"type": "object", "description": "The current recipe"},
-    },
-    predict_state_config={
-        "recipe": {"tool": "update_recipe", "tool_argument": "recipe"},
-    },
-    confirmation_strategy=RecipeConfirmationStrategy(),
-)
+
+def recipe_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create a recipe agent with streaming state updates.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance with recipe management
+    """
+    agent = ChatAgent(
+        name="recipe_agent",
+        instructions=_RECIPE_INSTRUCTIONS,
+        chat_client=chat_client,
+        tools=[update_recipe],
+    )
+
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="RecipeAgent",
+        description="Creates and modifies recipes with streaming state updates",
+        state_schema={
+            "recipe": {"type": "object", "description": "The current recipe"},
+        },
+        predict_state_config={
+            "recipe": {"tool": "update_recipe", "tool_argument": "recipe"},
+        },
+        confirmation_strategy=RecipeConfirmationStrategy(),
+    )
