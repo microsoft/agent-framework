@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -60,34 +61,34 @@ internal sealed class Program
 
     private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration, TicketingPlugin plugin)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "SelfServiceAgent",
             agentDefinition: DefineSelfServiceAgent(configuration),
             agentDescription: "Service agent for CustomerSupport workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "TicketingAgent",
             agentDefinition: DefineTicketingAgent(configuration, plugin),
             agentDescription: "Ticketing agent for CustomerSupport workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "TicketRoutingAgent",
             agentDefinition: DefineTicketRoutingAgent(configuration, plugin),
             agentDescription: "Routing agent for CustomerSupport workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "WindowsSupportAgent",
             agentDefinition: DefineWindowsSupportAgent(configuration, plugin),
             agentDescription: "Windows support agent for CustomerSupport workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "TicketResolutionAgent",
             agentDefinition: DefineResolutionAgent(configuration, plugin),
             agentDescription: "Resolution agent for CustomerSupport workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "TicketEscalationAgent",
             agentDefinition: TicketEscalationAgent(configuration, plugin),
             agentDescription: "Escalate agent for human support");

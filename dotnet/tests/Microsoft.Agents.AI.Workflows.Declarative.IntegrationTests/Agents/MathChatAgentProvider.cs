@@ -2,7 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -13,16 +14,16 @@ internal sealed class MathChatAgentProvider(IConfiguration configuration) : Agen
 {
     protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "StudentAgent",
                 agentDefinition: this.DefineStudentAgent(),
                 agentDescription: "Student agent for MathChat workflow");
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "TeacherAgent",
                 agentDefinition: this.DefineTeacherAgent(),
                 agentDescription: "Teacher agent for MathChat workflow");

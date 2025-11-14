@@ -16,11 +16,43 @@ from random import randint
 from typing import Annotated, Any
 
 import uvicorn
+
+# Agent Framework imports
+from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
+from agent_framework.azure import AzureOpenAIChatClient
+
+# Agent Framework ChatKit integration
+from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
+
+# Local imports
+from attachment_store import FileBasedAttachmentStore
 from azure.identity import AzureCliCredential
+
+# ChatKit imports
+from chatkit.actions import Action
+from chatkit.server import ChatKitServer
+from chatkit.store import StoreItemType, default_generate_id
+from chatkit.types import (
+    ThreadItem,
+    ThreadItemDoneEvent,
+    ThreadMetadata,
+    ThreadStreamEvent,
+    UserMessageItem,
+    WidgetItem,
+)
+from chatkit.widgets import WidgetRoot
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import Field
+from store import SQLiteStore
+from weather_widget import (
+    WeatherData,
+    city_selector_copy_text,
+    render_city_selector_widget,
+    render_weather_widget,
+    weather_widget_copy_text,
+)
 
 # ============================================================================
 # Configuration Constants
@@ -55,37 +87,6 @@ logging.basicConfig(
     datefmt=LOG_DATE_FORMAT,
 )
 logger = logging.getLogger(__name__)
-
-# Agent Framework imports
-from agent_framework import AgentRunResponseUpdate, ChatAgent, ChatMessage, FunctionResultContent, Role
-from agent_framework.azure import AzureOpenAIChatClient
-
-# Agent Framework ChatKit integration
-from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
-
-# Local imports
-from attachment_store import FileBasedAttachmentStore
-
-# ChatKit imports
-from chatkit.actions import Action
-from chatkit.server import ChatKitServer
-from chatkit.store import StoreItemType, default_generate_id
-from chatkit.types import (
-    ThreadItemDoneEvent,
-    ThreadMetadata,
-    ThreadStreamEvent,
-    UserMessageItem,
-    WidgetItem,
-)
-from chatkit.widgets import WidgetRoot
-from store import SQLiteStore
-from weather_widget import (
-    WeatherData,
-    city_selector_copy_text,
-    render_city_selector_widget,
-    render_weather_widget,
-    weather_widget_copy_text,
-)
 
 
 class WeatherResponse(str):
@@ -238,6 +239,81 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         """
         return await attachment_store.read_attachment_bytes(attachment_id)
 
+    async def _update_thread_title(
+        self, thread: ThreadMetadata, thread_items: list[ThreadItem], context: dict[str, Any]
+    ) -> None:
+        """Update thread title using LLM to generate a concise summary.
+
+        Args:
+            thread: The thread metadata to update.
+            thread_items: All items in the thread.
+            context: The context dictionary.
+        """
+        logger.info(f"Attempting to update thread title for thread: {thread.id}")
+        
+        if not thread_items:
+            logger.debug("No thread items available for title generation")
+            return
+
+        # Collect user messages to understand the conversation topic
+        user_messages: list[str] = []
+        for item in thread_items:
+            if isinstance(item, UserMessageItem) and item.content:
+                for content_part in item.content:
+                    if hasattr(content_part, "text") and isinstance(content_part.text, str):
+                        user_messages.append(content_part.text)
+                        break
+
+        if not user_messages:
+            logger.debug("No user messages found for title generation")
+            return
+
+        logger.debug(f"Found {len(user_messages)} user message(s) for title generation")
+
+        try:
+            # Use the agent's chat client to generate a concise title
+            # Combine first few messages to capture the conversation topic
+            conversation_context = "\n".join(user_messages[:3])
+
+            title_prompt = [
+                ChatMessage(
+                    role=Role.USER,
+                    text=(
+                        f"Generate a very short, concise title (max 40 characters) for a conversation "
+                        f"that starts with:\n\n{conversation_context}\n\n"
+                        "Respond with ONLY the title, nothing else."
+                    ),
+                )
+            ]
+
+            # Use the chat client directly for a quick, lightweight call
+            response = await self.weather_agent.chat_client.get_response(
+                messages=title_prompt,
+                temperature=0.3,
+                max_tokens=20,
+            )
+
+            if response.messages and response.messages[-1].text:
+                title = response.messages[-1].text.strip().strip('"').strip("'")
+                # Ensure it's not too long
+                if len(title) > 50:
+                    title = title[:47] + "..."
+
+                thread.title = title
+                await self.store.save_thread(thread, context)
+                logger.info(f"Updated thread {thread.id} title to: {title}")
+
+        except Exception as e:
+            logger.warning(f"Failed to generate thread title, using fallback: {e}")
+            # Fallback to simple truncation
+            first_message: str = user_messages[0]
+            title: str = first_message[:50].strip()
+            if len(first_message) > 50:
+                title += "..."
+            thread.title = title
+            await self.store.save_thread(thread, context)
+            logger.info(f"Updated thread {thread.id} title to (fallback): {title}")
+
     async def respond(
         self,
         thread: ThreadMetadata,
@@ -263,8 +339,19 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             weather_data: WeatherData | None = None
             show_city_selector = False
 
-            # Convert ChatKit user message to Agent Framework ChatMessage using ThreadItemConverter
-            agent_messages = await self.converter.to_agent_input(input_user_message)
+            # Load full thread history from the store
+            thread_items_page = await self.store.load_thread_items(
+                thread_id=thread.id,
+                after=None,
+                limit=1000,
+                order="asc",
+                context=context,
+            )
+            thread_items = thread_items_page.data
+
+            # Convert ALL thread items to Agent Framework ChatMessages using ThreadItemConverter
+            # This ensures the agent has the full conversation context
+            agent_messages = await self.converter.to_agent_input(thread_items)
 
             if not agent_messages:
                 logger.warning("No messages after conversion")
@@ -329,6 +416,10 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
                 ):
                     yield widget_event
                 logger.debug("City selector widget streamed successfully")
+
+            # Update thread title based on first user message if not already set
+            if not thread.title or thread.title == "New thread":
+                await self._update_thread_title(thread, thread_items, context)
 
             logger.info(f"Completed processing message for thread: {thread.id}")
 

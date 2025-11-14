@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -55,9 +56,9 @@ internal sealed class Program
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration, AIFunction[] functions)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "MenuAgent",
             agentDefinition: DefineMenuAgent(configuration, functions),
             agentDescription: "Provides information about the restaurant menu");

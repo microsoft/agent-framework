@@ -9,7 +9,7 @@
 // as AI functions. The AsAITools method of the plugin class shows how to specify
 // which methods should be exposed to the AI agent.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -30,11 +30,11 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent with plugin tools
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = agentClient.CreateAIAgent(
+AIAgent agent = aiProjectClient.CreateAIAgent(
     name: AssistantName,
     model: deploymentName,
     instructions: AssistantInstructions,
@@ -46,7 +46,7 @@ AgentThread thread = agent.GetNewThread();
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", thread));
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 /// <summary>
 /// The agent plugin that provides weather and current time information.

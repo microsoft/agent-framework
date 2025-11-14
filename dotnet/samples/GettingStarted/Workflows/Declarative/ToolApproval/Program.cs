@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -46,9 +47,9 @@ internal sealed class Program
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "DocumentSearchAgent",
             agentDefinition: DefineSearchAgent(configuration),
             agentDescription: "Searches documents on Microsoft Learn");

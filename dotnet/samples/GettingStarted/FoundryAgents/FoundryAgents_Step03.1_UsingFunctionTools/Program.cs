@@ -4,7 +4,7 @@
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
 
 using System.ComponentModel;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -20,13 +20,13 @@ const string AssistantInstructions = "You are a helpful assistant that can get w
 const string AssistantName = "WeatherAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent with function tools.
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Create AIAgent directly
-AIAgent agent = await agentClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [tool]);
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
 AgentThread thread = agent.GetNewThread();
@@ -40,4 +40,4 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("What is
 }
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

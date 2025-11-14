@@ -2,7 +2,7 @@
 
 // This sample shows how to create and use a simple AI agent with Azure Foundry Agents as the backend that logs telemetry using OpenTelemetry.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
@@ -29,10 +29,10 @@ if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
 using var tracerProvider = tracerProviderBuilder.Build();
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = agentClient.CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions)
+AIAgent agent = aiProjectClient.CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions)
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)
     .Build();
@@ -49,4 +49,4 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Tell me
 }
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

@@ -10,10 +10,10 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Core;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -30,18 +30,18 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     private readonly Dictionary<string, AgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
 
-    private AgentClient? _agentClient;
-    private ConversationClient? _conversationClient;
+    private AIProjectClient? _agentClient;
+    private ProjectConversationsClient? _conversationClient;
 
     /// <summary>
-    /// Optional options used when creating the <see cref="AgentClient"/>.
+    /// Optional options used when creating the <see cref="AIProjectClient"/>.
     /// </summary>
-    public AgentClientOptions? AgentClientOptions { get; init; }
+    public AIProjectClientOptions? AIProjectClientOptions { get; init; }
 
     /// <summary>
     /// Optional options used when invoking the <see cref="AIAgent"/>.
     /// </summary>
-    public OpenAIClientOptions? OpenAIClientOptions { get; init; }
+    public ProjectOpenAIClientOptions? OpenAIClientOptions { get; init; }
 
     /// <summary>
     /// An optional <see cref="HttpClient"/> instance to be used for making HTTP requests.
@@ -52,9 +52,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        AgentConversation conversation =
+        ProjectConversation conversation =
             await this.GetConversationClient()
-                .CreateConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
+                .CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
 
         return conversation.Id;
     }
@@ -63,7 +63,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
     {
         ReadOnlyCollection<ResponseItem> newItems =
-            await this.GetConversationClient().CreateConversationItemsAsync(
+            await this.GetConversationClient().CreateProjectConversationItemsAsync(
                 conversationId,
                 items: GetResponseItems(),
                 include: null,
@@ -112,7 +112,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         {
             JsonNode jsonNode = ConvertDictionaryToJson(inputArguments);
             ResponseCreationOptions responseCreationOptions = new();
-            responseCreationOptions.SetStructuredInputs(BinaryData.FromString(jsonNode.ToJsonString()));
+#pragma warning disable SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+            responseCreationOptions.Patch.Set("$.structured_inputs"u8, BinaryData.FromString(jsonNode.ToJsonString()));
+#pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             chatOptions.RawRepresentationFactory = (_) => responseCreationOptions;
         }
 
@@ -138,12 +140,12 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
             return targetAgent;
         }
 
-        AgentClient client = this.GetAgentClient();
+        AIProjectClient client = this.GetAgentClient();
 
         if (string.IsNullOrEmpty(agentVersion))
         {
             AgentRecord agentRecord =
-                await client.GetAgentAsync(
+                await client.Agents.GetAgentAsync(
                     agentName,
                     cancellationToken).ConfigureAwait(false);
 
@@ -152,7 +154,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         else
         {
             targetAgent =
-                await client.GetAgentVersionAsync(
+                await client.Agents.GetAgentVersionAsync(
                     agentName,
                     agentVersion,
                     cancellationToken).ConfigureAwait(false);
@@ -170,9 +172,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
             return agent;
         }
 
-        AgentClient client = this.GetAgentClient();
+        AIProjectClient client = this.GetAgentClient();
 
-        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, this.OpenAIClientOptions, services: null);
+        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, services: null);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -203,7 +205,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem responseItem = await this.GetConversationClient().GetConversationItemAsync(conversationId, messageId, cancellationToken).ConfigureAwait(false);
+        AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
         ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
         return items.AsChatMessages().Single();
     }
@@ -218,7 +220,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         AgentListOrder order = newestFirst ? AgentListOrder.Ascending : AgentListOrder.Descending;
-        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetConversationItemsAsync(conversationId, limit, order, after, before, itemType: null, cancellationToken).ConfigureAwait(false))
+
+        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
         {
             ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
             foreach (ChatMessage message in items.AsChatMessages())
@@ -228,18 +231,18 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
     }
 
-    private AgentClient GetAgentClient()
+    private AIProjectClient GetAgentClient()
     {
         if (this._agentClient is null)
         {
-            AgentClientOptions clientOptions = this.AgentClientOptions ?? new();
+            AIProjectClientOptions clientOptions = this.AIProjectClientOptions ?? new();
 
             if (this.HttpClient is not null)
             {
                 clientOptions.Transport = new HttpClientPipelineTransport(this.HttpClient);
             }
 
-            AgentClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
+            AIProjectClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 
             Interlocked.CompareExchange(ref this._agentClient, newClient, null);
         }
@@ -247,11 +250,11 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         return this._agentClient;
     }
 
-    private ConversationClient GetConversationClient()
+    private ProjectConversationsClient GetConversationClient()
     {
         if (this._conversationClient is null)
         {
-            ConversationClient conversationClient = this.GetAgentClient().GetConversationClient();
+            ProjectConversationsClient conversationClient = this.GetAgentClient().GetProjectOpenAIClient().GetProjectConversationsClient();
 
             Interlocked.CompareExchange(ref this._conversationClient, conversationClient, null);
         }

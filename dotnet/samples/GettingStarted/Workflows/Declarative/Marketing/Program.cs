@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -45,19 +46,19 @@ internal sealed class Program
 
     private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "AnalystAgent",
             agentDefinition: DefineAnalystAgent(configuration),
             agentDescription: "Analyst agent for Marketing workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "WriterAgent",
             agentDefinition: DefineWriterAgent(configuration),
             agentDescription: "Writer agent for Marketing workflow");
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "EditorAgent",
             agentDefinition: DefineEditorAgent(configuration),
             agentDescription: "Editor agent for Marketing workflow");

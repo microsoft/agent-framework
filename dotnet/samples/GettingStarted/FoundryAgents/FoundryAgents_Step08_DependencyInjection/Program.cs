@@ -2,7 +2,7 @@
 
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -18,11 +18,11 @@ const string JokerName = "JokerAgent";
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the agents client to the service collection.
-builder.Services.AddSingleton((sp) => new AgentClient(new Uri(endpoint), new AzureCliCredential()));
+builder.Services.AddSingleton((sp) => new AIProjectClient(new Uri(endpoint), new AzureCliCredential()));
 
 // Add the AI agent to the service collection.
 builder.Services.AddSingleton<AIAgent>((sp)
-    => sp.GetRequiredService<AgentClient>()
+    => sp.GetRequiredService<AIProjectClient>()
         .CreateAIAgent(name: JokerName, model: deploymentName, instructions: JokerInstructions));
 
 // Add a sample service that will use the agent to respond to user input.
@@ -35,7 +35,7 @@ await host.RunAsync().ConfigureAwait(false);
 /// <summary>
 /// A sample service that uses an AI agent to respond to user input.
 /// </summary>
-internal sealed class SampleService(AgentClient client, AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
+internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHostApplicationLifetime appLifetime) : IHostedService
 {
     private AgentThread? _thread;
 
@@ -77,6 +77,6 @@ internal sealed class SampleService(AgentClient client, AIAgent agent, IHostAppl
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         Console.WriteLine("\nDeleting agent ...");
-        await client.DeleteAgentAsync(agent.Name, cancellationToken).ConfigureAwait(false);
+        await client.Agents.DeleteAgentAsync(agent.Name, cancellationToken).ConfigureAwait(false);
     }
 }

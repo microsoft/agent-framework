@@ -2,7 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -23,10 +24,10 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
                 AIFunctionFactory.Create(menuPlugin.GetItemPrice),
             ];
 
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "MenuAgent",
                 agentDefinition: this.DefineMenuAgent(functions),
                 agentDescription: "Provides information about the restaurant menu");

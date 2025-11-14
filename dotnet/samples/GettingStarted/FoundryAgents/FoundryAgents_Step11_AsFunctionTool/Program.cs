@@ -3,7 +3,7 @@
 // This sample shows how to create and use an Azure Foundry Agents AI agent as a function tool.
 
 using System.ComponentModel;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -21,18 +21,18 @@ static string GetWeather([Description("The location to get the weather for.")] s
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Create the weather agent with function tools.
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
-AIAgent weatherAgent = agentClient.CreateAIAgent(
+AIAgent weatherAgent = aiProjectClient.CreateAIAgent(
     name: WeatherName,
     model: deploymentName,
     instructions: WeatherInstructions,
     tools: [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
-AIAgent agent = agentClient.CreateAIAgent(
+AIAgent agent = aiProjectClient.CreateAIAgent(
     name: MainName,
     model: deploymentName,
     instructions: MainInstructions,
@@ -43,5 +43,5 @@ AgentThread thread = agent.GetNewThread();
 Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
 
 // Cleanup by agent name removes the agent versions created.
-await agentClient.DeleteAgentAsync(agent.Name);
-await agentClient.DeleteAgentAsync(weatherAgent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(weatherAgent.Name);

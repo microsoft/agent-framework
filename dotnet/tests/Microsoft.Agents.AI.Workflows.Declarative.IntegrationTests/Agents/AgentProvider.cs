@@ -3,7 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Azure.AI.Agents;
+using Azure.AI.Projects.OpenAI;
 using Microsoft.Extensions.Configuration;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;

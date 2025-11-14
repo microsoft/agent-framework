@@ -7,7 +7,7 @@
 
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -20,7 +20,7 @@ const string AssistantInstructions = "You are an AI assistant that helps people 
 const string AssistantName = "InformationAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
@@ -34,7 +34,7 @@ AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDate
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent originalAgent = agentClient.CreateAIAgent(
+AIAgent originalAgent = aiProjectClient.CreateAIAgent(
     name: AssistantName,
     model: deploymentName,
     instructions: AssistantInstructions,
@@ -69,7 +69,7 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-AIAgent humamInTheLoopAgent = agentClient.CreateAIAgent(
+AIAgent humanInTheLoopAgent = aiProjectClient.CreateAIAgent(
     name: "HumanInTheLoopAgent",
     model: deploymentName,
     instructions: "You are an Human in the loop testing AI assistant that helps people find information.",
@@ -78,13 +78,13 @@ AIAgent humamInTheLoopAgent = agentClient.CreateAIAgent(
     tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);
 
 // Using the ConsolePromptingApprovalMiddleware for a specific request to handle user approval during function calls.
-AgentRunResponse response = await humamInTheLoopAgent
+AgentRunResponse response = await humanInTheLoopAgent
     .AsBuilder()
     .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
     .RunAsync("What's the current time and the weather in Seattle?");
 
-Console.WriteLine($"HumamInTheLoopAgent agent middleware response: {response}");
+Console.WriteLine($"HumanInTheLoopAgent agent middleware response: {response}");
 
 // Function invocation middleware that logs before and after function calls.
 async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
@@ -220,4 +220,4 @@ async Task<AgentRunResponse> ConsolePromptingApprovalMiddleware(IEnumerable<Chat
 }
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(middlewareEnabledAgent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(middlewareEnabledAgent.Name);

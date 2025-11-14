@@ -3,7 +3,7 @@
 // This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
 
 using System.Text.Json;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
@@ -14,9 +14,9 @@ const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
-AIAgent agent = await agentClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: JokerInstructions);
 
 // Start a new thread for the agent conversation.
 AgentThread thread = agent.GetNewThread();
@@ -41,4 +41,4 @@ AgentThread resumedThread = agent.DeserializeThread(reloadedSerializedThread);
 Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

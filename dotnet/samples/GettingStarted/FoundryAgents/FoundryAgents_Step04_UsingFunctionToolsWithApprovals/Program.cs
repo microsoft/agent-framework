@@ -6,7 +6,7 @@
 // while the agent is waiting for user input.
 
 using System.ComponentModel;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -23,12 +23,12 @@ const string AssistantInstructions = "You are a helpful assistant that can get w
 const string AssistantName = "WeatherAssistant";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather));
 
 // Create AIAgent directly
-AIAgent agent = await agentClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [approvalTool]);
+AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [approvalTool]);
 
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.
@@ -61,4 +61,4 @@ while (userInputRequests.Count > 0)
 Console.WriteLine($"\nAgent: {response}");
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

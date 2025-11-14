@@ -2,7 +2,7 @@
 
 // This sample shows how to use Image Multi-Modality with an AI agent.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -14,10 +14,10 @@ const string VisionInstructions = "You are a helpful agent that can analyze imag
 const string VisionName = "VisionAgent";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Define the agent you want to create. (Prompt Agent in this case)
-AIAgent agent = agentClient.CreateAIAgent(name: VisionName, model: deploymentName, instructions: VisionInstructions);
+AIAgent agent = aiProjectClient.CreateAIAgent(name: VisionName, model: deploymentName, instructions: VisionInstructions);
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
@@ -32,4 +32,4 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(message,
 }
 
 // Cleanup by agent name removes the agent version created.
-await agentClient.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);

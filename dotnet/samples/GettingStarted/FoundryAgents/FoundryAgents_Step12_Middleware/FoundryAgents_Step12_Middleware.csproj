@@ -11,7 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging.Console" />
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Azure.AI.Agents" />
+    <PackageReference Include="Azure.AI.Projects" />
   </ItemGroup>
 
   <ItemGroup>
