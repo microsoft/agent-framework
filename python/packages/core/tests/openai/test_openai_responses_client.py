@@ -1432,6 +1432,15 @@ async def test_prepare_options_store_parameter_handling() -> None:
     assert "previous_response_id" not in options
 
 
+async def test_prepare_options_message_raw_representation_handling() -> None:
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    messages = [ChatMessage(role="user", contents=[], raw_representation={"some": "data"})]
+
+    chat_options = ChatOptions()
+    options = await client.prepare_options(messages, chat_options)
+    assert options["input"] == [{"some": "data"}]
+
+
 def test_openai_responses_client_with_callable_api_key() -> None:
     """Test OpenAIResponsesClient initialization with callable API key."""
 

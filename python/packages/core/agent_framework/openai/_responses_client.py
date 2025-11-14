@@ -434,6 +434,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
+        elif message.raw_representation:
+            all_messages.append(message.raw_representation)
         return all_messages
 
     def _openai_content_parser(
