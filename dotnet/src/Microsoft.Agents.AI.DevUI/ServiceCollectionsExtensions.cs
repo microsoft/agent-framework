@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Shared.Diagnostics;
 
@@ -28,7 +27,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             var workflow = sp.GetKeyedService<Workflow>(keyAsStr);
             if (workflow is null)
             {
-                throw new InvalidOperationException($"Can't find registered {nameof(AIAgent)} or {nameof(Workflow)} with name '{keyAsStr}'");
+                return null!;
             }
 
             return workflow.AsAgent(name: workflow.Name);
