@@ -564,10 +564,6 @@ class BaseChatClient(SerializationMixin, ABC):
 
         # Validate that store is True when conversation_id is set
         if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
             chat_options.store = True
 
         if chat_options.instructions:
@@ -663,10 +659,6 @@ class BaseChatClient(SerializationMixin, ABC):
 
         # Validate that store is True when conversation_id is set
         if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
             chat_options.store = True
 
         if chat_options.instructions:

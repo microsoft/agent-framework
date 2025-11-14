@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/microsoft/agent-framework/schemas/durable-agent-entity-state.json",
+  "$defs": {
+    "usage": {
+      "type": "object",
+      "description": "Token usage statistics.",
+      "properties": {
+          "inputTokenCount": { "type": "integer" },
+          "outputTokenCount": { "type": "integer" },
+          "totalTokenCount": { "type": "integer" }
+      }
+    },
+    "dataContent": {
+      "type": "object",
+      "description": "The content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "data" },
+        "uri": { "type": "string", "description": "The URI that comprises the data." },
+        "mediaType": { "type": "string", "description": "The media type of the data." }
+      },
+      "required": ["$type", "uri"]
+    },
+    "errorContent": {
+      "type": "object",
+      "description": "The error content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "error" },
+        "message": { "type": "string", "description": "The error message." },
+        "errorCode": { "type": "string", "description": "The error code." },
+        "details": { "description": "Additional details about the error." }
+      },
+      "required": ["$type"]
+    },
+    "hostedFileContent": {
+      "type": "object",
+      "description": "The hosted file content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "hostedFile" },
+        "fileId": { "type": "string", "description": "The identifier of the hosted file." }
+      },
+      "required": ["$type", "fileId"]
+    },
+    "hostedVectorStoreContent": {
+      "type": "object",
+      "description": "The hosted vector store content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "hostedVectorStore" },
+        "vectorStoreId": { "type": "string", "description": "The identifier of the hosted vector store." }
+      },
+      "required": ["$type", "vectorStoreId"]
+    },
+    "textReasoningContent": {
+      "type": "object",
+      "description": "The reasoning content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "reasoning" },
+        "text": { "type": "string", "description": "The reasoning text." }
+      },
+      "required": ["$type"]
+    },
+    "uriContent": {
+      "type": "object",
+      "description": "The URI content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "uri" },
+        "uri": { "type": "string", "description": "The URI." },
+        "mediaType": { "type": "string", "description": "The media type of the URI." }
+      },
+      "required": ["$type", "uri", "mediaType"]
+    },
+    "usageContent": {
+      "type": "object",
+      "description": "The usage content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "usage" },
+        "usage": { "$ref": "#/$defs/usage" }
+      },
+      "required": ["$type", "usage"]
+    },
+    "textContent": {
+      "type": "object",
+      "description": "The text content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "text" },
+        "text": { "type": "string", "description": "The text content of the message." }
+      },
+      "required": ["$type", "text"]
+    },
+    "functionCallContent": {
+      "type": "object",
+      "description": "The function call content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "functionCall" },
+        "callId": { "type": "string", "description": "The identifier of the function being called." },
+        "name": { "type": "string", "description": "The name of the function being called." },
+        "arguments": { "type": "object", "description": "The arguments provided to the function call." }
+      },
+      "required": ["$type", "callId", "name"]
+    },
+    "functionResultContent": {
+      "type": "object",
+      "description": "The function result content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "functionResult" },
+        "callId": { "type": "string", "description": "The identifier of the function being called." },
+        "result": { "description": "The result returned by the function call." }
+      },
+      "required": ["$type", "callId"]
+    },
+    "unknownContent": {
+      "type": "object",
+      "description": "The unknown content of a message exchanged with the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "unknown" },
+        "content": { "description": "The unknown message content serialized as JSON." }
+      },
+      "required": ["$type", "content"]
+    },
+    "chatContentItem": {
+      "oneOf": [
+        { "$ref": "#/$defs/dataContent" },
+        { "$ref": "#/$defs/errorContent" },
+        { "$ref": "#/$defs/functionCallContent" },
+        { "$ref": "#/$defs/functionResultContent" },
+        { "$ref": "#/$defs/hostedFileContent" },
+        { "$ref": "#/$defs/hostedVectorStoreContent" },
+        { "$ref": "#/$defs/usageContent" },
+        { "$ref": "#/$defs/textContent" },
+        { "$ref": "#/$defs/textReasoningContent" },
+        { "$ref": "#/$defs/uriContent" },
+        { "$ref": "#/$defs/unknownContent" }
+      ]
+    },
+    "chatMessage": {
+      "type": "object",
+      "description": "Single chat message exchanged with the agent.",
+      "properties": {
+        "authorName": { "type": "string", "description": "The name of the author of the message." },
+        "role": { "type": "string", "enum": ["user", "assistant", "system", "tool"] },
+        "contents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/chatContentItem" }
+        },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When this message was created (RFC 3339)." }
+      },
+      "required": ["role"]
+    },
+    "chatMessages": {
+      "type": "array",
+      "description": "Ordered list of chat messages.",
+      "items": { "$ref": "#/$defs/chatMessage" }
+    },
+    "conversationEntry": {
+      "type": "object",
+      "properties": {
+        "createdAt": { "type": "string", "format": "date-time", "description": "When this exchange was created (RFC 3339)." },
+        "correlationId": { "type": "string", "description": "An optional correlation ID to group related exchanges." },
+        "messages": { "$ref": "#/$defs/chatMessages" }
+      }
+    },
+    "agentRequest": {
+      "allOf": [
+        { "$ref": "#/$defs/conversationEntry" }
+      ],
+      "description": "The request (i.e. prompt) sent to the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "request" },
+        "responseSchema": {
+          "type": "object",
+          "description": "If the expected response type is JSON, this schema defines the expected structure of the response."
+        },
+        "responseType": {
+          "type": "string",
+          "description": "The expected type of the response (e.g., 'text', 'json')."
+        }
+      }
+    },
+    "agentResponse": {
+      "allOf": [
+        { "$ref": "#/$defs/conversationEntry" }
+      ],
+      "description": "The response received from the agent.",
+      "properties": {
+        "$type": { "type": "string", "const": "response" },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "The durable agent's state data.",
+      "properties": {
+        "conversationHistory": {
+          "type": "array",
+          "description": "Ordered list of conversation entries.",
+          "items": { "$ref": "#/$defs/conversationEntry" }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semantic version of this state schema. By convention, this should be the first property.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "data": { "$ref": "#/$defs/data" }
+  },
+  "required": ["schemaVersion", "data"]
+}

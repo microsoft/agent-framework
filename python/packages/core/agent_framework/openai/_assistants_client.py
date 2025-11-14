@@ -161,7 +161,8 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     async def close(self) -> None:
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
-            await self.client.beta.assistants.delete(self.assistant_id)
+            client = await self.ensure_client()
+            await client.beta.assistants.delete(self.assistant_id)
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
@@ -215,7 +216,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
-            created_assistant = await self.client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
+            if not self.model_id:
+                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+
+            client = await self.ensure_client()
+            created_assistant = await client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
 
@@ -233,6 +238,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
+        client = await self.ensure_client()
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
@@ -240,7 +246,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
-            stream = self.client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
                 run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
             )
             final_thread_id = thread_run.thread_id
@@ -249,7 +255,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
 
             # Now create a new run and stream the results.
-            stream = self.client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
                 assistant_id=assistant_id, thread_id=final_thread_id, **run_options
             )
 
@@ -257,19 +263,21 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
         """Get any active run for the given thread."""
+        client = await self.ensure_client()
         if thread_id is None:
             return None
 
-        async for run in self.client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
+        async for run in client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
             if run.status not in ["completed", "cancelled", "failed", "expired"]:
                 return run
         return None
 
     async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
+        client = await self.ensure_client()
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
-            thread = await self.client.beta.threads.create(  # type: ignore[reportDeprecated]
+            thread = await client.beta.threads.create(  # type: ignore[reportDeprecated]
                 messages=run_options["additional_messages"],
                 tool_resources=run_options.get("tool_resources"),
                 metadata=run_options.get("metadata"),
@@ -280,7 +288,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None:
             # There was an active run; we need to cancel it before starting a new run.
-            await self.client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
+            await client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
 
         return thread_id
 

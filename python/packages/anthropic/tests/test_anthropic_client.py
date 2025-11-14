@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
+from pathlib import Path
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +10,7 @@ from agent_framework import (
     ChatMessage,
     ChatOptions,
     ChatResponseUpdate,
+    DataContent,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
@@ -90,7 +92,7 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
 def test_anthropic_settings_missing_api_key(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings when API key is missing."""
-    settings = AnthropicSettings()
+    settings = AnthropicSettings(env_file_path="test.env")
     assert settings.api_key is None
     assert settings.chat_model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
@@ -775,3 +777,31 @@ async def test_anthropic_client_integration_ordering() -> None:
 
     assert response is not None
     assert response.messages[0].text is not None
+
+
+@pytest.mark.flaky
+@skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_images() -> None:
+    """Integration test with images."""
+    client = AnthropicClient()
+
+    # get a image from the assets folder
+    image_path = Path(__file__).parent / "assets" / "sample_image.jpg"
+    with open(image_path, "rb") as img_file:  # noqa [ASYNC230]
+        image_bytes = img_file.read()
+
+    messages = [
+        ChatMessage(
+            role=Role.USER,
+            contents=[
+                TextContent(text="Describe this image"),
+                DataContent(media_type="image/jpeg", data=image_bytes),
+            ],
+        ),
+    ]
+
+    response = await client.get_response(messages=messages)
+
+    assert response is not None
+    assert response.messages[0].text is not None
+    assert "house" in response.messages[0].text.lower()
