@@ -7,28 +7,42 @@ namespace Microsoft.Agents.AI.DurableTask;
 /// </summary>
 public sealed class AgentNotRegisteredException : InvalidOperationException
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AgentNotRegisteredException"/> class.
-    /// </summary>
-    public AgentNotRegisteredException()
+    // Not used, but required by static analysis.
+    private AgentNotRegisteredException()
     {
+        this.AgentName = string.Empty;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentNotRegisteredException"/> class with a specified error message.
+    /// Initializes a new instance of the <see cref="AgentNotRegisteredException"/> class with the agent name.
     /// </summary>
-    /// <param name="message">The error message that explains the reason for the exception.</param>
-    public AgentNotRegisteredException(string? message) : base(message)
+    /// <param name="agentName">The name of the agent that was not registered.</param>
+    public AgentNotRegisteredException(string agentName)
+        : base(GetMessage(agentName))
     {
+        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        this.AgentName = agentName;
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentNotRegisteredException"/> class with a specified error message
-    /// and an inner exception.
+    /// Initializes a new instance of the <see cref="AgentNotRegisteredException"/> class with the agent name and an inner exception.
     /// </summary>
-    /// <param name="message">The error message that explains the reason for the exception.</param>
+    /// <param name="agentName">The name of the agent that was not registered.</param>
     /// <param name="innerException">The exception that is the cause of the current exception.</param>
-    public AgentNotRegisteredException(string? message, Exception? innerException) : base(message, innerException)
+    public AgentNotRegisteredException(string agentName, Exception? innerException)
+        : base(GetMessage(agentName), innerException)
     {
+        ArgumentException.ThrowIfNullOrEmpty(agentName);
+        this.AgentName = agentName;
+    }
+
+    /// <summary>
+    /// Gets the name of the agent that was not registered.
+    /// </summary>
+    public string AgentName { get; }
+
+    private static string GetMessage(string agentName)
+    {
+        return $"No agent named '{agentName}' was registered. Ensure the agent is registered using {nameof(ServiceCollectionExtensions.ConfigureDurableAgents)} before using it in an orchestration.";
     }
 }

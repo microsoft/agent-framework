@@ -108,10 +108,7 @@ public sealed class DurableAIAgent : AIAgent
         }
         catch (EntityOperationFailedException e) when (e.FailureDetails.ErrorType == "EntityTaskNotFound")
         {
-            throw new AgentNotRegisteredException(
-                $"No agent named '{this._agentName}' was registered. Ensure the agent is registered " +
-                $"using {nameof(ServiceCollectionExtensions.ConfigureDurableAgents)} before using it in an orchestration.",
-                e);
+            throw new AgentNotRegisteredException(this._agentName, e);
         }
     }
 
