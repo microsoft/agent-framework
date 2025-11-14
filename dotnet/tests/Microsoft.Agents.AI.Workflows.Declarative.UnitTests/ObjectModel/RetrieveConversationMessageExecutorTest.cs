@@ -28,13 +28,12 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
     {
         // Arrange
         MockAgentProvider mockAgentProvider = new();
-        ChatMessage testMessage = mockAgentProvider.TestChatMessage ?? new ChatMessage();
 
         RetrieveConversationMessage model = this.CreateModel(
             this.FormatDisplayName(displayName),
             FormatVariablePath(variableName),
             "TestConversationId",
-            testMessage.MessageId ?? "DefaultMessageId");
+            "DefaultMessageId");
 
         RetrieveConversationMessageExecutor action = new(model, mockAgentProvider.Object, this.State);
 
@@ -42,6 +41,7 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
         await this.ExecuteAsync(action);
 
         // Assert
+        ChatMessage testMessage = mockAgentProvider.TestChatMessage ?? new ChatMessage();
         VerifyModel(model, action);
         this.VerifyState(variableName, testMessage.ToRecord());
     }
@@ -56,7 +56,7 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
             new()
             {
                 Id = this.CreateActionId(),
-                DisplayName = displayName,
+                DisplayName = this.FormatDisplayName(displayName),
                 Message = PropertyPath.Create(messageVariable),
                 ConversationId = StringExpression.Literal(conversationId),
                 MessageId = StringExpression.Literal(messageId)
