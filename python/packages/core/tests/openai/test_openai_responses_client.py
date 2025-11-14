@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import json
 import os
 from typing import Annotated
 from unittest.mock import MagicMock, patch
@@ -37,6 +36,7 @@ from agent_framework import (
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
+    MCPStreamableHTTPTool,
     Role,
     TextContent,
     TextReasoningContent,
@@ -73,7 +73,11 @@ async def create_vector_store(client: OpenAIResponsesClient) -> tuple[str, Hoste
         name="knowledge_base",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
-    result = await client.client.vector_stores.files.create_and_poll(vector_store_id=vector_store.id, file_id=file.id)
+    result = await client.client.vector_stores.files.create_and_poll(
+        vector_store_id=vector_store.id,
+        file_id=file.id,
+        poll_interval_ms=1000,
+    )
     if result.last_error is not None:
         raise Exception(f"Vector store file processing failed with status: {result.last_error.message}")
 
@@ -132,18 +136,6 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
     for key, value in default_headers.items():
         assert key in openai_responses_client.client.default_headers
         assert openai_responses_client.client.default_headers[key] == value
-
-
-def test_openai_responses_client_instructions_sent_once(openai_unit_test_env: dict[str, str]) -> None:
-    """Ensure instructions are only included once for OpenAI Responses requests."""
-    client = OpenAIResponsesClient()
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert json.dumps(request_options).count(instructions) == 1
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_RESPONSES_MODEL_ID"]], indirect=True)
@@ -955,667 +947,6 @@ def test_streaming_response_basic_structure() -> None:
     assert response.raw_representation is mock_event
 
 
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_response() -> None:
-    """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    messages: list[ChatMessage] = []
-    messages.append(
-        ChatMessage(
-            role="user",
-            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-            "of climate change.",
-        )
-    )
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
-
-    # Test that the client can be used to get a response
-    response = await openai_responses_client.get_response(messages=messages)
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    assert "scientists" in response.text
-
-    messages.clear()
-    messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
-    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
-
-    # Test that the client can be used to get a response
-    response = await openai_responses_client.get_response(
-        messages=messages,
-        response_format=OutputStruct,
-    )
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    output = response.value
-    assert output is not None, "Response value is None"
-    assert "seattle" in output.location.lower()
-    assert output.weather is not None
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_response_tools() -> None:
-    """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    messages: list[ChatMessage] = []
-    messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
-
-    # Test that the client can be used to get a response
-    response = await openai_responses_client.get_response(
-        messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-    )
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    assert "sunny" in response.text.lower()
-
-    messages.clear()
-    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
-
-    # Test that the client can be used to get a response
-    response = await openai_responses_client.get_response(
-        messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
-    )
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    output = OutputStruct.model_validate_json(response.text)
-    assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_streaming() -> None:
-    """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    messages: list[ChatMessage] = []
-    messages.append(
-        ChatMessage(
-            role="user",
-            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-            "of climate change.",
-        )
-    )
-    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
-
-    # Test that the client can be used to get a response
-    response = await ChatResponse.from_chat_response_generator(
-        openai_responses_client.get_streaming_response(messages=messages)
-    )
-
-    assert "scientists" in response.text
-
-    messages.clear()
-    messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
-    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
-
-    response = openai_responses_client.get_streaming_response(
-        messages=messages,
-        response_format=OutputStruct,
-    )
-    chunks = []
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        chunks.append(chunk)
-    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
-    output = full_message.value
-    assert output is not None, "Response value is None"
-    assert "seattle" in output.location.lower()
-    assert output.weather is not None
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_streaming_tools() -> None:
-    """Test OpenAI chat completion responses."""
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    messages: list[ChatMessage] = [ChatMessage(role="user", text="What is the weather in Seattle?")]
-
-    # Test that the client can be used to get a response
-    response = openai_responses_client.get_streaming_response(
-        messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-    )
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    assert "sunny" in full_message.lower()
-
-    messages.clear()
-    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
-
-    response = openai_responses_client.get_streaming_response(
-        messages=messages,
-        tools=[get_weather],
-        tool_choice="auto",
-        response_format=OutputStruct,
-    )
-    chunks = []
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        chunks.append(chunk)
-
-    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
-    output = full_message.value
-    assert output is not None, "Response value is None"
-    assert "seattle" in output.location.lower()
-    assert "sunny" in output.weather.lower()
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_web_search() -> None:
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    # Test that the client will use the web search tool
-    response = await openai_responses_client.get_response(
-        messages=[
-            ChatMessage(
-                role="user",
-                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-            )
-        ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
-    )
-
-    assert response is not None
-    assert isinstance(response, ChatResponse)
-    assert "Rumi" in response.text
-    assert "Mira" in response.text
-    assert "Zoey" in response.text
-
-    # Test that the client will use the web search tool with location
-    additional_properties = {
-        "user_location": {
-            "country": "US",
-            "city": "Seattle",
-        }
-    }
-    response = await openai_responses_client.get_response(
-        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
-    )
-    assert response.text is not None
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_web_search_streaming() -> None:
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
-        messages=[
-            ChatMessage(
-                role="user",
-                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-            )
-        ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
-    )
-
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-    assert "Rumi" in full_message
-    assert "Mira" in full_message
-    assert "Zoey" in full_message
-
-    # Test that the client will use the web search tool with location
-    additional_properties = {
-        "user_location": {
-            "country": "US",
-            "city": "Seattle",
-        }
-    }
-    response = openai_responses_client.get_streaming_response(
-        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
-    )
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-    assert full_message is not None
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_file_search() -> None:
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Test that the client will use the web search tool
-    response = await openai_responses_client.get_response(
-        messages=[
-            ChatMessage(
-                role="user",
-                text="What is the weather today? Do a file search to find the answer.",
-            )
-        ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
-    )
-
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-    assert "sunny" in response.text.lower()
-    assert "75" in response.text
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_streaming_file_search() -> None:
-    openai_responses_client = OpenAIResponsesClient()
-
-    assert isinstance(openai_responses_client, ChatClientProtocol)
-
-    file_id, vector_store = await create_vector_store(openai_responses_client)
-    # Test that the client will use the web search tool
-    response = openai_responses_client.get_streaming_response(
-        messages=[
-            ChatMessage(
-                role="user",
-                text="What is the weather today? Do a file search to find the answer.",
-            )
-        ],
-        tools=[HostedFileSearchTool(inputs=vector_store)],
-        tool_choice="auto",
-    )
-
-    assert response is not None
-    full_message: str = ""
-    async for chunk in response:
-        assert chunk is not None
-        assert isinstance(chunk, ChatResponseUpdate)
-        for content in chunk.contents:
-            if isinstance(content, TextContent) and content.text:
-                full_message += content.text
-
-    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
-
-    assert "sunny" in full_message.lower()
-    assert "75" in full_message
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_basic_run():
-    """Test OpenAI Responses Client agent basic run functionality with OpenAIResponsesClient."""
-    agent = OpenAIResponsesClient().create_agent(
-        instructions="You are a helpful assistant.",
-    )
-
-    # Test basic run
-    response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
-
-    assert isinstance(response, AgentRunResponse)
-    assert response.text is not None
-    assert len(response.text) > 0
-    assert "hello world" in response.text.lower()
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_basic_run_streaming():
-    """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-    ) as agent:
-        # Test streaming run
-        full_text = ""
-        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
-            assert isinstance(chunk, AgentRunResponseUpdate)
-            if chunk.text:
-                full_text += chunk.text
-
-        assert len(full_text) > 0
-        assert "streaming response test" in full_text.lower()
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_thread_persistence():
-    """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant with good memory.",
-    ) as agent:
-        # Create a new thread that will be reused
-        thread = agent.get_new_thread()
-
-        # First interaction
-        first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-
-        # Second interaction - test memory
-        second_response = await agent.run("What is my favorite programming language?", thread=thread)
-
-        assert isinstance(second_response, AgentRunResponse)
-        assert second_response.text is not None
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_thread_storage_with_store_true():
-    """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        # Create a new thread
-        thread = AgentThread()
-
-        # Initially, service_thread_id should be None
-        assert thread.service_thread_id is None
-
-        # Run with store=True to store messages on OpenAI side
-        response = await agent.run(
-            "Hello! Please remember that my name is Alex.",
-            thread=thread,
-            store=True,
-        )
-
-        # Validate response
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-        # After store=True, service_thread_id should be populated
-        assert thread.service_thread_id is not None
-        assert isinstance(thread.service_thread_id, str)
-        assert len(thread.service_thread_id) > 0
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_existing_thread():
-    """Test OpenAI Responses Client agent with existing thread to continue conversations across agent instances."""
-    # First conversation - capture the thread
-    preserved_thread = None
-
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant with good memory.",
-    ) as first_agent:
-        # Start a conversation and capture the thread
-        thread = first_agent.get_new_thread()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-
-        # Preserve the thread for reuse
-        preserved_thread = thread
-
-    # Second conversation - reuse the thread in a new agent instance
-    if preserved_thread:
-        async with ChatAgent(
-            chat_client=OpenAIResponsesClient(),
-            instructions="You are a helpful assistant with good memory.",
-        ) as second_agent:
-            # Reuse the preserved thread
-            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
-
-            assert isinstance(second_response, AgentRunResponse)
-            assert second_response.text is not None
-            assert "photography" in second_response.text.lower()
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
-    """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant that can execute Python code.",
-        tools=[HostedCodeInterpreterTool()],
-    ) as agent:
-        # Test code interpreter functionality
-        response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
-
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        # Should contain calculation result (sum of 1-10 = 55) or code execution content
-        contains_relevant_content = any(
-            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
-        )
-        assert contains_relevant_content or len(response.text.strip()) > 10
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_raw_image_generation_tool():
-    """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant that can generate images.",
-        tools=[{"type": "image_generation", "size": "1024x1024", "quality": "low", "format": "png"}],
-    ) as agent:
-        # Test image generation functionality
-        response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
-
-        assert isinstance(response, AgentRunResponse)
-
-        # For image generation, we expect to get some response content
-        # This could be DataContent with image data, UriContent
-        assert response.messages is not None and len(response.messages) > 0
-
-        # Check that we have some kind of content in the response
-        total_contents = sum(len(message.contents) for message in response.messages)
-        assert total_contents > 0, f"Expected some content in response messages, got {total_contents} contents"
-
-        # Verify we got image content - look for DataContent with URI starting with "data:image"
-        image_content_found = False
-        for message in response.messages:
-            for content in message.contents:
-                uri = getattr(content, "uri", None)
-                if uri and uri.startswith("data:image"):
-                    image_content_found = True
-                    break
-            if image_content_found:
-                break
-
-        # The test passes if we got image content (which we did based on the visible base64 output)
-        assert image_content_found, "Expected to find image content in response"
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_level_tool_persistence():
-    """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
-
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant that uses available tools.",
-        tools=[get_weather],  # Agent-level tool
-    ) as agent:
-        # First run - agent-level tool should be available
-        first_response = await agent.run("What's the weather like in Chicago?")
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-        # Should use the agent-level weather tool
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
-
-        # Second run - agent-level tool should still be available (persistence test)
-        second_response = await agent.run("What's the weather in Miami?")
-
-        assert isinstance(second_response, AgentRunResponse)
-        assert second_response.text is not None
-        # Should use the agent-level weather tool again
-        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_run_level_tool_isolation():
-    """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Responses Client."""
-    # Counter to track how many times the weather tool is called
-    call_count = 0
-
-    @ai_function
-    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
-        """Get the current weather in a given location."""
-        nonlocal call_count
-        call_count += 1
-        return f"The weather in {location} is sunny and 72°F."
-
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        # First run - use run-level tool
-        first_response = await agent.run(
-            "What's the weather like in Chicago?",
-            tools=[get_weather_with_counter],  # Run-level tool
-        )
-
-        assert isinstance(first_response, AgentRunResponse)
-        assert first_response.text is not None
-        # Should use the run-level weather tool (call count should be 1)
-        assert call_count == 1
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
-
-        # Second run - run-level tool should NOT persist (key isolation test)
-        second_response = await agent.run("What's the weather like in Miami?")
-
-        assert isinstance(second_response, AgentRunResponse)
-        assert second_response.text is not None
-        # Should NOT use the weather tool since it was only run-level in previous call
-        # Call count should still be 1 (no additional calls)
-        assert call_count == 1
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_chat_options_run_level() -> None:
-    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        response = await agent.run(
-            "Provide a brief, helpful response about why the sky blue is.",
-            max_tokens=600,
-            model_id="gpt-4o",
-            user="comprehensive-test-user",
-            tools=[get_weather],
-            tool_choice="auto",
-        )
-
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
-    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant.",
-        max_tokens=100,
-        temperature=0.7,
-        top_p=0.9,
-        seed=123,
-        user="comprehensive-test-user",
-        tools=[get_weather],
-        tool_choice="auto",
-    ) as agent:
-        response = await agent.run(
-            "Provide a brief, helpful response.",
-        )
-
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-
-@pytest.mark.flaky
-@skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
-    """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
-
-    mcp_tool = HostedMCPTool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-        description="A Microsoft Learn MCP server for documentation questions",
-        approval_mode="never_require",
-    )
-
-    async with ChatAgent(
-        chat_client=OpenAIResponsesClient(),
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=[mcp_tool],
-    ) as agent:
-        response = await agent.run(
-            "How to create an Azure storage account using az cli?",
-            max_tokens=200,
-        )
-
-        assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        # Should contain Azure-related content since it's asking about Azure CLI
-        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
-
-
 def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -2076,27 +1407,27 @@ def test_create_response_content_image_generation_fallback():
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
 
 
-def test_prepare_options_store_parameter_handling() -> None:
+async def test_prepare_options_store_parameter_handling() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     messages = [ChatMessage(role="user", text="Test message")]
 
     test_conversation_id = "test-conversation-123"
     chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is True
     assert options["previous_response_id"] == test_conversation_id
 
     chat_options = ChatOptions(store=False, conversation_id="")
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
 
     chat_options = ChatOptions(store=None, conversation_id=None)
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
     assert "previous_response_id" not in options
 
     chat_options = ChatOptions()
-    options = client._prepare_options(messages, chat_options)  # type: ignore
+    options = await client.prepare_options(messages, chat_options)
     assert options["store"] is False
     assert "previous_response_id" not in options
 
@@ -2113,3 +1444,699 @@ def test_openai_responses_client_with_callable_api_key() -> None:
     assert client.model_id == "gpt-4o"
     # OpenAI SDK now manages callable API keys internally
     assert client.client is not None
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_response() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = []
+    messages.append(
+        ChatMessage(
+            role="user",
+            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+            "of climate change.",
+        )
+    )
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_responses_client.get_response(messages=messages)
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "scientists" in response.text
+
+    messages.clear()
+    messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
+    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_responses_client.get_response(
+        messages=messages,
+        response_format=OutputStruct,
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    output = response.value
+    assert output is not None, "Response value is None"
+    assert "seattle" in output.location.lower()
+    assert output.weather is not None
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_response_tools() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = []
+    messages.append(ChatMessage(role="user", text="What is the weather in New York?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_responses_client.get_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "sunny" in response.text.lower()
+
+    messages.clear()
+    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_responses_client.get_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+        response_format=OutputStruct,
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    output = OutputStruct.model_validate_json(response.text)
+    assert "seattle" in output.location.lower()
+    assert "sunny" in output.weather.lower()
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_streaming() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = []
+    messages.append(
+        ChatMessage(
+            role="user",
+            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+            "of climate change.",
+        )
+    )
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+
+    # Test that the client can be used to get a response
+    response = await ChatResponse.from_chat_response_generator(
+        openai_responses_client.get_streaming_response(messages=messages)
+    )
+
+    assert "scientists" in response.text
+
+    messages.clear()
+    messages.append(ChatMessage(role="user", text="The weather in Seattle is sunny"))
+    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+
+    response = openai_responses_client.get_streaming_response(
+        messages=messages,
+        response_format=OutputStruct,
+    )
+    chunks = []
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        chunks.append(chunk)
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
+    assert "seattle" in output.location.lower()
+    assert output.weather is not None
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_streaming_tools() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = [ChatMessage(role="user", text="What is the weather in Seattle?")]
+
+    # Test that the client can be used to get a response
+    response = openai_responses_client.get_streaming_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+    )
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+
+    assert "sunny" in full_message.lower()
+
+    messages.clear()
+    messages.append(ChatMessage(role="user", text="What is the weather in Seattle?"))
+
+    response = openai_responses_client.get_streaming_response(
+        messages=messages,
+        tools=[get_weather],
+        tool_choice="auto",
+        response_format=OutputStruct,
+    )
+    chunks = []
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        chunks.append(chunk)
+
+    full_message = ChatResponse.from_chat_response_updates(chunks, output_format_type=OutputStruct)
+    output = full_message.value
+    assert output is not None, "Response value is None"
+    assert "seattle" in output.location.lower()
+    assert "sunny" in output.weather.lower()
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_web_search() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    # Test that the client will use the web search tool
+    response = await openai_responses_client.get_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        tools=[HostedWebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "Rumi" in response.text
+    assert "Mira" in response.text
+    assert "Zoey" in response.text
+
+    # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
+    response = await openai_responses_client.get_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+        tool_choice="auto",
+    )
+    assert response.text is not None
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_web_search_streaming() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    # Test that the client will use the web search tool
+    response = openai_responses_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        tools=[HostedWebSearchTool()],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert "Rumi" in full_message
+    assert "Mira" in full_message
+    assert "Zoey" in full_message
+
+    # Test that the client will use the web search tool with location
+    additional_properties = {
+        "user_location": {
+            "country": "US",
+            "city": "Seattle",
+        }
+    }
+    response = openai_responses_client.get_streaming_response(
+        messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+        tool_choice="auto",
+    )
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+    assert full_message is not None
+
+
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing potential "
+    "race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_file_search() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    file_id, vector_store = await create_vector_store(openai_responses_client)
+    # Test that the client will use the web search tool
+    response = await openai_responses_client.get_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the weather today? Do a file search to find the answer.",
+            )
+        ],
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tool_choice="auto",
+    )
+
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+    assert "sunny" in response.text.lower()
+    assert "75" in response.text
+
+
+@pytest.mark.skip(
+    reason="Unreliable due to OpenAI vector store indexing "
+    "potential race condition. See https://github.com/microsoft/agent-framework/issues/1669"
+)
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_streaming_file_search() -> None:
+    openai_responses_client = OpenAIResponsesClient()
+
+    assert isinstance(openai_responses_client, ChatClientProtocol)
+
+    file_id, vector_store = await create_vector_store(openai_responses_client)
+    # Test that the client will use the web search tool
+    response = openai_responses_client.get_streaming_response(
+        messages=[
+            ChatMessage(
+                role="user",
+                text="What is the weather today? Do a file search to find the answer.",
+            )
+        ],
+        tools=[HostedFileSearchTool(inputs=vector_store)],
+        tool_choice="auto",
+    )
+
+    assert response is not None
+    full_message: str = ""
+    async for chunk in response:
+        assert chunk is not None
+        assert isinstance(chunk, ChatResponseUpdate)
+        for content in chunk.contents:
+            if isinstance(content, TextContent) and content.text:
+                full_message += content.text
+
+    await delete_vector_store(openai_responses_client, file_id, vector_store.vector_store_id)
+
+    assert "sunny" in full_message.lower()
+    assert "75" in full_message
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run():
+    """Test OpenAI Responses Client agent basic run functionality with OpenAIResponsesClient."""
+    agent = OpenAIResponsesClient().create_agent(
+        instructions="You are a helpful assistant.",
+    )
+
+    # Test basic run
+    response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+    assert isinstance(response, AgentRunResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    assert "hello world" in response.text.lower()
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_basic_run_streaming():
+    """Test OpenAI Responses Client agent basic streaming functionality with OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+    ) as agent:
+        # Test streaming run
+        full_text = ""
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_text += chunk.text
+
+        assert len(full_text) > 0
+        assert "streaming response test" in full_text.lower()
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_persistence():
+    """Test OpenAI Responses Client agent thread persistence across runs with OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as agent:
+        # Create a new thread that will be reused
+        thread = agent.get_new_thread()
+
+        # First interaction
+        first_response = await agent.run("My favorite programming language is Python. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Second interaction - test memory
+        second_response = await agent.run("What is my favorite programming language?", thread=thread)
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_thread_storage_with_store_true():
+    """Test OpenAI Responses Client agent with store=True to verify service_thread_id is returned."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # Create a new thread
+        thread = AgentThread()
+
+        # Initially, service_thread_id should be None
+        assert thread.service_thread_id is None
+
+        # Run with store=True to store messages on OpenAI side
+        response = await agent.run(
+            "Hello! Please remember that my name is Alex.",
+            thread=thread,
+            store=True,
+        )
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+        # After store=True, service_thread_id should be populated
+        assert thread.service_thread_id is not None
+        assert isinstance(thread.service_thread_id, str)
+        assert len(thread.service_thread_id) > 0
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_existing_thread():
+    """Test OpenAI Responses Client agent with existing thread to continue conversations across agent instances."""
+    # First conversation - capture the thread
+    preserved_thread = None
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant with good memory.",
+    ) as first_agent:
+        # Start a conversation and capture the thread
+        thread = first_agent.get_new_thread()
+        first_response = await first_agent.run("My hobby is photography. Remember this.", thread=thread)
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+
+        # Preserve the thread for reuse
+        preserved_thread = thread
+
+    # Second conversation - reuse the thread in a new agent instance
+    if preserved_thread:
+        async with ChatAgent(
+            chat_client=OpenAIResponsesClient(),
+            instructions="You are a helpful assistant with good memory.",
+        ) as second_agent:
+            # Reuse the preserved thread
+            second_response = await second_agent.run("What is my hobby?", thread=preserved_thread)
+
+            assert isinstance(second_response, AgentRunResponse)
+            assert second_response.text is not None
+            assert "photography" in second_response.text.lower()
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
+    """Test OpenAI Responses Client agent with HostedCodeInterpreterTool through OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can execute Python code.",
+        tools=[HostedCodeInterpreterTool()],
+    ) as agent:
+        # Test code interpreter functionality
+        response = await agent.run("Calculate the sum of numbers from 1 to 10 using Python code.")
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain calculation result (sum of 1-10 = 55) or code execution content
+        contains_relevant_content = any(
+            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
+        )
+        assert contains_relevant_content or len(response.text.strip()) > 10
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_raw_image_generation_tool():
+    """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can generate images.",
+        tools=[{"type": "image_generation", "size": "1024x1024", "quality": "low", "format": "png"}],
+    ) as agent:
+        # Test image generation functionality
+        response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
+
+        assert isinstance(response, AgentRunResponse)
+
+        # For image generation, we expect to get some response content
+        # This could be DataContent with image data, UriContent
+        assert response.messages is not None and len(response.messages) > 0
+
+        # Check that we have some kind of content in the response
+        total_contents = sum(len(message.contents) for message in response.messages)
+        assert total_contents > 0, f"Expected some content in response messages, got {total_contents} contents"
+
+        # Verify we got image content - look for DataContent with URI starting with "data:image"
+        image_content_found = False
+        for message in response.messages:
+            for content in message.contents:
+                uri = getattr(content, "uri", None)
+                if uri and uri.startswith("data:image"):
+                    image_content_found = True
+                    break
+            if image_content_found:
+                break
+
+        # The test passes if we got image content (which we did based on the visible base64 output)
+        assert image_content_found, "Expected to find image content in response"
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_level_tool_persistence():
+    """Test that agent-level tools persist across multiple runs with OpenAI Responses Client."""
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that uses available tools.",
+        tools=[get_weather],  # Agent-level tool
+    ) as agent:
+        # First run - agent-level tool should be available
+        first_response = await agent.run("What's the weather like in Chicago?")
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the agent-level weather tool
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - agent-level tool should still be available (persistence test)
+        second_response = await agent.run("What's the weather in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should use the agent-level weather tool again
+        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "72"])
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_run_level_tool_isolation():
+    """Test that run-level tools are isolated to specific runs and don't persist with OpenAI Responses Client."""
+    # Counter to track how many times the weather tool is called
+    call_count = 0
+
+    @ai_function
+    async def get_weather_with_counter(location: Annotated[str, "The location as a city name"]) -> str:
+        """Get the current weather in a given location."""
+        nonlocal call_count
+        call_count += 1
+        return f"The weather in {location} is sunny and 72°F."
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        # First run - use run-level tool
+        first_response = await agent.run(
+            "What's the weather like in Chicago?",
+            tools=[get_weather_with_counter],  # Run-level tool
+        )
+
+        assert isinstance(first_response, AgentRunResponse)
+        assert first_response.text is not None
+        # Should use the run-level weather tool (call count should be 1)
+        assert call_count == 1
+        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "72"])
+
+        # Second run - run-level tool should NOT persist (key isolation test)
+        second_response = await agent.run("What's the weather like in Miami?")
+
+        assert isinstance(second_response, AgentRunResponse)
+        assert second_response.text is not None
+        # Should NOT use the weather tool since it was only run-level in previous call
+        # Call count should still be 1 (no additional calls)
+        assert call_count == 1
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_chat_options_run_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response about why the sky blue is.",
+            max_tokens=600,
+            model_id="gpt-4o",
+            user="comprehensive-test-user",
+            tools=[get_weather],
+            tool_choice="auto",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
+    """Integration test for comprehensive ChatOptions parameter coverage with OpenAI Response Agent."""
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant.",
+        max_tokens=100,
+        temperature=0.7,
+        top_p=0.9,
+        seed=123,
+        user="comprehensive-test-user",
+        tools=[get_weather],
+        tool_choice="auto",
+    ) as agent:
+        response = await agent.run(
+            "Provide a brief, helpful response.",
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
+    """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
+
+    mcp_tool = HostedMCPTool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+        description="A Microsoft Learn MCP server for documentation questions",
+        approval_mode="never_require",
+    )
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=[mcp_tool],
+    ) as agent:
+        response = await agent.run(
+            "How to create an Azure storage account using az cli?",
+            max_tokens=200,
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain Azure-related content since it's asking about Azure CLI
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
+async def test_openai_responses_client_agent_local_mcp_tool() -> None:
+    """Integration test for MCPStreamableHTTPTool with OpenAI Response Agent using Microsoft Learn MCP."""
+
+    mcp_tool = MCPStreamableHTTPTool(
+        name="Microsoft Learn MCP",
+        url="https://learn.microsoft.com/api/mcp",
+    )
+
+    async with ChatAgent(
+        chat_client=OpenAIResponsesClient(),
+        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+        tools=[mcp_tool],
+    ) as agent:
+        response = await agent.run(
+            "How to create an Azure storage account using az cli?",
+            max_tokens=200,
+        )
+
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # Should contain Azure-related content since it's asking about Azure CLI
+        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])

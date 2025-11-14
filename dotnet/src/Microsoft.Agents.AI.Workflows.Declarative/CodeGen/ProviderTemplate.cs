@@ -110,7 +110,8 @@ foreach (string edge in ByLine(this.Edges))
 
 }
  
-            this.Write("\n\n        // Build the workflow\n        return builder.Build();\n    }\n}\n");
+            this.Write("\n\n        // Build the workflow\n        return builder.Build(validateOrphans: fal" +
+                    "se);\n    }\n}\n");
             return this.GenerationEnvironment.ToString();
         }
     }

@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Data;
 
 namespace Microsoft.Agents.AI;
 
@@ -43,8 +44,12 @@ internal static partial class AgentJsonUtilities
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as in AgentAbstractionsJsonUtilities and AIJsonUtilities
         };
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
+        // Chain in the resolvers from both AgentAbstractionsJsonUtilities and our source generated context.
+        // We want AgentAbstractionsJsonUtilities first to ensure any M.E.AI types are handled via its resolver.
+        options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
+
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             options.Converters.Add(new JsonStringEnumConverter());
@@ -62,6 +67,8 @@ internal static partial class AgentJsonUtilities
 
     // Agent abstraction types
     [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
+    [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
+    [JsonSerializable(typeof(ChatHistoryMemoryProvider.ChatHistoryMemoryProviderState))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

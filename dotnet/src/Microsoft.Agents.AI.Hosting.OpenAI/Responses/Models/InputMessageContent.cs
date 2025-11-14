@@ -22,7 +22,7 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
         this.Contents = null;
     }
 
-    private InputMessageContent(IReadOnlyList<ItemContent> contents)
+    private InputMessageContent(List<ItemContent> contents)
     {
         this.Contents = contents ?? throw new ArgumentNullException(nameof(contents));
         this.Text = null;
@@ -36,12 +36,12 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
     /// <summary>
     /// Creates an InputMessageContent from a list of ItemContent items.
     /// </summary>
-    public static InputMessageContent FromContents(IReadOnlyList<ItemContent> contents) => new(contents);
+    public static InputMessageContent FromContents(List<ItemContent> contents) => new(contents);
 
     /// <summary>
     /// Creates an InputMessageContent from a list of ItemContent items.
     /// </summary>
-    public static InputMessageContent FromContents(params ItemContent[] contents) => new(contents);
+    public static InputMessageContent FromContents(params ItemContent[] contents) => new([.. contents]);
 
     /// <summary>
     /// Implicit conversion from string to InputMessageContent.
@@ -62,12 +62,14 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
     /// Gets whether this content is text.
     /// </summary>
     [MemberNotNullWhen(true, nameof(Text))]
+    [MemberNotNullWhen(false, nameof(Contents))]
     public bool IsText => this.Text is not null;
 
     /// <summary>
     /// Gets whether this content is a list of ItemContent items.
     /// </summary>
     [MemberNotNullWhen(true, nameof(Contents))]
+    [MemberNotNullWhen(false, nameof(Text))]
     public bool IsContents => this.Contents is not null;
 
     /// <summary>
@@ -78,7 +80,7 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
     /// <summary>
     /// Gets the ItemContent items, or null if this is not a content list.
     /// </summary>
-    public IReadOnlyList<ItemContent>? Contents { get; }
+    public List<ItemContent>? Contents { get; }
 
     /// <inheritdoc/>
     public bool Equals(InputMessageContent? other)
@@ -143,6 +145,16 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
     {
         return !Equals(left, right);
     }
+
+    /// <summary>
+    /// Converts this instance to a list of ItemContent.
+    /// </summary>
+    public List<ItemContent> ToItemContents()
+    {
+        return this.IsText
+            ? [new ItemContentInputText { Text = this.Text }]
+            : this.Contents;
+    }
 }
 
 /// <summary>
@@ -150,6 +162,7 @@ internal sealed class InputMessageContent : IEquatable<InputMessageContent>
 /// </summary>
 internal sealed class InputMessageContentJsonConverter : JsonConverter<InputMessageContent>
 {
+    /// <inheritdoc/>
     public override InputMessageContent? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         // Check if it's a string
@@ -162,7 +175,7 @@ internal sealed class InputMessageContentJsonConverter : JsonConverter<InputMess
         // Check if it's an array of ItemContent
         if (reader.TokenType == JsonTokenType.StartArray)
         {
-            var contents = JsonSerializer.Deserialize(ref reader, ResponsesJsonContext.Default.ListItemContent);
+            var contents = JsonSerializer.Deserialize(ref reader, OpenAIHostingJsonContext.Default.ListItemContent);
             return contents?.Count > 0
                 ? InputMessageContent.FromContents(contents)
                 : InputMessageContent.FromText(string.Empty);
@@ -171,6 +184,7 @@ internal sealed class InputMessageContentJsonConverter : JsonConverter<InputMess
         throw new JsonException($"Unexpected token type for InputMessageContent: {reader.TokenType}");
     }
 
+    /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, InputMessageContent value, JsonSerializerOptions options)
     {
         if (value.IsText)
@@ -179,7 +193,7 @@ internal sealed class InputMessageContentJsonConverter : JsonConverter<InputMess
         }
         else if (value.IsContents)
         {
-            JsonSerializer.Serialize(writer, value.Contents, ResponsesJsonContext.Default.ListItemContent);
+            JsonSerializer.Serialize(writer, value.Contents, OpenAIHostingJsonContext.Default.ListItemContent);
         }
         else
         {

@@ -1,87 +1,59 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Literal
 
 from agent_framework import (
     Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
+    RequestInfoEvent,
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
+    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
     handler,
+    response_handler,
 )
 from typing_extensions import Never
 
 """
-Sample: Sub-workflow with parallel request handling by specialized interceptors
+This sample demonstrates how to handle multiple parallel requests from a sub-workflow to
+different executors in the main workflow.
 
-This sample demonstrates how different parent executors can handle different types of requests
-from the same sub-workflow using regular @handler methods for RequestInfoMessage subclasses.
+Prerequisite:
+- Understanding of sub-workflows.
+- Understanding of requests and responses.
 
-Prerequisites:
-- No external services required (external handling simulated via `RequestInfoExecutor`).
+This pattern is useful when a sub-workflow needs to interact with multiple external systems
+or services.
 
-Key architectural principles:
-1. Specialized interceptors: Each parent executor handles only specific request types
-2. Type-based routing: ResourceCache handles ResourceRequest, PolicyEngine handles PolicyCheckRequest
-3. Automatic type filtering: Each interceptor only receives requests with matching types
-4. Fallback forwarding: Unhandled requests are forwarded to external services
+This sample implements a resource request distribution system where:
+1. A sub-workflow generates requests for computing resources and policy checks.
+2. The main workflow has executors that handle resource allocation and policy checking.
+3. Responses are routed back to the sub-workflow, which collects and processes them.
 
-The example simulates a resource allocation system where:
-- Sub-workflow makes mixed requests for resources (CPU, memory) and policy checks
-- ResourceCache executor intercepts ResourceRequest messages, serves from cache or forwards
-- PolicyEngine executor intercepts PolicyCheckRequest messages, applies rules or forwards
-- Each interceptor uses typed @handler methods for automatic filtering
+The sub-workflow sends two types of requests:
+- ResourceRequest: Requests for computing resources (e.g., CPU, memory).
+- PolicyRequest: Requests to check resource allocation policies.
 
-Flow visualization:
-
-  Coordinator
-      |
-      |  Mixed list[resource + policy requests]
-      v
-    [ Sub-workflow: WorkflowExecutor(ResourceRequester) ]
-      |
-      |  Emits different RequestInfoMessage types:
-      |     - ResourceRequest
-      |     - PolicyCheckRequest
-      v
-  Parent workflow routes to specialized handlers:
-      |                                    |
-      | ResourceCache.handle_resource_request | PolicyEngine.handle_policy_request
-      | (@handler ResourceRequest)          | (@handler PolicyCheckRequest)
-      v                                    v
-  Cache hit/miss decision              Policy allow/deny decision
-      |                                    |
-      | RequestResponse OR forward        | RequestResponse OR forward
-      v                                    v
-  Back to sub-workflow  <----------> External RequestInfoExecutor
-                                           |
-                                           v
-                                    External responses route back
+The main workflow contains:
+- ResourceAllocator: Simulates a system that allocates computing resources.
+- PolicyEngine: Simulates a policy engine that approves or denies resource requests.
 """
 
 
-# 1. Define domain-specific request/response types
 @dataclass
-class ResourceRequest(RequestInfoMessage):
+class ComputingResourceRequest:
     """Request for computing resources."""
 
-    resource_type: str = "cpu"  # cpu, memory, disk, etc.
-    amount: int = 1
-    priority: str = "normal"  # low, normal, high
-
-
-@dataclass
-class PolicyCheckRequest(RequestInfoMessage):
-    """Request to check resource allocation policy."""
-
-    resource_type: str = ""
-    amount: int = 0
-    policy_type: str = "quota"  # quota, compliance, security
+    request_type: Literal["resource", "policy"]
+    resource_type: Literal["cpu", "memory", "disk", "gpu"]
+    amount: int
+    priority: Literal["low", "normal", "high"] | None = None
+    policy_type: Literal["quota", "security"] | None = None
 
 
 @dataclass
@@ -102,340 +74,291 @@ class PolicyResponse:
 
 
 @dataclass
-class RequestFinished:
-    pass
+class ResourceRequest:
+    """Request for computing resources."""
+
+    resource_type: Literal["cpu", "memory", "disk", "gpu"]
+    amount: int
+    priority: Literal["low", "normal", "high"]
+    id: str = str(uuid.uuid4())
 
 
-# 2. Implement the sub-workflow executor - makes resource and policy requests
-class ResourceRequester(Executor):
-    """Simple executor that requests resources and checks policies."""
+@dataclass
+class PolicyRequest:
+    """Request to check resource allocation policy."""
 
-    def __init__(self):
-        super().__init__(id="resource_requester")
-        self._request_count = 0
-
-    @handler
-    async def request_resources(
-        self,
-        requests: list[dict[str, Any]],
-        ctx: WorkflowContext[ResourceRequest | PolicyCheckRequest],
-    ) -> None:
-        """Process a list of resource requests."""
-        print(f"🏭 Sub-workflow processing {len(requests)} requests")
-        self._request_count += len(requests)
-
-        for req_data in requests:
-            req_type = req_data.get("request_type", "resource")
-
-            request: ResourceRequest | PolicyCheckRequest
-            if req_type == "resource":
-                print(f"  📦 Requesting resource: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)}")
-                request = ResourceRequest(
-                    resource_type=req_data.get("type", "cpu"),
-                    amount=req_data.get("amount", 1),
-                    priority=req_data.get("priority", "normal"),
-                )
-                # Send to parent workflow for interception - not to target_id
-                await ctx.send_message(request)
-            elif req_type == "policy":
-                print(
-                    f"  🛡️  Checking policy: {req_data.get('type', 'cpu')} x{req_data.get('amount', 1)} "
-                    f"({req_data.get('policy_type', 'quota')})"
-                )
-                request = PolicyCheckRequest(
-                    resource_type=req_data.get("type", "cpu"),
-                    amount=req_data.get("amount", 1),
-                    policy_type=req_data.get("policy_type", "quota"),
-                )
-                # Send to parent workflow for interception - not to target_id
-                await ctx.send_message(request)
-
-    @handler
-    async def handle_resource_response(
-        self,
-        response: RequestResponse[ResourceRequest, ResourceResponse],
-        ctx: WorkflowContext[Never, RequestFinished],
-    ) -> None:
-        """Handle resource allocation response."""
-        if response.data:
-            source_icon = "🏪" if response.data.source == "cache" else "🌐"
-            print(
-                f"📦 {source_icon} Sub-workflow received: {response.data.allocated} {response.data.resource_type} "
-                f"from {response.data.source}"
-            )
-            if self._collect_results():
-                # Yield completion result to the parent workflow.
-                await ctx.yield_output(RequestFinished())
-
-    @handler
-    async def handle_policy_response(
-        self,
-        response: RequestResponse[PolicyCheckRequest, PolicyResponse],
-        ctx: WorkflowContext[Never, RequestFinished],
-    ) -> None:
-        """Handle policy check response."""
-        if response.data:
-            status_icon = "✅" if response.data.approved else "❌"
-            print(
-                f"🛡️  {status_icon} Sub-workflow received policy response: "
-                f"{response.data.approved} - {response.data.reason}"
-            )
-            if self._collect_results():
-                # Yield completion result to the parent workflow.
-                await ctx.yield_output(RequestFinished())
-
-    def _collect_results(self) -> bool:
-        """Collect and summarize results."""
-        self._request_count -= 1
-        print(f"📊 Sub-workflow completed request ({self._request_count} remaining)")
-        return self._request_count == 0
+    policy_type: Literal["quota", "security"]
+    resource_type: Literal["cpu", "memory", "disk", "gpu"]
+    amount: int
+    id: str = str(uuid.uuid4())
 
 
-# 3. Implement the Resource Cache - Uses typed handler for ResourceRequest
-class ResourceCache(Executor):
-    """Interceptor that handles RESOURCE requests from cache using typed routing."""
+def build_resource_request_distribution_workflow() -> Workflow:
+    class RequestDistribution(Executor):
+        """Distributes computing resource requests to appropriate executors."""
 
-    # Use class attributes to avoid Pydantic assignment restrictions
-    cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
-    results: list[ResourceResponse] = []
+        @handler
+        async def distribute_requests(
+            self,
+            requests: list[ComputingResourceRequest],
+            ctx: WorkflowContext[ResourceRequest | PolicyRequest | int],
+        ) -> None:
+            for req in requests:
+                if req.request_type == "resource":
+                    if req.priority is None:
+                        raise ValueError("Priority must be set for resource requests")
+                    await ctx.send_message(ResourceRequest(req.resource_type, req.amount, req.priority))
+                elif req.request_type == "policy":
+                    if req.policy_type is None:
+                        raise ValueError("Policy type must be set for policy requests")
+                    await ctx.send_message(PolicyRequest(req.policy_type, req.resource_type, req.amount))
+                else:
+                    raise ValueError(f"Unknown request type: {req.request_type}")
+            # Notify the collector about the number of requests sent
+            await ctx.send_message(len(requests))
 
-    def __init__(self):
-        super().__init__(id="resource_cache")
-        # Instance initialization only; state kept in class attributes as above
+    class ResourceRequester(Executor):
+        """Handles resource allocation requests."""
 
-    @handler
-    async def handle_resource_request(
-        self, request: ResourceRequest, ctx: WorkflowContext[RequestResponse[ResourceRequest, Any] | ResourceRequest]
-    ) -> None:
-        """Handle RESOURCE requests from sub-workflows and check cache first."""
-        resource_request = request
-        print(f"🏪 CACHE interceptor checking: {resource_request.amount} {resource_request.resource_type}")
+        @handler
+        async def run(self, request: ResourceRequest, ctx: WorkflowContext) -> None:
+            await ctx.request_info(request_data=request, response_type=ResourceResponse)
 
-        available = self.cache.get(resource_request.resource_type, 0)
+        @response_handler
+        async def handle_response(
+            self, original_request: ResourceRequest, response: ResourceResponse, ctx: WorkflowContext[ResourceResponse]
+        ) -> None:
+            print(f"Resource allocated: {response.allocated} {response.resource_type} from {response.source}")
+            await ctx.send_message(response)
 
-        if available >= resource_request.amount:
-            # We can satisfy from cache
-            self.cache[resource_request.resource_type] -= resource_request.amount
-            response_data = ResourceResponse(
-                resource_type=resource_request.resource_type, allocated=resource_request.amount, source="cache"
-            )
-            print(f"  ✅ Cache satisfied: {resource_request.amount} {resource_request.resource_type}")
-            self.results.append(response_data)
+    class PolicyChecker(Executor):
+        """Handles policy check requests."""
 
-            # Send response back to sub-workflow
-            response = RequestResponse(data=response_data, original_request=request, request_id=request.request_id)
-            await ctx.send_message(response, target_id=request.source_executor_id)
-        else:
-            # Cache miss - forward to external
-            print(f"  ❌ Cache miss: need {resource_request.amount}, have {available} {resource_request.resource_type}")
-            await ctx.send_message(request)
+        @handler
+        async def run(self, request: PolicyRequest, ctx: WorkflowContext) -> None:
+            await ctx.request_info(request_data=request, response_type=PolicyResponse)
 
-    @handler
-    async def collect_result(
-        self, response: RequestResponse[ResourceRequest, ResourceResponse], ctx: WorkflowContext
-    ) -> None:
-        """Collect results from external requests that were forwarded."""
-        if response.data and response.data.source != "cache":  # Don't double-count our own results
-            self.results.append(response.data)
-            print(
-                f"🏪 🌐 Cache received external response: {response.data.allocated} {response.data.resource_type} "
-                f"from {response.data.source}"
-            )
+        @response_handler
+        async def handle_response(
+            self, original_request: PolicyRequest, response: PolicyResponse, ctx: WorkflowContext[PolicyResponse]
+        ) -> None:
+            print(f"Policy check result: {response.approved} - {response.reason}")
+            await ctx.send_message(response)
+
+    class ResultCollector(Executor):
+        """Collects and processes all responses."""
+
+        def __init__(self, id: str) -> None:
+            super().__init__(id)
+            self._request_count = 0
+            self._responses: list[ResourceResponse | PolicyResponse] = []
+
+        @handler
+        async def set_request_count(self, count: int, ctx: WorkflowContext) -> None:
+            if count <= 0:
+                raise ValueError("Request count must be positive")
+            self._request_count = count
+
+        @handler
+        async def collect(self, response: ResourceResponse | PolicyResponse, ctx: WorkflowContext[Never, str]) -> None:
+            self._responses.append(response)
+            print(f"Collected {len(self._responses)}/{self._request_count} responses")
+            if len(self._responses) == self._request_count:
+                # All responses received, process them
+                await ctx.yield_output(f"All {self._request_count} requests processed.")
+            elif len(self._responses) > self._request_count:
+                raise ValueError("Received more responses than expected")
+
+    orchestrator = RequestDistribution("orchestrator")
+    resource_requester = ResourceRequester("resource_requester")
+    policy_checker = PolicyChecker("policy_checker")
+    result_collector = ResultCollector("result_collector")
+
+    return (
+        WorkflowBuilder()
+        .set_start_executor(orchestrator)
+        .add_edge(orchestrator, resource_requester)
+        .add_edge(orchestrator, policy_checker)
+        .add_edge(resource_requester, result_collector)
+        .add_edge(policy_checker, result_collector)
+        .add_edge(orchestrator, result_collector)  # For request count
+        .build()
+    )
 
 
-# 4. Implement the Policy Engine - Uses typed handler for PolicyCheckRequest
-class PolicyEngine(Executor):
-    """Interceptor that handles POLICY requests using typed routing."""
+class ResourceAllocator(Executor):
+    """Simulates a system that allocates computing resources."""
 
-    # Use class attributes for simple sample state
-    quota: dict[str, int] = {
-        "cpu": 5,  # Only allow up to 5 CPU units
-        "memory": 20,  # Only allow up to 20 memory units
-        "disk": 1000,  # Liberal disk policy
-    }
-    results: list[PolicyResponse] = []
+    def __init__(self, id: str) -> None:
+        super().__init__(id)
+        self._cache: dict[str, int] = {"cpu": 10, "memory": 50, "disk": 100}
+        # Record pending requests to match responses
+        self._pending_requests: dict[str, RequestInfoEvent] = {}
 
-    def __init__(self):
-        super().__init__(id="policy_engine")
-        # Instance initialization only; state kept in class attributes as above
+    async def _handle_resource_request(self, request: ResourceRequest) -> ResourceResponse | None:
+        """Allocates resources based on request and available cache."""
+        available = self._cache.get(request.resource_type, 0)
+        if available >= request.amount:
+            self._cache[request.resource_type] -= request.amount
+            return ResourceResponse(request.resource_type, request.amount, "cache")
+        return None
 
     @handler
-    async def handle_policy_request(
-        self,
-        request: PolicyCheckRequest,
-        ctx: WorkflowContext[RequestResponse[PolicyCheckRequest, Any] | PolicyCheckRequest],
+    async def handle_subworkflow_request(
+        self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
-        """Handle POLICY requests from sub-workflows and apply rules."""
-        policy_request = request
-        print(
-            f"🛡️  POLICY interceptor checking: {policy_request.amount} {policy_request.resource_type}, policy={policy_request.policy_type}"
-        )
-
-        quota_limit = self.quota.get(policy_request.resource_type, 0)
-
-        if policy_request.policy_type == "quota":
-            if policy_request.amount <= quota_limit:
-                response_data = PolicyResponse(approved=True, reason=f"Within quota ({quota_limit})")
-                print(f"  ✅ Policy approved: {policy_request.amount} <= {quota_limit}")
-                self.results.append(response_data)
-
-                # Send response back to sub-workflow
-                response = RequestResponse(data=response_data, original_request=request, request_id=request.request_id)
-                await ctx.send_message(response, target_id=request.source_executor_id)
-                return
-
-            # Exceeds quota - forward to external for review
-            print(f"  ❌ Policy exceeds quota: {policy_request.amount} > {quota_limit}, forwarding to external")
-            await ctx.send_message(request)
+        """Handles requests from sub-workflows."""
+        source_event: RequestInfoEvent = request.source_event
+        if not isinstance(source_event.data, ResourceRequest):
             return
 
-        # Unknown policy type - forward to external
-        print(f"  ❓ Unknown policy type: {policy_request.policy_type}, forwarding")
-        await ctx.send_message(request)
+        request_payload: ResourceRequest = source_event.data
+        response = await self._handle_resource_request(request_payload)
+        if response:
+            await ctx.send_message(request.create_response(response))
+        else:
+            # Request cannot be fulfilled via cache, forward the request to external
+            self._pending_requests[request_payload.id] = source_event
+            await ctx.request_info(request_data=request_payload, response_type=ResourceResponse)
 
-    @handler
-    async def collect_policy_result(
-        self, response: RequestResponse[PolicyCheckRequest, PolicyResponse], ctx: WorkflowContext
+    @response_handler
+    async def handle_external_response(
+        self,
+        original_request: ResourceRequest,
+        response: ResourceResponse,
+        ctx: WorkflowContext[SubWorkflowResponseMessage],
     ) -> None:
-        """Collect policy results from external requests that were forwarded."""
-        if response.data:
-            self.results.append(response.data)
-            print(f"🛡️  🌐 Policy received external response: {response.data.approved} - {response.data.reason}")
+        """Handles responses from external systems and routes them to the sub-workflow."""
+        print(f"External resource allocated: {response.allocated} {response.resource_type} from {response.source}")
+        source_event = self._pending_requests.pop(original_request.id, None)
+        if source_event is None:
+            raise ValueError("No matching pending request found for the resource response")
+        await ctx.send_message(SubWorkflowResponseMessage(data=response, source_event=source_event))
 
 
-class Coordinator(Executor):
-    def __init__(self):
-        super().__init__(id="coordinator")
+class PolicyEngine(Executor):
+    """Simulates a policy engine that approves or denies resource requests."""
+
+    def __init__(self, id: str) -> None:
+        super().__init__(id)
+        self._quota: dict[str, int] = {
+            "cpu": 5,  # Only allow up to 5 CPU units
+            "memory": 20,  # Only allow up to 20 memory units
+            "disk": 1000,  # Liberal disk policy
+        }
+        # Record pending requests to match responses
+        self._pending_requests: dict[str, RequestInfoEvent] = {}
 
     @handler
-    async def start(self, requests: list[dict[str, Any]], ctx: WorkflowContext[list[dict[str, Any]]]) -> None:
-        """Start the resource allocation process."""
-        await ctx.send_message(requests, target_id="resource_workflow")
+    async def handle_subworkflow_request(
+        self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
+    ) -> None:
+        """Handles requests from sub-workflows."""
+        source_event: RequestInfoEvent = request.source_event
+        if not isinstance(source_event.data, PolicyRequest):
+            return
 
-    @handler
-    async def handle_completion(self, completion: RequestFinished, ctx: WorkflowContext) -> None:
-        """Handle sub-workflow completion.
+        request_payload: PolicyRequest = source_event.data
+        # Simple policy logic for demonstration
+        if request_payload.policy_type == "quota":
+            allowed_amount = self._quota.get(request_payload.resource_type, 0)
+            if request_payload.amount <= allowed_amount:
+                response = PolicyResponse(True, "Within quota limits")
+            else:
+                response = PolicyResponse(False, "Exceeds quota limits")
+            await ctx.send_message(request.create_response(response))
+        else:
+            # For other policy types, forward to external system
+            self._pending_requests[request_payload.id] = source_event
+            await ctx.request_info(request_data=request_payload, response_type=PolicyResponse)
 
-        It comes from the sub-workflow yielded output.
-        """
-        print("🎯 Main workflow received completion.")
+    @response_handler
+    async def handle_external_response(
+        self,
+        original_request: PolicyRequest,
+        response: PolicyResponse,
+        ctx: WorkflowContext[SubWorkflowResponseMessage],
+    ) -> None:
+        """Handles responses from external systems and routes them to the sub-workflow."""
+        print(f"External policy check result: {response.approved} - {response.reason}")
+        source_event = self._pending_requests.pop(original_request.id, None)
+        if source_event is None:
+            raise ValueError("No matching pending request found for the policy response")
+        await ctx.send_message(SubWorkflowResponseMessage(data=response, source_event=source_event))
 
 
 async def main() -> None:
-    """Demonstrate parallel request interception patterns."""
-    print("🚀 Starting Sub-Workflow Parallel Request Interception Demo...")
-    print("=" * 60)
+    # Create executors in the main workflow
+    sub_workflow = build_resource_request_distribution_workflow()
+    resource_allocator = ResourceAllocator("resource_allocator")
+    policy_engine = PolicyEngine("policy_engine")
 
-    # 5. Create the sub-workflow
-    resource_requester = ResourceRequester()
-    sub_request_info = RequestInfoExecutor(id="sub_request_info")
-
-    sub_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(resource_requester)
-        .add_edge(resource_requester, sub_request_info)
-        .add_edge(sub_request_info, resource_requester)
-        .build()
+    # Create the WorkflowExecutor for the sub-workflow
+    # Setting allow_direct_output=True to let the sub-workflow output directly.
+    # This is because the sub-workflow is the both the entry point and the exit
+    # point of the main workflow.
+    sub_workflow_executor = WorkflowExecutor(
+        sub_workflow,
+        "sub_workflow_executor",
+        allow_direct_output=True,
     )
 
-    # 6. Create parent workflow with PROPER interceptor pattern
-    cache = ResourceCache()  # Intercepts ResourceRequest
-    policy = PolicyEngine()  # Intercepts PolicyCheckRequest (different type!)
-    workflow_executor = WorkflowExecutor(sub_workflow, id="resource_workflow")
-    main_request_info = RequestInfoExecutor(id="main_request_info")
-
-    # Create a simple coordinator that starts the process
-    coordinator = Coordinator()
-
-    # TYPED ROUTING: Each executor handles specific typed RequestInfoMessage messages
+    # Build the main workflow
     main_workflow = (
         WorkflowBuilder()
-        .set_start_executor(coordinator)
-        .add_edge(coordinator, workflow_executor)  # Start sub-workflow
-        .add_edge(workflow_executor, coordinator)  # Sub-workflow completion back to coordinator
-        .add_edge(workflow_executor, cache)  # WorkflowExecutor sends ResourceRequest to cache
-        .add_edge(workflow_executor, policy)  # WorkflowExecutor sends PolicyCheckRequest to policy
-        .add_edge(cache, workflow_executor)  # Cache sends RequestResponse back
-        .add_edge(policy, workflow_executor)  # Policy sends RequestResponse back
-        .add_edge(cache, main_request_info)  # Cache forwards ResourceRequest to external
-        .add_edge(policy, main_request_info)  # Policy forwards PolicyCheckRequest to external
-        .add_edge(main_request_info, workflow_executor)  # External responses back to sub-workflow
+        .set_start_executor(sub_workflow_executor)
+        .add_edge(sub_workflow_executor, resource_allocator)
+        .add_edge(resource_allocator, sub_workflow_executor)
+        .add_edge(sub_workflow_executor, policy_engine)
+        .add_edge(policy_engine, sub_workflow_executor)
         .build()
     )
 
-    # 7. Test with various requests (mixed resource and policy)
+    # Test requests
     test_requests = [
-        {"request_type": "resource", "type": "cpu", "amount": 2, "priority": "normal"},  # Cache hit
-        {"request_type": "policy", "type": "cpu", "amount": 3, "policy_type": "quota"},  # Policy hit
-        {"request_type": "resource", "type": "memory", "amount": 15, "priority": "normal"},  # Cache hit
-        {"request_type": "policy", "type": "memory", "amount": 100, "policy_type": "quota"},  # Policy miss -> external
-        {"request_type": "resource", "type": "gpu", "amount": 1, "priority": "high"},  # Cache miss -> external
-        {"request_type": "policy", "type": "disk", "amount": 500, "policy_type": "quota"},  # Policy hit
-        {"request_type": "policy", "type": "cpu", "amount": 1, "policy_type": "security"},  # Unknown policy -> external
+        ComputingResourceRequest("resource", "cpu", 2, priority="normal"),  # cache hit
+        ComputingResourceRequest("policy", "cpu", 3, policy_type="quota"),  # policy hit
+        ComputingResourceRequest("resource", "memory", 15, priority="normal"),  # cache hit
+        ComputingResourceRequest("policy", "memory", 100, policy_type="quota"),  # policy miss -> external
+        ComputingResourceRequest("resource", "gpu", 1, priority="high"),  # cache miss -> external
+        ComputingResourceRequest("policy", "disk", 500, policy_type="quota"),  # policy hit
+        ComputingResourceRequest("policy", "cpu", 1, policy_type="security"),  # unknown policy -> external
     ]
 
-    print(f"🧪 Testing with {len(test_requests)} mixed requests:")
-    for i, req in enumerate(test_requests, 1):
-        req_icon = "📦" if req["request_type"] == "resource" else "🛡️"
-        print(
-            f"  {i}. {req_icon} {req['type']} x{req['amount']} "
-            f"({req.get('priority', req.get('policy_type', 'default'))})"
-        )
-    print("=" * 70)
+    # Run the workflow
+    print(f"🧪 Testing with {len(test_requests)} mixed requests.")
+    print("🚀 Starting main workflow...")
+    run_result = await main_workflow.run(test_requests)
 
-    # 8. Run the workflow
-    print("🎬 Running workflow...")
-    events = await main_workflow.run(test_requests)
+    # Handle request info events
+    request_info_events = run_result.get_request_info_events()
+    if request_info_events:
+        print(f"\n🔍 Handling {len(request_info_events)} request info events...\n")
 
-    # 9. Handle any external requests that couldn't be intercepted
-    request_events = events.get_request_info_events()
-    if request_events:
-        print(f"\n🌐 Handling {len(request_events)} external request(s)...")
-
-        external_responses: dict[str, Any] = {}
-        for event in request_events:
+        responses: dict[str, ResourceResponse | PolicyResponse] = {}
+        for event in request_info_events:
             if isinstance(event.data, ResourceRequest):
-                # Handle ResourceRequest - create ResourceResponse
+                # Simulate external resource allocation
                 resource_response = ResourceResponse(
                     resource_type=event.data.resource_type, allocated=event.data.amount, source="external_provider"
                 )
-                external_responses[event.request_id] = resource_response
-                print(f"  🏭 External provider: {resource_response.allocated} {resource_response.resource_type}")
-            elif isinstance(event.data, PolicyCheckRequest):
-                # Handle PolicyCheckRequest - create PolicyResponse
-                policy_response = PolicyResponse(approved=True, reason="External policy service approved")
-                external_responses[event.request_id] = policy_response
-                print(f"  🔒 External policy: {'✅ APPROVED' if policy_response.approved else '❌ DENIED'}")
+                responses[event.request_id] = resource_response
+            elif isinstance(event.data, PolicyRequest):
+                # Simulate external policy check
+                response = PolicyResponse(True, "External system approved")
+                responses[event.request_id] = response
+            else:
+                print(f"Unknown request info event data type: {type(event.data)}")
 
-        await main_workflow.send_responses(external_responses)
+        run_result = await main_workflow.send_responses(responses)
+
+    outputs = run_result.get_outputs()
+    if outputs:
+        print("\nWorkflow completed with outputs:")
+        for output in outputs:
+            print(f"- {output}")
     else:
-        print("\n🎯 All requests were intercepted internally!")
-
-    # 10. Show results and analysis
-    print("\n" + "=" * 70)
-    print("📊 RESULTS ANALYSIS")
-    print("=" * 70)
-
-    print(f"\n🏪 Cache Results ({len(cache.results)} handled):")
-    for result in cache.results:
-        print(f"  ✅ {result.allocated} {result.resource_type} from {result.source}")
-
-    print(f"\n🛡️  Policy Results ({len(policy.results)} handled):")
-    for result in policy.results:
-        status_icon = "✅" if result.approved else "❌"
-        print(f"  {status_icon} Approved: {result.approved} - {result.reason}")
-
-    print("\n💾 Final Cache State:")
-    for resource, amount in cache.cache.items():
-        print(f"  📦 {resource}: {amount} remaining")
-
-    print("\n📈 Summary:")
-    print(f"  🎯 Total requests: {len(test_requests)}")
-    print(f"  🏪 Resource requests handled: {len(cache.results)}")
-    print(f"  🛡️  Policy requests handled: {len(policy.results)}")
-    print(f"  🌐 External requests: {len(request_events) if request_events else 0}")
-
-    print("\n" + "=" * 70)
+        raise RuntimeError("Workflow did not produce an output.")
 
 
 if __name__ == "__main__":

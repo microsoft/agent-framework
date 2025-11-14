@@ -11,6 +11,23 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 /// </summary>
 internal static class ItemContentConverter
 {
+    private static string AudioFormatToMediaType(string? format) =>
+        format?.Equals("mp3", StringComparison.OrdinalIgnoreCase) == true ? "audio/mpeg" :
+        format?.Equals("wav", StringComparison.OrdinalIgnoreCase) == true ? "audio/wav" :
+        format?.Equals("opus", StringComparison.OrdinalIgnoreCase) == true ? "audio/opus" :
+        format?.Equals("aac", StringComparison.OrdinalIgnoreCase) == true ? "audio/aac" :
+        format?.Equals("flac", StringComparison.OrdinalIgnoreCase) == true ? "audio/flac" :
+        format?.Equals("pcm16", StringComparison.OrdinalIgnoreCase) == true ? "audio/pcm" :
+        "audio/*";
+
+    private static string MediaTypeToAudioFormat(string mediaType) =>
+        mediaType.Equals("audio/mpeg", StringComparison.OrdinalIgnoreCase) ? "mp3" :
+        mediaType.Equals("audio/wav", StringComparison.OrdinalIgnoreCase) ? "wav" :
+        mediaType.Equals("audio/opus", StringComparison.OrdinalIgnoreCase) ? "opus" :
+        mediaType.Equals("audio/aac", StringComparison.OrdinalIgnoreCase) ? "aac" :
+        mediaType.Equals("audio/flac", StringComparison.OrdinalIgnoreCase) ? "flac" :
+        mediaType.Equals("audio/pcm", StringComparison.OrdinalIgnoreCase) ? "pcm16" :
+        "mp3";
     /// <summary>
     /// Converts <see cref="ItemContent"/> to <see cref="AIContent"/>.
     /// </summary>
@@ -49,16 +66,7 @@ internal static class ItemContentConverter
 
             // Audio content - map to DataContent with media type based on format
             ItemContentInputAudio inputAudio =>
-                new DataContent(inputAudio.Data, inputAudio.Format?.ToUpperInvariant() switch
-                {
-                    "MP3" => "audio/mpeg",
-                    "WAV" => "audio/wav",
-                    "OPUS" => "audio/opus",
-                    "AAC" => "audio/aac",
-                    "FLAC" => "audio/flac",
-                    "PCM16" => "audio/pcm",
-                    _ => "audio/*"
-                }),
+                new DataContent(inputAudio.Data, AudioFormatToMediaType(inputAudio.Format)),
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
 
@@ -104,34 +112,28 @@ internal static class ItemContentConverter
                     ImageUrl = uriContent.Uri?.ToString(),
                     Detail = GetImageDetail(uriContent)
                 },
+            HostedFileContent hostedFile =>
+                new ItemContentInputFile
+                {
+                    FileId = hostedFile.FileId
+                },
             DataContent dataContent when dataContent.HasTopLevelMediaType("image") =>
                 new ItemContentInputImage
                 {
                     ImageUrl = dataContent.Uri,
                     Detail = GetImageDetail(dataContent)
                 },
-            HostedFileContent hostedFile =>
-                new ItemContentInputFile
-                {
-                    FileId = hostedFile.FileId
-                },
-            DataContent fileData when !fileData.HasTopLevelMediaType("image") && !fileData.HasTopLevelMediaType("audio") =>
-                new ItemContentInputFile
-                {
-                    FileData = fileData.Uri,
-                    Filename = fileData.Name
-                },
             DataContent audioData when audioData.HasTopLevelMediaType("audio") =>
                 new ItemContentInputAudio
                 {
                     Data = audioData.Uri,
-                    Format = audioData.MediaType.Equals("audio/mpeg", StringComparison.OrdinalIgnoreCase) ? "mp3" :
-                        audioData.MediaType.Equals("audio/wav", StringComparison.OrdinalIgnoreCase) ? "wav" :
-                        audioData.MediaType.Equals("audio/opus", StringComparison.OrdinalIgnoreCase) ? "opus" :
-                        audioData.MediaType.Equals("audio/aac", StringComparison.OrdinalIgnoreCase) ? "aac" :
-                        audioData.MediaType.Equals("audio/flac", StringComparison.OrdinalIgnoreCase) ? "flac" :
-                        audioData.MediaType.Equals("audio/pcm", StringComparison.OrdinalIgnoreCase) ? "pcm16" :
-                        "mp3" // Default to mp3
+                    Format = MediaTypeToAudioFormat(audioData.MediaType)
+                },
+            DataContent fileData =>
+                new ItemContentInputFile
+                {
+                    FileData = fileData.Uri,
+                    Filename = fileData.Name
                 },
             // Other AIContent types (FunctionCallContent, FunctionResultContent, etc.)
             // are handled separately in the Responses API as different ItemResource types, not ItemContent

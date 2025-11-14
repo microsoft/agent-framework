@@ -3,7 +3,7 @@
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
@@ -19,7 +19,6 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     Role,
-    TextContent,
     UsageDetails,
 )
 
@@ -29,6 +28,8 @@ from ._events import (
     RequestInfoEvent,
     WorkflowEvent,
 )
+from ._message_utils import normalize_messages_input
+from ._typing_utils import is_type_compatible
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -59,10 +60,13 @@ class WorkflowAgent(BaseAgent):
 
         @classmethod
         def from_json(cls, raw: str) -> "WorkflowAgent.RequestInfoFunctionArgs":
-            data = json.loads(raw)
-            if not isinstance(data, dict):
+            try:
+                parsed: Any = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"RequestInfoFunctionArgs JSON payload is malformed: {exc}") from exc
+            if not isinstance(parsed, dict):
                 raise ValueError("RequestInfoFunctionArgs JSON payload must decode to a mapping")
-            return cls.from_dict(data)
+            return cls.from_dict(cast(dict[str, Any], parsed))
 
     def __init__(
         self,
@@ -93,7 +97,7 @@ class WorkflowAgent(BaseAgent):
         except KeyError as exc:  # Defensive: workflow lacks a configured entry point
             raise ValueError("Workflow's start executor is not defined.") from exc
 
-        if list[ChatMessage] not in start_executor.input_types:
+        if not any(is_type_compatible(list[ChatMessage], input_type) for input_type in start_executor.input_types):
             raise ValueError("Workflow's start executor cannot handle list[ChatMessage]")
 
         super().__init__(id=id, name=name, description=description, **kwargs)
@@ -131,7 +135,7 @@ class WorkflowAgent(BaseAgent):
         """
         # Collect all streaming updates
         response_updates: list[AgentRunResponseUpdate] = []
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
@@ -165,7 +169,7 @@ class WorkflowAgent(BaseAgent):
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
         """
-        input_messages = self._normalize_messages(messages)
+        input_messages = normalize_messages_input(messages)
         thread = thread or self.get_new_thread()
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
@@ -224,28 +228,6 @@ class WorkflowAgent(BaseAgent):
             update = self._convert_workflow_event_to_agent_update(response_id, event)
             if update:
                 yield update
-
-    def _normalize_messages(
-        self,
-        messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
-    ) -> list[ChatMessage]:
-        """Normalize input messages to a list of ChatMessage objects."""
-        if messages is None:
-            return []
-
-        if isinstance(messages, str):
-            return [ChatMessage(role=Role.USER, contents=[TextContent(text=messages)])]
-
-        if isinstance(messages, ChatMessage):
-            return [messages]
-
-        normalized: list[ChatMessage] = []
-        for msg in messages:
-            if isinstance(msg, str):
-                normalized.append(ChatMessage(role=Role.USER, contents=[TextContent(text=msg)]))
-            elif isinstance(msg, ChatMessage):
-                normalized.append(msg)
-        return normalized
 
     def _convert_workflow_event_to_agent_update(
         self,

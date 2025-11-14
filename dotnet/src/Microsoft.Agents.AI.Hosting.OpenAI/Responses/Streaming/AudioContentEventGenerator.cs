@@ -16,27 +16,18 @@ internal sealed class AudioContentEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    private bool _isCompleted;
-
     public override bool IsSupported(AIContent content) =>
         content is DataContent dataContent && dataContent.HasTopLevelMediaType("audio");
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (this._isCompleted)
-        {
-            throw new InvalidOperationException("Cannot process content after the generator has been completed.");
-        }
-
         if (content is not DataContent audioData || !audioData.HasTopLevelMediaType("audio"))
         {
             throw new InvalidOperationException("AudioContentEventGenerator only supports audio DataContent.");
         }
 
         var itemId = idGenerator.GenerateMessageId();
-        var itemContent = ItemContentConverter.ToItemContent(content) as ItemContentInputAudio;
-
-        if (itemContent == null)
+        if (ItemContentConverter.ToItemContent(content) is not ItemContentInputAudio itemContent)
         {
             throw new InvalidOperationException("Failed to convert audio content to ItemContentInputAudio.");
         }
@@ -79,13 +70,7 @@ internal sealed class AudioContentEventGenerator(
             OutputIndex = outputIndex,
             Item = item
         };
-
-        this._isCompleted = true;
     }
 
-    public override IEnumerable<StreamingResponseEvent> Complete()
-    {
-        this._isCompleted = true;
-        return [];
-    }
+    public override IEnumerable<StreamingResponseEvent> Complete() => [];
 }

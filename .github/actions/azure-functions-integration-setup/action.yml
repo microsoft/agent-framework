@@ -1,0 +1,36 @@
+name: Azure Functions Integration Test Setup
+description: Prepare local emulators and tools for Azure Functions integration tests
+
+runs:
+    using: "composite"
+    steps:
+      - name: Start Durable Task Scheduler Emulator
+        shell: bash
+        run: |
+          if [ "$(docker ps -aq -f name=dts-emulator)" ]; then
+            echo "Stopping and removing existing Durable Task Scheduler Emulator"
+            docker rm -f dts-emulator
+          fi
+          echo "Starting Durable Task Scheduler Emulator"
+          docker run -d --name dts-emulator -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest
+          echo "Waiting for Durable Task Scheduler Emulator to be ready"
+          timeout 30 bash -c 'until curl --silent http://localhost:8080/healthz; do sleep 1; done'
+          echo "Durable Task Scheduler Emulator is ready"
+      - name: Start Azurite (Azure Storage emulator)
+        shell: bash
+        run: |
+          if [ "$(docker ps -aq -f name=azurite)" ]; then
+            echo "Stopping and removing existing Azurite (Azure Storage emulator)"
+            docker rm -f azurite
+          fi
+          echo "Starting Azurite (Azure Storage emulator)"
+          docker run -d --name azurite -p 10000:10000 -p 10001:10001 -p 10002:10002 mcr.microsoft.com/azure-storage/azurite
+          echo "Waiting for Azurite (Azure Storage emulator) to be ready"
+          timeout 30 bash -c 'until curl --silent http://localhost:10000/devstoreaccount1; do sleep 1; done'
+          echo "Azurite (Azure Storage emulator) is ready"
+      - name: Install Azure Functions Core Tools
+        shell: bash
+        run: |
+          echo "Installing Azure Functions Core Tools"
+          npm install -g azure-functions-core-tools@4 --unsafe-perm true
+          func --version

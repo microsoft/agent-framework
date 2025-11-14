@@ -166,8 +166,8 @@ public class ChatClientAgentThread : AgentThread
         var state = new ThreadState
         {
             ConversationId = this.ConversationId,
-            StoreState = storeState,
-            AIContextProviderState = aiContextProviderState
+            StoreState = storeState is { ValueKind: not JsonValueKind.Undefined } ? storeState : null,
+            AIContextProviderState = aiContextProviderState is { ValueKind: not JsonValueKind.Undefined } ? aiContextProviderState : null,
         };
 
         return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));

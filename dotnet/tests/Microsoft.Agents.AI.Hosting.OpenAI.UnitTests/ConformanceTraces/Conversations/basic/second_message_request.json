@@ -1,0 +1,6 @@
+{
+  "model": "gpt-4o-mini",
+  "conversation": "conv_68fb96fe1a488195bf48df8f7666551604cbf45151194822",
+  "input": "What is its population?",
+  "max_output_tokens": 150
+}

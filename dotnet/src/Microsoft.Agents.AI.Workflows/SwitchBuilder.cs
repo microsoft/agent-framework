@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class SwitchBuilder
 {
-    private readonly List<ExecutorIsh> _executors = [];
+    private readonly List<ExecutorBinding> _executors = [];
     private readonly Dictionary<string, int> _executorIndicies = [];
     private readonly List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> _caseMap = [];
     private readonly HashSet<int> _defaultIndicies = [];
@@ -30,14 +30,14 @@ public sealed class SwitchBuilder
     /// <param name="executors">One or more executors to associate with the predicate. Each executor will be invoked if the predicate matches.
     /// Cannot be null.</param>
     /// <returns>The current <see cref="SwitchBuilder"/> instance, allowing for method chaining.</returns>
-    public SwitchBuilder AddCase<T>(Func<T?, bool> predicate, params IEnumerable<ExecutorIsh> executors)
+    public SwitchBuilder AddCase<T>(Func<T?, bool> predicate, params IEnumerable<ExecutorBinding> executors)
     {
         Throw.IfNull(predicate);
         Throw.IfNull(executors);
 
         HashSet<int> indicies = [];
 
-        foreach (ExecutorIsh executor in executors)
+        foreach (ExecutorBinding executor in executors)
         {
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
@@ -60,11 +60,11 @@ public sealed class SwitchBuilder
     /// </summary>
     /// <param name="executors"></param>
     /// <returns></returns>
-    public SwitchBuilder WithDefault(params IEnumerable<ExecutorIsh> executors)
+    public SwitchBuilder WithDefault(params IEnumerable<ExecutorBinding> executors)
     {
         Throw.IfNull(executors);
 
-        foreach (ExecutorIsh executor in executors)
+        foreach (ExecutorBinding executor in executors)
         {
             if (!this._executorIndicies.TryGetValue(executor.Id, out int index))
             {
@@ -79,12 +79,12 @@ public sealed class SwitchBuilder
         return this;
     }
 
-    internal WorkflowBuilder ReduceToFanOut(WorkflowBuilder builder, ExecutorIsh source)
+    internal WorkflowBuilder ReduceToFanOut(WorkflowBuilder builder, ExecutorBinding source)
     {
         List<(Func<object?, bool> Predicate, HashSet<int> OutgoingIndicies)> caseMap = this._caseMap;
         HashSet<int> defaultIndicies = this._defaultIndicies;
 
-        return builder.AddFanOutEdge<object>(source, CasePartitioner, [.. this._executors]);
+        return builder.AddFanOutEdge<object>(source, this._executors, CasePartitioner);
 
         IEnumerable<int> CasePartitioner(object? input, int targetCount)
         {
