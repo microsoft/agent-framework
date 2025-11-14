@@ -126,12 +126,13 @@ internal sealed class Program
             Console.WriteLine($"\n--- Iteration {iteration} ---");
 
             // Check for computer calls in the response
-            List<ComputerCallResponseItem> compuerCallResponseItems = runResponse.Messages.SelectMany(x => x.Contents).Where(c => c.RawRepresentation is ComputerCallResponseItem)
-                .Select(c => c.RawRepresentation as ComputerCallResponseItem)
-                .OfType<ComputerCallResponseItem>()
-                .ToList();
+            IEnumerable<ComputerCallResponseItem> computerCallResponseItems = runResponse.Messages
+                .SelectMany(x => x.Contents)
+                .Where(c => c.RawRepresentation is ComputerCallResponseItem and not null)
+                .Select(c => (ComputerCallResponseItem)c.RawRepresentation!);
 
-            if (compuerCallResponseItems.Count == 0)
+            ComputerCallResponseItem? firstComputerCall = computerCallResponseItems.FirstOrDefault();
+            if (firstComputerCall is null)
             {
                 Console.WriteLine("No computer call actions found. Ending interaction.");
                 Console.WriteLine($"Final Response: {runResponse}");
@@ -139,9 +140,8 @@ internal sealed class Program
             }
 
             // Process the first computer call response
-            ComputerCallResponseItem computerCall = compuerCallResponseItems[0];
-            ComputerCallAction action = computerCall.Action;
-            string callId = computerCall.CallId;
+            ComputerCallAction action = firstComputerCall.Action;
+            string callId = firstComputerCall.CallId;
 
             Console.WriteLine($"Processing computer call (ID: {callId})");
 
@@ -150,16 +150,6 @@ internal sealed class Program
             currentState = screenInfo.CurrentState;
 
             Console.WriteLine("Sending action result back to agent...");
-
-            chatOptions = new()
-            {
-                ConversationId = runResponse.ResponseId,
-                RawRepresentationFactory = (_) => responseCreationOptions
-            };
-            runOptions = new(chatOptions)
-            {
-                AllowBackgroundResponses = true,
-            };
 
             AIContent content = new()
             {
