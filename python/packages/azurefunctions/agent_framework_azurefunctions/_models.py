@@ -282,7 +282,7 @@ class RunRequest:
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
         thread_id: Optional thread ID for tracking
-        correlation_id: Optional correlation ID for tracking the response to this specific request
+        correlationId: Optional correlation ID for tracking the response to this specific request
     """
 
     message: str
@@ -290,7 +290,10 @@ class RunRequest:
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
     thread_id: str | None = None
-    correlation_id: str | None = None
+    correlationId: str | None = None
+    author_name: str | None = None
+    created_at: str | None = None
+    extension_data: dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -299,14 +302,14 @@ class RunRequest:
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
         thread_id: str | None = None,
-        correlation_id: str | None = None,
+        correlationId: str | None = None,
     ) -> None:
         self.message = message
         self.role = self.coerce_role(role)
         self.response_format = response_format
         self.enable_tool_calls = enable_tool_calls
         self.thread_id = thread_id
-        self.correlation_id = correlation_id
+        self.correlationId = correlationId
 
     @staticmethod
     def coerce_role(value: Role | str | None) -> Role:
@@ -331,8 +334,14 @@ class RunRequest:
             result["response_format"] = _serialize_response_format(self.response_format)
         if self.thread_id:
             result["thread_id"] = self.thread_id
-        if self.correlation_id:
-            result["correlation_id"] = self.correlation_id
+        if self.correlationId:
+            result["correlationId"] = self.correlationId
+        if self.author_name:
+            result["author_name"] = self.author_name
+        if self.created_at:
+            result["created_at"] = self.created_at
+        if self.extension_data:
+            result["extension_data"] = self.extension_data
         return result
 
     @classmethod
@@ -344,7 +353,7 @@ class RunRequest:
             response_format=_deserialize_response_format(data.get("response_format")),
             enable_tool_calls=data.get("enable_tool_calls", True),
             thread_id=data.get("thread_id"),
-            correlation_id=data.get("correlation_id"),
+            correlationId=data.get("correlationId"),
         )
 
 
