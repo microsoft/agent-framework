@@ -683,7 +683,6 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             except Exception as exception:
                 end_time_stamp = perf_counter()
 
-                # FIX FOR ISSUE #2217: Set span status to ERROR
                 span.set_status(Status(StatusCode.ERROR, description=f"Tool execution failed: {exception!s}"))
 
                 # Record the exception with detailed attributes
