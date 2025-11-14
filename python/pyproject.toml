@@ -296,6 +296,15 @@ args = [{ name = "files", default = ".", positional = true, multiple = true }]
 cmd = "uv run python run_tasks_in_changed_packages.py pyright ${files}"
 args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
+
+[tool.poe.tasks.ci-mypy]
+shell = """
+CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- . || git diff --name-only HEAD~1 -- . || echo ".")
+echo "Changed files: $CHANGED_FILES"
+uv run python run_tasks_in_changed_packages.py mypy $CHANGED_FILES
+"""
+interpreter = "bash"
+
 [tool.poe.tasks.pre-commit-check]
 sequence = [
     { ref = "fmt" },

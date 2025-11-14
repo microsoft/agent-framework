@@ -46,4 +46,4 @@ jobs:
         with:
           extra_args: --config python/.pre-commit-config.yaml --all-files
       - name: Run Mypy
-        run: uv run poe mypy
+        run: uv run poe ci-mypy

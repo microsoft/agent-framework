@@ -61,10 +61,15 @@ def get_changed_packages(projects: list[Path], changed_files: list[str], workspa
     core_package_changed = False
 
     for file_path in changed_files:
+        # Strip 'python/' prefix if present (when git diff is run from repo root)
+        file_path_str = str(file_path)
+        if file_path_str.startswith("python/"):
+            file_path_str = file_path_str[7:]  # Remove 'python/' prefix
+
         # Convert to absolute path if relative
-        abs_path = Path(file_path)
+        abs_path = Path(file_path_str)
         if not abs_path.is_absolute():
-            abs_path = workspace_root / file_path
+            abs_path = workspace_root / file_path_str
 
         # Check which package this file belongs to
         for project in projects:
