@@ -99,6 +99,7 @@ internal sealed class Program
         int iteration = 0;
         // Initialize state machine
         SearchState currentState = SearchState.Initial;
+        string initialCallId = string.Empty;
 
         while (true)
         {
@@ -141,9 +142,15 @@ internal sealed class Program
 
             // Process the first computer call response
             ComputerCallAction action = firstComputerCall.Action;
-            string callId = firstComputerCall.CallId;
+            string currentCallId = firstComputerCall.CallId;
 
-            Console.WriteLine($"Processing computer call (ID: {callId})");
+            // Set the initial computer call ID for tracking and subsequent responses.
+            if (string.IsNullOrEmpty(initialCallId))
+            {
+                initialCallId = currentCallId;
+            }
+
+            Console.WriteLine($"Processing computer call (ID: {currentCallId})");
 
             // Simulate executing the action and taking a screenshot
             (SearchState CurrentState, byte[] ImageBytes) screenInfo = ComputerUseUtil.HandleComputerActionAndTakeScreenshot(action, currentState, screenshots);
@@ -154,7 +161,7 @@ internal sealed class Program
             AIContent content = new()
             {
                 RawRepresentation = new ComputerCallOutputResponseItem(
-                    callId,
+                    initialCallId,
                     output: ComputerCallOutput.CreateScreenshotOutput(new BinaryData(screenInfo.ImageBytes), "image/png"))
             };
 
