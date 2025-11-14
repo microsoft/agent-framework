@@ -263,7 +263,9 @@ class AgentFactory:
                     if not self.connections:
                         raise ValueError("Connections must be provided to resolve ReferenceConnection")
                     # find the referenced connection
-                    if value := self.connections.get(prompt_agent.model.connection.name):
+                    if prompt_agent.model.connection.name and (
+                        value := self.connections.get(prompt_agent.model.connection.name)
+                    ):
                         setup_dict[prompt_agent.model.connection.name] = value
                     else:
                         raise ValueError(
@@ -287,7 +289,7 @@ class AgentFactory:
         module = __import__(module_name, fromlist=[class_name])
         agent_class = getattr(module, class_name)
         setup_dict[mapping["model_id_field"]] = prompt_agent.model.id
-        return agent_class(**setup_dict)
+        return agent_class(**setup_dict)  # type: ignore[no-any-return]
 
     def _parse_chat_options(self, model: Model | None) -> dict[str, Any]:
         """Parse ModelOptions into chat options dictionary."""
