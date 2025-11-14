@@ -299,7 +299,21 @@ args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
 [tool.poe.tasks.ci-mypy]
 shell = """
-CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- . || git diff --name-only HEAD~1 -- . || echo ".")
+# Try multiple strategies to get changed files
+if [ -n "$GITHUB_BASE_REF" ]; then
+    # In GitHub Actions PR context
+    git fetch origin $GITHUB_BASE_REF --depth=1 2>/dev/null || true
+    CHANGED_FILES=$(git diff --name-only origin/$GITHUB_BASE_REF...HEAD -- . 2>/dev/null || \
+                    git diff --name-only FETCH_HEAD...HEAD -- . 2>/dev/null || \
+                    git diff --name-only HEAD^...HEAD -- . 2>/dev/null || \
+                    echo ".")
+else
+    # Local development
+    CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- . 2>/dev/null || \
+                    git diff --name-only main...HEAD -- . 2>/dev/null || \
+                    git diff --name-only HEAD~1 -- . 2>/dev/null || \
+                    echo ".")
+fi
 echo "Changed files: $CHANGED_FILES"
 uv run python run_tasks_in_changed_packages.py mypy $CHANGED_FILES
 """
