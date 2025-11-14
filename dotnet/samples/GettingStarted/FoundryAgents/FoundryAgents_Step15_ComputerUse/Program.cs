@@ -2,7 +2,8 @@
 
 // This sample shows how to use Computer Use Tool with AI Agents.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -18,7 +19,7 @@ internal sealed class Program
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
         // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-        AgentClient agentClient = new(new Uri(endpoint), new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
         const string AgentInstructions = @"
                     You are a computer automation assistant. 
                     
@@ -30,7 +31,7 @@ internal sealed class Program
 
         // Option 1 - Using ComputerUseTool + AgentOptions (MEAI + AgentFramework)
         // Create AIAgent directly
-        AIAgent agentOption1 = await agentClient.CreateAIAgentAsync(
+        AIAgent agentOption1 = await aiProjectClient.CreateAIAgentAsync(
             name: AgentNameMEAI,
             model: deploymentName,
             instructions: AgentInstructions,
@@ -41,7 +42,7 @@ internal sealed class Program
 
         // Option 2 - Using PromptAgentDefinition SDK native type
         // Create the server side agent version
-        AIAgent agentOption2 = await agentClient.CreateAIAgentAsync(
+        AIAgent agentOption2 = await aiProjectClient.CreateAIAgentAsync(
             name: AgentNameNative,
             creationOptions: new AgentVersionCreationOptions(
                 new PromptAgentDefinition(model: deploymentName)
@@ -62,8 +63,8 @@ internal sealed class Program
         //await InvokeComputerUseAgentAsync(agentOption2);
 
         // Cleanup by agent name removes the agent version created.
-        await agentClient.DeleteAgentAsync(agentOption1.Name);
-        await agentClient.DeleteAgentAsync(agentOption2.Name);
+        await aiProjectClient.Agents.DeleteAgentAsync(agentOption1.Name);
+        await aiProjectClient.Agents.DeleteAgentAsync(agentOption2.Name);
     }
 
     private static async Task InvokeComputerUseAgentAsync(AIAgent agent)
