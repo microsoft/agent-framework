@@ -643,6 +643,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         """
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
+        from opentelemetry.trace import Status, StatusCode
 
         tool_call_id = kwargs.pop("tool_call_id", None)
         if arguments is not None:
@@ -680,11 +681,35 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
+                
+                # FIX FOR ISSUE #2217: Set span status to ERROR
+                span.set_status(
+                    Status(
+                        StatusCode.ERROR,
+                        description=f"Tool execution failed: {str(exception)}"
+                    )
+                )
+                
+                # Record the exception with detailed attributes
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+                
+                # Add error event for better visibility in Azure AI Foundry
+                span.add_event(
+                    "tool_call_error",
+                    attributes={
+                        "error.type": type(exception).__name__,
+                        "error.message": str(exception),
+                        "tool.name": self.name,
+                    }
+                )
+                
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                # FIX FOR ISSUE #2217: Explicitly set span status to OK on success
+                span.set_status(Status(StatusCode.OK))
+                
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     try:
@@ -701,6 +726,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 span.set_attribute(OtelAttr.MEASUREMENT_FUNCTION_INVOCATION_DURATION, duration)
                 self._invocation_duration_histogram.record(duration, attributes=attributes)
                 logger.info("Function duration: %fs", duration)
+
 
     def parameters(self) -> dict[str, Any]:
         """Create the JSON schema of the parameters.
