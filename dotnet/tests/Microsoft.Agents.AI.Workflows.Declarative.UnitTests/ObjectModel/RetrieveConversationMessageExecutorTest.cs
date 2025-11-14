@@ -3,7 +3,6 @@
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Xunit.Abstractions;
@@ -28,8 +27,6 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
         string variableName)
     {
         // Arrange
-        // Initialize state to simulate workflow environment.
-        this.State.InitializeSystem();
         MockAgentProvider mockAgentProvider = new();
         ChatMessage testMessage = mockAgentProvider.TestChatMessage ?? new ChatMessage();
 
