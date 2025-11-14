@@ -6,6 +6,7 @@ import logging
 import os
 
 import uvicorn
+from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,8 +15,8 @@ from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent
 from ..agents.recipe_agent import recipe_agent
-from ..agents.simple_agent import agent as simple_agent
-from ..agents.task_steps_agent import task_steps_agent_wrapped as task_steps_agent  # Custom wrapper
+from ..agents.simple_agent import simple_agent
+from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
 
@@ -58,38 +59,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create a shared chat client for all agents
+# You can use different chat clients for different agents if needed
+chat_client = AzureOpenAIChatClient()
+
 # Agentic Chat - basic chat agent
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=simple_agent,
+    agent=simple_agent(chat_client),
     path="/agentic_chat",
 )
 
 # Backend Tool Rendering - agent with tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=weather_agent,
+    agent=weather_agent(chat_client),
     path="/backend_tool_rendering",
 )
 
 # Shared State - recipe agent with structured output
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=recipe_agent,
+    agent=recipe_agent(chat_client),
     path="/shared_state",
 )
 
 # Predictive State Updates - document writer with predictive state
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=document_writer_agent,
+    agent=document_writer_agent(chat_client),
     path="/predictive_state_updates",
 )
 
 # Human in the Loop - human-in-the-loop agent with step customization
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=human_in_the_loop_agent,
+    agent=human_in_the_loop_agent(chat_client),
     path="/human_in_the_loop",
     state_schema={"steps": {"type": "array"}},
     predict_state_config={"steps": {"tool": "generate_task_steps", "tool_argument": "steps"}},
@@ -98,22 +103,25 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent,  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(chat_client),  # type: ignore[arg-type]
     path="/agentic_generative_ui",
 )
 
 # Tool-based Generative UI - UI generator with frontend-rendered tools
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=ui_generator_agent,
+    agent=ui_generator_agent(chat_client),
     path="/tool_based_generative_ui",
 )
 
 
 def main():
     """Run the server."""
-    port = int(os.getenv("PORT", "8888"))
+    port = int(os.getenv("PORT", "8887"))
     host = os.getenv("HOST", "127.0.0.1")
+
+    print(f"\nAG-UI Examples Server starting on http://{host}:{port}")
+    print("Set ENABLE_DEBUG_LOGGING=1 for detailed request logging\n")
 
     # Use log_config=None to prevent uvicorn from reconfiguring logging
     # This preserves our file + console logging setup

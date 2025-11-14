@@ -5,7 +5,7 @@
 import asyncio
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 
 from agent_framework_ag_ui import AgentFrameworkAgent
 
@@ -82,19 +82,31 @@ async def analyze_data(dataset: str) -> str:
     return f"Analysis of '{dataset}':\n" + "\n".join(insights)
 
 
-agent = ChatAgent(
-    name="research_assistant",
-    instructions=(
-        "You are a research and analysis assistant. "
-        "You can research topics, create presentations, and analyze data. "
-        "Use the available tools to help users with their research needs."
-    ),
-    chat_client=AzureOpenAIChatClient(),
-    tools=[research_topic, create_presentation, analyze_data],
+_RESEARCH_ASSISTANT_INSTRUCTIONS = (
+    "You are a research and analysis assistant. "
+    "You can research topics, create presentations, and analyze data. "
+    "Use the available tools to help users with their research needs."
 )
 
-research_assistant_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="ResearchAssistant",
-    description="Research assistant that emits progress events during task execution",
-)
+
+def research_assistant_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create a research assistant agent with progress events.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance with research capabilities
+    """
+    agent = ChatAgent(
+        name="research_assistant",
+        instructions=_RESEARCH_ASSISTANT_INSTRUCTIONS,
+        chat_client=chat_client,
+        tools=[research_topic, create_presentation, analyze_data],
+    )
+
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="ResearchAssistant",
+        description="Research assistant that emits progress events during task execution",
+    )
