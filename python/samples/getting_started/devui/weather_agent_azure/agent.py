@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Sample weather agent for Agent Framework Debug UI."""
 
+import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
@@ -10,12 +11,26 @@ from agent_framework import (
     ChatContext,
     ChatMessage,
     ChatResponse,
+    ChatResponseUpdate,
     FunctionInvocationContext,
     Role,
+    TextContent,
     chat_middleware,
     function_middleware,
+    ai_function
 )
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework_devui import register_cleanup
+
+logger = logging.getLogger(__name__)
+
+
+def cleanup_resources():
+    """Cleanup function that runs when DevUI shuts down."""
+    logger.info("=" * 60)
+    logger.info(" Cleaning up resources...")
+    logger.info("   (In production, this would close credentials, sessions, etc.)")
+    logger.info("=" * 60)
 
 
 @chat_middleware
@@ -24,28 +39,42 @@ async def security_filter_middleware(
     next: Callable[[ChatContext], Awaitable[None]],
 ) -> None:
     """Chat middleware that blocks requests containing sensitive information."""
-    # Block requests with sensitive information
     blocked_terms = ["password", "secret", "api_key", "token"]
 
-    for message in context.messages:
-        if message.text:
-            message_lower = message.text.lower()
-            for term in blocked_terms:
-                if term in message_lower:
-                    # Override the response without calling the LLM
+    # Check only the last message (most recent user input)
+    last_message = context.messages[-1] if context.messages else None
+    if last_message and last_message.role == Role.USER and last_message.text:
+        message_lower = last_message.text.lower()
+        for term in blocked_terms:
+            if term in message_lower:
+                error_message = (
+                    "I cannot process requests containing sensitive information. "
+                    "Please rephrase your question without including passwords, secrets, "
+                    "or other sensitive data."
+                )
+
+                if context.is_streaming:
+                    # Streaming mode: return async generator
+                    async def blocked_stream() -> AsyncIterable[ChatResponseUpdate]:
+                        yield ChatResponseUpdate(
+                            contents=[TextContent(text=error_message)],
+                            role=Role.ASSISTANT,
+                        )
+
+                    context.result = blocked_stream()
+                else:
+                    # Non-streaming mode: return complete response
                     context.result = ChatResponse(
                         messages=[
                             ChatMessage(
                                 role=Role.ASSISTANT,
-                                text=(
-                                    "I cannot process requests containing sensitive information. "
-                                    "Please rephrase your question without including passwords, secrets, "
-                                    "or other sensitive data."
-                                ),
+                                text=error_message,
                             )
                         ]
                     )
-                    return
+
+                context.terminate = True
+                return
 
     await next(context)
 
@@ -93,6 +122,14 @@ def get_forecast(
 
     return f"Weather forecast for {location}:\n" + "\n".join(forecast)
 
+@ai_function(approval_mode="always_require")
+def send_email(
+    recipient: Annotated[str, "The email address of the recipient."],
+    subject: Annotated[str, "The subject of the email."],
+    body: Annotated[str, "The body content of the email."],
+) -> str:
+    """Simulate sending an email."""
+    return f"Email sent to {recipient} with subject '{subject}'."
 
 # Agent instance following Agent Framework conventions
 agent = ChatAgent(
@@ -106,9 +143,12 @@ agent = ChatAgent(
     chat_client=AzureOpenAIChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
-    tools=[get_weather, get_forecast],
+    tools=[get_weather, get_forecast, send_email],
     middleware=[security_filter_middleware, atlantis_location_filter_middleware],
 )
+
+# Register cleanup hook - demonstrates resource cleanup on shutdown
+register_cleanup(agent, cleanup_resources)
 
 
 def main():

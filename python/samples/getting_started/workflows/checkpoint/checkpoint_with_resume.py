@@ -47,7 +47,7 @@ What you learn:
 - How to configure FileCheckpointStorage and call with_checkpointing on WorkflowBuilder.
 - How to list and inspect checkpoints programmatically.
 - How to interactively choose a checkpoint to resume from (instead of always resuming
-    from the most recent or a hard-coded one) using run_stream_from_checkpoint.
+    from the most recent or a hard-coded one) using run_stream.
 - How workflows complete by yielding outputs when idle, not via explicit completion events.
 
 Prerequisites:
@@ -196,7 +196,7 @@ def _render_checkpoint_summary(checkpoints: list["WorkflowCheckpoint"]) -> None:
     for cp in sorted(checkpoints, key=lambda c: c.timestamp):
         summary = get_checkpoint_summary(cp)
         msg_count = sum(len(v) for v in cp.messages.values())
-        state_keys = sorted(cp.executor_states.keys())
+        state_keys = sorted(summary.executor_ids)
         orig = cp.shared_state.get("original_input")
         upper = cp.shared_state.get("upper_output")
 
@@ -281,7 +281,7 @@ async def main():
     new_workflow = create_workflow(checkpoint_storage=checkpoint_storage)
 
     print(f"\nResuming from checkpoint: {chosen_cp_id}")
-    async for event in new_workflow.run_stream_from_checkpoint(chosen_cp_id, checkpoint_storage=checkpoint_storage):
+    async for event in new_workflow.run_stream(checkpoint_id=chosen_cp_id, checkpoint_storage=checkpoint_storage):
         print(f"Resumed Event: {event}")
 
     """

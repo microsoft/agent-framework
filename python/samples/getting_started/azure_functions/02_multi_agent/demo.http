@@ -1,0 +1,57 @@
+### DAFx Multi-Agent Function App - HTTP Samples
+### Use with the VS Code REST Client extension or any HTTP client
+###
+### API Structure:
+### - POST /api/agents/{agentName}/run        -> Send a message to an agent
+### - GET  /api/health                        -> Health check and agent metadata
+
+### Variables
+@baseUrl = http://localhost:7071
+@weatherAgentName = WeatherAgent
+@mathAgentName = MathAgent
+@weatherAgentRoute = {{baseUrl}}/api/agents/{{weatherAgentName}}
+@mathAgentRoute = {{baseUrl}}/api/agents/{{mathAgentName}}
+@healthRoute = {{baseUrl}}/api/health
+
+### Health Check
+# Confirms the Azure Functions app is running and both agents are registered
+# Expected response:
+# {
+#   "status": "healthy",
+#   "agents": [
+#     {"name": "WeatherAgent", "type": "AzureOpenAIAssistantsAgent"},
+#     {"name": "MathAgent", "type": "AzureOpenAIAssistantsAgent"}
+#   ],
+#   "agent_count": 2
+# }
+GET {{healthRoute}}
+
+###
+
+### Weather Agent - Current Conditions
+# Tests the Weather agent's tool-assisted response path
+# Expected response: { "response": "The weather in Seattle...", "status": "success" }
+POST {{weatherAgentRoute}}/run
+Content-Type: application/json
+
+{
+  "message": "What is the weather in Seattle?",
+  "thread_id": "weather-user-001"
+}
+
+###
+
+
+### Math Agent - Tip Calculation
+# Exercises the Math agent with a calculation request
+# Expected response: { "response": "A 20% tip on a $50 bill is $10...", "status": "success" }
+POST {{mathAgentRoute}}/run
+Content-Type: application/json
+
+{
+  "message": "Calculate a 20% tip on a $50 bill",
+  "thread_id": "math-user-001"
+}
+
+###
+

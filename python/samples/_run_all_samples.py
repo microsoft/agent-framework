@@ -56,9 +56,9 @@ def run_sample(
     sample_path: Path,
     use_uv: bool = True,
     python_root: Path | None = None,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, str]:
     """
-    Run a single sample file using subprocess and return (success, output, error_info).
+    Run a single sample file using subprocess and return (success, output, error_info, error_type).
 
     Args:
         sample_path: Path to the sample file
@@ -66,7 +66,8 @@ def run_sample(
         python_root: Root directory for uv run
 
     Returns:
-        Tuple of (success, output, error_info)
+        Tuple of (success, output, error_info, error_type)
+        error_type can be: "timeout", "input_hang", "execution_error", "exception"
     """
     if use_uv and python_root:
         cmd = ["uv", "run", "python", str(sample_path)]
@@ -75,29 +76,69 @@ def run_sample(
         cmd = [sys.executable, sample_path.name]
         cwd = sample_path.parent
 
+    # Set environment variables to handle Unicode properly
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"  # Force Python to use UTF-8 for I/O
+    env["PYTHONUTF8"] = "1"  # Enable UTF-8 mode in Python 3.7+
+
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=60,  # 60 second timeout
+        # Use Popen for better timeout handling with stdin for samples that may wait for input
+        # Popen gives us more control over process lifecycle compared to subprocess.run()
+        process = subprocess.Popen(
+            cmd,  # Command to execute as a list [program, arg1, arg2, ...]
+            cwd=cwd,  # Working directory for the subprocess
+            stdout=subprocess.PIPE,  # Capture stdout so we can read the output
+            stderr=subprocess.PIPE,  # Capture stderr so we can read error messages
+            stdin=subprocess.PIPE,  # Create a pipe for stdin so we can send input
+            text=True,  # Handle input/output as text strings (not bytes)
+            encoding="utf-8",  # Use UTF-8 encoding to handle Unicode characters like emojis
+            errors="replace",  # Replace problematic characters instead of failing
+            env=env,  # Pass environment variables for proper Unicode handling
         )
 
-        if result.returncode == 0:
-            output = result.stdout.strip() if result.stdout.strip() else "No output"
-            return True, output, ""
+        try:
+            # communicate() sends input to stdin and waits for process to complete
+            # input="" sends an empty string to stdin, which causes input() calls to
+            # immediately receive EOFError (End Of File) since there's no data to read.
+            # This prevents the process from hanging indefinitely waiting for user input.
+            stdout, stderr = process.communicate(input="", timeout=60)
+        except subprocess.TimeoutExpired:
+            # If the process doesn't complete within the timeout period, we need to
+            # forcibly terminate it. This is especially important for processes that
+            # ignore EOFError and continue to hang on input() calls.
 
-        error_info = f"Exit code: {result.returncode}"
-        if result.stderr.strip():
-            error_info += f"\nSTDERR: {result.stderr}"
+            # First attempt: Send SIGKILL (immediate termination) on Unix or TerminateProcess on Windows
+            process.kill()
+            try:
+                # Give the process a few seconds to clean up after being killed
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # If the process is still alive after kill(), use terminate() as a last resort
+                # terminate() sends SIGTERM (graceful termination request) which may work
+                # when kill() doesn't on some systems
+                process.terminate()
+                stdout, stderr = "", "Process forcibly terminated"
+            return False, "", f"TIMEOUT: {sample_path.name} (exceeded 60 seconds)", "timeout"
 
-        return False, result.stdout.strip() if result.stdout.strip() else "", error_info
+        if process.returncode == 0:
+            output = stdout.strip() if stdout.strip() else "No output"
+            return True, output, "", "success"
 
-    except subprocess.TimeoutExpired:
-        return False, "", f"TIMEOUT: {sample_path.name} (exceeded 60 seconds)"
+        error_info = f"Exit code: {process.returncode}"
+        if stderr.strip():
+            error_info += f"\nSTDERR: {stderr}"
+
+        # Check if this looks like an input/interaction related error
+        error_type = "execution_error"
+        stderr_safe = stderr.encode("utf-8", errors="replace").decode("utf-8") if stderr else ""
+        if "EOFError" in stderr_safe or "input" in stderr_safe.lower() or "stdin" in stderr_safe.lower():
+            error_type = "input_hang"
+        elif "UnicodeEncodeError" in stderr_safe and ("charmap" in stderr_safe or "codec can't encode" in stderr_safe):
+            error_type = "input_hang"  # Unicode errors often indicate interactive samples with emojis
+
+        return False, stdout.strip() if stdout.strip() else "", error_info, error_type
     except Exception as e:
-        return False, "", f"ERROR: {sample_path.name} - Exception: {str(e)}"
+        return False, "", f"ERROR: {sample_path.name} - Exception: {str(e)}", "exception"
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -161,7 +202,7 @@ def main() -> None:
     print(f"Found {len(sample_files)} Python sample files")
 
     # Run samples concurrently
-    results: list[tuple[Path, bool, str, str]] = []
+    results: list[tuple[Path, bool, str, str, str]] = []
 
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         # Submit all tasks
@@ -174,52 +215,80 @@ def main() -> None:
         for future in as_completed(future_to_sample):
             sample_path = future_to_sample[future]
             try:
-                success, output, error_info = future.result()
-                results.append((sample_path, success, output, error_info))
+                success, output, error_info, error_type = future.result()
+                results.append((sample_path, success, output, error_info, error_type))
 
                 # Print progress - show relative path from samples directory
                 relative_path = sample_path.relative_to(samples_dir)
                 if success:
                     print(f"✅ {relative_path}")
                 else:
-                    print(f"❌ {relative_path} - {error_info.split(':', 1)[0]}")
+                    # Show error type in progress display
+                    error_display = f"{error_type.upper()}" if error_type != "execution_error" else "ERROR"
+                    print(f"❌ {relative_path} - {error_display}")
 
             except Exception as e:
                 error_info = f"Future exception: {str(e)}"
-                results.append((sample_path, False, "", error_info))
+                results.append((sample_path, False, "", error_info, "exception"))
                 relative_path = sample_path.relative_to(samples_dir)
-                print(f"❌ {relative_path} - {error_info}")
+                print(f"❌ {relative_path} - EXCEPTION")
 
     # Sort results by original file order for consistent reporting
     sample_to_index = {path: i for i, path in enumerate(sample_files)}
     results.sort(key=lambda x: sample_to_index[x[0]])
 
-    successful_runs = sum(1 for _, success, _, _ in results if success)
+    successful_runs = sum(1 for _, success, _, _, _ in results if success)
     failed_runs = len(results) - successful_runs
+
+    # Categorize failures by type
+    timeout_failures = [r for r in results if not r[1] and r[4] == "timeout"]
+    input_hang_failures = [r for r in results if not r[1] and r[4] == "input_hang"]
+    execution_errors = [r for r in results if not r[1] and r[4] == "execution_error"]
+    exceptions = [r for r in results if not r[1] and r[4] == "exception"]
 
     # Print detailed results
     print(f"\n{'=' * 80}")
     print("DETAILED RESULTS:")
     print(f"{'=' * 80}")
 
-    for sample_path, success, output, error_info in results:
+    for sample_path, success, output, error_info, error_type in results:
         relative_path = sample_path.relative_to(samples_dir)
         if success:
             print(f"✅ {relative_path}")
             if output and output != "No output":
                 print(f"   Output preview: {output[:100]}{'...' if len(output) > 100 else ''}")
         else:
-            print(f"❌ {relative_path}")
+            # Display error with type indicator
+            if error_type == "timeout":
+                print(f"⏱️  {relative_path} - TIMEOUT (likely waiting for input)")
+            elif error_type == "input_hang":
+                print(f"⌨️  {relative_path} - INPUT ERROR (interactive sample)")
+            elif error_type == "exception":
+                print(f"💥 {relative_path} - EXCEPTION")
+            else:
+                print(f"❌ {relative_path} - EXECUTION ERROR")
             print(f"   Error: {error_info}")
 
-    # Print summary
+    # Print categorized summary
     print(f"\n{'=' * 80}")
     if failed_runs == 0:
         print("🎉 ALL SAMPLES COMPLETED SUCCESSFULLY!")
     else:
         print(f"❌ {failed_runs} SAMPLE(S) FAILED!")
+
     print(f"Successful runs: {successful_runs}")
     print(f"Failed runs: {failed_runs}")
+
+    if failed_runs > 0:
+        print("\nFailure breakdown:")
+        if len(timeout_failures) > 0:
+            print(f"  ⏱️  Timeouts (likely interactive): {len(timeout_failures)}")
+        if len(input_hang_failures) > 0:
+            print(f"  ⌨️  Input errors (interactive): {len(input_hang_failures)}")
+        if len(execution_errors) > 0:
+            print(f"  ❌ Execution errors: {len(execution_errors)}")
+        if len(exceptions) > 0:
+            print(f"  💥 Exceptions: {len(exceptions)}")
 
     if args.subdir:
         print(f"Subdirectory filter: {args.subdir}")

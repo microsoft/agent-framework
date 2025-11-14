@@ -5,289 +5,307 @@ from dataclasses import dataclass
 
 from agent_framework import (
     Executor,
-    RequestInfoExecutor,
-    RequestInfoMessage,
-    RequestResponse,
+    SubWorkflowRequestMessage,
+    SubWorkflowResponseMessage,
+    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowExecutor,
+    WorkflowOutputEvent,
     handler,
+    response_handler,
 )
+from typing_extensions import Never
 
 """
-Sample: Sub-Workflows with Request Interception
+This sample demonstrates how to handle request from the sub-workflow in the main workflow.
 
-This sample shows how to:
-1. Create workflows that execute other workflows as sub-workflows
-2. Intercept requests from sub-workflows using an executor with @handler for RequestInfoMessage subclasses
-3. Conditionally handle or forward requests using RequestResponse messages
-4. Handle external requests that are forwarded by the parent workflow
-5. Proper request/response correlation for concurrent processing
+Prerequisite:
+- Understanding of sub-workflows.
+- Understanding of requests and responses.
 
-The example simulates an email validation system where:
-- Sub-workflows validate multiple email addresses concurrently
-- Parent workflows can intercept domain check requests for optimization
-- Known domains (example.com, company.com) are approved locally
-- Unknown domains (unknown.org) are forwarded to external services
-- Request correlation ensures each email gets the correct domain check response
-- External domain check requests are processed and responses routed back correctly
+This pattern is useful when you want to reuse a workflow that makes requests to an external system,
+but you want to intercept those requests in the main workflow and handle them without further propagation
+to the external system.
 
-Key concepts demonstrated:
-- WorkflowExecutor: Wraps a workflow to make it behave as an executor
-- RequestInfoMessage handler: @handler method to intercept sub-workflow requests
-- Request correlation: Using request_id and source_executor_id to match responses with original requests
-- Concurrent processing: Multiple emails processed simultaneously without interference
-- External request routing: RequestInfoExecutor handles forwarded external requests
-- Sub-workflow isolation: Sub-workflows work normally without knowing they're nested
-- Sub-workflows complete by yielding outputs when validation is finished
-
-Prerequisites:
-- No external services required (external calls are simulated via `RequestInfoExecutor`).
-
-Simple flow visualization:
-
-  Parent Orchestrator (handles DomainCheckRequest)
-      |
-      |  EmailValidationRequest(email) x3 (concurrent)
-      v
-    [ Sub-workflow: WorkflowExecutor(EmailValidator) ]
-      |
-      |  DomainCheckRequest(domain) with request_id and source_executor_id
-      v
-  Interception? yes -> handled locally with RequestResponse(data=True)
-               no  -> forwarded to RequestInfoExecutor -> external service
-                                |
-                                v
-                     Response routed back to sub-workflow using source_executor_id
+This sample implements a smart email delivery system that validates email addresses before sending emails.
+1. We will start by creating a workflow that validates email addresses in a sequential manner. The validation
+   consists of three steps: sanitization, format validation, and domain validation. The domain validation
+   step will involve checking if the email domain is valid by making a request to an external system.
+2. Then we will create a main workflow that uses the email validation workflow as a sub-workflow. The main
+    workflow will intercept the domain validation requests from the sub-workflow and handle them internally
+    without propagating them to an external system.
+3. Once the email address is validated, the main workflow will proceed to send the email if the address is valid,
+   or block the email if the address is invalid.
 """
 
 
-# 1. Define domain-specific message types
 @dataclass
-class EmailValidationRequest:
-    """Request to validate an email address."""
+class SanitizedEmailResult:
+    """Result of email sanitization and validation.
 
-    email: str
+    The properties get built up as the email address goes through
+    the validation steps in the workflow.
+    """
 
-
-@dataclass
-class DomainCheckRequest(RequestInfoMessage):
-    """Request to check if a domain is approved."""
-
-    domain: str = ""
-
-
-@dataclass
-class ValidationResult:
-    """Result of email validation."""
-
-    email: str
+    original: str
+    sanitized: str
     is_valid: bool
-    reason: str
 
 
-# 2. Implement the sub-workflow executor (completely standard)
-class EmailValidator(Executor):
-    """Validates email addresses - doesn't know it's in a sub-workflow."""
+def build_email_address_validation_workflow() -> Workflow:
+    """Build an email address validation workflow.
 
-    def __init__(self) -> None:
-        """Initialize the EmailValidator executor."""
-        super().__init__(id="email_validator")
-        # Use a dict to track multiple pending emails by request_id
-        self._pending_emails: dict[str, str] = {}
+    This workflow consists of three steps (each is represented by an executor):
+    1. Sanitize the email address, such as removing leading/trailing spaces.
+    2. Validate the email address format, such as checking for "@" and domain.
+    3. Extract the domain from the email address and request domain validation,
+       after which it completes with the final result.
+    """
 
-    @handler
-    async def validate_request(
-        self,
-        request: EmailValidationRequest,
-        ctx: WorkflowContext[DomainCheckRequest | ValidationResult, ValidationResult],
-    ) -> None:
-        """Validate an email address."""
-        print(f"🔍 Sub-workflow validating email: {request.email}")
+    class EmailSanitizer(Executor):
+        """Sanitize email address by trimming spaces."""
 
-        # Extract domain
-        domain = request.email.split("@")[1] if "@" in request.email else ""
+        @handler
+        async def handle(self, email_address: str, ctx: WorkflowContext[SanitizedEmailResult]) -> None:
+            """Trim leading and trailing spaces from the email address.
 
-        if not domain:
-            print(f"❌ Invalid email format: {request.email}")
-            result = ValidationResult(email=request.email, is_valid=False, reason="Invalid email format")
-            await ctx.yield_output(result)
-            return
+            This executor doesn't produce any workflow output, but sends the sanitized
+            email address to the next executor in the workflow.
+            """
+            sanitized = email_address.strip()
+            print(f"✂️ Sanitized email address: '{sanitized}'")
+            await ctx.send_message(SanitizedEmailResult(original=email_address, sanitized=sanitized, is_valid=False))
 
-        print(f"🌐 Sub-workflow requesting domain check for: {domain}")
-        # Request domain check
-        domain_check = DomainCheckRequest(domain=domain)
-        # Store the pending email with the request_id for correlation
-        self._pending_emails[domain_check.request_id] = request.email
-        await ctx.send_message(domain_check, target_id="email_request_info")
+    class EmailFormatValidator(Executor):
+        """Validate email address format."""
 
-    @handler
-    async def handle_domain_response(
-        self,
-        response: RequestResponse[DomainCheckRequest, bool],
-        ctx: WorkflowContext[ValidationResult, ValidationResult],
-    ) -> None:
-        """Handle domain check response from RequestInfo with correlation."""
-        approved = bool(response.data)
-        domain = (
-            response.original_request.domain
-            if (hasattr(response, "original_request") and response.original_request)
-            else "unknown"
-        )
-        print(f"📬 Sub-workflow received domain response for '{domain}': {approved}")
+        @handler
+        async def handle(
+            self,
+            partial_result: SanitizedEmailResult,
+            ctx: WorkflowContext[SanitizedEmailResult, SanitizedEmailResult],
+        ) -> None:
+            """Validate the email address format.
 
-        # Find the corresponding email using the request_id
-        request_id = (
-            response.original_request.request_id
-            if (hasattr(response, "original_request") and response.original_request)
-            else None
-        )
-        if request_id and request_id in self._pending_emails:
-            email = self._pending_emails.pop(request_id)  # Remove from pending
-            result = ValidationResult(
-                email=email,
-                is_valid=approved,
-                reason="Domain approved" if approved else "Domain not approved",
+            This executor can potentially produce a workflow output (False if the format is invalid).
+            When the format is valid, it sends the validated email address to the next executor in the workflow.
+            """
+            if "@" not in partial_result.sanitized or "." not in partial_result.sanitized.split("@")[-1]:
+                print(f"❌ Invalid email format: '{partial_result.sanitized}'")
+                await ctx.yield_output(
+                    SanitizedEmailResult(
+                        original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
+                    )
+                )
+                return
+            print(f"✅ Validated email format: '{partial_result.sanitized}'")
+            await ctx.send_message(
+                SanitizedEmailResult(
+                    original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
+                )
             )
-            print(f"✅ Sub-workflow completing validation for: {email}")
-            await ctx.yield_output(result)
+
+    class DomainValidator(Executor):
+        """Validate email domain."""
+
+        def __init__(self, id: str):
+            super().__init__(id=id)
+            self._pending_domains: dict[str, SanitizedEmailResult] = {}
+
+        @handler
+        async def handle(self, partial_result: SanitizedEmailResult, ctx: WorkflowContext) -> None:
+            """Extract the domain from the email address and request domain validation.
+
+            This executor doesn't produce any workflow output, but sends a domain validation request
+            to an external system to user for validation.
+            """
+            domain = partial_result.sanitized.split("@")[-1]
+            print(f"🔍 Validating domain: '{domain}'")
+            self._pending_domains[domain] = partial_result
+            # Send a request to the external system via the request_info mechanism
+            await ctx.request_info(request_data=domain, response_type=bool)
+
+        @response_handler
+        async def handle_domain_validation_response(
+            self, original_request: str, is_valid: bool, ctx: WorkflowContext[Never, SanitizedEmailResult]
+        ) -> None:
+            """Handle the domain validation response.
+
+            This method receives the response from the external system and yields the final
+            validation result (True if both format and domain are valid, False otherwise).
+            """
+            if original_request not in self._pending_domains:
+                raise ValueError(f"Received response for unknown domain: '{original_request}'")
+            partial_result = self._pending_domains.pop(original_request)
+            if is_valid:
+                print(f"✅ Domain '{original_request}' is valid.")
+                await ctx.yield_output(
+                    SanitizedEmailResult(
+                        original=partial_result.original, sanitized=partial_result.sanitized, is_valid=True
+                    )
+                )
+            else:
+                print(f"❌ Domain '{original_request}' is invalid.")
+                await ctx.yield_output(
+                    SanitizedEmailResult(
+                        original=partial_result.original, sanitized=partial_result.sanitized, is_valid=False
+                    )
+                )
+
+    # Build the workflow
+    sanitizer = EmailSanitizer(id="email_sanitizer")
+    format_validator = EmailFormatValidator(id="email_format_validator")
+    domain_validator = DomainValidator(id="domain_validator")
+
+    return (
+        WorkflowBuilder()
+        .set_start_executor(sanitizer)
+        .add_edge(sanitizer, format_validator)
+        .add_edge(format_validator, domain_validator)
+        .build()
+    )
 
 
-# 3. Implement the parent workflow with request interception
+@dataclass
+class Email:
+    recipient: str
+    subject: str
+    body: str
+
+
 class SmartEmailOrchestrator(Executor):
-    """Parent orchestrator that can intercept domain checks."""
+    """Orchestrates email address validation using a sub-workflow."""
 
-    approved_domains: set[str] = set()
-
-    def __init__(self, approved_domains: set[str] | None = None):
-        """Initialize the SmartEmailOrchestrator with approved domains.
+    def __init__(self, id: str, approved_domains: set[str]):
+        """Initialize the orchestrator with a set of approved domains.
 
         Args:
-            approved_domains: Set of pre-approved domains, defaults to example.com, test.org, company.com
+            id: The executor ID.
+            approved_domains: A set of domains that are considered valid.
         """
-        super().__init__(id="email_orchestrator", approved_domains=approved_domains)
-        self._results: list[ValidationResult] = []
+        super().__init__(id=id)
+        self._approved_domains = approved_domains
+        # Keep track of previously approved and disapproved recipients
+        self._approved_recipients: set[str] = set()
+        self._disapproved_recipients: set[str] = set()
+        # Record pending emails waiting for validation results
+        self._pending_emails: dict[str, Email] = {}
 
     @handler
-    async def start_validation(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
-        """Start validating a batch of emails."""
-        print(f"📧 Starting validation of {len(emails)} email addresses")
-        print("=" * 60)
-        for email in emails:
-            print(f"📤 Sending '{email}' to sub-workflow for validation")
-            request = EmailValidationRequest(email=email)
-            await ctx.send_message(request, target_id="email_validator_workflow")
+    async def run(self, email: Email, ctx: WorkflowContext[Email | str, bool]) -> None:
+        """Start the email delivery process.
+
+        This handler receives an Email object. If the recipient has been previously approved,
+        it sends the email object to the next executor to handle delivery. If the recipient
+        has been previously disapproved, it yields False as the final result. Otherwise,
+        it sends the recipient email address to the sub-workflow for validation.
+        """
+        recipient = email.recipient
+        if recipient in self._approved_recipients:
+            print(f"📧 Recipient '{recipient}' has been previously approved.")
+            await ctx.send_message(email)
+            return
+        if recipient in self._disapproved_recipients:
+            print(f"🚫 Blocking email to previously disapproved recipient: '{recipient}'")
+            await ctx.yield_output(False)
+            return
+
+        print(f"🔍 Validating new recipient email address: '{recipient}'")
+        self._pending_emails[recipient] = email
+        await ctx.send_message(recipient)
 
     @handler
-    async def handle_domain_request(
-        self,
-        request: DomainCheckRequest,
-        ctx: WorkflowContext[RequestResponse[DomainCheckRequest, bool] | DomainCheckRequest],
+    async def handler_domain_validation_request(
+        self, request: SubWorkflowRequestMessage, ctx: WorkflowContext[SubWorkflowResponseMessage]
     ) -> None:
-        """Handle requests from sub-workflows."""
-        print(f"🔍 Parent intercepting domain check for: {request.domain}")
+        """Handle requests from the sub-workflow for domain validation.
 
-        if request.domain in self.approved_domains:
-            print(f"✅ Domain '{request.domain}' is pre-approved locally!")
-            # Send response back to sub-workflow
-            response = RequestResponse(data=True, original_request=request, request_id=request.request_id)
-            await ctx.send_message(response, target_id=request.source_executor_id)
-        else:
-            print(f"❓ Domain '{request.domain}' unknown, forwarding to external service...")
-            # Forward to external handler
-            await ctx.send_message(request)
+        Note that the message type must be SubWorkflowRequestMessage to intercept the request. And
+        the response must be sent back using SubWorkflowResponseMessage to route the response
+        back to the sub-workflow.
+        """
+        if not isinstance(request.source_event.data, str):
+            raise TypeError(f"Expected domain string, got {type(request.source_event.data)}")
+        domain = request.source_event.data
+        is_valid = domain in self._approved_domains
+        print(f"🌐 External domain validation for '{domain}': {'valid' if is_valid else 'invalid'}")
+        await ctx.send_message(request.create_response(is_valid), target_id=request.executor_id)
 
     @handler
-    async def collect_result(self, result: ValidationResult, ctx: WorkflowContext) -> None:
-        """Collect validation results. It comes from the sub-workflow yielded output."""
-        status_icon = "✅" if result.is_valid else "❌"
-        print(f"📥 {status_icon} Validation result: {result.email} -> {result.reason}")
-        self._results.append(result)
+    async def handle_validation_result(self, result: SanitizedEmailResult, ctx: WorkflowContext[Email, bool]) -> None:
+        """Handle the email address validation result.
 
-    @property
-    def results(self) -> list[ValidationResult]:
-        """Get the collected validation results."""
-        return self._results
+        This handler receives the validation result from the sub-workflow.
+        If the email address is valid, it adds the recipient to the approved list
+        and sends the email object to the next executor to handle delivery.
+        If the email address is invalid, it adds the recipient to the disapproved list
+        and yields False as the final result.
+        """
+        email = self._pending_emails.pop(result.original)
+        email.recipient = result.sanitized  # Use the sanitized email address
+        if result.is_valid:
+            print(f"✅ Email address '{result.original}' is valid.")
+            self._approved_recipients.add(result.original)
+            await ctx.send_message(email)
+        else:
+            print(f"🚫 Email address '{result.original}' is invalid. Blocking email.")
+            self._disapproved_recipients.add(result.original)
+            await ctx.yield_output(False)
 
 
-async def run_example() -> None:
-    """Run the sub-workflow example."""
-    print("🚀 Setting up sub-workflow with request interception...")
-    print()
+class EmailDelivery(Executor):
+    """Simulates email delivery."""
 
-    # 4. Build the sub-workflow
-    email_validator = EmailValidator()
-    # Match the target_id used in EmailValidator ("email_request_info")
-    request_info = RequestInfoExecutor(id="email_request_info")
+    @handler
+    async def handle(self, email: Email, ctx: WorkflowContext[Never, bool]) -> None:
+        """Simulate sending the email and yield True as the final result."""
+        print(f"📤 Sending email to '{email.recipient}' with subject '{email.subject}'")
+        await asyncio.sleep(1)  # Simulate network delay
+        print(f"✅ Email sent to '{email.recipient}' successfully.")
+        await ctx.yield_output(True)
 
-    validation_workflow = (
-        WorkflowBuilder()
-        .set_start_executor(email_validator)
-        .add_edge(email_validator, request_info)
-        .add_edge(request_info, email_validator)
-        .build()
-    )
 
-    # 5. Build the parent workflow with interception
-    orchestrator = SmartEmailOrchestrator(approved_domains={"example.com", "company.com"})
-    workflow_executor = WorkflowExecutor(validation_workflow, id="email_validator_workflow")
-    # Add a RequestInfoExecutor to handle forwarded external requests
-    main_request_info = RequestInfoExecutor(id="main_request_info")
+async def main() -> None:
+    # A list of approved domains
+    approved_domains = {"example.com", "company.com"}
 
-    main_workflow = (
+    # Create executors in the main workflow
+    orchestrator = SmartEmailOrchestrator(id="smart_email_orchestrator", approved_domains=approved_domains)
+    email_delivery = EmailDelivery(id="email_delivery")
+
+    # Create the sub-workflow for email address validation
+    validation_workflow = build_email_address_validation_workflow()
+    validation_workflow_executor = WorkflowExecutor(validation_workflow, id="email_validation_workflow")
+
+    # Build the main workflow
+    workflow = (
         WorkflowBuilder()
         .set_start_executor(orchestrator)
-        .add_edge(orchestrator, workflow_executor)
-        .add_edge(workflow_executor, orchestrator)  # For ValidationResult collection and request interception
-        # Add edges for external request handling
-        .add_edge(orchestrator, main_request_info)
-        .add_edge(main_request_info, workflow_executor)  # Route external responses to sub-workflow
+        .add_edge(orchestrator, validation_workflow_executor)
+        .add_edge(validation_workflow_executor, orchestrator)
+        .add_edge(orchestrator, email_delivery)
         .build()
     )
 
-    # 6. Prepare test inputs: known domain, unknown domain
     test_emails = [
-        "user@example.com",  # Should be intercepted and approved
-        "admin@company.com",  # Should be intercepted and approved
-        "guest@unknown.org",  # Should be forwarded externally
+        Email(recipient="user1@example.com", subject="Hello User1", body="This is a test email."),
+        Email(recipient=" user2@invalid", subject="Hello User2", body="This is a test email."),
+        Email(recipient="  user3@company.com  ", subject="Hello User3", body="This is a test email."),
+        Email(recipient="user4@unknown.com", subject="Hello User4", body="This is a test email."),
+        # Re-send to an approved recipient
+        Email(recipient="user1@example.com", subject="Hello User1", body="This is a test email."),
+        # Re-send to a disapproved recipient
+        Email(recipient=" user2@invalid", subject="Hello User2", body="This is a test email."),
     ]
 
-    # 7. Run the workflow
-    result = await main_workflow.run(test_emails)
-
-    # 8. Handle any external requests
-    request_events = result.get_request_info_events()
-    if request_events:
-        print(f"\n🌐 Handling {len(request_events)} external request(s)...")
-        for event in request_events:
-            if event.data and hasattr(event.data, "domain"):
-                print(f"🔍 External domain check needed for: {event.data.domain}")
-
-        # Simulate external responses
-        external_responses: dict[str, bool] = {}
-        for event in request_events:
-            # Simulate external domain checking
-            if event.data and hasattr(event.data, "domain"):
-                domain = event.data.domain
-                # Let's say unknown.org is actually approved externally
-                approved = domain == "unknown.org"
-                print(f"🌐 External service response for '{domain}': {'APPROVED' if approved else 'REJECTED'}")
-                external_responses[event.request_id] = approved
-
-        # 9. Send external responses
-        await main_workflow.send_responses(external_responses)
-    else:
-        print("\n🎯 All requests were intercepted and handled locally!")
-
-    # 10. Display final summary
-    print("\n📊 Final Results Summary:")
-    print("=" * 60)
-    for result in orchestrator.results:
-        status = "✅ VALID" if result.is_valid else "❌ INVALID"
-        print(f"{status} {result.email}: {result.reason}")
-
-    print(f"\n🏁 Processed {len(orchestrator.results)} emails total")
+    # Execute the workflow
+    for email in test_emails:
+        print(f"\n🚀 Processing email to '{email.recipient}'")
+        async for event in workflow.run_stream(email):
+            if isinstance(event, WorkflowOutputEvent):
+                print(f"🎉 Final result for '{email.recipient}': {'Delivered' if event.data else 'Blocked'}")
 
 
 if __name__ == "__main__":
-    asyncio.run(run_example())
+    asyncio.run(main())

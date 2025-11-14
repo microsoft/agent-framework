@@ -8,7 +8,6 @@ import pytest
 from agent_framework import (
     EdgeDuplicationError,
     Executor,
-    ExecutorDuplicationError,
     GraphConnectivityError,
     TypeCompatibilityError,
     ValidationTypeEnum,
@@ -83,11 +82,10 @@ def test_duplicate_executor_ids_fail_validation():
     executor1 = StringExecutor(id="dup")
     executor2 = IntExecutor(id="dup")
 
-    with pytest.raises(ExecutorDuplicationError) as exc_info:
+    with pytest.raises(ValueError) as exc_info:
         (WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor1).build())
 
-    assert exc_info.value.executor_id == "dup"
-    assert exc_info.value.validation_type == ValidationTypeEnum.EXECUTOR_DUPLICATION
+    assert str(exc_info.value) == "Duplicate executor ID 'dup' detected in workflow."
 
 
 def test_edge_duplication_validation_fails():
@@ -185,7 +183,7 @@ def test_graph_connectivity_isolated_executors():
     assert "executor3" in str(exc_info.value)
 
 
-def test_start_executor_not_in_graph():
+def test_disconnected_start_executor_not_in_graph():
     executor1 = StringExecutor(id="executor1")
     executor2 = StringExecutor(id="executor2")
     executor3 = StringExecutor(id="executor3")  # Not in graph
@@ -193,7 +191,7 @@ def test_start_executor_not_in_graph():
     with pytest.raises(GraphConnectivityError) as exc_info:
         WorkflowBuilder().add_edge(executor1, executor2).set_start_executor(executor3).build()
 
-    assert "not present in the workflow graph" in str(exc_info.value)
+    assert "The following executors are unreachable from the start executor 'executor3'" in str(exc_info.value)
 
 
 def test_missing_start_executor():
@@ -387,28 +385,6 @@ def test_dead_end_detection(caplog: Any) -> None:
     assert "Verify these are intended as final nodes" in caplog.text
 
 
-def test_cycle_detection_warning(caplog: Any) -> None:
-    caplog.set_level(logging.WARNING)
-
-    executor1 = StringExecutor(id="executor1")
-    executor2 = StringExecutor(id="executor2")
-    executor3 = StringExecutor(id="executor3")
-
-    # Create a cycle: executor1 -> executor2 -> executor3 -> executor1
-    workflow = (
-        WorkflowBuilder()
-        .add_edge(executor1, executor2)
-        .add_edge(executor2, executor3)
-        .add_edge(executor3, executor1)
-        .set_start_executor(executor1)
-        .build()
-    )
-
-    assert workflow is not None
-    assert "Cycle detected in the workflow graph" in caplog.text
-    assert "Ensure termination or iteration limits exist" in caplog.text
-
-
 def test_successful_type_compatibility_logging(caplog: Any) -> None:
     caplog.set_level(logging.DEBUG)
 
@@ -420,51 +396,6 @@ def test_successful_type_compatibility_logging(caplog: Any) -> None:
     assert workflow is not None
     assert "Type compatibility validated for edge" in caplog.text
     assert "Compatible type pairs" in caplog.text
-
-
-def test_complex_cycle_detection(caplog: Any) -> None:
-    caplog.set_level(logging.WARNING)
-
-    # Create a more complex graph with multiple cycles
-    executor1 = StringExecutor(id="executor1")
-    executor2 = StringExecutor(id="executor2")
-    executor3 = StringExecutor(id="executor3")
-    executor4 = StringExecutor(id="executor4")
-
-    # Create multiple paths and cycles
-    workflow = (
-        WorkflowBuilder()
-        .add_edge(executor1, executor2)
-        .add_edge(executor2, executor3)
-        .add_edge(executor3, executor4)
-        .add_edge(executor4, executor2)  # Creates cycle: executor2 -> executor3 -> executor4 -> executor2
-        .set_start_executor(executor1)
-        .build()
-    )
-
-    assert workflow is not None
-    assert "Cycle detected in the workflow graph" in caplog.text
-
-
-def test_no_cycles_in_simple_chain(caplog: Any) -> None:
-    caplog.set_level(logging.WARNING)
-
-    executor1 = StringExecutor(id="executor1")
-    executor2 = StringExecutor(id="executor2")
-    executor3 = StringExecutor(id="executor3")
-
-    # Simple chain without cycles
-    workflow = (
-        WorkflowBuilder()
-        .add_edge(executor1, executor2)
-        .add_edge(executor2, executor3)
-        .set_start_executor(executor1)
-        .build()
-    )
-
-    assert workflow is not None
-    # Should not log cycle detection
-    assert "Cycle detected" not in caplog.text
 
 
 def test_multiple_dead_ends_detection(caplog: Any) -> None:
