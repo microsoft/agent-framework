@@ -20,7 +20,6 @@ public sealed class AgentNotRegisteredException : InvalidOperationException
     public AgentNotRegisteredException(string agentName)
         : base(GetMessage(agentName))
     {
-        ArgumentException.ThrowIfNullOrEmpty(agentName);
         this.AgentName = agentName;
     }
 
@@ -32,7 +31,6 @@ public sealed class AgentNotRegisteredException : InvalidOperationException
     public AgentNotRegisteredException(string agentName, Exception? innerException)
         : base(GetMessage(agentName), innerException)
     {
-        ArgumentException.ThrowIfNullOrEmpty(agentName);
         this.AgentName = agentName;
     }
 
@@ -43,6 +41,7 @@ public sealed class AgentNotRegisteredException : InvalidOperationException
 
     private static string GetMessage(string agentName)
     {
+        ArgumentException.ThrowIfNullOrEmpty(agentName);
         return $"No agent named '{agentName}' was registered. Ensure the agent is registered using {nameof(ServiceCollectionExtensions.ConfigureDurableAgents)} before using it in an orchestration.";
     }
 }
