@@ -10,6 +10,9 @@ from azure.identity.aio import AzureCliCredential
 The following sample demonstrates how to create an Azure AI agent that
 uses Bing Custom Search to find real-time information from the web.
 
+More information on Bing Custom Search and difference from Bing Grounding can be found here:
+https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/bing-custom-search
+
 Prerequisites:
 1. A connected Grounding with Bing Custom Search resource in your Azure AI project
 2. Set BING_CUSTOM_CONNECTION_ID environment variable
@@ -21,7 +24,7 @@ To set up Bing Custom Search:
 1. Go to Azure AI Foundry portal (https://ai.azure.com)
 2. Navigate to your project's "Connected resources" section
 3. Add a new connection for "Grounding with Bing Custom Search"
-4. Copy either the connection ID and instance name and set the appropriate environment variables
+4. Copy the connection ID and instance name and set the appropriate environment variables
 """
 
 
@@ -47,7 +50,7 @@ async def main() -> None:
             tools=bing_search_tool,
         ) as agent,
     ):
-        # 4. Demonstrate agent capabilities with bing custom search
+        # 3. Demonstrate agent capabilities with bing custom search
         print("=== Azure AI Agent with Bing Custom Search ===\n")
 
         user_input = "Tell me more about foundry agent service"
