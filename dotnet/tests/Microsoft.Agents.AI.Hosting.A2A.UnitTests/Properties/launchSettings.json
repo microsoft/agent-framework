@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Microsoft.Agents.AI.Hosting.A2A.UnitTests": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:55034;http://localhost:55035"
+    }
+  }
+}

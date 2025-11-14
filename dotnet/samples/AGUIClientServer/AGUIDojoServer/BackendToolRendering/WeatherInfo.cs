@@ -1,8 +1,8 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
-namespace AGUIDojoServer;
+namespace AGUIDojoServer.BackendToolRendering;
 
 internal sealed class WeatherInfo
 {
