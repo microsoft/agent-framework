@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// Represents an exception that is thrown when the maximum number of concurrent Purview jobs has been exceeded.

@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
-using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;

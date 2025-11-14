@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// Represents errors that occur during the execution of a Purview job.

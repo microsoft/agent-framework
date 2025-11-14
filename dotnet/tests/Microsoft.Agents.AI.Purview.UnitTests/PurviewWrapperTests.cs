@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;

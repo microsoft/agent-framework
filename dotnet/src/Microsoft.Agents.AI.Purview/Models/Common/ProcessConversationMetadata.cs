@@ -36,11 +36,11 @@ internal sealed class ProcessConversationMetadata : ProcessContentMetadataBase
     /// Gets or sets the plugins used during message generation for bot messages.
     /// </summary>
     [JsonPropertyName("plugins")]
-    public List<AiInteractionPlugin>? Plugins { get; set; }
+    public List<AIInteractionPlugin>? Plugins { get; set; }
 
     /// <summary>
     /// Gets or sets the collection of AI agent information.
     /// </summary>
     [JsonPropertyName("agents")]
-    public List<AiAgentInfo>? Agents { get; set; }
+    public List<AIAgentInfo>? Agents { get; set; }
 }

@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 /// <summary>
 /// Info about an AI agent associated with the content.
 /// </summary>
-internal sealed class AiAgentInfo
+internal sealed class AIAgentInfo
 {
     /// <summary>
     /// Gets or sets agent id.

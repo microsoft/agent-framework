@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// Exception for rate limit exceeded errors from Purview service.

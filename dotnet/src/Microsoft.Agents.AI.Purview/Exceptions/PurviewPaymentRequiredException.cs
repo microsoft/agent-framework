@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// Exception for payment required errors related to Purview.

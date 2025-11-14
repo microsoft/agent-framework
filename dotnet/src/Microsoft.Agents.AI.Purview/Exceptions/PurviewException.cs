@@ -2,7 +2,7 @@
 
 using System;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// General base exception type for Purview service errors.

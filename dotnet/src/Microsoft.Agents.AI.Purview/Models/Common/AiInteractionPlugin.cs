@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Purview.Models.Common;
 /// <summary>
 /// Represents a plugin used in an AI interaction within the Purview SDK.
 /// </summary>
-internal sealed class AiInteractionPlugin
+internal sealed class AIInteractionPlugin
 {
     /// <summary>
     /// Gets or sets Plugin id.

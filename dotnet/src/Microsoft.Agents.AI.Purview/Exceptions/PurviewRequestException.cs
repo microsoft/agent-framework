@@ -3,7 +3,7 @@
 using System;
 using System.Net;
 
-namespace Microsoft.Agents.AI.Purview.Exceptions;
+namespace Microsoft.Agents.AI.Purview;
 
 /// <summary>
 /// Exception for general http request errors from Purview.

@@ -3,7 +3,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Purview.Exceptions;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;

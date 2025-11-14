@@ -92,7 +92,7 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
   </Folder>
   <Folder Name="/Samples/Purview/AgentWithPurview/">
-    <Project Path="samples/Purview/AgentWithPurview/AgentWithPurview.csproj" Id="36a59e99-ac83-4a35-b5ae-8b60f009dc1e" />
+    <Project Path="samples/Purview/AgentWithPurview/AgentWithPurview.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
     <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
@@ -313,7 +313,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" Id="e2fa3f42-2062-44cc-9329-0d7899ce8578" />
+    <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
