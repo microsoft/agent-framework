@@ -9,9 +9,11 @@ metadata:
   authors:
     - Microsoft Agent Framework Team
   tags:
+    - Azure AI AgentServer
     - Microsoft Agent Framework
     - Model Context Protocol
     - MCP
+    - Tool Call Approval
 template:
   kind: hosted
   name: AgentWithHostedMCP
