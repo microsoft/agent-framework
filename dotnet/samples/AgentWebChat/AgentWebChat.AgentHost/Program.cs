@@ -22,7 +22,8 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.Services.AddDevUI();
+// Add DevUI services
+builder.AddDevUI();
 
 // Add OpenAI services
 builder.AddOpenAIChatCompletions();

@@ -28,7 +28,7 @@ internal static class EntitiesApiExtensions
     /// </remarks>
     public static IEndpointConventionBuilder MapEntities(this IEndpointRouteBuilder endpoints)
     {
-        var registeredAIAgents = ResolveRegisteredAgents(endpoints.ServiceProvider);
+        var registeredAIAgents = endpoints.ServiceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey);
         var registeredWorkflows = endpoints.ServiceProvider.GetKeyedServices<Workflow>(KeyedService.AnyKey);
 
         var group = endpoints.MapGroup("/v1/entities")
@@ -289,16 +289,5 @@ internal static class EntitiesApiExtensions
             InputTypeName = "string",
             StartExecutorId = workflow.StartExecutorId
         };
-    }
-
-    private static IEnumerable<AIAgent> ResolveRegisteredAgents(IServiceProvider serviceProvider)
-    {
-        var agentsProvider = serviceProvider.GetService<RegisteredAgentsProvider>();
-        if (agentsProvider != null)
-        {
-            return agentsProvider.ResolveAgents();
-        }
-
-        return serviceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey);
     }
 }

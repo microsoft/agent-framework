@@ -12,6 +12,10 @@
     <NoWarn>$(NoWarn);CS1591;CA1852;CA1050;RCS1037;RCS1036;RCS1124;RCS1021;RCS1146;RCS1211;CA2007;CA1308;IL2026;IL3050;CA1812</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
   <!-- Import nuget packaging properties -->
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
