@@ -27,8 +27,8 @@ async def main() -> None:
             You can answer questions, provide information, and assist with various tasks
             related to web browsing using the Browser Automation tool available to you.""",
             tools={
-                "type": "browser_automation",
-                "browser_automation": {
+                "type": "browser_automation_preview",
+                "browser_automation_preview": {
                     "connection": {
                         "project_connection_id": os.environ["BROWSER_AUTOMATION_PROJECT_CONNECTION_ID"],
                     }

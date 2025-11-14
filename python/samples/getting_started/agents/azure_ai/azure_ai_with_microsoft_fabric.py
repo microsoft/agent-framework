@@ -25,8 +25,8 @@ async def main() -> None:
             name="MyFabricAgent",
             instructions="You are a helpful assistant.",
             tools={
-                "type": "microsoft_fabric",
-                "microsoft_fabric": {
+                "type": "fabric_dataagent_preview",
+                "fabric_dataagent_preview": {
                     "project_connections": [
                         {
                             "project_connection_id": os.environ["FABRIC_PROJECT_CONNECTION_ID"],
