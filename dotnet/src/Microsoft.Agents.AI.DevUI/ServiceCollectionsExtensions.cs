@@ -15,9 +15,11 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
     /// </summary>
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
-    public static void AddDevUI(this IServiceCollection services)
+    public static IServiceCollection AddDevUI(this IServiceCollection services)
     {
-        // a factory, that tries to construct an AIAgent from Workflow,
+        ArgumentNullException.ThrowIfNull(services);
+
+        // a factory that tries to construct an AIAgent from Workflow,
         // even if workflow was not explicitly registered as an AIAgent.
         services.AddKeyedSingleton(KeyedService.AnyKey, (sp, key) =>
         {
@@ -32,5 +34,7 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
 
             return workflow.AsAgent(name: workflow.Name);
         });
+
+        return services;
     }
 }

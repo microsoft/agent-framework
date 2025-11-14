@@ -66,7 +66,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
                 Message = $"""
                     Agent '{agentName}' not found.
                     Ensure the agent is registered with '{agentName}' name in the dependency injection container.
-                    We recommend using `builder.AddAIAgent()` for simplicity.
+                    We recommend using 'builder.AddAIAgent()' for simplicity.
                 """
             });
         }

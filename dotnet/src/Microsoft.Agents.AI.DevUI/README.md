@@ -24,7 +24,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Register your agents
 builder.AddAIAgent("assistant", "You are a helpful assistant.");
 
-// Register DevIU services
+// Register DevUI services
 if (builder.Environment.IsDevelopment())
 {
     builder.AddDevUI();
