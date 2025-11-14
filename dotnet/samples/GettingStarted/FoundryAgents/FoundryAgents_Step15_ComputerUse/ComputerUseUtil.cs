@@ -7,7 +7,7 @@ namespace Demo.ComputerUse;
 /// <summary>
 /// Enum for tracking the state of the simulated web search flow.
 /// </summary>
-public enum SearchState
+internal enum SearchState
 {
     Initial,        // Browser search page
     Typed,          // Text entered in search box

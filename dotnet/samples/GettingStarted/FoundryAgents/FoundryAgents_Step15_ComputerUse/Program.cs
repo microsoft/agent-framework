@@ -28,7 +28,7 @@ internal sealed class Program
         const string AgentNameMEAI = "ComputerAgent-MEAI";
         const string AgentNameNative = "ComputerAgent-NATIVE";
 
-        // Option 1 - Using HostedCodeInterpreterTool + AgentOptions (MEAI + AgentFramework)
+        // Option 1 - Using ComputerUseTool + AgentOptions (MEAI + AgentFramework)
         // Create AIAgent directly
         AIAgent agentOption1 = await agentClient.CreateAIAgentAsync(
             name: AgentNameMEAI,
