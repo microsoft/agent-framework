@@ -85,6 +85,7 @@ class AgentFrameworkEventBridge:
         self.input_messages = input_messages or []
         self.pending_tool_calls: list[dict[str, Any]] = []  # Track tool calls for assistant message
         self.tool_results: list[dict[str, Any]] = []  # Track tool results
+        self.tool_calls_ended: set[str] = set()  # Track which tool calls have had ToolCallEndEvent emitted
 
     async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
         """
@@ -118,12 +119,14 @@ class AgentFrameworkEventBridge:
                         message_id=self.current_message_id,
                         role="assistant",
                     )
+                    logger.debug(f"Emitting TextMessageStartEvent with message_id={self.current_message_id}")
                     events.append(start_event)
 
                 event = TextMessageContentEvent(
                     message_id=self.current_message_id,
                     delta=content.text,
                 )
+                logger.debug(f"Emitting TextMessageContentEvent with delta: {content.text}")
                 events.append(event)
 
             elif isinstance(content, FunctionCallContent):
@@ -378,6 +381,7 @@ class AgentFrameworkEventBridge:
                     )
                     logger.info(f"Emitting ToolCallEndEvent for completed tool call '{content.call_id}'")
                     events.append(end_event)
+                    self.tool_calls_ended.add(content.call_id)  # Track that we emitted end event
 
                     # Log total StateDeltaEvent count for this tool call
                     if self.state_delta_count > 0:
@@ -617,6 +621,7 @@ class AgentFrameworkEventBridge:
                         f"Emitting ToolCallEndEvent for approval-required tool '{content.function_call.call_id}'"
                     )
                     events.append(end_event)
+                    self.tool_calls_ended.add(content.function_call.call_id)  # Track that we emitted end event
 
                 # Emit custom event for approval request
                 # Note: In AG-UI protocol, the frontend handles interrupts automatically

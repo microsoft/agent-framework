@@ -16,11 +16,11 @@ import azure.functions as func
 from agent_framework import AgentProtocol, get_logger
 
 from ._callbacks import AgentResponseCallbackProtocol
-from ._durable_agent_state import DurableAgentState
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._models import AgentSessionId, RunRequest
 from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
+from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -33,6 +33,9 @@ WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+DEFAULT_MAX_POLL_RETRIES: int = 30
+DEFAULT_POLL_INTERVAL_SECONDS: float = 1.0
 
 if TYPE_CHECKING:
 
@@ -70,17 +73,16 @@ class AgentFunctionApp(DFAppBase):
 
     .. code-block:: python
 
-        from agent_framework.azure import AgentFunctionApp
-        from agent_framework.azure import AzureOpenAIAssistantsClient
+        from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIAssistantsClient(...).create_agent(
+        weather_agent = AzureOpenAIChatClient(...).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIAssistantsClient(...).create_agent(
+        math_agent = AzureOpenAIChatClient(...).create_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -128,23 +130,23 @@ class AgentFunctionApp(DFAppBase):
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
-        max_poll_retries: int = 30,
-        poll_interval_seconds: float = 1,
+        max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
 
-        Args:
-            agents: List of agent instances to register
-            http_auth_level: HTTP authentication level (default: FUNCTION)
-            enable_health_check: Enable built-in health check endpoint (default: True)
-            enable_http_endpoints: Enable HTTP endpoints for agents (default: True)
-            max_poll_retries: Maximum number of polling attempts when waiting for a response
-            poll_interval_seconds: Delay (in seconds) between polling attempts
-            default_callback: Optional callback invoked for agents without specific callbacks
+        :param agents: List of agent instances to register.
+        :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
+        :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
+        :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
+        :param max_poll_retries: Maximum polling attempts when waiting for a response.
+            Defaults to ``DEFAULT_MAX_POLL_RETRIES``.
+        :param poll_interval_seconds: Delay in seconds between polling attempts.
+            Defaults to ``DEFAULT_POLL_INTERVAL_SECONDS``.
+        :param default_callback: Optional callback invoked for agents without specific callbacks.
 
-        Note:
-            If no agents are provided, they can be added later using add_agent().
+        :note: If no agents are provided, they can be added later using :meth:`add_agent`.
         """
         logger.debug("[AgentFunctionApp] Initializing with Durable Entities...")
 
@@ -161,14 +163,14 @@ class AgentFunctionApp(DFAppBase):
         try:
             retries = int(max_poll_retries)
         except (TypeError, ValueError):
-            retries = 10
+            retries = DEFAULT_MAX_POLL_RETRIES
         self.max_poll_retries = max(1, retries)
 
         try:
             interval = float(poll_interval_seconds)
         except (TypeError, ValueError):
-            interval = 0.5
-        self.poll_interval_seconds = interval if interval > 0 else 0.5
+            interval = DEFAULT_POLL_INTERVAL_SECONDS
+        self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
         if agents:
             # Register all provided agents
@@ -350,13 +352,12 @@ class AgentFunctionApp(DFAppBase):
                     thread_id,
                     correlation_id,
                 )
-                logger.info("Signalling entity %s with request: %s", entity_instance_id, run_request)
+                logger.debug("Signalling entity %s with request: %s", entity_instance_id, run_request)
                 await client.signal_entity(entity_instance_id, "run_agent", run_request)
 
-                logger.info(f"[HTTP Trigger] Signal sent to entity {session_id}. This is wait_for_response: {wait_for_response}")
+                logger.debug(f"[HTTP Trigger] Signal sent to entity {session_id}")
 
                 if wait_for_response:
-                    logger.info("[HTTP Trigger] wait_for_response enabled; polling for result...")
                     result = await self._get_response_from_entity(
                         client=client,
                         entity_instance_id=entity_instance_id,
@@ -365,7 +366,7 @@ class AgentFunctionApp(DFAppBase):
                         thread_id=thread_id,
                     )
 
-                    logger.info(f"[HTTP Trigger] Result status: {result.get('status', 'unknown')}")
+                    logger.debug(f"[HTTP Trigger] Result status: {result.get('status', 'unknown')}")
                     return self._create_http_response(
                         payload=result,
                         status_code=200 if result.get("status") == "success" else 500,
@@ -373,7 +374,7 @@ class AgentFunctionApp(DFAppBase):
                         thread_id=thread_id,
                     )
 
-                logger.info("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
+                logger.debug("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
 
                 accepted_response = self._build_accepted_response(
                     message=message, thread_id=thread_id, correlation_id=correlation_id
@@ -490,7 +491,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         client: df.DurableOrchestrationClient,
         entity_instance_id: df.EntityId,
-    ) -> DurableAgentState | None:
+    ) -> AgentState | None:
         state_response = await client.read_entity_state(entity_instance_id)
         if not state_response or not state_response.entity_exists:
             return None
@@ -501,7 +502,7 @@ class AgentFunctionApp(DFAppBase):
 
         typed_state_payload = cast(dict[str, Any], state_payload)
 
-        agent_state = DurableAgentState()
+        agent_state = AgentState()
         agent_state.restore_state(typed_state_payload)
         return agent_state
 
@@ -514,56 +515,39 @@ class AgentFunctionApp(DFAppBase):
         thread_id: str,
     ) -> dict[str, Any]:
         """Poll the entity state until a response is available or timeout occurs."""
-        try:
-            import asyncio
+        import asyncio
 
-            max_retries = self.max_poll_retries
-            interval = self.poll_interval_seconds
-            retry_count = 0
-            result: dict[str, Any] | None = None
+        max_retries = self.max_poll_retries
+        interval = self.poll_interval_seconds
+        retry_count = 0
+        result: dict[str, Any] | None = None
 
-            logger.info(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
+        logger.debug(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
 
-            while retry_count < max_retries:
-                import time
-                logger.info("Sleeping for %.2f seconds before next poll...", interval)
-                time.sleep(interval)
-                logger.info("Polling for response (attempt %d/%d)...", retry_count, max_retries)
+        while retry_count < max_retries:
+            await asyncio.sleep(interval)
 
-                result = await self._poll_entity_for_response(
-                    client=client,
-                    entity_instance_id=entity_instance_id,
-                    correlation_id=correlation_id,
-                    message=message,
-                    thread_id=thread_id,
-                )
-                logger.info("This is our poll result: %s", result)
-                if result is not None:
-                    logger.info(f"[HTTP Trigger] Response found on attempt {retry_count}")
-                    break
-
-                logger.info(f"[HTTP Trigger] Response not available yet (retry {retry_count})")
-                retry_count += 1
-
-            logger.info("Breaking out of our polling loop...")
-            if result is not None:
-                logger.info(f"[HTTP Trigger] Response received for correlation ID: {correlation_id}")
-                return result
-
-            logger.info(
-                f"[HTTP Trigger] Response with correlation ID {correlation_id} "
-                f"not found in time (waited {max_retries * interval} seconds)"
+            result = await self._poll_entity_for_response(
+                client=client,
+                entity_instance_id=entity_instance_id,
+                correlation_id=correlation_id,
+                message=message,
+                thread_id=thread_id,
             )
-            return await self._build_timeout_result(message=message, thread_id=thread_id, correlation_id=correlation_id)
-        except Exception as exc:
-            logger.error(f"[HTTP Trigger] Error while polling for response: {exc!s}", exc_info=True)
-            return {
-                "error": str(exc),
-                "message": message,
-                THREAD_ID_FIELD: thread_id,
-                "status": "error",
-                "correlation_id": correlation_id,
-            }  
+            if result is not None:
+                break
+
+            logger.debug(f"[HTTP Trigger] Response not available yet (retry {retry_count})")
+            retry_count += 1
+
+        if result is not None:
+            return result
+
+        logger.warning(
+            f"[HTTP Trigger] Response with correlation ID {correlation_id} "
+            f"not found in time (waited {max_retries * interval} seconds)"
+        )
+        return await self._build_timeout_result(message=message, thread_id=thread_id, correlation_id=correlation_id)
 
     async def _poll_entity_for_response(
         self,
@@ -575,17 +559,12 @@ class AgentFunctionApp(DFAppBase):
     ) -> dict[str, Any] | None:
         result: dict[str, Any] | None = None
         try:
-            logger.info(f"[HTTP Trigger] Reading entity state for {entity_instance_id}...")
             state = await self._read_cached_state(client, entity_instance_id)
-            logger.info(f"[HTTP Trigger] Entity state read complete for {entity_instance_id}")
 
             if state is None:
-                logger.info(f"[HTTP Trigger] No state found for entity {entity_instance_id}")
                 return None
 
-            logger.info(f"[HTTP Trigger] Checking for response with correlation ID: {correlation_id}")
             agent_response = state.try_get_agent_response(correlation_id)
-            logger.info(f"[HTTP Trigger] Agent response: {agent_response}")
             if agent_response:
                 result = self._build_success_result(
                     response_data=agent_response,
@@ -594,12 +573,11 @@ class AgentFunctionApp(DFAppBase):
                     correlation_id=correlation_id,
                     state=state,
                 )
-                logger.info(f"[HTTP Trigger] Found response for correlation ID: {correlation_id}")
+                logger.debug(f"[HTTP Trigger] Found response for correlation ID: {correlation_id}")
 
         except Exception as exc:
             logger.warning(f"[HTTP Trigger] Error reading entity state: {exc}")
 
-        logger.info(f"[HTTP Trigger] Returning poll result: {result}")
         return result
 
     async def _build_timeout_result(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:
@@ -613,7 +591,7 @@ class AgentFunctionApp(DFAppBase):
         }
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
+        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: AgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return {
@@ -734,7 +712,8 @@ class AgentFunctionApp(DFAppBase):
         headers: dict[str, str] = {}
         raw_headers = req.headers
         if isinstance(raw_headers, Mapping):
-            for key, value in raw_headers.items():
+            header_mapping: Mapping[str, Any] = cast(Mapping[str, Any], raw_headers)
+            for key, value in header_mapping.items():
                 if value is not None:
                     headers[str(key).lower()] = str(value)
         return headers
@@ -795,13 +774,8 @@ class AgentFunctionApp(DFAppBase):
 
     def _should_wait_for_response(self, req: func.HttpRequest, req_body: dict[str, Any]) -> bool:
         """Determine whether the caller requested to wait for the response."""
-        header_value = None
-        raw_headers = req.headers
-        if isinstance(raw_headers, Mapping):
-            for key, value in raw_headers.items():
-                if str(key).lower() == WAIT_FOR_RESPONSE_HEADER:
-                    header_value = value
-                    break
+        headers: dict[str, str] = self._extract_normalized_headers(req)
+        header_value: str | None = headers.get(WAIT_FOR_RESPONSE_HEADER)
 
         if header_value is not None:
             return self._coerce_to_bool(header_value)

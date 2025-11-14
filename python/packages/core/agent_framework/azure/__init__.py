@@ -9,6 +9,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentFunctionApp": ("agent_framework_azurefunctions", "azurefunctions"),
     "AgentResponseCallbackProtocol": ("agent_framework_azurefunctions", "azurefunctions"),
     "AzureAIAgentClient": ("agent_framework_azure_ai", "azure-ai"),
+    "AzureAIClient": ("agent_framework_azure_ai", "azure-ai"),
     "AzureOpenAIAssistantsClient": ("agent_framework.azure._assistants_client", "core"),
     "AzureOpenAIChatClient": ("agent_framework.azure._chat_client", "core"),
     "AzureAISettings": ("agent_framework_azure_ai", "azure-ai"),

@@ -261,6 +261,27 @@ def test_executor_parse_stringified_json_workflow_input():
     assert parsed.metadata == {"key": "value"}
 
 
+def test_extract_workflow_hil_responses_handles_stringified_json():
+    """Test HIL response extraction handles both stringified and parsed JSON (regression test)."""
+    from agent_framework_devui._discovery import EntityDiscovery
+    from agent_framework_devui._executor import AgentFrameworkExecutor
+    from agent_framework_devui._mapper import MessageMapper
+
+    executor = AgentFrameworkExecutor(EntityDiscovery(None), MessageMapper())
+
+    # Regression test: Frontend sends stringified JSON via streamWorkflowExecutionOpenAI
+    stringified = '[{"type":"message","content":[{"type":"workflow_hil_response","responses":{"req_1":"spam"}}]}]'
+    assert executor._extract_workflow_hil_responses(stringified) == {"req_1": "spam"}
+
+    # Ensure parsed format still works
+    parsed = [{"type": "message", "content": [{"type": "workflow_hil_response", "responses": {"req_2": "ham"}}]}]
+    assert executor._extract_workflow_hil_responses(parsed) == {"req_2": "ham"}
+
+    # Non-HIL inputs should return None
+    assert executor._extract_workflow_hil_responses("plain text") is None
+    assert executor._extract_workflow_hil_responses({"email": "test"}) is None
+
+
 async def test_executor_handles_non_streaming_agent():
     """Test executor can handle agents with only run() method (no run_stream)."""
     from agent_framework import AgentRunResponse, AgentThread, ChatMessage, Role, TextContent
