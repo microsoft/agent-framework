@@ -69,16 +69,7 @@ internal sealed class Program
     private static async Task InvokeComputerUseAgentAsync(AIAgent agent)
     {
         // Load screenshot assets
-        Dictionary<string, byte[]> screenshots;
-        try
-        {
-            screenshots = ComputerUseUtil.LoadScreenshotAssets();
-        }
-        catch (FileNotFoundException)
-        {
-            Console.WriteLine("Failed to load required screenshot assets. Please ensure the asset files exist in ../assets/");
-            return;
-        }
+        Dictionary<string, byte[]> screenshots = ComputerUseUtil.LoadScreenshotAssets();
 
         ChatOptions chatOptions = new();
         ResponseCreationOptions responseCreationOptions = new()
@@ -179,7 +170,7 @@ internal sealed class Program
 
             // Follow-up message with action result and new screenshot
             message = new(ChatRole.User, [content]);
-            runResponse = await agent.RunAsync(message, options: runOptions);
+            runResponse = await agent.RunAsync(message, thread: thread, options: runOptions);
         }
     }
 }
