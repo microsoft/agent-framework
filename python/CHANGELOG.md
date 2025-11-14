@@ -269,4 +269,3 @@ For more information, see the [announcement blog post](https://devblogs.microsof
 [1.0.0b251007]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251001...python-1.0.0b251007
 [1.0.0b251001]: https://github.com/microsoft/agent-framework/releases/tag/python-1.0.0b251001
 
-<!-- markdownlint-enable MD024 -->
