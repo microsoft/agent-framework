@@ -343,7 +343,7 @@ class TestAgentEntityOperations:
         assert result["thread_id"] == "test-conv-123"
         assert entity.state.messageCount == 1
 
-    async def test_entity_stores_conversationHistory(self) -> None:
+    async def test_entity_stores_conversation_history(self) -> None:
         """Test that the entity stores conversation history."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
@@ -379,7 +379,7 @@ class TestAgentEntityOperations:
         assert assistant_role == "assistant"
         assert assistant_msg.text == "Response 1"
 
-    async def test_entity_increments_messageCount(self) -> None:
+    async def test_entity_increments_message_count(self) -> None:
         """Test that the entity increments the message count."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(

@@ -38,22 +38,69 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
     """
     result: list[ChatMessage] = []
     for msg in messages:
-        # Check for backend tool rendering results FIRST (may not have role field)
-        if "actionExecutionId" in msg or "actionName" in msg:
-            # Backend tool rendering - convert to FunctionResultContent
-            from agent_framework import FunctionResultContent
+        # Handle standard tool result messages early (role="tool") to preserve provider invariants
+        # This path maps AG‑UI tool messages to FunctionResultContent with the correct tool_call_id
+        role_str = msg.get("role", "user")
+        if role_str == "tool":
+            # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
+            tool_call_id = msg.get("tool_call_id") or msg.get("toolCallId")
 
-            tool_call_id = msg.get("actionExecutionId", "")
+            # If no explicit tool_call_id, treat as backend tool rendering payloads where
+            # AG‑UI may send actionExecutionId/actionName. This must still map to the
+            # assistant's tool call id to satisfy provider requirements.
+            if not tool_call_id:
+                tool_call_id = msg.get("actionExecutionId") or ""
+
+            # Extract raw content text
+            result_content = msg.get("content")
+            if result_content is None:
+                result_content = msg.get("result", "")
+
+            # Distinguish approval payloads from actual tool results
+            is_approval = False
+            if isinstance(result_content, str) and result_content:
+                import json as _json
+
+                try:
+                    parsed = _json.loads(result_content)
+                    is_approval = isinstance(parsed, dict) and "accepted" in parsed
+                except Exception:
+                    is_approval = False
+
+            if is_approval:
+                # Approval responses should be treated as user messages to trigger human-in-the-loop flow
+                chat_msg = ChatMessage(
+                    role=Role.USER,
+                    contents=[TextContent(text=str(result_content))],
+                    additional_properties={"is_tool_result": True, "tool_call_id": str(tool_call_id or "")},
+                )
+                if "id" in msg:
+                    chat_msg.message_id = msg["id"]
+                result.append(chat_msg)
+                continue
+
+            chat_msg = ChatMessage(
+                role=Role.TOOL,
+                contents=[FunctionResultContent(call_id=str(tool_call_id), result=result_content)],
+            )
+            if "id" in msg:
+                chat_msg.message_id = msg["id"]
+            result.append(chat_msg)
+            continue
+
+        # Backend tool rendering payloads without an explicit role
+        # Prefer standard tool mapping above; this block only covers legacy/minimal payloads
+        if "actionExecutionId" in msg or "actionName" in msg:
+            # Prefer toolCallId if present; otherwise fall back to actionExecutionId
+            tool_call_id = msg.get("toolCallId") or msg.get("tool_call_id") or msg.get("actionExecutionId", "")
             result_content = msg.get("result", msg.get("content", ""))
 
             chat_msg = ChatMessage(
-                role=Role.TOOL,  # Tool results must be tool role
-                contents=[FunctionResultContent(call_id=tool_call_id, result=result_content)],
+                role=Role.TOOL,
+                contents=[FunctionResultContent(call_id=str(tool_call_id), result=result_content)],
             )
-
             if "id" in msg:
                 chat_msg.message_id = msg["id"]
-
             result.append(chat_msg)
             continue
 
@@ -93,55 +140,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             result.append(chat_msg)
             continue
 
-        role_str = msg.get("role", "user")
-
-        # Handle tool result messages (with role="tool")
-        if role_str == "tool":
-            # Check if this is a standard tool result (has tool_call_id or toolCallId)
-            tool_call_id = msg.get("tool_call_id") or msg.get("toolCallId")
-            result_content = msg.get("content", "")
-
-            # Distinguish between backend tool results and approval responses
-            # Approval responses have {"accepted": ...} structure
-            is_approval = False
-            if result_content:
-                import json
-
-                try:
-                    parsed_content = json.loads(result_content)
-                    is_approval = "accepted" in parsed_content
-                except (json.JSONDecodeError, TypeError):
-                    is_approval = False
-
-            # Backend tool results have non-empty content WITHOUT "accepted" field
-            if tool_call_id and result_content and not is_approval:
-                # Tool execution result - convert to FunctionResultContent with correct role
-                from agent_framework import FunctionResultContent
-
-                chat_msg = ChatMessage(
-                    role=Role.TOOL,
-                    contents=[FunctionResultContent(call_id=tool_call_id, result=result_content)],
-                )
-
-                if "id" in msg:
-                    chat_msg.message_id = msg["id"]
-
-                result.append(chat_msg)
-                continue
-            else:
-                # Human-in-the-loop approval response - mark for special handling
-                content = msg.get("content", "")
-                chat_msg = ChatMessage(
-                    role=Role.USER,  # Approval responses are user messages
-                    contents=[TextContent(text=content)],
-                    additional_properties={"is_tool_result": True, "tool_call_id": msg.get("toolCallId", "")},
-                )
-
-                if "id" in msg:
-                    chat_msg.message_id = msg["id"]
-
-                result.append(chat_msg)
-                continue
+        # No special handling required for assistant/plain messages here
 
         role = _AGUI_TO_FRAMEWORK_ROLE.get(role_str, Role.USER)
 

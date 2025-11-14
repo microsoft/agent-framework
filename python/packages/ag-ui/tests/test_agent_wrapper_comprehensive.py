@@ -505,17 +505,20 @@ async def test_error_handling_with_exception():
 
 
 async def test_json_decode_error_in_tool_result():
-    """Test handling of JSONDecodeError when parsing tool result."""
+    """Test handling of orphaned tool result - should be sanitized out."""
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
-            yield ChatResponseUpdate(contents=[TextContent(text="Fallback response")])
+            # Should not be called since orphaned tool result is dropped
+            if False:
+                yield
+            raise AssertionError("ChatClient should not be called with orphaned tool result")
 
     agent = ChatAgent(name="test_agent", instructions="Test", chat_client=MockChatClient())
     wrapper = AgentFrameworkAgent(agent=agent)
 
-    # Send invalid JSON as tool result
+    # Send invalid JSON as tool result without preceding tool call
     input_data = {
         "messages": [
             {
@@ -530,10 +533,12 @@ async def test_json_decode_error_in_tool_result():
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
-    # Should fall through to normal agent processing
+    # Orphaned tool result should be sanitized out
+    # Only run lifecycle events should be emitted, no text/tool events
     text_events = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
-    assert len(text_events) > 0
-    assert text_events[0].delta == "Fallback response"
+    tool_events = [e for e in events if e.type.startswith("TOOL_CALL")]
+    assert len(text_events) == 0
+    assert len(tool_events) == 0
 
 
 async def test_suppressed_summary_with_document_state():

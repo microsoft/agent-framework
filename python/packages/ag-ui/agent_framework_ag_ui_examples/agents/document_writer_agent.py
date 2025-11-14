@@ -3,7 +3,7 @@
 """Example agent demonstrating predictive state updates with document writing."""
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 
 from agent_framework_ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
 
@@ -28,31 +28,43 @@ def write_document_local(document: str) -> str:
     return "Document written."
 
 
-agent = ChatAgent(
-    name="document_writer",
-    instructions=(
-        "You are a helpful assistant for writing documents. "
-        "To write the document, you MUST use the write_document_local tool. "
-        "You MUST write the full document, even when changing only a few words. "
-        "When you wrote the document, DO NOT repeat it as a message. "
-        "Just briefly summarize the changes you made. 2 sentences max. "
-        "\n\n"
-        "The current state of the document will be provided to you. "
-        "When editing, make minimal changes - do not change every word unless requested."
-    ),
-    chat_client=AzureOpenAIChatClient(),
-    tools=[write_document_local],
+_DOCUMENT_WRITER_INSTRUCTIONS = (
+    "You are a helpful assistant for writing documents. "
+    "To write the document, you MUST use the write_document_local tool. "
+    "You MUST write the full document, even when changing only a few words. "
+    "When you wrote the document, DO NOT repeat it as a message. "
+    "Just briefly summarize the changes you made. 2 sentences max. "
+    "\n\n"
+    "The current state of the document will be provided to you. "
+    "When editing, make minimal changes - do not change every word unless requested."
 )
 
-document_writer_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="DocumentWriter",
-    description="Writes and edits documents with predictive state updates",
-    state_schema={
-        "document": {"type": "string", "description": "The current document content"},
-    },
-    predict_state_config={
-        "document": {"tool": "write_document_local", "tool_argument": "document"},
-    },
-    confirmation_strategy=DocumentWriterConfirmationStrategy(),
-)
+
+def document_writer_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create a document writer agent with predictive state updates.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance with document writing capabilities
+    """
+    agent = ChatAgent(
+        name="document_writer",
+        instructions=_DOCUMENT_WRITER_INSTRUCTIONS,
+        chat_client=chat_client,
+        tools=[write_document_local],
+    )
+
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="DocumentWriter",
+        description="Writes and edits documents with predictive state updates",
+        state_schema={
+            "document": {"type": "string", "description": "The current document content"},
+        },
+        predict_state_config={
+            "document": {"tool": "write_document_local", "tool_argument": "document"},
+        },
+        confirmation_strategy=DocumentWriterConfirmationStrategy(),
+    )

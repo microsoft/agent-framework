@@ -223,7 +223,7 @@ class TestAgentEntityRunAgent:
         assert final_context.thread_id == "session-2"
         assert final_context.request_message == "Hi"
 
-    async def test_run_agent_updates_conversationHistory(self) -> None:
+    async def test_run_agent_updates_conversation_history(self) -> None:
         """Test that run_agent updates the conversation history."""
         mock_agent = Mock()
         mock_response = _agent_response("Agent response")
@@ -274,7 +274,7 @@ class TestAgentEntityRunAgent:
         )
         assert len(entity.state.data.conversationHistory) == 3
 
-    async def test_run_agent_stores_lastResponse(self) -> None:
+    async def test_run_agent_stores_last_response(self) -> None:
         """Test that run_agent stores the last response."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Response 1"))
@@ -371,7 +371,7 @@ class TestAgentEntityRunAgent:
 class TestAgentEntityReset:
     """Test suite for the reset operation."""
 
-    def test_reset_clears_conversationHistory(self) -> None:
+    def test_reset_clears_conversation_history(self) -> None:
         """Test that reset clears the conversation history."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
@@ -387,7 +387,7 @@ class TestAgentEntityReset:
 
         assert entity.state.data.conversationHistory == []
 
-    def test_reset_clears_lastResponse(self) -> None:
+    def test_reset_clears_last_response(self) -> None:
         """Test that reset clears the last response."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
@@ -670,7 +670,7 @@ class TestErrorHandling:
 class TestConversationHistory:
     """Test suite for conversation history tracking."""
 
-    async def test_conversationHistory_has_timestamps(self) -> None:
+    async def test_conversation_history_has_timestamps(self) -> None:
         """Test that conversation history entries include timestamps."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Response"))
@@ -689,7 +689,7 @@ class TestConversationHistory:
             # Verify timestamp is in ISO format
             datetime.fromisoformat(str(timestamp))
 
-    async def test_conversationHistory_ordering(self) -> None:
+    async def test_conversation_history_ordering(self) -> None:
         """Test that conversation history maintains the correct order."""
         mock_agent = Mock()
 
@@ -724,7 +724,7 @@ class TestConversationHistory:
         assert history[2].messages[0].text == "Message 3"
         assert history[2].messages[1].text == "Response 3"
 
-    async def test_conversationHistory_role_alternation(self) -> None:
+    async def test_conversation_history_role_alternation(self) -> None:
         """Test that conversation history alternates between user and assistant roles."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Response"))

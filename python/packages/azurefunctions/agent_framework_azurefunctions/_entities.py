@@ -10,9 +10,9 @@ allows for long-running agent conversations.
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from datetime import datetime, timezone
-from typing import Any, cast, Callable
+from typing import Any, cast
 
 import azure.durable_functions as df
 from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
@@ -117,6 +117,10 @@ class AgentEntity:
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
         logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
+
+        # Store message in history with role
+        self.state.add_user_message(message, role=role, correlation_id=correlationId)
+
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 
         try:
@@ -138,7 +142,7 @@ class AgentEntity:
                 if hasattr(msg, 'additional_properties'):
                     msg.additional_properties = {}
 
-            run_kwargs: dict[str, Any] = {"messages": chat_messages}
+            run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
             if response_format:

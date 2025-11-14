@@ -21,20 +21,20 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/azure_ai/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
-| [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_file_search.py`](./getting_started/agents/azure_ai/azure_ai_with_file_search.py) | Azure AI agent with File Search capabilities |
-| [`getting_started/agents/azure_ai/azure_ai_with_function_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_function_tools.py) | Azure AI Agent with Function Tools Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py`](./getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py) | Azure AI Agent with Hosted MCP Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_local_mcp.py`](./getting_started/agents/azure_ai/azure_ai_with_local_mcp.py) | Azure AI Agent with Local MCP Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_multiple_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_multiple_tools.py) | Azure AI Agent with Multiple Tools Example |
-| [`getting_started/agents/azure_ai/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
-| [`getting_started/agents/azure_ai/azure_ai_with_thread.py`](./getting_started/agents/azure_ai/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_file_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_file_search.py) | Azure AI agent with File Search capabilities |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_function_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_function_tools.py) | Azure AI Agent with Function Tools Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_hosted_mcp.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_hosted_mcp.py) | Azure AI Agent with Hosted MCP Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_local_mcp.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_local_mcp.py) | Azure AI Agent with Local MCP Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py) | Azure AI Agent with Multiple Tools Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
 
 ### Azure OpenAI
 
