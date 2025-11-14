@@ -129,13 +129,13 @@ class DurableAIAgent(AgentProtocol):
 
         # Generate a deterministic correlation ID for this call
         # This is required by the entity and must be unique per call
-        correlation_id = str(self.context.new_uuid())
+        correlationId = str(self.context.new_uuid())
 
         # Prepare the request using RunRequest model
         run_request = RunRequest(
             message=message_str,
             enable_tool_calls=enable_tool_calls,
-            correlation_id=correlation_id,
+            correlationId=correlationId,
             thread_id=session_id.key,
             response_format=response_format,
         )
