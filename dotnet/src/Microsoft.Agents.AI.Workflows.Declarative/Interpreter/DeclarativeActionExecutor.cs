@@ -61,7 +61,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     }
 
     /// <inheritdoc/>
-    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context)
+    public override async ValueTask HandleAsync(ActionExecutorResult message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (this.Model.Disabled)
         {
@@ -69,16 +69,16 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             return;
         }
 
-        await context.RaiseInvocationEventAsync(this.Model, message.ExecutorId).ConfigureAwait(false);
+        await context.RaiseInvocationEventAsync(this.Model, message.ExecutorId, cancellationToken).ConfigureAwait(false);
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken).ConfigureAwait(false);
             Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)
             {
-                await context.SendResultMessageAsync(this.Id, result).ConfigureAwait(false);
+                await context.SendResultMessageAsync(this.Id, result, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (DeclarativeActionException exception)
@@ -95,7 +95,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         {
             if (this.IsDiscreteAction)
             {
-                await context.RaiseCompletionEventAsync(this.Model).ConfigureAwait(false);
+                await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
             }
         }
     }

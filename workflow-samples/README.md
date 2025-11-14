@@ -1,7 +1,7 @@
 # Declarative Workflows
 
 This folder contains sample workflow definitions than be ran using the
-[Declarative Workflow](../dotnet/samples/GettingStarted/Workflows/Declarative) demo.
+[Declarative Workflow](../dotnet/samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow) demo.
 
 Each workflow is defined in a single YAML file and contains 
 comments with additional information specific to that workflow.
@@ -10,7 +10,7 @@ A _Declarative Workflow_ may be executed locally no different from any `Workflow
 The difference is that the workflow definition is loaded from a YAML file instead of being defined in code.
 
 ```c#
-Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("HelloWorld.yaml", options);
+Workflow<string> workflow = DeclarativeWorkflowBuilder.Build<string>("Marketing.yaml", options);
 ```
 
 Workflows may also be hosted in your _Azure Foundry Project_.

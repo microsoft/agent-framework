@@ -65,31 +65,55 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
         instruction_role: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize an AzureChatCompletion service.
+        """Initialize an Azure OpenAI Chat completion client.
 
-        Args:
-            api_key: The optional api key. If provided, will override the value in the
-                env vars or .env file.
-            deployment_name: The optional deployment. If provided, will override the value
+        Keyword Args:
+            api_key: The API key. If provided, will override the value in the env vars or .env file.
+                Can also be set via environment variable AZURE_OPENAI_API_KEY.
+            deployment_name: The deployment name. If provided, will override the value
                 (chat_deployment_name) in the env vars or .env file.
-            endpoint: The optional deployment endpoint. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_CHAT_DEPLOYMENT_NAME.
+            endpoint: The deployment endpoint. If provided will override the value
                 in the env vars or .env file.
-            base_url: The optional deployment base_url. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_ENDPOINT.
+            base_url: The deployment base URL. If provided will override the value
                 in the env vars or .env file.
-            api_version: The optional deployment api version. If provided will override the value
+                Can also be set via environment variable AZURE_OPENAI_BASE_URL.
+            api_version: The deployment API version. If provided will override the value
                 in the env vars or .env file.
-            ad_token: The Azure Active Directory token. (Optional)
-            ad_token_provider: The Azure Active Directory token provider. (Optional)
-            token_endpoint: The token endpoint to request an Azure token. (Optional)
-            credential: The Azure credential for authentication. (Optional)
+                Can also be set via environment variable AZURE_OPENAI_API_VERSION.
+            ad_token: The Azure Active Directory token.
+            ad_token_provider: The Azure Active Directory token provider.
+            token_endpoint: The token endpoint to request an Azure token.
+                Can also be set via environment variable AZURE_OPENAI_TOKEN_ENDPOINT.
+            credential: The Azure credential for authentication.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
-                prompts could use `developer` or `system`. (Optional)
+                prompts could use `developer` or `system`.
             kwargs: Other keyword parameters.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureOpenAIChatClient
+
+                # Using environment variables
+                # Set AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com
+                # Set AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4
+                # Set AZURE_OPENAI_API_KEY=your-key
+                client = AzureOpenAIChatClient()
+
+                # Or passing parameters directly
+                client = AzureOpenAIChatClient(
+                    endpoint="https://your-endpoint.openai.azure.com", deployment_name="gpt-4", api_key="your-key"
+                )
+
+                # Or loading from a .env file
+                client = AzureOpenAIChatClient(env_file_path="path/to/.env")
         """
         try:
             # Filter out any None values from the arguments

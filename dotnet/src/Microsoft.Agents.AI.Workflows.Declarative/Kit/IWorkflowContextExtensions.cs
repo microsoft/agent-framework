@@ -53,7 +53,7 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken = default)
     {
-        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken: default).ConfigureAwait(false);
+        WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         StringBuilder builder = new();
         foreach (string line in lines)
@@ -132,7 +132,7 @@ public static class IWorkflowContextExtensions
     /// <returns>The converted value</returns>
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        object? sourceValue = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+        object? sourceValue = await context.ReadStateAsync<object>(key, scopeName, cancellationToken).ConfigureAwait(false);
         return sourceValue.ConvertType(targetType);
     }
 
@@ -143,10 +143,11 @@ public static class IWorkflowContextExtensions
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
     /// <param name="key">The key of the state value.</param>
     /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated list expression</returns>
-    public static async ValueTask<IList<TElement>?> ReadListAsync<TElement>(this IWorkflowContext context, string key, string? scopeName = null)
+    public static async ValueTask<IList<TElement>?> ReadListAsync<TElement>(this IWorkflowContext context, string key, string? scopeName = null, CancellationToken cancellationToken = default)
     {
-        object? value = await context.ReadStateAsync<object>(key, scopeName).ConfigureAwait(false);
+        object? value = await context.ReadStateAsync<object>(key, scopeName, cancellationToken).ConfigureAwait(false);
         return value.AsList<TElement>();
     }
 

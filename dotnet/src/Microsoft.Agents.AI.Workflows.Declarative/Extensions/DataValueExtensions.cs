@@ -148,11 +148,9 @@ internal static class DataValueExtensions
 
         IEnumerable<KeyValuePair<string, DataValue>> GetFields()
         {
-            yield return new KeyValuePair<string, DataValue>(TypeSchema.Discriminator, nameof(ExpandoObject).ToDataValue());
-
-            foreach (string key in value.Keys)
+            foreach (DictionaryEntry entry in value)
             {
-                yield return new KeyValuePair<string, DataValue>(key, value[key].ToDataValue());
+                yield return new KeyValuePair<string, DataValue>((string)entry.Key, entry.Value.ToDataValue());
             }
         }
     }
@@ -252,7 +250,6 @@ internal static class DataValueExtensions
     private static Dictionary<string, object?> ToDictionary(this RecordDataValue record)
     {
         Dictionary<string, object?> result = [];
-        result[TypeSchema.Discriminator] = nameof(ExpandoObject);
         foreach (KeyValuePair<string, DataValue> property in record.Properties)
         {
             result[property.Key] = property.Value.ToObject();

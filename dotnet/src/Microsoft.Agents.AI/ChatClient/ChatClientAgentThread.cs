@@ -52,7 +52,7 @@ public class ChatClientAgentThread : AgentThread
         }
 
         var state = serializedThreadState.Deserialize(
-            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
+            AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState))) as ThreadState;
 
         this.AIContextProvider = aiContextProviderFactory?.Invoke(state?.AIContextProviderState ?? default, jsonSerializerOptions);
 
@@ -166,11 +166,11 @@ public class ChatClientAgentThread : AgentThread
         var state = new ThreadState
         {
             ConversationId = this.ConversationId,
-            StoreState = storeState,
-            AIContextProviderState = aiContextProviderState
+            StoreState = storeState is { ValueKind: not JsonValueKind.Undefined } ? storeState : null,
+            AIContextProviderState = aiContextProviderState is { ValueKind: not JsonValueKind.Undefined } ? aiContextProviderState : null,
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
+        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
     }
 
     /// <inheritdoc/>

@@ -13,7 +13,7 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-internal class WorkflowHostExecutor : Executor, IResettableExecutor
+internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 {
     private readonly string _runId;
     private readonly Workflow _workflow;
@@ -24,6 +24,7 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
     private readonly ExecutorOptions _options;
 
     private ISuperStepJoinContext? _joinContext;
+    private string? _joinId;
     private StreamingRun? _run;
 
     [MemberNotNullWhen(true, nameof(_checkpointManager))]
@@ -44,22 +45,22 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
         return routeBuilder.AddCatchAll(this.QueueExternalMessageAsync);
     }
 
-    private async ValueTask QueueExternalMessageAsync(PortableValue portableValue, IWorkflowContext context)
+    private async ValueTask QueueExternalMessageAsync(PortableValue portableValue, IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (portableValue.Is(out ExternalResponse? response))
         {
             response = this.CheckAndUnqualifyResponse(response);
-            await this.EnsureRunSendMessageAsync(response).ConfigureAwait(false);
+            await this.EnsureRunSendMessageAsync(response, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         else
         {
             InProcessRunner runner = await this.EnsureRunnerAsync().ConfigureAwait(false);
-            IEnumerable<Type> validInputTypes = await runner.RunContext.GetStartingExecutorInputTypesAsync().ConfigureAwait(false);
+            IEnumerable<Type> validInputTypes = await runner.RunContext.GetStartingExecutorInputTypesAsync(cancellationToken).ConfigureAwait(false);
             foreach (Type candidateType in validInputTypes)
             {
                 if (portableValue.IsType(candidateType, out object? message))
                 {
-                    await this.EnsureRunSendMessageAsync(message, candidateType).ConfigureAwait(false);
+                    await this.EnsureRunSendMessageAsync(message, candidateType, cancellationToken: cancellationToken).ConfigureAwait(false);
                     return;
                 }
             }
@@ -81,13 +82,17 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
                 this._checkpointManager = new InMemoryCheckpointManager();
             }
 
-            this._activeRunner = new(this._workflow, this._checkpointManager, this._runId, this._ownershipToken, subworkflow: true);
+            this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
+                                                                         this._checkpointManager,
+                                                                         this._runId,
+                                                                         this._ownershipToken,
+                                                                         this.JoinContext.ConcurrentRunsEnabled);
         }
 
         return this._activeRunner;
     }
 
-    internal async ValueTask<StreamingRun> EnsureRunSendMessageAsync(object? incomingMessage = null, Type? incomingMessageType = null, bool resume = false, CancellationToken cancellation = default)
+    internal async ValueTask<StreamingRun> EnsureRunSendMessageAsync(object? incomingMessage = null, Type? incomingMessageType = null, bool resume = false, CancellationToken cancellationToken = default)
     {
         Debug.Assert(this._joinContext != null, "Must attach to a join context before starting the run.");
 
@@ -114,19 +119,20 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
                     throw new InvalidOperationException("No checkpoints available to resume from.");
                 }
 
-                runHandle = await activeRunner.ResumeStreamAsync(InProcessExecution.DefaultMode, lastCheckpoint!, cancellation)
-                                                             .ConfigureAwait(false);
+                runHandle = await activeRunner.ResumeStreamAsync(ExecutionMode.Subworkflow, lastCheckpoint!, cancellationToken)
+                                              .ConfigureAwait(false);
+
                 if (incomingMessage != null)
                 {
-                    await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellation).ConfigureAwait(false);
+                    await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellationToken).ConfigureAwait(false);
                 }
             }
             else if (incomingMessage != null)
             {
-                runHandle = await activeRunner.BeginStreamAsync(InProcessExecution.DefaultMode, cancellation)
-                                                             .ConfigureAwait(false);
+                runHandle = await activeRunner.BeginStreamAsync(ExecutionMode.Subworkflow, cancellationToken)
+                                              .ConfigureAwait(false);
 
-                await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellation).ConfigureAwait(false);
+                await runHandle.EnqueueUntypedAndRunAsync(incomingMessage, cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -135,14 +141,14 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
         }
         else
         {
-            runHandle = await activeRunner.BeginStreamAsync(InProcessExecution.DefaultMode, cancellation).ConfigureAwait(false);
+            runHandle = await activeRunner.BeginStreamAsync(ExecutionMode.Subworkflow, cancellationToken).ConfigureAwait(false);
 
-            await runHandle.EnqueueMessageUntypedAsync(Throw.IfNull(incomingMessage), cancellation: cancellation).ConfigureAwait(false);
+            await runHandle.EnqueueMessageUntypedAsync(Throw.IfNull(incomingMessage), cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         this._run = new(runHandle);
 
-        await this._joinContext.AttachSuperstepAsync(activeRunner, cancellation).ConfigureAwait(false);
+        this._joinId = await this._joinContext.AttachSuperstepAsync(activeRunner, cancellationToken).ConfigureAwait(false);
         activeRunner.OutgoingEvents.EventRaised += this.ForwardWorkflowEventAsync;
 
         return this._run;
@@ -227,7 +233,7 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
 
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        await context.QueueStateUpdateAsync(nameof(CheckpointManager), this._checkpointManager).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(nameof(CheckpointManager), this._checkpointManager, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -236,7 +242,7 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
 
-        InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(nameof(InMemoryCheckpointManager)).ConfigureAwait(false) ?? new();
+        InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(nameof(InMemoryCheckpointManager), cancellationToken: cancellationToken).ConfigureAwait(false) ?? new();
         if (this._checkpointManager == manager)
         {
             // We are restoring in the context of the same run; not need to rebuild the entire execution stack.
@@ -248,19 +254,36 @@ internal class WorkflowHostExecutor : Executor, IResettableExecutor
             await this.ResetAsync().ConfigureAwait(false);
         }
 
-        StreamingRun run = await this.EnsureRunSendMessageAsync(cancellation: cancellationToken).ConfigureAwait(false);
+        StreamingRun run = await this.EnsureRunSendMessageAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask ResetAsync()
+    private async ValueTask ResetAsync()
     {
-        this._run = null;
+        if (this._run != null)
+        {
+            await this._run.DisposeAsync().ConfigureAwait(false);
+            this._run = null;
+        }
 
         if (this._activeRunner != null)
         {
             this._activeRunner.OutgoingEvents.EventRaised -= this.ForwardWorkflowEventAsync;
             await this._activeRunner.RequestEndRunAsync().ConfigureAwait(false);
 
-            this._activeRunner = new(this._workflow, this._checkpointManager, this._runId);
+            this._activeRunner = null;
+        }
+
+        if (this._joinContext != null)
+        {
+            if (this._joinId != null)
+            {
+                await this._joinContext.DetachSuperstepAsync(this._joinId).ConfigureAwait(false);
+                this._joinId = null;
+            }
+
+            this._joinContext = null;
         }
     }
+
+    public ValueTask DisposeAsync() => this.ResetAsync();
 }
