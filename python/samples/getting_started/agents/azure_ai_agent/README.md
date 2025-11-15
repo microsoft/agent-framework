@@ -7,6 +7,7 @@ This folder contains examples demonstrating different ways to create and use age
 | File | Description |
 |------|-------------|
 | [`azure_ai_basic.py`](azure_ai_basic.py) | The simplest way to create an agent using `ChatAgent` with `AzureAIAgentClient`. It automatically handles all configuration using environment variables. |
+| [`azure_ai_with_bing_custom_search.py`](azure_ai_with_bing_custom_search.py) | Shows how to use Bing Custom Search with Azure AI agents to find real-time information from the web using custom search configurations. Demonstrates how to set up and use HostedWebSearchTool with custom search instances. |
 | [`azure_ai_with_bing_grounding.py`](azure_ai_with_bing_grounding.py) | Shows how to use Bing Grounding search with Azure AI agents to find real-time information from the web. Demonstrates web search capabilities with proper source citations and comprehensive error handling. |
 | [`azure_ai_with_code_interpreter.py`](azure_ai_with_code_interpreter.py) | Shows how to use the HostedCodeInterpreterTool with Azure AI agents to write and execute Python code. Includes helper methods for accessing code interpreter data from response chunks. |
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with a pre-existing agent by providing the agent ID to the Azure AI chat client. This example also demonstrates proper cleanup of manually created agents. |
@@ -49,6 +50,18 @@ Before running the examples, you need to set up your environment variables. You 
    - Add a new connection for "Grounding with Bing Search"
    - Copy the ID
 
+4. For samples using Bing Custom Search (like `azure_ai_with_bing_custom_search.py`), you'll also need:
+   ```
+   BING_CUSTOM_CONNECTION_ID="your-bing-custom-connection-id"
+   BING_CUSTOM_INSTANCE_NAME="your-bing-custom-instance-name"
+   ```
+
+   To get your Bing Custom Search connection details:
+   - Go to [Azure AI Foundry portal](https://ai.azure.com)
+   - Navigate to your project's "Connected resources" section
+   - Add a new connection for "Grounding with Bing Custom Search"
+   - Copy the connection ID and instance name
+
 ### Option 2: Using environment variables directly
 
 Set the environment variables in your shell:
@@ -57,6 +70,8 @@ Set the environment variables in your shell:
 export AZURE_AI_PROJECT_ENDPOINT="your-project-endpoint"
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="your-model-deployment-name"
 export BING_CONNECTION_ID="your-bing-connection-id"
+export BING_CUSTOM_CONNECTION_ID="your-bing-custom-connection-id"
+export BING_CUSTOM_INSTANCE_NAME="your-bing-custom-instance-name"
 ```
 
 ### Required Variables
@@ -67,3 +82,5 @@ export BING_CONNECTION_ID="your-bing-connection-id"
 ### Optional Variables
 
 - `BING_CONNECTION_ID`: Your Bing connection ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
+- `BING_CUSTOM_CONNECTION_ID`: Your Bing Custom Search connection ID (required for `azure_ai_with_bing_custom_search.py`)
+- `BING_CUSTOM_INSTANCE_NAME`: Your Bing Custom Search instance name (required for `azure_ai_with_bing_custom_search.py`)
