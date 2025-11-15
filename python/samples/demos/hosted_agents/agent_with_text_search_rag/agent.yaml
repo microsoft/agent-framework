@@ -26,8 +26,4 @@ template:
     - name: AZURE_OPENAI_ENDPOINT
       value: ${AZURE_OPENAI_ENDPOINT}
     - name: AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-      value: "{{chat}}"
-resources:
-  - kind: model
-    id: gpt-4o-mini
-    name: chat
+      value: gpt-4o-mini
