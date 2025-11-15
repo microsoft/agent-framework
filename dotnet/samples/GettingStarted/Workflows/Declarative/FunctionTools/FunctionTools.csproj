@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ProjectsDebugTargetFrameworks>net9.0</ProjectsDebugTargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
+    <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
+    <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="FunctionTools.yaml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
