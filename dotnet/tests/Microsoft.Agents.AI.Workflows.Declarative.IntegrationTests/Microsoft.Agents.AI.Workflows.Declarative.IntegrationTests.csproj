@@ -5,12 +5,15 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
     <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
+    <InjectSharedFoundryAgents>true</InjectSharedFoundryAgents>
+    <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -21,9 +24,6 @@
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Abstractions" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" />
-    <PackageReference Include="Microsoft.SemanticKernel.Agents.Yaml" />
     <PackageReference Include="System.Linq.Async" />
   </ItemGroup>
 
