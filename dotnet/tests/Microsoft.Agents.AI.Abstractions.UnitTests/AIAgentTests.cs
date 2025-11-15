@@ -353,6 +353,52 @@ public class AIAgentTests
 
     #endregion
 
+    #region AdditionalProperties Tests
+
+    /// <summary>
+    /// Verify that AdditionalProperties returns null by default.
+    /// </summary>
+    [Fact]
+    public void AdditionalProperties_DefaultValue_ReturnsNull()
+    {
+        // Arrange
+        var agent = new MockAgent();
+
+        // Act
+        var result = agent.AdditionalProperties;
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    /// <summary>
+    /// Verify that AdditionalProperties can be overridden to return custom properties.
+    /// </summary>
+    [Fact]
+    public void AdditionalProperties_OverriddenValue_ReturnsCustomProperties()
+    {
+        // Arrange
+        var customProperties = new AdditionalPropertiesDictionary
+        {
+            ["beta"] = true,
+            ["icon"] = "agent-icon.png",
+            ["requiresAuth"] = true
+        };
+        var agent = new MockAgentWithProperties(customProperties);
+
+        // Act
+        var result = agent.AdditionalProperties;
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(3, result.Count);
+        Assert.Equal(true, result["beta"]);
+        Assert.Equal("agent-icon.png", result["icon"]);
+        Assert.Equal(true, result["requiresAuth"]);
+    }
+
+    #endregion
+
     /// <summary>
     /// Typed mock thread.
     /// </summary>
@@ -362,6 +408,36 @@ public class AIAgentTests
     {
         public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken) =>
             AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
+
+        public override AgentThread GetNewThread()
+            => throw new NotImplementedException();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
+        public override Task<AgentRunResponse> RunAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+    }
+
+    private sealed class MockAgentWithProperties : AIAgent
+    {
+        public MockAgentWithProperties(AdditionalPropertiesDictionary? additionalProperties)
+        {
+            this.AdditionalProperties = additionalProperties;
+        }
+
+        public override AdditionalPropertiesDictionary? AdditionalProperties { get; }
 
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();
