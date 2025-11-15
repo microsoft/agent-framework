@@ -127,18 +127,18 @@ class OpenAIBase(SerializationMixin):
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
 
-    def __init__(self, *, client: AsyncOpenAI, model_id: str, **kwargs: Any) -> None:
+    def __init__(self, *, model_id: str | None = None, client: AsyncOpenAI | None = None, **kwargs: Any) -> None:
         """Initialize OpenAIBase.
 
         Keyword Args:
             client: The AsyncOpenAI client instance.
-            model_id: The AI model ID to use (non-empty, whitespace stripped).
+            model_id: The AI model ID to use.
             **kwargs: Additional keyword arguments.
         """
-        if not model_id or not model_id.strip():
-            raise ValueError("model_id must be a non-empty string")
         self.client = client
-        self.model_id = model_id.strip()
+        self.model_id = None
+        if model_id:
+            self.model_id = model_id.strip()
 
         # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
         # Extract known kwargs that belong to other base classes
@@ -161,6 +161,21 @@ class OpenAIBase(SerializationMixin):
             self.instruction_role = instruction_role
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    async def initialize_client(self) -> None:
+        """Initialize OpenAI client asynchronously.
+
+        Override in subclasses to initialize the OpenAI client asynchronously.
+        """
+        pass
+
+    async def ensure_client(self) -> AsyncOpenAI:
+        """Ensure OpenAI client is initialized."""
+        await self.initialize_client()
+        if self.client is None:
+            raise ServiceInitializationError("OpenAI client is not initialized")
+
+        return self.client
 
     def _get_api_key(
         self, api_key: str | SecretStr | Callable[[], str | Awaitable[str]] | None

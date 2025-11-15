@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
 import asyncio
+import os
 
 from agent_framework import ChatAgent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -18,12 +18,13 @@ servers.
 # --- Below code uses Microsoft Learn MCP server over Streamable HTTP ---
 # --- Users can set these environment variables, or just edit the values below to their desired local MCP server
 MCP_NAME = os.environ.get("MCP_NAME", "Microsoft Learn MCP")  # example name
-MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")   # example endpoint
+MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")  # example endpoint
 
 # Environment variables for Azure OpenAI Responses authentication
 # AZURE_OPENAI_ENDPOINT="<your-azure openai-endpoint>"
 # AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="<your-deployment-name>"
 # AZURE_OPENAI_API_VERSION="<your-api-version>"  # e.g. "2025-03-01-preview"
+
 
 async def main():
     """Example showing local MCP tools for a Azure OpenAI Responses Agent."""
@@ -38,16 +39,13 @@ async def main():
 
     agent: ChatAgent = responses_client.create_agent(
         name="DocsAgent",
-        instructions=(
-            "You are a helpful assistant that can help with Microsoft documentation questions."
-        ),
+        instructions=("You are a helpful assistant that can help with Microsoft documentation questions."),
     )
 
     # Connect to the MCP server (Streamable HTTP)
     async with MCPStreamableHTTPTool(
         name=MCP_NAME,
         url=MCP_URL,
-        
     ) as mcp_tool:
         # First query — expect the agent to use the MCP tool if it helps
         q1 = "How to create an Azure storage account using az cli?"

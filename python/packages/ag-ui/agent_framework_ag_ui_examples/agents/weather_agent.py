@@ -5,7 +5,7 @@
 from typing import Any
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 
 
 @ai_function
@@ -58,14 +58,22 @@ def get_forecast(location: str, days: int = 3) -> str:
     return f"{days}-day forecast for {location}:\n" + "\n".join(forecast)
 
 
-# Create the weather agent
-weather_agent = ChatAgent(
-    name="weather_agent",
-    instructions=(
-        "You are a helpful weather assistant. "
-        "Use the get_weather and get_forecast functions to help users with weather information. "
-        "Always provide friendly and informative responses."
-    ),
-    chat_client=AzureOpenAIChatClient(),
-    tools=[get_weather, get_forecast],
-)
+def weather_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+    """Create a weather agent with get_weather and get_forecast tools.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured ChatAgent instance with weather tools
+    """
+    return ChatAgent(
+        name="weather_agent",
+        instructions=(
+            "You are a helpful weather assistant. "
+            "Use the get_weather and get_forecast functions to help users with weather information. "
+            "Always provide friendly and informative responses."
+        ),
+        chat_client=chat_client,
+        tools=[get_weather, get_forecast],
+    )

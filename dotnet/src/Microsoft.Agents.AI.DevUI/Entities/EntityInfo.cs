@@ -36,16 +36,16 @@ internal sealed record EntityInfo(
     string Name,
 
     [property: JsonPropertyName("description")]
-    string? Description = null,
+    string? Description,
 
     [property: JsonPropertyName("framework")]
-    string Framework = "dotnet",
+    string Framework,
 
     [property: JsonPropertyName("tools")]
-    List<string>? Tools = null,
+    List<string> Tools,
 
     [property: JsonPropertyName("metadata")]
-    Dictionary<string, JsonElement>? Metadata = null
+    Dictionary<string, JsonElement> Metadata
 )
 {
     [JsonPropertyName("source")]
@@ -53,6 +53,32 @@ internal sealed record EntityInfo(
 
     [JsonPropertyName("original_url")]
     public string? OriginalUrl { get; init; }
+
+    // Deployment support
+    [JsonPropertyName("deployment_supported")]
+    public bool DeploymentSupported { get; init; }
+
+    [JsonPropertyName("deployment_reason")]
+    public string? DeploymentReason { get; init; }
+
+    // Agent-specific fields
+    [JsonPropertyName("instructions")]
+    public string? Instructions { get; init; }
+
+    [JsonPropertyName("model_id")]
+    public string? ModelId { get; init; }
+
+    [JsonPropertyName("chat_client_type")]
+    public string? ChatClientType { get; init; }
+
+    [JsonPropertyName("context_providers")]
+    public List<string>? ContextProviders { get; init; }
+
+    [JsonPropertyName("middleware")]
+    public List<string>? Middleware { get; init; }
+
+    [JsonPropertyName("module_path")]
+    public string? ModulePath { get; init; }
 
     // Workflow-specific fields
     [JsonPropertyName("required_env_vars")]

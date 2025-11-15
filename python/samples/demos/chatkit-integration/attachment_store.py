@@ -8,7 +8,7 @@ cloud storage like S3, Azure Blob Storage, or Google Cloud Storage.
 """
 
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from chatkit.store import AttachmentStore
 from chatkit.types import Attachment, AttachmentCreateParams, FileAttachment, ImageAttachment
@@ -51,7 +51,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         self.uploads_dir = Path(uploads_dir)
         self.base_url = base_url.rstrip("/")
         self.data_store = data_store
-        
+
         # Create uploads directory if it doesn't exist
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
 
@@ -65,9 +65,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         if file_path.exists():
             file_path.unlink()
 
-    async def create_attachment(
-        self, input: AttachmentCreateParams, context: dict[str, Any]
-    ) -> Attachment:
+    async def create_attachment(self, input: AttachmentCreateParams, context: dict[str, Any]) -> Attachment:
         """Create an attachment with upload URL for two-phase upload.
 
         This creates the attachment metadata and returns upload URLs that
@@ -75,7 +73,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         """
         # Generate unique ID for this attachment
         attachment_id = self.generate_attachment_id(input.mime_type, context)
-        
+
         # Generate upload URL that points to our FastAPI upload endpoint
         upload_url = f"{self.base_url}/upload/{attachment_id}"
 
@@ -83,7 +81,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         if input.mime_type.startswith("image/"):
             # For images, also provide a preview URL
             preview_url = f"{self.base_url}/preview/{attachment_id}"
-            
+
             attachment = ImageAttachment(
                 id=attachment_id,
                 type="image",
@@ -117,5 +115,5 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         file_path = self.get_file_path(attachment_id)
         if not file_path.exists():
             raise FileNotFoundError(f"Attachment {attachment_id} not found on disk")
-        
+
         return file_path.read_bytes()

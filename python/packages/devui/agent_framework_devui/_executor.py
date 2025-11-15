@@ -781,6 +781,27 @@ class AgentFrameworkExecutor:
         Returns:
             Dict of {request_id: response_value} if found, None otherwise
         """
+        # Handle case where input_data might be a JSON string (from streamWorkflowExecutionOpenAI)
+        # The input field type is: str | list[Any] | dict[str, Any]
+        if isinstance(input_data, str):
+            try:
+                parsed = json.loads(input_data)
+                # Only use parsed value if it's a list (ResponseInputParam format expected for HIL)
+                if isinstance(parsed, list):
+                    input_data = parsed
+                else:
+                    # Parsed to dict, string, or primitive - not HIL response format
+                    return None
+            except (json.JSONDecodeError, TypeError):
+                # Plain text string, not valid JSON - not HIL format
+                return None
+
+        # At this point, input_data should be a list or dict
+        # HIL responses are always in list format (ResponseInputParam)
+        if isinstance(input_data, dict):
+            # This is structured workflow input (dict), not HIL responses
+            return None
+
         if not isinstance(input_data, list):
             return None
 

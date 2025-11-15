@@ -10,6 +10,8 @@ pip install agent-framework-ag-ui
 
 ## Quick Start
 
+### Server (Host an AI Agent)
+
 ```python
 from fastapi import FastAPI
 from agent_framework import ChatAgent
@@ -23,6 +25,7 @@ agent = ChatAgent(
     chat_client=AzureOpenAIChatClient(
         endpoint="https://your-resource.openai.azure.com/",
         deployment_name="gpt-4o-mini",
+        api_key="your-api-key",
     ),
 )
 
@@ -33,9 +36,38 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 # Run with: uvicorn main:app --reload
 ```
 
+### Client (Connect to an AG-UI Server)
+
+```python
+import asyncio
+from agent_framework import TextContent
+from agent_framework_ag_ui import AGUIChatClient
+
+async def main():
+    async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
+        # Stream responses
+        async for update in client.get_streaming_response("Hello!"):
+            for content in update.contents:
+                if isinstance(content, TextContent):
+                    print(content.text, end="", flush=True)
+        print()
+
+asyncio.run(main())
+```
+
+The `AGUIChatClient` supports:
+- Streaming and non-streaming responses
+- Hybrid tool execution (client-side + server-side tools)
+- Automatic thread management for conversation continuity
+- Integration with `ChatAgent` for client-side history management
+
 ## Documentation
 
-- **[Getting Started Tutorial](getting_started/)** - Step-by-step guide to building your first AG-UI server and client
+- **[Getting Started Tutorial](getting_started/)** - Step-by-step guide to building AG-UI servers and clients
+  - Server setup with FastAPI
+  - Client examples using `AGUIChatClient`
+  - Hybrid tool execution (client-side + server-side)
+  - Thread management and conversation continuity
 - **[Examples](agent_framework_ag_ui_examples/)** - Complete examples for AG-UI features
 
 ## Features

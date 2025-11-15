@@ -5,6 +5,7 @@
 import importlib.metadata
 
 from ._agent import AgentFrameworkAgent
+from ._client import AGUIChatClient
 from ._confirmation_strategies import (
     ConfirmationStrategy,
     DefaultConfirmationStrategy,
@@ -13,6 +14,8 @@ from ._confirmation_strategies import (
     TaskPlannerConfirmationStrategy,
 )
 from ._endpoint import add_agent_framework_fastapi_endpoint
+from ._event_converters import AGUIEventConverter
+from ._http_service import AGUIHttpService
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -22,6 +25,9 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AgentFrameworkAgent",
     "add_agent_framework_fastapi_endpoint",
+    "AGUIChatClient",
+    "AGUIEventConverter",
+    "AGUIHttpService",
     "ConfirmationStrategy",
     "DefaultConfirmationStrategy",
     "TaskPlannerConfirmationStrategy",

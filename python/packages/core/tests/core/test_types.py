@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 from collections.abc import AsyncIterable
 from typing import Any
 
@@ -164,6 +165,57 @@ def test_data_content_empty():
     # Attempt to create an instance of DataContent with empty URI
     with raises(ValueError):
         DataContent(uri="")
+
+
+def test_data_content_detect_image_format_from_base64():
+    """Test the detect_image_format_from_base64 static method."""
+    # Test each supported format
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(png_data).decode()) == "png"
+
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(jpeg_data).decode()) == "jpeg"
+
+    webp_data = b"RIFF" + b"1234" + b"WEBP" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(webp_data).decode()) == "webp"
+
+    gif_data = b"GIF89a" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(gif_data).decode()) == "gif"
+
+    # Test fallback behavior
+    unknown_data = b"UNKNOWN_FORMAT"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(unknown_data).decode()) == "png"
+
+    # Test error handling
+    assert DataContent.detect_image_format_from_base64("invalid_base64!") == "png"
+    assert DataContent.detect_image_format_from_base64("") == "png"
+
+
+def test_data_content_create_data_uri_from_base64():
+    """Test the create_data_uri_from_base64 class method."""
+    # Test with PNG data
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    png_base64 = base64.b64encode(png_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(png_base64)
+
+    assert uri == f"data:image/png;base64,{png_base64}"
+    assert media_type == "image/png"
+
+    # Test with different format
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    jpeg_base64 = base64.b64encode(jpeg_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(jpeg_base64)
+
+    assert uri == f"data:image/jpeg;base64,{jpeg_base64}"
+    assert media_type == "image/jpeg"
+
+    # Test fallback for unknown format
+    unknown_data = b"UNKNOWN_FORMAT"
+    unknown_base64 = base64.b64encode(unknown_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(unknown_base64)
+
+    assert uri == f"data:image/png;base64,{unknown_base64}"
+    assert media_type == "image/png"
 
 
 # region UriContent

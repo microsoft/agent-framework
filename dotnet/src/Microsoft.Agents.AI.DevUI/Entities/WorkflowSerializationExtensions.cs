@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
@@ -17,31 +19,37 @@ internal static class WorkflowSerializationExtensions
     /// Converts a workflow to a dictionary representation compatible with DevUI frontend.
     /// This matches the Python workflow.to_dict() format expected by the UI.
     /// </summary>
-    public static Dictionary<string, object> ToDevUIDict(this Workflow workflow)
+    /// <param name="workflow">The workflow to convert.</param>
+    /// <returns>A dictionary with string keys and JsonElement values containing the workflow data.</returns>
+    public static Dictionary<string, JsonElement> ToDevUIDict(this Workflow workflow)
     {
-        var result = new Dictionary<string, object>
+        var result = new Dictionary<string, JsonElement>
         {
-            ["id"] = workflow.Name ?? Guid.NewGuid().ToString(),
-            ["start_executor_id"] = workflow.StartExecutorId,
-            ["max_iterations"] = MaxIterationsDefault
+            ["id"] = Serialize(workflow.Name ?? Guid.NewGuid().ToString(), EntitiesJsonContext.Default.String),
+            ["start_executor_id"] = Serialize(workflow.StartExecutorId, EntitiesJsonContext.Default.String),
+            ["max_iterations"] = Serialize(MaxIterationsDefault, EntitiesJsonContext.Default.Int32)
         };
 
         // Add optional fields
         if (!string.IsNullOrEmpty(workflow.Name))
         {
-            result["name"] = workflow.Name;
+            result["name"] = Serialize(workflow.Name, EntitiesJsonContext.Default.String);
         }
 
         if (!string.IsNullOrEmpty(workflow.Description))
         {
-            result["description"] = workflow.Description;
+            result["description"] = Serialize(workflow.Description, EntitiesJsonContext.Default.String);
         }
 
         // Convert executors to Python-compatible format
-        result["executors"] = ConvertExecutorsToDict(workflow);
+        result["executors"] = Serialize(
+            ConvertExecutorsToDict(workflow),
+            EntitiesJsonContext.Default.DictionaryStringDictionaryStringString);
 
         // Convert edges to edge_groups format
-        result["edge_groups"] = ConvertEdgesToEdgeGroups(workflow);
+        result["edge_groups"] = Serialize(
+            ConvertEdgesToEdgeGroups(workflow),
+            EntitiesJsonContext.Default.ListDictionaryStringJsonElement);
 
         return result;
     }
@@ -49,9 +57,9 @@ internal static class WorkflowSerializationExtensions
     /// <summary>
     /// Converts workflow executors to a dictionary format compatible with Python
     /// </summary>
-    private static Dictionary<string, object> ConvertExecutorsToDict(Workflow workflow)
+    private static Dictionary<string, Dictionary<string, string>> ConvertExecutorsToDict(Workflow workflow)
     {
-        var executors = new Dictionary<string, object>();
+        var executors = new Dictionary<string, Dictionary<string, string>>();
 
         // Extract executor IDs from edges and start executor
         // (Registrations is internal, so we infer executors from the graph structure)
@@ -73,7 +81,7 @@ internal static class WorkflowSerializationExtensions
         // Create executor entries (we can't access internal Registrations for type info)
         foreach (var executorId in executorIds)
         {
-            executors[executorId] = new Dictionary<string, object>
+            executors[executorId] = new Dictionary<string, string>
             {
                 ["id"] = executorId,
                 ["type"] = "Executor"
@@ -86,9 +94,9 @@ internal static class WorkflowSerializationExtensions
     /// <summary>
     /// Converts workflow edges to edge_groups format expected by the UI
     /// </summary>
-    private static List<object> ConvertEdgesToEdgeGroups(Workflow workflow)
+    private static List<Dictionary<string, JsonElement>> ConvertEdgesToEdgeGroups(Workflow workflow)
     {
-        var edgeGroups = new List<object>();
+        var edgeGroups = new List<Dictionary<string, JsonElement>>();
         var edgeGroupId = 0;
 
         // Get edges using the public ReflectEdges method
@@ -101,13 +109,13 @@ internal static class WorkflowSerializationExtensions
                 if (edgeInfo is DirectEdgeInfo directEdge)
                 {
                     // Single edge group for direct edges
-                    var edges = new List<object>();
+                    var edges = new List<Dictionary<string, string>>();
 
                     foreach (var source in directEdge.Connection.SourceIds)
                     {
                         foreach (var sink in directEdge.Connection.SinkIds)
                         {
-                            var edge = new Dictionary<string, object>
+                            var edge = new Dictionary<string, string>
                             {
                                 ["source_id"] = source,
                                 ["target_id"] = sink
@@ -123,23 +131,25 @@ internal static class WorkflowSerializationExtensions
                         }
                     }
 
-                    edgeGroups.Add(new Dictionary<string, object>
+                    var edgeGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = $"edge_group_{edgeGroupId++}",
-                        ["type"] = "SingleEdgeGroup",
-                        ["edges"] = edges
-                    });
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("SingleEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
+                    };
+
+                    edgeGroups.Add(edgeGroup);
                 }
                 else if (edgeInfo is FanOutEdgeInfo fanOutEdge)
                 {
                     // FanOut edge group
-                    var edges = new List<object>();
+                    var edges = new List<Dictionary<string, string>>();
 
                     foreach (var source in fanOutEdge.Connection.SourceIds)
                     {
                         foreach (var sink in fanOutEdge.Connection.SinkIds)
                         {
-                            edges.Add(new Dictionary<string, object>
+                            edges.Add(new Dictionary<string, string>
                             {
                                 ["source_id"] = source,
                                 ["target_id"] = sink
@@ -147,16 +157,16 @@ internal static class WorkflowSerializationExtensions
                         }
                     }
 
-                    var fanOutGroup = new Dictionary<string, object>
+                    var fanOutGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = $"edge_group_{edgeGroupId++}",
-                        ["type"] = "FanOutEdgeGroup",
-                        ["edges"] = edges
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("FanOutEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
                     };
 
                     if (fanOutEdge.HasAssigner)
                     {
-                        fanOutGroup["selection_func_name"] = "selector";
+                        fanOutGroup["selection_func_name"] = Serialize("selector", EntitiesJsonContext.Default.String);
                     }
 
                     edgeGroups.Add(fanOutGroup);
@@ -164,13 +174,13 @@ internal static class WorkflowSerializationExtensions
                 else if (edgeInfo is FanInEdgeInfo fanInEdge)
                 {
                     // FanIn edge group
-                    var edges = new List<object>();
+                    var edges = new List<Dictionary<string, string>>();
 
                     foreach (var source in fanInEdge.Connection.SourceIds)
                     {
                         foreach (var sink in fanInEdge.Connection.SinkIds)
                         {
-                            edges.Add(new Dictionary<string, object>
+                            edges.Add(new Dictionary<string, string>
                             {
                                 ["source_id"] = source,
                                 ["target_id"] = sink
@@ -178,16 +188,20 @@ internal static class WorkflowSerializationExtensions
                         }
                     }
 
-                    edgeGroups.Add(new Dictionary<string, object>
+                    var edgeGroup = new Dictionary<string, JsonElement>
                     {
-                        ["id"] = $"edge_group_{edgeGroupId++}",
-                        ["type"] = "FanInEdgeGroup",
-                        ["edges"] = edges
-                    });
+                        ["id"] = Serialize($"edge_group_{edgeGroupId++}", EntitiesJsonContext.Default.String),
+                        ["type"] = Serialize("FanInEdgeGroup", EntitiesJsonContext.Default.String),
+                        ["edges"] = Serialize(edges, EntitiesJsonContext.Default.ListDictionaryStringString)
+                    };
+
+                    edgeGroups.Add(edgeGroup);
                 }
             }
         }
 
         return edgeGroups;
     }
+
+    private static JsonElement Serialize<T>(T value, JsonTypeInfo<T> typeInfo) => JsonSerializer.SerializeToElement(value, typeInfo);
 }

@@ -1,0 +1,19 @@
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "Microsoft.Azure.Functions.DurableAgents": "Information",
+      "DurableTask": "Information",
+      "Microsoft.DurableTask": "Information"
+    }
+  },
+  "extensions": {
+    "durableTask": {
+      "hubName": "default",
+      "storageProvider": {
+        "type": "AzureManaged",
+        "connectionStringName": "DURABLE_TASK_SCHEDULER_CONNECTION_STRING"
+      }
+    }
+  }
+}

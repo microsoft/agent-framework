@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
@@ -27,28 +27,26 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Azure AI Chat Client with Explicit Settings ===")
-
-    # Since no Agent ID is provided, the agent will be automatically created
-    # and deleted after getting a response
+    # Since no Agent ID is provided, the agent will be automatically created.
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(
+            chat_client=AzureAIClient(
                 project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
                 model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
                 async_credential=credential,
                 agent_name="WeatherAgent",
-                should_cleanup_agent=True,  # Set to False if you want to disable automatic agent cleanup
             ),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
     ):
-        result = await agent.run("What's the weather like in New York?")
-        print(f"Result: {result}\n")
+        query = "What's the weather like in New York?"
+        print(f"User: {query}")
+        result = await agent.run(query)
+        print(f"Agent: {result}\n")
 
 
 if __name__ == "__main__":

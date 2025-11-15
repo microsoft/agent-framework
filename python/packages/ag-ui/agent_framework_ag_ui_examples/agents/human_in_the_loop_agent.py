@@ -5,7 +5,7 @@
 from enum import Enum
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 from pydantic import BaseModel, Field
 
 
@@ -43,10 +43,18 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return f"Generated {len(steps)} execution steps for the task."
 
 
-# Create the human-in-the-loop agent using tool-based approach for predictive state
-human_in_the_loop_agent = ChatAgent(
-    name="human_in_the_loop_agent",
-    instructions="""You are a helpful assistant that can perform any task by breaking it down into steps.
+def human_in_the_loop_agent(chat_client: ChatClientProtocol) -> ChatAgent:
+    """Create a human-in-the-loop agent using tool-based approach for predictive state.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured ChatAgent instance with human-in-the-loop capabilities
+    """
+    return ChatAgent(
+        name="human_in_the_loop_agent",
+        instructions="""You are a helpful assistant that can perform any task by breaking it down into steps.
 
     When asked to perform a task, you MUST call the `generate_task_steps` function with the proper
     number of steps per the request.
@@ -71,6 +79,6 @@ human_in_the_loop_agent = ChatAgent(
     After calling the function, provide a brief acknowledgment like:
     "I've created a plan with 10 steps. You can customize which steps to enable before I proceed."
     """,
-    chat_client=AzureOpenAIChatClient(),
-    tools=[generate_task_steps],
-)
+        chat_client=chat_client,
+        tools=[generate_task_steps],
+    )

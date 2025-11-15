@@ -64,8 +64,8 @@ export function WorkflowDetailsModal({
     workflow.source === "directory"
       ? "Local"
       : workflow.source === "in_memory"
-      ? "In-Memory"
-      : "Gallery";
+        ? "In-Memory"
+        : "Gallery";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -151,7 +151,8 @@ export function WorkflowDetailsModal({
                 {workflow.executors.map((executor, index) => (
                   <div
                     key={index}
-                    className="font-mono text-xs text-foreground bg-muted px-2 py-1 rounded"
+                    className="font-mono text-xs text-foreground bg-muted px-2 py-1 rounded truncate"
+                    title={executor}
                   >
                     {executor}
                   </div>

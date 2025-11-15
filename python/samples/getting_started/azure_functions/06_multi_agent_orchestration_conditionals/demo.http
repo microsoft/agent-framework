@@ -1,0 +1,24 @@
+### Test spam detection with a legitimate email
+POST http://localhost:7071/api/spamdetection/run
+Content-Type: application/json
+
+{
+  "email_id": "email-001",
+  "email_content": "Hi John, I hope you're doing well. I wanted to follow up on our meeting yesterday about the quarterly report. Could you please send me the updated figures by Friday? Thanks!"
+}
+
+
+### Test spam detection with a spam email
+POST http://localhost:7071/api/spamdetection/run
+Content-Type: application/json
+
+{
+  "email_id": "email-002",
+  "email_content": "URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!"
+}
+
+
+### Check the status of the orchestration
+@instanceId =<Replace with the instance ID from the response above>
+
+GET http://localhost:7071/api/spamdetection/status/{{instanceId}}

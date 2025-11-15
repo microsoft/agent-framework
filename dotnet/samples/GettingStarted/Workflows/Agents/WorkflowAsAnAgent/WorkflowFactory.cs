@@ -16,7 +16,7 @@ internal static class WorkflowFactory
     internal static Workflow BuildWorkflow(IChatClient chatClient)
     {
         // Create executors
-        var startExecutor = new ConcurrentStartExecutor();
+        var startExecutor = new ChatForwardingExecutor("Start");
         var aggregationExecutor = new ConcurrentAggregationExecutor();
         AIAgent frenchAgent = GetLanguageAgent("French", chatClient);
         AIAgent englishAgent = GetLanguageAgent("English", chatClient);
@@ -39,32 +39,10 @@ internal static class WorkflowFactory
         new(chatClient, instructions: $"You're a helpful assistant who always responds in {targetLanguage}.", name: $"{targetLanguage}Agent");
 
     /// <summary>
-    /// Executor that starts the concurrent processing by sending messages to the agents.
-    /// </summary>
-    private sealed class ConcurrentStartExecutor() : Executor("ConcurrentStartExecutor")
-    {
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
-        {
-            return routeBuilder
-                .AddHandler<List<ChatMessage>>(this.RouteMessages)
-                .AddHandler<TurnToken>(this.RouteTurnTokenAsync);
-        }
-
-        private ValueTask RouteMessages(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            return context.SendMessageAsync(messages, cancellationToken: cancellationToken);
-        }
-
-        private ValueTask RouteTurnTokenAsync(TurnToken token, IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            return context.SendMessageAsync(token, cancellationToken: cancellationToken);
-        }
-    }
-
-    /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
-    private sealed class ConcurrentAggregationExecutor() : Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
+    private sealed class ConcurrentAggregationExecutor() :
+        Executor<List<ChatMessage>>("ConcurrentAggregationExecutor"), IResettableExecutor
     {
         private readonly List<ChatMessage> _messages = [];
 
@@ -84,6 +62,13 @@ internal static class WorkflowFactory
                 var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.Text}"));
                 await context.YieldOutputAsync(formattedMessages, cancellationToken);
             }
+        }
+
+        /// <inheritdoc/>
+        public ValueTask ResetAsync()
+        {
+            this._messages.Clear();
+            return default;
         }
     }
 }

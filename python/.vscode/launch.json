@@ -16,7 +16,7 @@
             "name": "AG-UI Examples Server",
             "type": "debugpy",
             "request": "launch",
-            "module": "examples",
+            "module": "agent_framework_ag_ui_examples",
             "cwd": "${workspaceFolder}/packages/ag-ui",
             "console": "integratedTerminal",
             "justMyCode": false

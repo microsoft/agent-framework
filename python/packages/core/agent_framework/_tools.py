@@ -1636,7 +1636,7 @@ def _handle_function_calls_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
@@ -1839,7 +1839,7 @@ def _handle_function_calls_streaming_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
