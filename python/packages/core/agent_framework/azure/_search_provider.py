@@ -125,8 +125,6 @@ class AzureAISearchContextProvider(ContextProvider):
             )
     """
 
-    DEFAULT_CONTEXT_PROMPT = "Use the following context to answer the question:"
-
     def __init__(
         self,
         endpoint: str,
