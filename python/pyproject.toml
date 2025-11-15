@@ -32,6 +32,7 @@ dependencies = [
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
+    "agent-framework-cua",
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-purview",
@@ -101,6 +102,7 @@ agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-cua = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 
