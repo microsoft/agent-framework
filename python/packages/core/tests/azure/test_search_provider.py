@@ -915,3 +915,305 @@ class TestErrorHandling:
         # Verify context was created
         assert isinstance(context, Context)
         assert len(context.messages) > 0
+
+
+class TestAgenticModeValidation:
+    """Test agentic mode parameter validation."""
+
+    def test_agentic_mode_missing_knowledge_base_name(self) -> None:
+        """Test ValueError when knowledge_base_name is missing in agentic mode."""
+        with pytest.raises(ValueError, match="knowledge_base_name is required"):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                credential=AzureKeyCredential("test-key"),
+                mode="agentic",
+                azure_ai_project_endpoint="https://test.services.ai.azure.com",
+                model_deployment_name="gpt-4o",
+                azure_openai_resource_url="https://test.openai.azure.com",
+                # knowledge_base_name is missing
+            )
+
+    def test_agentic_mode_missing_azure_openai_resource_url(self) -> None:
+        """Test ValueError when azure_openai_resource_url is missing in agentic mode."""
+        with pytest.raises(ValueError, match="azure_openai_resource_url"):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                credential=AzureKeyCredential("test-key"),
+                mode="agentic",
+                azure_ai_project_endpoint="https://test.services.ai.azure.com",
+                model_deployment_name="gpt-4o",
+                knowledge_base_name="test-kb",
+                # azure_openai_resource_url is missing
+            )
+
+    def test_agentic_mode_missing_model_deployment_name(self) -> None:
+        """Test ValueError when model_deployment_name is missing in agentic mode."""
+        with pytest.raises(ValueError, match="model_deployment_name"):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                credential=AzureKeyCredential("test-key"),
+                mode="agentic",
+                azure_ai_project_endpoint="https://test.services.ai.azure.com",
+                knowledge_base_name="test-kb",
+                azure_openai_resource_url="https://test.openai.azure.com",
+                # model_deployment_name is missing
+            )
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_ensure_kb_missing_knowledge_base_name_runtime(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test ValueError when knowledge_base_name is None at runtime in _ensure_knowledge_base."""
+        # Setup mocks
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+        mock_index_client = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider with knowledge_base_name, then set to None to trigger runtime validation
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        # Set knowledge_base_name to None to trigger runtime validation
+        provider.knowledge_base_name = None
+
+        with pytest.raises(ValueError, match="knowledge_base_name is required"):
+            await provider._ensure_knowledge_base()
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_ensure_kb_missing_azure_openai_url_runtime(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test ValueError when azure_openai_resource_url is None at runtime."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+        mock_index_client = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        provider.azure_openai_resource_url = None
+
+        with pytest.raises(ValueError, match="azure_openai_resource_url"):
+            await provider._ensure_knowledge_base()
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_ensure_kb_missing_deployment_name_runtime(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test ValueError when model_deployment_name is None at runtime."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+        mock_index_client = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        provider.azure_openai_deployment_name = None
+
+        with pytest.raises(ValueError, match="model_deployment_name"):
+            await provider._ensure_knowledge_base()
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_retrieval_client_cleanup_on_exit(self, mock_search_class: MagicMock) -> None:
+        """Test that retrieval client is properly closed in __aexit__."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Create provider in agentic mode
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        # Mock retrieval client
+        mock_retrieval_client = AsyncMock()
+        provider._retrieval_client = mock_retrieval_client
+
+        # Exit context
+        await provider.__aexit__(None, None, None)
+
+        # Verify cleanup
+        mock_retrieval_client.close.assert_called_once()
+        assert provider._retrieval_client is None
+
+
+class TestImportErrorHandling:
+    """Test import error handling for optional dependencies."""
+
+    @patch("agent_framework.azure._search_provider._agentic_retrieval_available", False)
+    def test_agentic_mode_unavailable_sdk(self) -> None:
+        """Test ImportError when agentic SDK is not available."""
+        with pytest.raises(ImportError, match="azure-search-documents >= 11.7.0b1"):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                credential=AzureKeyCredential("test-key"),
+                mode="agentic",
+                azure_ai_project_endpoint="https://test.services.ai.azure.com",
+                model_deployment_name="gpt-4o",
+                knowledge_base_name="test-kb",
+                azure_openai_resource_url="https://test.openai.azure.com",
+            )
+
+
+class TestEdgeCasesAndPaths:
+    """Test edge cases and alternative code paths."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_empty_search_results_returns_empty_context(self, mock_search_class: MagicMock) -> None:
+        """Test that empty search results return empty Context (line 322)."""
+        # Setup mock to return empty results
+        mock_search_client = AsyncMock()
+        mock_results = AsyncMock()
+        mock_results.__aiter__.return_value = iter([])  # No results
+        mock_search_client.search.return_value = mock_results
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        context = await provider.invoking([ChatMessage(role=Role.USER, text="test query")])
+
+        # Should return empty context when no results
+        assert isinstance(context, Context)
+        assert len(context.messages) == 0
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_external_index_client_used_when_provided(self, mock_search_class: MagicMock) -> None:
+        """Test that external _index_client is used when provided (line 345)."""
+        # Setup mocks
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        external_index_client = AsyncMock()
+        mock_index = MagicMock()
+        mock_index.fields = []
+        external_index_client.get_index.return_value = mock_index
+        external_index_client.close = AsyncMock()
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Set external index client
+        provider._index_client = external_index_client
+
+        # Trigger auto-discovery which should use the external client
+        await provider._auto_discover_vector_field()
+
+        # Verify external client was used (get_index called)
+        external_index_client.get_index.assert_called_once_with("test-index")
+        # Verify external client was NOT closed (we don't own it)
+        external_index_client.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_ensure_kb_early_return_when_already_initialized(self, mock_search_class: MagicMock) -> None:
+        """Test early return from _ensure_knowledge_base when already initialized (line 466)."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        # Mark as already initialized
+        provider._knowledge_base_initialized = True
+
+        # Call should return early without doing anything (no errors)
+        await provider._ensure_knowledge_base()
+
+
+class TestHelperFunctions:
+    """Test helper and utility functions."""
+
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    def test_extract_document_text_fallback_to_all_fields(self, mock_search_class: MagicMock) -> None:
+        """Test document text extraction fallback when no standard fields (lines 622-626)."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Document with no standard text fields, only custom fields
+        doc = {
+            "title": "Custom Title",
+            "author": "John Doe",
+            "year": 2024,  # Non-string field should be ignored
+            "id": "doc123",  # Should be ignored
+            "@search.score": 0.95,  # @ fields should be ignored
+        }
+
+        result = provider._extract_document_text(doc)
+
+        # Should concatenate string fields (except id and @fields)
+        assert "title: Custom Title" in result
+        assert "author: John Doe" in result
+        assert "2024" not in result  # Non-string ignored
+        assert "id" not in result  # id field ignored
+        assert "@search" not in result  # @ fields ignored
