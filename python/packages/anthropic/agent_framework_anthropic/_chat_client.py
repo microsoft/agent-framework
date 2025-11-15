@@ -396,7 +396,7 @@ class AnthropicClient(BaseChatClient):
                 case HostedCodeInterpreterTool():
                     code_tool: dict[str, Any] = {
                         "type": "code_execution_20250825",
-                        "name": "code_interpreter",
+                        "name": "code_execution",
                     }
                     tool_list.append(code_tool)
                 case HostedMCPTool():

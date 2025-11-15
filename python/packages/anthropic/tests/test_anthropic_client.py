@@ -727,6 +727,32 @@ async def test_anthropic_client_integration_function_calling() -> None:
 
 @pytest.mark.flaky
 @skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_hosted_tools() -> None:
+    """Integration test for function calling."""
+    client = AnthropicClient()
+
+    messages = [ChatMessage(role=Role.USER, text="What tools do you have available?")]
+    tools = [
+        HostedWebSearchTool(),
+        HostedCodeInterpreterTool(),
+        HostedMCPTool(
+            name="example-mcp",
+            url="https://learn.microsoft.com/api/mcp",
+            approval_mode="never_require",
+        ),
+    ]
+
+    response = await client.get_response(
+        messages=messages,
+        chat_options=ChatOptions(tools=tools, max_tokens=100),
+    )
+
+    assert response is not None
+    assert response.text is not None
+
+
+@pytest.mark.flaky
+@skip_if_anthropic_integration_tests_disabled
 async def test_anthropic_client_integration_with_system_message() -> None:
     """Integration test with system message."""
     client = AnthropicClient()
