@@ -542,3 +542,194 @@ class TestVectorFieldAutoDiscovery:
         # Should NOT detect any vector fields
         assert provider.vector_field_name is None
         assert provider._auto_discovered_vector_field is True
+
+
+class TestAgenticMode:
+    """Test agentic mode functionality with Knowledge Bases."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.KnowledgeAgentRetrievalClient")
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_agentic_mode_end_to_end(
+        self,
+        mock_search_class: MagicMock,
+        mock_index_class: MagicMock,
+        mock_retrieval_class: MagicMock,
+    ) -> None:
+        """Test complete agentic mode flow from invoking to retrieval."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock (Knowledge Base exists)
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.return_value = MagicMock()
+        mock_index_client.get_agent.return_value = MagicMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Setup retrieval client mock
+        mock_retrieval_client = AsyncMock()
+
+        # Import the models for mocking
+        from agent_framework.azure._search_provider import (
+            KnowledgeAgentMessageTextContent,
+        )
+
+        # Mock retrieval response
+        mock_response_message = MagicMock()
+        mock_response_message.content = [
+            KnowledgeAgentMessageTextContent(text="This is the synthesized answer from the Knowledge Base.")
+        ]
+
+        mock_retrieval_result = MagicMock()
+        mock_retrieval_result.response = [mock_response_message]
+        mock_retrieval_client.retrieve = AsyncMock(return_value=mock_retrieval_result)
+
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        # Create provider in agentic mode
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        # Call invoking with a user message
+        messages = [ChatMessage(role=Role.USER, text="What information is available?")]
+        context = await provider.invoking(messages)
+
+        # Verify context was created with synthesized answer
+        assert isinstance(context, Context)
+        assert len(context.messages) > 0
+        assert "synthesized answer from the Knowledge Base" in context.messages[0].text
+
+        # Verify retrieval was called
+        mock_retrieval_client.retrieve.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.KnowledgeAgentRetrievalClient")
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_agentic_mode_empty_response_fallback(
+        self,
+        mock_search_class: MagicMock,
+        mock_index_class: MagicMock,
+        mock_retrieval_class: MagicMock,
+    ) -> None:
+        """Test that agentic mode handles empty responses with fallback message."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock (Knowledge Base exists)
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.return_value = MagicMock()
+        mock_index_client.get_agent.return_value = MagicMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Setup retrieval client mock with empty response
+        mock_retrieval_client = AsyncMock()
+        mock_retrieval_result = MagicMock()
+        mock_retrieval_result.response = []  # Empty response
+        mock_retrieval_client.retrieve = AsyncMock(return_value=mock_retrieval_result)
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        # Create provider in agentic mode
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        # Call invoking
+        messages = [ChatMessage(role=Role.USER, text="What is this about?")]
+        context = await provider.invoking(messages)
+
+        # Should have fallback message
+        assert isinstance(context, Context)
+        assert len(context.messages) > 0
+        assert "No results found from Knowledge Base" in context.messages[0].text
+
+
+class TestErrorHandling:
+    """Test error handling and edge cases."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchIndexClient")
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_auto_discovery_exception_handling(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that auto-discovery gracefully handles exceptions."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client to raise an exception
+        mock_index_client = AsyncMock()
+        mock_index_client.get_index.side_effect = Exception("Network error")
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Should not raise exception, just log warning
+        import logging
+
+        with patch.object(logging, "warning") as mock_warning:
+            await provider._auto_discover_vector_field()
+            # Should log warning about failure
+            mock_warning.assert_called_once()
+
+        # Should mark as attempted and continue with keyword search
+        assert provider._auto_discovered_vector_field is True
+        assert provider.vector_field_name is None
+
+    @pytest.mark.asyncio
+    @patch("agent_framework.azure._search_provider.SearchClient")
+    async def test_semantic_search_with_semantic_configuration(self, mock_search_class: MagicMock) -> None:
+        """Test semantic search with semantic_configuration_name parameter."""
+        # Setup mock
+        mock_search_client = AsyncMock()
+        mock_results = AsyncMock()
+        mock_results.__aiter__.return_value = iter([{"content": "Semantic search result"}])
+        mock_search_client.search.return_value = mock_results
+        mock_search_class.return_value = mock_search_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+            semantic_configuration_name="my-semantic-config",
+        )
+
+        messages = [ChatMessage(role=Role.USER, text="test query")]
+        context = await provider.invoking(messages)
+
+        # Verify search was called with semantic configuration
+        assert mock_search_client.search.called
+        call_args = mock_search_client.search.call_args
+        assert "semantic_configuration_name" in call_args.kwargs
+        assert call_args.kwargs["semantic_configuration_name"] == "my-semantic-config"
+
+        # Verify context was created
+        assert isinstance(context, Context)
+        assert len(context.messages) > 0
