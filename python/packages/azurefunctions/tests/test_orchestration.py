@@ -136,8 +136,8 @@ class TestDurableAIAgent:
         assert operation == "run_agent"
         assert request["message"] == "Test message"
         assert request["enable_tool_calls"] is True
-        assert "correlation_id" in request
-        assert request["correlation_id"] == "correlation-guid"
+        assert "correlationId" in request
+        assert request["correlationId"] == "correlation-guid"
         assert "thread_id" in request
         assert request["thread_id"] == "thread-guid"
 
@@ -145,7 +145,7 @@ class TestDurableAIAgent:
         """Test that run() works without explicit thread (creates unique session key)."""
         mock_context = Mock()
         mock_context.instance_id = "test-instance-002"
-        # Two calls to new_uuid: one for session_key, one for correlation_id
+        # Two calls to new_uuid: one for session_key, one for correlationId
         mock_context.new_uuid = Mock(side_effect=["auto-generated-guid", "correlation-guid"])
 
         mock_task = Mock()
@@ -164,7 +164,7 @@ class TestDurableAIAgent:
         entity_id = call_args[0][0]
         assert entity_id.name == "dafx-TestAgent"
         assert entity_id.key == "auto-generated-guid"
-        # Should be called twice: once for session_key, once for correlation_id
+        # Should be called twice: once for session_key, once for correlationId
         assert mock_context.new_uuid.call_count == 2
 
     def test_run_with_response_format(self) -> None:
@@ -307,8 +307,8 @@ class TestOrchestrationIntegration:
         mock_context.instance_id = "test-orchestration-001"
         # new_uuid will be called 3 times:
         # 1. thread creation
-        # 2. correlation_id for first call
-        # 3. correlation_id for second call
+        # 2. correlationId for first call
+        # 3. correlationId for second call
         mock_context.new_uuid = Mock(side_effect=["deterministic-guid-001", "corr-1", "corr-2"])
 
         # Track entity calls
