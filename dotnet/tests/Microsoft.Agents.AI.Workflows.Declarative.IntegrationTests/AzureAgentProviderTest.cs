@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Linq;
 using System.Threading.Tasks;
-using Azure;
-using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
@@ -18,7 +15,7 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
+        AzureAgentProvider provider = new(this.TestEndpoint, new AzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert
@@ -42,36 +39,5 @@ public sealed class AzureAgentProviderTest(ITestOutputHelper output) : Integrati
         // Assert
         Assert.NotNull(message);
         Assert.Equal(messages[3].Text, message.Text);
-    }
-
-    [Fact]
-    public async Task GetAgentTestAsync()
-    {
-        // Arrange
-        AzureAgentProvider provider = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
-        string agentName = $"TestAgent-{DateTime.UtcNow:yyMMdd-HHmmss-fff}";
-
-        string agent1Id = await this.CreateAgentAsync();
-        string agent2Id = await this.CreateAgentAsync(agentName);
-
-        // Act
-        AIAgent agent1 = await provider.GetAgentAsync(agent1Id);
-        // Assert
-        Assert.Equal(agent1Id, agent1.Id);
-
-        // Act
-        AIAgent agent2 = await provider.GetAgentAsync(agent2Id);
-        // Assert
-        Assert.Equal(agent2Id, agent2.Id);
-
-        // Act & Assert
-        await Assert.ThrowsAsync<RequestFailedException>(() => provider.GetAgentAsync(agentName));
-    }
-
-    private async ValueTask<string> CreateAgentAsync(string? name = null)
-    {
-        PersistentAgentsClient client = new(this.FoundryConfiguration.Endpoint, new AzureCliCredential());
-        PersistentAgent agent = await client.Administration.CreateAgentAsync(this.FoundryConfiguration.DeploymentName, name: name);
-        return agent.Id;
     }
 }

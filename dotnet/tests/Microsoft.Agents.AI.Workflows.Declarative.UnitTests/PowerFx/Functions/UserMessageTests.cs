@@ -22,11 +22,10 @@ public class UserMessageTests
     public void Execute_ReturnsBlank_ForEmptyInput()
     {
         // Arrange
-        FormulaValue sourceValue = FormulaValue.New(string.Empty);
-        StringValue stringValue = Assert.IsType<StringValue>(sourceValue);
+        StringValue sourceValue = FormulaValue.New(string.Empty);
 
         // Act
-        FormulaValue result = UserMessage.Execute(stringValue);
+        FormulaValue result = UserMessage.Execute(sourceValue);
 
         // Assert
         Assert.IsType<BlankValue>(result);
