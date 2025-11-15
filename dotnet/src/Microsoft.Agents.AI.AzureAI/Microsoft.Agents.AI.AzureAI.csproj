@@ -24,8 +24,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework Azure AI Agents</Title>
-    <Description>Provides Microsoft Agent Framework support for Azure AI Agents.</Description>
+    <Title>Microsoft Agent Framework for Foundry Agents</Title>
+    <Description>Provides Microsoft Agent Framework support for Foundry Agents.</Description>
   </PropertyGroup>
 
 </Project>
