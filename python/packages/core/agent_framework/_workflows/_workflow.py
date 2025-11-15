@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
+from .._serialization import SerializationMixin
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
@@ -30,7 +31,6 @@ from ._events import (
     _framework_event_origin,  # type: ignore
 )
 from ._executor import Executor
-from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._shared_state import SharedState
@@ -105,7 +105,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
 # region Workflow
 
 
-class Workflow(DictConvertible):
+class Workflow(SerializationMixin):
     """A graph-based execution engine that orchestrates connected executors.
 
     ## Overview
@@ -237,7 +237,7 @@ class Workflow(DictConvertible):
         """Reset the running flag."""
         self._is_running = False
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {
             "id": self.id,
@@ -268,10 +268,6 @@ class Workflow(DictConvertible):
                         executor_payload["workflow"] = original_executor.workflow.to_dict()
 
         return data
-
-    def to_json(self) -> str:
-        """Serialize the workflow definition to JSON."""
-        return json.dumps(self.to_dict())
 
     def get_start_executor(self) -> Executor:
         """Get the starting executor of the workflow.

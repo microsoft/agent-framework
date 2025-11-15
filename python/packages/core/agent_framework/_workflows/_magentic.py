@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, TypeVar, Union, cast
@@ -23,6 +23,7 @@ from agent_framework import (
     FunctionResultContent,
     Role,
 )
+from agent_framework._serialization import SerializationMixin
 
 from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
@@ -38,7 +39,7 @@ from ._group_chat import (
     group_chat_orchestrator,
 )
 from ._message_utils import normalize_messages_input
-from ._model_utils import DictConvertible, encode_value
+from ._model_utils import encode_value
 from ._participant_utils import GroupChatParticipantSpec, participant_description
 from ._request_info_mixin import response_handler
 from ._workflow import Workflow, WorkflowRunResult
@@ -328,7 +329,7 @@ def _new_chat_message_list() -> list[ChatMessage]:
 
 
 @dataclass
-class _MagenticStartMessage(DictConvertible):
+class _MagenticStartMessage(SerializationMixin):
     """Internal: A message to start a magentic workflow."""
 
     messages: list[ChatMessage] = field(default_factory=_new_chat_message_list)
@@ -356,7 +357,7 @@ class _MagenticStartMessage(DictConvertible):
         """Create a MagenticStartMessage from a simple string."""
         return cls(task_text)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Create a dict representation of the message."""
         return {
             "messages": [message.to_dict() for message in self.messages],
@@ -364,7 +365,7 @@ class _MagenticStartMessage(DictConvertible):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_MagenticStartMessage":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "_MagenticStartMessage":
         """Create from a dict."""
         if "messages" in data:
             raw_messages = data["messages"]
@@ -446,17 +447,17 @@ class _MagenticPlanReviewReply:
 
 
 @dataclass
-class _MagenticTaskLedger(DictConvertible):
+class _MagenticTaskLedger(SerializationMixin):
     """Internal: Task ledger for the Standard Magentic manager."""
 
     facts: ChatMessage
     plan: ChatMessage
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         return {"facts": _message_to_payload(self.facts), "plan": _message_to_payload(self.plan)}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_MagenticTaskLedger":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "_MagenticTaskLedger":
         return cls(
             facts=_message_from_payload(data.get("facts")),
             plan=_message_from_payload(data.get("plan")),
@@ -464,17 +465,19 @@ class _MagenticTaskLedger(DictConvertible):
 
 
 @dataclass
-class _MagenticProgressLedgerItem(DictConvertible):
+class _MagenticProgressLedgerItem(SerializationMixin):
     """Internal: A progress ledger item."""
 
     reason: str
     answer: str | bool
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         return {"reason": self.reason, "answer": self.answer}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_MagenticProgressLedgerItem":
+    def from_dict(
+        cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any
+    ) -> "_MagenticProgressLedgerItem":
         answer_value = data.get("answer")
         if not isinstance(answer_value, (str, bool)):
             answer_value = ""  # Default to empty string if not str or bool
@@ -482,7 +485,7 @@ class _MagenticProgressLedgerItem(DictConvertible):
 
 
 @dataclass
-class _MagenticProgressLedger(DictConvertible):
+class _MagenticProgressLedger(SerializationMixin):
     """Internal: A progress ledger for tracking workflow progress."""
 
     is_request_satisfied: _MagenticProgressLedgerItem
@@ -491,7 +494,7 @@ class _MagenticProgressLedger(DictConvertible):
     next_speaker: _MagenticProgressLedgerItem
     instruction_or_question: _MagenticProgressLedgerItem
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         return {
             "is_request_satisfied": self.is_request_satisfied.to_dict(),
             "is_in_loop": self.is_in_loop.to_dict(),
@@ -501,7 +504,7 @@ class _MagenticProgressLedger(DictConvertible):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "_MagenticProgressLedger":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "_MagenticProgressLedger":
         return cls(
             is_request_satisfied=_MagenticProgressLedgerItem.from_dict(data.get("is_request_satisfied", {})),
             is_in_loop=_MagenticProgressLedgerItem.from_dict(data.get("is_in_loop", {})),
@@ -512,7 +515,7 @@ class _MagenticProgressLedger(DictConvertible):
 
 
 @dataclass
-class MagenticContext(DictConvertible):
+class MagenticContext(SerializationMixin):
     """Context for the Magentic manager."""
 
     task: ChatMessage
@@ -522,7 +525,7 @@ class MagenticContext(DictConvertible):
     stall_count: int = 0
     reset_count: int = 0
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         return {
             "task": _message_to_payload(self.task),
             "chat_history": [_message_to_payload(msg) for msg in self.chat_history],
@@ -533,7 +536,7 @@ class MagenticContext(DictConvertible):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MagenticContext":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "MagenticContext":
         chat_history_payload = data.get("chat_history", [])
         history: list[ChatMessage] = []
         for item in chat_history_payload:
@@ -556,6 +559,12 @@ class MagenticContext(DictConvertible):
         self.chat_history.clear()
         self.stall_count = 0
         self.reset_count += 1
+
+    def clone(self, *, deep: bool = True) -> Self:
+        """Create a copy of this context."""
+        import copy
+
+        return copy.deepcopy(self) if deep else copy.copy(self)  # type: ignore[return-value]
 
 
 # endregion Messages and Types
@@ -2418,7 +2427,8 @@ class MagenticWorkflow:
         if not isinstance(orchestrator_state, dict):
             return
 
-        context_payload = orchestrator_state.get("magentic_context")
+        orchestrator_state_dict = cast(dict[str, Any], orchestrator_state)
+        context_payload = orchestrator_state_dict.get("magentic_context")
         if not isinstance(context_payload, dict):
             return
 

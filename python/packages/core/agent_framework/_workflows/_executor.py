@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from .._serialization import SerializationMixin
 from ..observability import create_processing_span
 from ._events import (
     ExecutorCompletedEvent,
@@ -15,7 +16,6 @@ from ._events import (
     WorkflowErrorDetails,
     _framework_event_origin,  # type: ignore[reportPrivateUsage]
 )
-from ._model_utils import DictConvertible
 from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import Message, MessageType, RunnerContext
 from ._shared_state import SharedState
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 # region Executor
-class Executor(RequestInfoMixin, DictConvertible):
+class Executor(RequestInfoMixin, SerializationMixin):
     """Base class for all workflow executors that process messages and perform computations.
 
     ## Overview
@@ -422,7 +422,7 @@ class Executor(RequestInfoMixin, DictConvertible):
 
         return list(output_types)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialize executor definition for workflow topology export."""
         return {"id": self.id, "type": self.type}
 
