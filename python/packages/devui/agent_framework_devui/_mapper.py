@@ -1316,16 +1316,11 @@ class MessageMapper:
                 ]
 
             # For unknown/legacy events, still emit as workflow event for backward compatibility
-            # Get event data and serialize if it's a SerializationMixin
+            # Get event data and recursively serialize it to handle nested SerializationMixin objects
             raw_event_data = getattr(event, "data", None)
-            serialized_event_data: dict[str, Any] | str | None = raw_event_data
-            if raw_event_data is not None and hasattr(raw_event_data, "to_dict"):
-                # SerializationMixin objects - convert to dict for JSON serialization
-                try:
-                    serialized_event_data = raw_event_data.to_dict()
-                except Exception as e:
-                    logger.debug(f"Failed to serialize event data with to_dict(): {e}")
-                    serialized_event_data = str(raw_event_data)
+            serialized_event_data: dict[str, Any] | str | list[Any] | None = (
+                _serialize_content_recursive(raw_event_data) if raw_event_data is not None else None
+            )
 
             # Create structured workflow event (keeping for backward compatibility)
             workflow_event = ResponseWorkflowEventComplete(
