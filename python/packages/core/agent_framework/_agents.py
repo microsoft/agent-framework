@@ -10,6 +10,7 @@ from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
 
+from opentelemetry.trace import Status, StatusCode, get_current_span
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
@@ -870,6 +871,95 @@ class ChatAgent(BaseAgent):
         )
         response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **kwargs)
 
+        current_span = get_current_span()
+        if current_span and current_span.is_recording():
+            has_tool_calls = False
+            failed_tool_count = 0
+            total_tool_count = 0
+            failed_tool_names: list[str] = []
+
+            # Count tool calls and failures from response messages
+            for message in response.messages:
+                # Check for tool calls in the message (with type checking)
+                if hasattr(message, "tool_calls") and getattr(message, "tool_calls", None):
+                    tool_calls = getattr(message, "tool_calls", None)
+                    if tool_calls:
+                        has_tool_calls = True
+                        for tool_call in tool_calls:
+                            total_tool_count += 1
+                            # Check if tool call has error status
+                            if hasattr(tool_call, "status") and getattr(tool_call, "status", None) == "error":
+                                failed_tool_count += 1
+                                if hasattr(tool_call, "function"):
+                                    func = getattr(tool_call, "function", None)
+                                    if func and hasattr(func, "name"):
+                                        failed_tool_names.append(func.name)
+
+                # Check for tool response messages with errors
+                if message.role == Role.TOOL and hasattr(message, "text"):
+                    msg_text = getattr(message, "text", None)
+                    if msg_text:
+                        text_lower = msg_text.lower()
+                        error_keywords = ["error", "exception", "failed", "traceback"]
+                        if any(keyword in text_lower for keyword in error_keywords):
+                            failed_tool_count += 1
+                            # Try to extract tool name if available
+                            if hasattr(message, "tool_call_id"):
+                                tool_call_id = getattr(message, "tool_call_id", None)
+                                if tool_call_id:
+                                    failed_tool_names.append(f"tool_{tool_call_id}")
+
+            # Set span attributes for tool call metrics
+            if has_tool_calls and total_tool_count > 0:
+                current_span.set_attribute("gen_ai.agent.tool_calls.total", total_tool_count)
+                current_span.set_attribute("gen_ai.agent.tool_calls.failed", failed_tool_count)
+                successful_count = total_tool_count - failed_tool_count
+                current_span.set_attribute("gen_ai.agent.tool_calls.successful", successful_count)
+
+                # Prepare failed tools string once (fixes unbound variable issue)
+                failed_tools_str = ", ".join(failed_tool_names) if failed_tool_names else "unknown"
+
+                if failed_tool_count > 0 and failed_tool_count == total_tool_count:
+                    # All tools failed - set span status to ERROR
+                    error_desc = f"All {total_tool_count} tool call(s) failed during agent execution"
+                    current_span.set_status(Status(StatusCode.ERROR, description=error_desc))
+                    current_span.set_attribute("gen_ai.agent.all_tools_failed", True)
+
+                    # Add error event with details
+                    current_span.add_event(
+                        "all_tool_calls_failed",
+                        attributes={
+                            "failed_count": failed_tool_count,
+                            "total_count": total_tool_count,
+                            "failed_tools": failed_tools_str,
+                        },
+                    )
+                    logger.error(f"All {total_tool_count} tool call(s) failed. Failed tools: {failed_tools_str}")
+                elif failed_tool_count > 0:
+                    # Partial failure - some tools failed but not all
+                    current_span.set_attribute("gen_ai.agent.partial_tool_failure", True)
+                    current_span.add_event(
+                        "partial_tool_failure",
+                        attributes={
+                            "failed_count": failed_tool_count,
+                            "successful_count": successful_count,
+                            "total_count": total_tool_count,
+                            "failed_tools": failed_tools_str,
+                        },
+                    )
+                    # Still set OK status for partial failures
+                    current_span.set_status(Status(StatusCode.OK))
+                    logger.warning(
+                        f"{failed_tool_count}/{total_tool_count} tool call(s) failed. Failed tools: {failed_tools_str}"
+                    )
+                else:
+                    # All tools succeeded
+                    current_span.set_status(Status(StatusCode.OK))
+                    logger.info(f"All {total_tool_count} tool call(s) succeeded")
+            else:
+                # No tool calls were made - mark as successful
+                current_span.set_status(Status(StatusCode.OK))
+
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
         # Ensure that the author name is set for each message in the response.
@@ -880,6 +970,7 @@ class ChatAgent(BaseAgent):
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
         await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+
         return AgentRunResponse(
             messages=response.messages,
             response_id=response.response_id,
@@ -1020,7 +1111,99 @@ class ChatAgent(BaseAgent):
                 raw_representation=update,
             )
 
-        response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
+        response = ChatResponse.from_chat_response_updates(response_updates)
+
+        current_span = get_current_span()
+        if current_span and current_span.is_recording():
+            has_tool_calls = False
+            failed_tool_count = 0
+            total_tool_count = 0
+            failed_tool_names: list[str] = []
+
+            # Count tool calls and failures from response messages
+            for message in response.messages:
+                # Check for tool calls in the message (with type checking)
+                if hasattr(message, "tool_calls") and getattr(message, "tool_calls", None):
+                    tool_calls = getattr(message, "tool_calls", None)
+                    if tool_calls:
+                        has_tool_calls = True
+                        for tool_call in tool_calls:
+                            total_tool_count += 1
+                            # Check if tool call has error status
+                            if hasattr(tool_call, "status") and getattr(tool_call, "status", None) == "error":
+                                failed_tool_count += 1
+                                if hasattr(tool_call, "function"):
+                                    func = getattr(tool_call, "function", None)
+                                    if func and hasattr(func, "name"):
+                                        failed_tool_names.append(func.name)
+
+                # Check for tool response messages with errors
+                if message.role == Role.TOOL and hasattr(message, "text"):
+                    msg_text = getattr(message, "text", None)
+                    if msg_text:
+                        text_lower = msg_text.lower()
+                        error_keywords = ["error", "exception", "failed", "traceback"]
+                        if any(keyword in text_lower for keyword in error_keywords):
+                            failed_tool_count += 1
+                            # Try to extract tool name if available
+                            if hasattr(message, "tool_call_id"):
+                                tool_call_id = getattr(message, "tool_call_id", None)
+                                if tool_call_id:
+                                    failed_tool_names.append(f"tool_{tool_call_id}")
+
+            # Set span attributes for tool call metrics
+            if has_tool_calls and total_tool_count > 0:
+                current_span.set_attribute("gen_ai.agent.tool_calls.total", total_tool_count)
+                current_span.set_attribute("gen_ai.agent.tool_calls.failed", failed_tool_count)
+                successful_count = total_tool_count - failed_tool_count
+                current_span.set_attribute("gen_ai.agent.tool_calls.successful", successful_count)
+
+                # Prepare failed tools string once
+                failed_tools_str = ", ".join(failed_tool_names) if failed_tool_names else "unknown"
+
+                if failed_tool_count > 0 and failed_tool_count == total_tool_count:
+                    # All tools failed - set span status to ERROR
+                    error_desc = f"All {total_tool_count} tool call(s) failed during streaming execution"
+                    current_span.set_status(Status(StatusCode.ERROR, description=error_desc))
+                    current_span.set_attribute("gen_ai.agent.all_tools_failed", True)
+
+                    current_span.add_event(
+                        "all_tool_calls_failed",
+                        attributes={
+                            "failed_count": failed_tool_count,
+                            "total_count": total_tool_count,
+                            "failed_tools": failed_tools_str,
+                            "execution_mode": "streaming",
+                        },
+                    )
+                    logger.error(
+                        f"[STREAMING] All {total_tool_count} tool call(s) failed. Failed tools: {failed_tools_str}"
+                    )
+                elif failed_tool_count > 0:
+                    # Partial failure
+                    current_span.set_attribute("gen_ai.agent.partial_tool_failure", True)
+                    current_span.add_event(
+                        "partial_tool_failure",
+                        attributes={
+                            "failed_count": failed_tool_count,
+                            "successful_count": successful_count,
+                            "total_count": total_tool_count,
+                            "failed_tools": failed_tools_str,
+                            "execution_mode": "streaming",
+                        },
+                    )
+                    current_span.set_status(Status(StatusCode.OK))
+                    logger.warning(
+                        f"[STREAMING] {failed_tool_count}/{total_tool_count} tool call(s) failed. "
+                        f"Failed tools: {failed_tools_str}"
+                    )
+                else:
+                    # All tools succeeded
+                    current_span.set_status(Status(StatusCode.OK))
+                    logger.info(f"[STREAMING] All {total_tool_count} tool call(s) succeeded")
+            else:
+                current_span.set_status(Status(StatusCode.OK))
+
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
         await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
 

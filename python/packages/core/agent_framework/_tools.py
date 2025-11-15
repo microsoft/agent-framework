@@ -688,6 +688,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
+        from opentelemetry.trace import Status, StatusCode
+
         from .observability import OBSERVABILITY_SETTINGS
 
         tool_call_id = kwargs.pop("tool_call_id", None)
@@ -726,11 +728,29 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
+
+                span.set_status(Status(StatusCode.ERROR, description=f"Tool execution failed: {exception!s}"))
+
+                # Record the exception with detailed attributes
                 attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+
+                # Add error event for better visibility in Azure AI Foundry
+                span.add_event(
+                    "tool_call_error",
+                    attributes={
+                        "error.type": type(exception).__name__,
+                        "error.message": str(exception),
+                        "tool.name": self.name,
+                    },
+                )
+
                 logger.error(f"Function failed. Error: {exception}")
                 raise
             else:
+                # FIX FOR ISSUE #2217: Explicitly set span status to OK on success
+                span.set_status(Status(StatusCode.OK))
+
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
                     try:
