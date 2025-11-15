@@ -37,6 +37,7 @@ import {
   Copy,
   CheckCheck,
   RefreshCw,
+  Wrench,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -60,8 +61,11 @@ interface ConversationItemBubbleProps {
 }
 
 function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
+  // All hooks must be at the top - cannot be conditional
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false); // For tool calls/results
+  const showToolCalls = useDevUIStore((state) => state.showToolCalls);
 
   // Extract text content from message for copying
   const getMessageText = () => {
@@ -188,19 +192,70 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
     );
   }
 
-  // Function calls and results - render with neutral styling
-  return (
-    <div className="flex gap-3">
-      <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-md border bg-muted">
-        <Bot className="h-4 w-4" />
-      </div>
-      <div className="flex flex-col space-y-1 items-start max-w-[80%]">
-        <div className="rounded px-3 py-2 text-sm bg-muted">
-          <OpenAIMessageRenderer item={item} />
+  // Function calls - compact, collapsible renderer
+  if (item.type === "function_call") {
+    // Don't render if showToolCalls is disabled or no name
+    if (!showToolCalls || !item.name) return null;
+
+    return (
+      <div className="flex gap-3 ml-11"> {/* Indent to align with message content */}
+        <div className="flex flex-col w-full">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors w-fit group"
+          >
+            <Wrench className="h-3 w-3 text-muted-foreground" />
+            <span className="text-muted-foreground font-mono">{item.name}</span>
+            <span className="text-muted-foreground/60">→</span>
+            {isExpanded ? (
+              <span className="text-xs text-muted-foreground">▼</span>
+            ) : (
+              <span className="text-xs text-muted-foreground">▶</span>
+            )}
+          </button>
+
+          {isExpanded && item.arguments && (
+            <div className="ml-5 mt-1 text-xs font-mono text-muted-foreground border-l-2 border-muted pl-3">
+              <pre className="whitespace-pre-wrap break-all">{item.arguments}</pre>
+            </div>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // Function results - compact renderer
+  if (item.type === "function_call_output") {
+    // Don't render if showToolCalls is disabled or no output
+    if (!showToolCalls || !item.output) return null;
+
+    return (
+      <div className="flex gap-3 ml-11">
+        <div className="flex flex-col w-full">
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors w-fit"
+          >
+            <CheckCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
+            <span className="text-muted-foreground/60 text-xs">Result</span>
+            {isExpanded ? (
+              <span className="text-xs text-muted-foreground">▼</span>
+            ) : (
+              <span className="text-xs text-muted-foreground">▶</span>
+            )}
+          </button>
+
+          {isExpanded && (
+            <div className="ml-5 mt-1 text-xs font-mono text-muted-foreground border-l-2 border-green-600/20 pl-3">
+              <pre className="whitespace-pre-wrap break-all">{item.output}</pre>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
@@ -351,7 +406,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             const error = failedEvent.response?.error;
             const errorMessage = error
               ? typeof error === "object" && "message" in error
-                ? (error as any).message
+                ? (error as { message: string }).message
                 : JSON.stringify(error)
               : "Request failed";
 
@@ -1336,6 +1391,24 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             continue;
           }
 
+          // Handle function call arguments delta (streaming arguments)
+          if (openAIEvent.type === "response.function_call_arguments.delta") {
+            const argsEvent = openAIEvent as import("@/types/openai").ResponseFunctionCallArgumentsDelta;
+
+            // Update the function call item with accumulated arguments
+            const currentItems = useDevUIStore.getState().chatItems;
+            setChatItems(currentItems.map((item) => {
+              if (item.type === "function_call" && item.call_id === argsEvent.item_id) {
+                return {
+                  ...item,
+                  arguments: (item.arguments || "") + (argsEvent.delta || ""),
+                };
+              }
+              return item;
+            }));
+            continue;
+          }
+
           // Handle function result events (after function execution)
           if (openAIEvent.type === "response.function_result.complete") {
             const resultEvent = openAIEvent as import("@/types/openai").ResponseFunctionResultComplete;
@@ -1382,10 +1455,27 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             return; // Exit stream processing early on error
           }
 
-          // Handle output item added events (images, files, data)
+          // Handle output item added events (images, files, data, function calls)
           if (openAIEvent.type === "response.output_item.added") {
             const outputItemEvent = openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent;
             const item = outputItemEvent.item;
+
+            // Handle function calls as separate conversation items
+            if (item.type === "function_call") {
+              const functionCallItem: import("@/types/openai").ConversationFunctionCall = {
+                id: item.id || `call-${Date.now()}`,
+                type: "function_call",
+                name: item.name,
+                arguments: item.arguments || "",
+                call_id: item.call_id,
+                status: (item.status === "failed" || item.status === "cancelled" ? "incomplete" : item.status) || "in_progress",
+                created_at: Math.floor(Date.now() / 1000),
+              };
+
+              const currentItems = useDevUIStore.getState().chatItems;
+              setChatItems([...currentItems, functionCallItem]);
+              continue;
+            }
 
             // Add output items to assistant message content
             const currentItems = useDevUIStore.getState().chatItems;

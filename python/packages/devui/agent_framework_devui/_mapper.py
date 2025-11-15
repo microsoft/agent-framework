@@ -29,7 +29,6 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
-    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -671,25 +670,9 @@ class MessageMapper:
                 ]
 
             if isinstance(event, AgentCompletedEvent):
-                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
-
-                response_obj = Response(
-                    id=f"resp_{execution_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                # Don't emit response.completed here - the server will emit a proper one
+                # with usage data after aggregating all events
+                return []
 
             if isinstance(event, AgentFailedEvent):
                 execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
@@ -839,35 +822,10 @@ class MessageMapper:
                         )
                     ]
 
-            # Handle WorkflowCompletedEvent - emit response.completed
+            # Handle WorkflowCompletedEvent - Don't emit response.completed here
+            # The server will emit a proper one with usage data after aggregating all events
             if event_class == "WorkflowCompletedEvent":
-                workflow_id = context.get("workflow_id", str(uuid4()))
-
-                # Import Response type for proper construction
-                from openai.types.responses import Response
-
-                # Get model name from request or use 'devui' as default
-                request_obj = context.get("request")
-                model_name = request_obj.model if request_obj and request_obj.model else "devui"
-
-                # Create a full Response object for completed state
-                response_obj = Response(
-                    id=f"resp_{workflow_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],  # Output items already sent via output_item.added events
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                return []
 
             if event_class == "WorkflowFailedEvent":
                 workflow_id = context.get("workflow_id", str(uuid4()))
