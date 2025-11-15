@@ -73,7 +73,7 @@ class TestAgentEntityInit:
         assert entity.agent == mock_agent
         assert len(entity.state.data.conversationHistory) == 0
         assert entity.state.data.extensionData is None
-        assert entity.state.schemaVersion == "1.0.0"
+        assert entity.state.schema_version == "1.0.0"
 
     def test_init_stores_agent_reference(self) -> None:
         """Test that the agent reference is stored correctly."""
@@ -112,7 +112,7 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Test message", "thread_id": "conv-123", "correlation_id": "corr-entity-1"}
+            mock_context, {"message": "Test message", "thread_id": "conv-123", "correlationId": "corr-entity-1"}
         )
 
         # Verify agent.run was called
@@ -158,7 +158,7 @@ class TestAgentEntityRunAgent:
             {
                 "message": "Tell me something",
                 "thread_id": "session-1",
-                "correlation_id": "corr-stream-1",
+                "correlationId": "corr-stream-1",
             },
         )
 
@@ -174,7 +174,7 @@ class TestAgentEntityRunAgent:
             assert recorded_call.args[0] is expected_update
             context = recorded_call.args[1]
             assert context.agent_name == "StreamingAgent"
-            assert context.correlation_id == "corr-stream-1"
+            assert context.correlationId == "corr-stream-1"
             assert context.thread_id == "session-1"
             assert context.request_message == "Tell me something"
 
@@ -182,7 +182,7 @@ class TestAgentEntityRunAgent:
         assert final_call is not None
         final_response, final_context = final_call.args
         assert final_context.agent_name == "StreamingAgent"
-        assert final_context.correlation_id == "corr-stream-1"
+        assert final_context.correlationId == "corr-stream-1"
         assert final_context.thread_id == "session-1"
         assert final_context.request_message == "Tell me something"
         assert getattr(final_response, "text", "").strip()
@@ -205,7 +205,7 @@ class TestAgentEntityRunAgent:
             {
                 "message": "Hi",
                 "thread_id": "session-2",
-                "correlation_id": "corr-final-1",
+                "correlationId": "corr-final-1",
             },
         )
 
@@ -219,7 +219,7 @@ class TestAgentEntityRunAgent:
         assert final_call.args[0] is agent_response
         final_context = final_call.args[1]
         assert final_context.agent_name == "NonStreamingAgent"
-        assert final_context.correlation_id == "corr-final-1"
+        assert final_context.correlationId == "corr-final-1"
         assert final_context.thread_id == "session-2"
         assert final_context.request_message == "Hi"
 
@@ -233,19 +233,20 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         await entity.run_agent(
-            mock_context, {"message": "User message", "thread_id": "conv-1", "correlation_id": "corr-entity-2"}
+            mock_context, {"message": "User message", "thread_id": "conv-1", "correlationId": "corr-entity-2"}
         )
 
-        # Should have 2 entries: user message + assistant response
-        history = entity.state.data.conversationHistory[0].messages
+        # Should have 1 entry: user message + assistant response
+        user_history = entity.state.data.conversationHistory[0].messages
+        assistant_history = entity.state.data.conversationHistory[1].messages
 
-        assert len(history) == 2
+        assert len(user_history) == 1
 
-        user_msg = history[0]
+        user_msg = user_history[0]
         assert _role_value(user_msg) == "user"
         assert user_msg.text == "User message"
 
-        assistant_msg = history[1]
+        assistant_msg = assistant_history[0]
         assert _role_value(assistant_msg) == "assistant"
         assert assistant_msg.text == "Agent response"
 
@@ -260,19 +261,19 @@ class TestAgentEntityRunAgent:
         assert len(entity.state.data.conversationHistory) == 0
 
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-3a"}
-        )
-        assert len(entity.state.data.conversationHistory) == 1
-
-        await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-3b"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-3a"}
         )
         assert len(entity.state.data.conversationHistory) == 2
 
         await entity.run_agent(
-            mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlation_id": "corr-entity-3c"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-3b"}
         )
-        assert len(entity.state.data.conversationHistory) == 3
+        assert len(entity.state.data.conversationHistory) == 4
+
+        await entity.run_agent(
+            mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlationId": "corr-entity-3c"}
+        )
+        assert len(entity.state.data.conversationHistory) == 6
 
     async def test_run_agent_stores_last_response(self) -> None:
         """Test that run_agent stores the last response."""
@@ -283,15 +284,15 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-4a"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-4a"}
         )
-        assert entity.state.lastResponse == "Response 1"
+        assert entity.state.last_response == "Response 1"
 
         mock_agent.run = AsyncMock(return_value=_agent_response("Response 2"))
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-4b"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-4b"}
         )
-        assert entity.state.lastResponse == "Response 2"
+        assert entity.state.last_response == "Response 2"
 
     async def test_run_agent_with_none_thread_id(self) -> None:
         """Test run_agent with a None thread identifier."""
@@ -303,7 +304,7 @@ class TestAgentEntityRunAgent:
 
         with pytest.raises(ValueError, match="thread_id"):
             await entity.run_agent(
-                mock_context, {"message": "Message", "thread_id": None, "correlation_id": "corr-entity-5"}
+                mock_context, {"message": "Message", "thread_id": None, "correlationId": "corr-entity-5"}
             )
 
     async def test_run_agent_handles_response_without_text_attribute(self) -> None:
@@ -322,7 +323,7 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-6"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-6"}
         )
 
         # Should handle gracefully
@@ -338,7 +339,7 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-7"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-7"}
         )
 
         assert result["status"] == "success"
@@ -354,18 +355,18 @@ class TestAgentEntityRunAgent:
 
         # Send multiple messages
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-8a"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-8a"}
         )
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-8b"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-8b"}
         )
         await entity.run_agent(
-            mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlation_id": "corr-entity-8c"}
+            mock_context, {"message": "Message 3", "thread_id": "conv-1", "correlationId": "corr-entity-8c"}
         )
 
         history = entity.state.data.conversationHistory
-        assert len(history) == 3
-        assert entity.state.messageCount == 3
+        assert len(history) == 6
+        assert entity.state.message_count == 6
 
 
 class TestAgentEntityReset:
@@ -421,23 +422,23 @@ class TestAgentEntityReset:
 
         # Have a conversation
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-10a"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-10a"}
         )
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-10b"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-10b"}
         )
 
         # Verify state before reset
-        assert entity.state.messageCount == 2
-        assert len(entity.state.data.conversationHistory) == 2
+        assert entity.state.message_count == 4
+        assert len(entity.state.data.conversationHistory) == 4
 
         # Reset
         entity.reset(mock_context)
 
         # Verify state after reset
-        assert entity.state.messageCount == 0
+        assert entity.state.message_count == 0
         assert len(entity.state.data.conversationHistory) == 0
-        assert entity.state.lastResponse is None
+        assert entity.state.last_response is None
 
 
 class TestCreateAgentEntity:
@@ -464,7 +465,7 @@ class TestCreateAgentEntity:
         mock_context.get_input.return_value = {
             "message": "Test message",
             "thread_id": "conv-123",
-            "correlation_id": "corr-entity-factory",
+            "correlationId": "corr-entity-factory",
         }
         mock_context.get_state.return_value = None
 
@@ -490,8 +491,8 @@ class TestCreateAgentEntity:
                     role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
                 ).to_dict()
             ],
-            "messageCount": 0,
-            "lastResponse": None
+            "message_count": 0,
+            "last_response": None
         }
 
         # Execute
@@ -505,9 +506,9 @@ class TestCreateAgentEntity:
         # Verify state was cleared
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["messageCount"] == 0
+        assert state["message_count"] == 0
         assert state["data"]["conversationHistory"] == []
-        assert state["lastResponse"] is None
+        assert state["last_response"] is None
 
     def test_entity_function_handles_unknown_operation(self) -> None:
         """Test that the entity function handles unknown operations."""
@@ -556,7 +557,7 @@ class TestCreateAgentEntity:
         entity_function = create_agent_entity(mock_agent)
 
         existing_state = {
-            "messageCount": 5,
+            "message_count": 5,
             "conversationHistory": [
                 ChatMessage(
                     role="user", text="msg1", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
@@ -565,7 +566,7 @@ class TestCreateAgentEntity:
                     role="assistant", text="resp1", additional_properties={"timestamp": "2024-01-01T00:05:00Z"}
                 ).to_dict(),
             ],
-            "lastResponse": "resp1",
+            "last_response": "resp1",
         }
 
         mock_context = Mock()
@@ -590,7 +591,7 @@ class TestErrorHandling:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-1"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-1"}
         )
 
         assert result["status"] == "error"
@@ -607,7 +608,7 @@ class TestErrorHandling:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-2"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-2"}
         )
 
         assert result["status"] == "error"
@@ -623,7 +624,7 @@ class TestErrorHandling:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-3"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-3"}
         )
 
         assert result["status"] == "error"
@@ -658,7 +659,7 @@ class TestErrorHandling:
 
         result = await entity.run_agent(
             mock_context,
-            {"message": "Test message", "thread_id": "conv-123", "correlation_id": "corr-entity-error-4"},
+            {"message": "Test message", "thread_id": "conv-123", "correlationId": "corr-entity-error-4"},
         )
 
         # Even on error, message info should be preserved
@@ -679,12 +680,12 @@ class TestConversationHistory:
         mock_context = Mock()
 
         await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-history-1"}
+            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-history-1"}
         )
 
         # Check both user and assistant messages have timestamps
         for entry in entity.state.data.conversationHistory:
-            timestamp = entry.createdAt
+            timestamp = entry.created_at
             assert timestamp is not None
             # Verify timestamp is in ISO format
             datetime.fromisoformat(str(timestamp))
@@ -700,19 +701,19 @@ class TestConversationHistory:
         mock_agent.run = AsyncMock(return_value=_agent_response("Response 1"))
         await entity.run_agent(
             mock_context,
-            {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-history-2a"},
+            {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-history-2a"},
         )
 
         mock_agent.run = AsyncMock(return_value=_agent_response("Response 2"))
         await entity.run_agent(
             mock_context,
-            {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-history-2b"},
+            {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-history-2b"},
         )
 
         mock_agent.run = AsyncMock(return_value=_agent_response("Response 3"))
         await entity.run_agent(
             mock_context,
-            {"message": "Message 3", "thread_id": "conv-1", "correlation_id": "corr-entity-history-2c"},
+            {"message": "Message 3", "thread_id": "conv-1", "correlationId": "corr-entity-history-2c"},
         )
 
         # Verify order
@@ -734,11 +735,11 @@ class TestConversationHistory:
 
         await entity.run_agent(
             mock_context,
-            {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-entity-history-3a"},
+            {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-history-3a"},
         )
         await entity.run_agent(
             mock_context,
-            {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-entity-history-3b"},
+            {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-history-3b"},
         )
 
         # Check role alternation
@@ -765,7 +766,7 @@ class TestRunRequestSupport:
             thread_id="conv-123",
             role=Role.USER,
             enable_tool_calls=True,
-            correlation_id="corr-runreq-1",
+            correlationId="corr-runreq-1",
         )
 
         result = await entity.run_agent(mock_context, request)
@@ -788,7 +789,7 @@ class TestRunRequestSupport:
             "thread_id": "conv-456",
             "role": "system",
             "enable_tool_calls": False,
-            "correlation_id": "corr-runreq-2",
+            "correlationId": "corr-runreq-2",
         }
 
         result = await entity.run_agent(mock_context, request_dict)
@@ -821,7 +822,7 @@ class TestRunRequestSupport:
             message="System message",
             thread_id="conv-runreq-3",
             role=Role.SYSTEM,
-            correlation_id="corr-runreq-3",
+            correlationId="corr-runreq-3",
         )
 
         await entity.run_agent(mock_context, request)
@@ -844,7 +845,7 @@ class TestRunRequestSupport:
             message="What is the answer?",
             thread_id="conv-runreq-4",
             response_format=EntityStructuredResponse,
-            correlation_id="corr-runreq-4",
+            correlationId="corr-runreq-4",
         )
 
         result = await entity.run_agent(mock_context, request)
@@ -863,7 +864,7 @@ class TestRunRequestSupport:
         mock_context = Mock()
 
         request = RunRequest(
-            message="Test", thread_id="conv-runreq-5", enable_tool_calls=False, correlation_id="corr-runreq-5"
+            message="Test", thread_id="conv-runreq-5", enable_tool_calls=False, correlationId="corr-runreq-5"
         )
 
         result = await entity.run_agent(mock_context, request)
@@ -886,7 +887,7 @@ class TestRunRequestSupport:
             "thread_id": "conv-789",
             "role": "user",
             "enable_tool_calls": True,
-            "correlation_id": "corr-runreq-6",
+            "correlationId": "corr-runreq-6",
         }
         mock_context.get_state.return_value = None
 

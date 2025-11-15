@@ -10,9 +10,9 @@ allows for long-running agent conversations.
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, cast, Callable
 
 import azure.durable_functions as df
 from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
@@ -97,7 +97,7 @@ class AgentEntity:
 
         message = run_request.message
         thread_id = run_request.thread_id
-        correlationId = run_request.correlation_id
+        correlationId = run_request.correlationId
         if not thread_id:
             raise ValueError("RunRequest must include a thread_id")
         if not correlationId:
@@ -108,6 +108,7 @@ class AgentEntity:
 
         # Store request in pending (will be combined with response later)
         state_request = DurableAgentStateRequest.from_run_request(run_request)
+        self.state.data.conversationHistory.append(state_request)
         self._pending_requests[correlationId] = state_request
 
         logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
@@ -117,10 +118,6 @@ class AgentEntity:
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
         logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
         logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
-
-        # Store message in history with role
-        self.state.add_user_message(message, role=role, correlation_id=correlationId)
-
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 
         try:
@@ -133,8 +130,8 @@ class AgentEntity:
                 for m in entry.messages
             ]
             # Add the current request message
-            for m in state_request.messages:
-                chat_messages.append(m.to_chat_message())
+            # for m in state_request.messages:
+            #     chat_messages.append(m.to_chat_message())
 
             # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
             # Azure OpenAI doesn't support the 'metadata' field in messages
@@ -142,7 +139,7 @@ class AgentEntity:
                 if hasattr(msg, 'additional_properties'):
                     msg.additional_properties = {}
 
-            run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
+            run_kwargs: dict[str, Any] = {"messages": chat_messages}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
             if response_format:
@@ -150,7 +147,7 @@ class AgentEntity:
 
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
-                correlation_id=correlationId,
+                correlationId=correlationId,
                 thread_id=thread_id,
                 request_message=message,
             )
@@ -164,10 +161,10 @@ class AgentEntity:
             state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
 
             # Get the pending request and combine its messages with the response messages
-            pending_request = self._pending_requests.pop(correlationId, None)
-            if pending_request:
-                # Combine request and response messages into a single entry
-                state_response.messages = pending_request.messages + state_response.messages
+            # pending_request = self._pending_requests.pop(correlationId, None)
+            # if pending_request:
+            #     # Combine request and response messages into a single entry
+            #     state_response.messages = pending_request.messages + state_response.messages
 
             self.state.data.conversationHistory.append(state_response)
 
@@ -229,7 +226,7 @@ class AgentEntity:
 
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(
-                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), errorCode=type(exc).__name__)])
+                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
             )
 
             # Combine request and error response messages
@@ -262,7 +259,7 @@ class AgentEntity:
     async def _invoke_agent(
         self,
         run_kwargs: dict[str, Any],
-        correlation_id: str,
+        correlationId: str,
         thread_id: str,
         request_message: str,
     ) -> AgentRunResponse:
@@ -270,7 +267,7 @@ class AgentEntity:
         callback_context: AgentCallbackContext | None = None
         if self.callback is not None:
             callback_context = self._build_callback_context(
-                correlation_id=correlation_id,
+                correlationId=correlationId,
                 thread_id=thread_id,
                 request_message=request_message,
             )
@@ -384,7 +381,7 @@ class AgentEntity:
 
     def _build_callback_context(
         self,
-        correlation_id: str,
+        correlationId: str,
         thread_id: str,
         request_message: str,
     ) -> AgentCallbackContext:
@@ -392,7 +389,7 @@ class AgentEntity:
         agent_name = getattr(self.agent, "name", None) or type(self.agent).__name__
         return AgentCallbackContext(
             agent_name=agent_name,
-            correlation_id=correlation_id,
+            correlationId=correlationId,
             thread_id=thread_id,
             request_message=request_message,
         )
@@ -431,7 +428,7 @@ def create_agent_entity(
             if current_state is not None:
                 entity.state.restore_state(current_state)
                 logger.debug(
-                    "[entity_function] Restored entity from state (messageCount: %s)", entity.state.messageCount
+                    "[entity_function] Restored entity from state (message_count: %s)", entity.state.message_count
                 )
             else:
                 logger.debug("[entity_function] Created new entity instance")
@@ -459,8 +456,9 @@ def create_agent_entity(
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
+            logger.info("State dict: %s", str(entity.state.to_dict()))
             context.set_state(entity.state.to_dict())
-            logger.debug(f"[entity_function] Operation {operation} completed successfully")
+            logger.info(f"[entity_function] Operation {operation} completed successfully")
 
         except Exception as exc:
             import traceback

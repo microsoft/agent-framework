@@ -56,7 +56,7 @@ omit = [
 ]
 
 [tool.pyright]
-extend = "../../pyproject.toml"
+extends = "../../pyproject.toml"
 exclude = ['tests', 'chatkit-python', 'openai-chatkit-advanced-samples']
 
 [tool.mypy]
