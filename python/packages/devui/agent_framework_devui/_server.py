@@ -1049,10 +1049,20 @@ class DevServer:
             from .models import ResponseCompletedEvent
 
             final_response = await executor.message_mapper.aggregate_to_response(events, request)
+
+            # The sequence number for response.completed should be the next number after all events
+            # The last event in the list should have the highest sequence number so far
+            # We need to increment from that
+            last_seq = 0
+            for event in reversed(events):
+                if hasattr(event, "sequence_number") and event.sequence_number is not None:
+                    last_seq = event.sequence_number
+                    break
+
             completed_event = ResponseCompletedEvent(
                 type="response.completed",
                 response=final_response,
-                sequence_number=len(events),
+                sequence_number=last_seq + 1,
             )
             yield f"data: {completed_event.model_dump_json()}\n\n"
 

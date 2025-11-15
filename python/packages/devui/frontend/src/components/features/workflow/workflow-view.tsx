@@ -727,7 +727,7 @@ export function WorkflowView({
         event.type === "response.output_item.added" ||
         event.type === "response.output_item.done"
       ) {
-        const item = (event as any).item;
+        const item = (event as import("@/types/openai").ResponseOutputItemAddedEvent | import("@/types/openai").ResponseOutputItemDoneEvent).item;
         if (item && item.type === "executor_action" && item.executor_id) {
           history.push({
             executorId: item.executor_id,
@@ -835,7 +835,7 @@ export function WorkflowView({
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
-                  ? (prev[prev.length - 1] as any)._uiTimestamp || 0
+                  ? (prev[prev.length - 1] as { _uiTimestamp?: number })._uiTimestamp || 0
                   : 0;
               const uniqueTimestamp = Math.max(
                 baseTimestamp,
@@ -857,7 +857,7 @@ export function WorkflowView({
 
           // Handle new standard OpenAI events
           if (openAIEvent.type === "response.output_item.added") {
-            const item = (openAIEvent as any).item;
+            const item = (openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent).item;
 
             // Handle executor action items
             if (
@@ -1090,7 +1090,7 @@ export function WorkflowView({
               },
             ],
           },
-        ] as any, // OpenAI Responses API format, cast to satisfy TypeScript
+        ] as unknown as Record<string, unknown>, // OpenAI Responses API format, cast to satisfy RunWorkflowRequest type
         conversation_id: currentSession?.conversation_id || undefined,
         checkpoint_id: selectedCheckpointId || undefined, // Pass selected checkpoint
       };
@@ -1117,7 +1117,7 @@ export function WorkflowView({
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
-                ? (prev[prev.length - 1] as any)._uiTimestamp || 0
+                ? (prev[prev.length - 1] as { _uiTimestamp?: number })._uiTimestamp || 0
                 : 0;
             const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
 
@@ -1136,7 +1136,7 @@ export function WorkflowView({
 
         // Handle workflow output items (from ctx.yield_output)
         if (openAIEvent.type === "response.output_item.added") {
-          const item = (openAIEvent as any).item;
+          const item = (openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent).item;
 
           // Handle executor action items
           if (

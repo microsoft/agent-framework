@@ -204,41 +204,29 @@ function DataContentRenderer({ content, className }: ContentRendererProps) {
   );
 }
 
-// Function approval request renderer
+// Function approval request renderer - compact version
 function FunctionApprovalRequestRenderer({ content, className }: ContentRendererProps) {
   if (content.type !== "function_approval_request") return null;
 
   const [isExpanded, setIsExpanded] = useState(false);
   const { status, function_call } = content;
 
-  // Status styling
+  // Status styling - compact
   const statusConfig = {
     pending: {
       icon: Clock,
-      color: "amber",
-      label: "Awaiting Approval",
-      bgClass: "bg-amber-50 dark:bg-amber-950/20",
-      borderClass: "border-amber-200 dark:border-amber-800",
+      label: "Awaiting approval",
       iconClass: "text-amber-600 dark:text-amber-400",
-      textClass: "text-amber-800 dark:text-amber-300",
     },
     approved: {
       icon: Check,
-      color: "green",
       label: "Approved",
-      bgClass: "bg-green-50 dark:bg-green-950/20",
-      borderClass: "border-green-200 dark:border-green-800",
       iconClass: "text-green-600 dark:text-green-400",
-      textClass: "text-green-800 dark:text-green-300",
     },
     rejected: {
       icon: X,
-      color: "red",
       label: "Rejected",
-      bgClass: "bg-red-50 dark:bg-red-950/20",
-      borderClass: "border-red-200 dark:border-red-800",
       iconClass: "text-red-600 dark:text-red-400",
-      textClass: "text-red-800 dark:text-red-300",
     },
   };
 
@@ -255,27 +243,24 @@ function FunctionApprovalRequestRenderer({ content, className }: ContentRenderer
   }
 
   return (
-    <div className={`my-2 p-3 border rounded ${config.bgClass} ${config.borderClass} ${className || ""}`}>
-      <div
-        className="flex items-center gap-2 cursor-pointer"
+    <div className={className}>
+      <button
         onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors w-fit"
       >
-        <StatusIcon className={`h-4 w-4 ${config.iconClass}`} />
-        <span className={`text-sm font-medium ${config.textClass}`}>
-          {config.label}: {function_call.name}
-        </span>
+        <StatusIcon className={`h-3 w-3 ${config.iconClass}`} />
+        <span className="text-muted-foreground font-mono">{function_call.name}</span>
+        <span className={`text-xs ${config.iconClass}`}>{config.label}</span>
         {isExpanded ? (
-          <ChevronDown className={`h-4 w-4 ${config.iconClass} ml-auto`} />
+          <span className="text-xs text-muted-foreground">▼</span>
         ) : (
-          <ChevronRight className={`h-4 w-4 ${config.iconClass} ml-auto`} />
+          <span className="text-xs text-muted-foreground">▶</span>
         )}
-      </div>
+      </button>
+
       {isExpanded && (
-        <div className="mt-2 text-xs font-mono bg-white dark:bg-gray-900 p-2 rounded border">
-          <div className={`${config.textClass} mb-1`}>Arguments:</div>
-          <pre className="whitespace-pre-wrap">
-            {JSON.stringify(parsedArgs, null, 2)}
-          </pre>
+        <div className="ml-5 mt-1 text-xs font-mono text-muted-foreground border-l-2 border-muted pl-3">
+          <pre className="whitespace-pre-wrap break-all">{JSON.stringify(parsedArgs, null, 2)}</pre>
         </div>
       )}
     </div>
