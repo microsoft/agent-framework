@@ -1,0 +1,9 @@
+# EditorConfig overrides for Cosmos DB Unit Tests
+# Multi-targeting (net472 + net9.0) causes false positives for IDE0005 (unnecessary using directives)
+
+root = false
+
+[*.cs]
+# Suppress IDE0005 for this project - multi-targeting causes false positives
+# These using directives ARE necessary but appear unnecessary in one target framework
+dotnet_diagnostic.IDE0005.severity = none
