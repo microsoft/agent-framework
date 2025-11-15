@@ -18,6 +18,7 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    HostedFileContent,
     HostedMCPTool,
     HostedWebSearchTool,
     Role,
@@ -122,6 +123,7 @@ class AnthropicClient(BaseChatClient):
         api_key: str | None = None,
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -134,6 +136,8 @@ class AnthropicClient(BaseChatClient):
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
+            additional_beta_flags: Additional beta flags to enable on the client.
+                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -196,6 +200,7 @@ class AnthropicClient(BaseChatClient):
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
+        self.additional_beta_flags = additional_beta_flags or []
         self.model_id = anthropic_settings.chat_model_id
         # streaming requires tracking the last function call ID and name
         self._last_call_id_name: tuple[str, str] | None = None
@@ -246,12 +251,16 @@ class AnthropicClient(BaseChatClient):
         Returns:
             A dictionary of run options for the Anthropic client.
         """
+        if chat_options.additional_properties and "additional_beta_flags" in chat_options.additional_properties:
+            betas = chat_options.additional_properties.pop("additional_beta_flags")
+        else:
+            betas = []
         run_options: dict[str, Any] = {
             "model": chat_options.model_id or self.model_id,
             "messages": self._convert_messages_to_anthropic_format(messages),
             "max_tokens": chat_options.max_tokens or ANTHROPIC_DEFAULT_MAX_TOKENS,
             "extra_headers": {"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
-            "betas": BETA_FLAGS,
+            "betas": {*BETA_FLAGS, *self.additional_beta_flags, *betas},
         }
 
         # Add any additional options from chat_options or kwargs
@@ -396,7 +405,7 @@ class AnthropicClient(BaseChatClient):
                 case HostedCodeInterpreterTool():
                     code_tool: dict[str, Any] = {
                         "type": "code_execution_20250825",
-                        "name": "code_interpreter",
+                        "name": "code_execution",
                     }
                     tool_list.append(code_tool)
                 case HostedMCPTool():
@@ -524,17 +533,7 @@ class AnthropicClient(BaseChatClient):
                             annotations=self._parse_citations(content_block),
                         )
                     )
-                case "tool_use":
-                    self._last_call_id_name = (content_block.id, content_block.name)
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=content_block.id,
-                            name=content_block.name,
-                            arguments=content_block.input,
-                            raw_representation=content_block,
-                        )
-                    )
-                case "mcp_tool_use" | "server_tool_use":
+                case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
                     contents.append(
                         FunctionCallContent(
@@ -572,6 +571,19 @@ class AnthropicClient(BaseChatClient):
                     | "text_editor_code_execution_tool_result"
                 ):
                     call_id, name = self._last_call_id_name or (None, None)
+                    if (
+                        content_block.content
+                        and (
+                            content_block.content.type == "bash_code_execution_result"
+                            or content_block.content.type == "code_execution_result"
+                        )
+                        and content_block.content.content
+                    ):
+                        for result_content in content_block.content.content:
+                            if hasattr(result_content, "file_id"):
+                                contents.append(
+                                    HostedFileContent(file_id=result_content.file_id, raw_representation=result_content)
+                                )
                     contents.append(
                         FunctionResultContent(
                             call_id=content_block.tool_use_id,

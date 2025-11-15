@@ -61,6 +61,7 @@ def create_test_anthropic_client(
     client._last_call_id_name = None
     client.additional_properties = {}
     client.middleware = None
+    client.additional_beta_flags = []
 
     return client
 
@@ -307,7 +308,7 @@ def test_convert_tools_to_anthropic_format_code_interpreter(mock_anthropic_clien
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "code_execution_20250825"
-    assert result["tools"][0]["name"] == "code_interpreter"
+    assert result["tools"][0]["name"] == "code_execution"
 
 
 def test_convert_tools_to_anthropic_format_mcp_tool(mock_anthropic_client: MagicMock) -> None:
@@ -723,6 +724,32 @@ async def test_anthropic_client_integration_function_calling() -> None:
         isinstance(content, FunctionCallContent) for msg in response.messages for content in msg.contents
     )
     assert has_function_call
+
+
+@pytest.mark.flaky
+@skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_hosted_tools() -> None:
+    """Integration test for hosted tools."""
+    client = AnthropicClient()
+
+    messages = [ChatMessage(role=Role.USER, text="What tools do you have available?")]
+    tools = [
+        HostedWebSearchTool(),
+        HostedCodeInterpreterTool(),
+        HostedMCPTool(
+            name="example-mcp",
+            url="https://learn.microsoft.com/api/mcp",
+            approval_mode="never_require",
+        ),
+    ]
+
+    response = await client.get_response(
+        messages=messages,
+        chat_options=ChatOptions(tools=tools, max_tokens=100),
+    )
+
+    assert response is not None
+    assert response.text is not None
 
 
 @pytest.mark.flaky
