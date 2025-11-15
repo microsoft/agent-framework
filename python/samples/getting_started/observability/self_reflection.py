@@ -25,13 +25,17 @@ Usage as library:
     )
 """
 
+import asyncio
 import os
 import time
 import argparse
 import pandas as pd
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+
+from agent_framework import ChatAgent
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
 from azure.ai.evaluation import GroundednessEvaluator, AzureOpenAIModelConfiguration
 
 
@@ -39,88 +43,41 @@ DEFAULT_AGENT_MODEL = "gpt-4.1"
 DEFAULT_JUDGE_MODEL = "gpt-4.1"
 
 
-def configure_azure_openai(
-    endpoint: Optional[str] = None,
-    api_key: Optional[str] = None,
-    api_version: str = "2024-12-01-preview"
-) -> AzureOpenAI:
-    """
-    Configure Azure OpenAI client.
-    
-    Args:
-        endpoint: Azure OpenAI endpoint (defaults to env var AZURE_OPENAI_ENDPOINT)
-        api_key: Azure OpenAI API key (defaults to env var AZURE_OPENAI_API_KEY)
-        api_version: API version to use
-        
-    Returns:
-        Configured AzureOpenAI client
-    """
-    endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-    
-    if not endpoint or not api_key:
-        raise ValueError("Azure OpenAI endpoint and API key must be provided via parameters or environment variables")
-    
-    return AzureOpenAI(
-        api_version=api_version,
-        azure_endpoint=endpoint,
-        api_key=api_key,
-    )
-
-
-def create_groundedness_evaluator(
-    judge_model: str,
-    endpoint: Optional[str] = None,
-    api_key: Optional[str] = None,
-    api_version: str = "2024-12-01-preview"
-) -> GroundednessEvaluator:
+def create_groundedness_evaluator(judge_model: str) -> GroundednessEvaluator:
     """
     Create a groundedness evaluator.
-    
+
     Args:
         judge_model: Model deployment name for evaluation
-        endpoint: Azure OpenAI endpoint
-        api_key: Azure OpenAI API key
-        api_version: API version
-        
     Returns:
         Configured GroundednessEvaluator
     """
-    endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
-    api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY")
-    
     judge_model_config = AzureOpenAIModelConfiguration(
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version=api_version,
+        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
+        api_version="2024-12-01-preview",
         azure_deployment=judge_model,
     )
-    
     return GroundednessEvaluator(model_config=judge_model_config)
 
 
-def do_query_with_self_reflection(
+async def do_query_with_self_reflection(
+    *,
+    agent: ChatAgent,
     full_user_query: str,
-    agent_model_name: str,
-    query: str,
     context: str,
     evaluator: GroundednessEvaluator,
     max_self_reflections: int = 3,
-    max_completion_tokens: int = 32768,
-    client: Optional[AzureOpenAI] = None
 ) -> Dict[str, Any]:
     """
     Execute a query with self-reflection loop.
     
     Args:
+        agent: ChatAgent instance to use for generating responses
         full_user_query: Complete prompt including system prompt, user request, and context
-        agent_model_name: Name of the agent model to use
-        query: Just the user request (without system prompt or context)
         context: Context document for groundedness evaluation
         evaluator: Groundedness evaluator function
         max_self_reflections: Maximum number of self-reflection iterations
-        max_completion_tokens: Maximum tokens for completion
-        client: Optional pre-configured AzureOpenAI client
         
     Returns:
         Dictionary containing:
@@ -147,18 +104,13 @@ def do_query_with_self_reflection(
     for i in range(max_self_reflections):
         print(f"  Self-reflection iteration {i+1}/{max_self_reflections}...")
         
-        # Get agent response
-        raw_response = client.chat.completions.create(
-            messages=messages,
-            max_completion_tokens=max_completion_tokens,
-            model=agent_model_name,
-        )
-        agent_response = raw_response.choices[0].message.content
-        
+        response = await agent.run(full_user_query)
+        agent_response = response.text
+
         # Evaluate groundedness
         start_time_eval = time.time()
         groundedness_res = evaluator(
-            query=query,
+            query=full_user_query,
             response=agent_response,
             context=context
         )
@@ -209,32 +161,24 @@ def do_query_with_self_reflection(
         best_response = raw_response.choices[0].message.content
         best_iteration = i + 1
 
-    usage_metadata = {
-        "completion_tokens": raw_response.usage.completion_tokens if raw_response.usage else None,
-        "prompt_tokens": raw_response.usage.prompt_tokens if raw_response.usage else None,
-        "total_tokens": raw_response.usage.total_tokens if raw_response.usage else None
-    }
-
     return {
         "best_response": best_response,
         "best_response_score": best_score,
         "best_iteration": best_iteration,
         "iteration_scores": iteration_scores,  # Structured list of all scores
         "messages": messages,
-        "usage_metadata": usage_metadata,
         "num_retries": i + 1,
         "total_groundedness_eval_time": total_groundedness_eval_time,
         "total_end_to_end_time": latency,
     }
 
 
-def run_self_reflection_batch(
+async def run_self_reflection_batch(
     input_file: str,
     output_file: str,
     agent_model: str = DEFAULT_AGENT_MODEL,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     max_self_reflections: int = 3,
-    max_completion_tokens: int = 32768,
     env_file: Optional[str] = None,
     limit: Optional[int] = None
 ) -> pd.DataFrame:
@@ -247,7 +191,6 @@ def run_self_reflection_batch(
         agent_model: Model to use for generating responses
         judge_model: Model to use for groundedness evaluation
         max_self_reflections: Maximum number of self-reflection iterations
-        max_completion_tokens: Maximum tokens for completion
         env_file: Optional path to .env file
         limit: Optional limit to process only the first N prompts
 
@@ -259,7 +202,17 @@ def run_self_reflection_batch(
         load_dotenv(env_file, override=True)
     else:
         load_dotenv(override=True)
-    
+
+    # Create agent
+    agent = AzureOpenAIChatClient(
+        credential=AzureCliCredential(),
+        deployment_name=agent_model,
+        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
+        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+    ).create_agent(
+        instructions="You are a helpful helpful agent.",
+    )
+
     # Load input data
     print(f"Loading prompts from: {input_file}")
     df = pd.read_parquet(input_file)
@@ -279,13 +232,11 @@ def run_self_reflection_batch(
     
     # Configure clients
     print(f"Configuring Azure OpenAI client...")
-    client = configure_azure_openai()
     
     print(f"Creating groundedness evaluator with model: {judge_model}")
     evaluator = create_groundedness_evaluator(judge_model)
     
     # Process each prompt
-    print(f"\nProcessing prompts with model: {agent_model}")
     print(f"Max self-reflections: {max_self_reflections}\n")
     
     results = []
@@ -293,15 +244,12 @@ def run_self_reflection_batch(
         print(f"[{counter}/{len(df)}] Processing prompt {row.get('original_index', idx)}...")
         
         try:
-            result = do_query_with_self_reflection(
+            result = await do_query_with_self_reflection(
+                agent=agent,
                 full_user_query=row['full_prompt'],
-                agent_model_name=agent_model,
-                query=row['user_request'],
                 context=row['context_document'],
                 evaluator=evaluator,
                 max_self_reflections=max_self_reflections,
-                max_completion_tokens=max_completion_tokens,
-                client=client
             )
 
             # Prepare result data
@@ -407,29 +355,27 @@ def run_self_reflection_batch(
     return results_df
 
 
-def main():
+async def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Run self-reflection loop on LLM prompts with groundedness evaluation")
     parser.add_argument('--input', '-i', default="resources/suboptimal_groundedness_prompts.parquet", help='Input parquet file with prompts')
     parser.add_argument('--output', '-o', default="resources/results.parquet", help='Output parquet file for results')
-    parser.add_argument('--model', '-m', default=DEFAULT_AGENT_MODEL, help=f'Agent model deployment name (default: {DEFAULT_AGENT_MODEL})')
+    parser.add_argument('--agent-model', '-m', default=DEFAULT_AGENT_MODEL, help=f'Agent model deployment name (default: {DEFAULT_AGENT_MODEL})')
     parser.add_argument('--judge-model', '-e', default=DEFAULT_JUDGE_MODEL, help=f'Judge model deployment name (default: {DEFAULT_JUDGE_MODEL})')
     parser.add_argument('--max-reflections', type=int, default=3, help='Maximum number of self-reflection iterations (default: 3)')
-    parser.add_argument('--max-tokens', type=int, default=32768, help='Maximum completion tokens (default: 32768)')
     parser.add_argument('--env-file', help='Path to .env file with Azure OpenAI credentials')
     parser.add_argument('--limit', '-n', type=int, default=None, help='Process only the first N prompts from the input file')
 
     args = parser.parse_args()
-    
+
     # Run the batch processing
     try:
-        results_df = run_self_reflection_batch(
+        results_df = await run_self_reflection_batch(
             input_file=args.input,
             output_file=args.output,
-            agent_model=args.model,
+            agent_model=args.agent_model,
             judge_model=args.judge_model,
             max_self_reflections=args.max_reflections,
-            max_completion_tokens=args.max_tokens,
             env_file=args.env_file,
             limit=args.limit
         )
@@ -442,4 +388,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    exit(asyncio.run(main()))
