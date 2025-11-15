@@ -9,13 +9,13 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
     BaseAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Executor,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
@@ -185,7 +185,6 @@ async def test_standard_manager_progress_ledger_and_fallback():
     assert ledger2.is_request_satisfied.answer is False
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_workflow_plan_review_approval_to_completion():
     manager = FakeManager(max_round_count=10)
     wf = (
@@ -204,7 +203,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     completed = False
     output: ChatMessage | None = None
-    async for ev in wf.run_stream(
+    async for ev in wf.send_responses_streaming(
         responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
     ):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
@@ -218,7 +217,6 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(output, ChatMessage)
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
     class CountingManager(FakeManager):
         # Declare as a model field so assignment is allowed under Pydantic
@@ -250,7 +248,7 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
     completed = False
-    async for ev in wf.run_stream(
+    async for ev in wf.send_responses_streaming(
         responses={
             req_event.request_id: MagenticPlanReviewReply(
                 decision=MagenticPlanReviewDecision.APPROVE,
@@ -298,7 +296,6 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     assert data.role == Role.ASSISTANT
 
 
-@pytest.mark.skip(reason="Response handling refactored - send_responses_streaming no longer exists")
 async def test_magentic_checkpoint_resume_round_trip():
     storage = InMemoryCheckpointStorage()
 
@@ -556,8 +553,12 @@ async def _collect_agent_responses_setup(participant_obj: object):
         events.append(ev)
         if isinstance(ev, WorkflowOutputEvent):
             break
-        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
-            captured.append(ev.message)
+        if isinstance(ev, AgentRunUpdateEvent) and ev.data is not None:
+            captured.append(
+                ChatMessage(
+                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                )
+            )
         if len(events) > 50:
             break
 

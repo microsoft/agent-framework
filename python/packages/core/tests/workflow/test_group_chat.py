@@ -6,19 +6,20 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
+    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatMessage,
     GroupChatBuilder,
     GroupChatDirective,
     GroupChatStateSnapshot,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticContext,
     MagenticManagerBase,
-    MagenticOrchestratorMessageEvent,
     Role,
     TextContent,
     Workflow,
@@ -155,14 +156,17 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
     assert isinstance(workflow, Workflow)
 
     outputs: list[ChatMessage] = []
-    orchestrator_events: list[MagenticOrchestratorMessageEvent] = []
-    agent_events: list[MagenticAgentMessageEvent] = []
+    orchestrator_event_count = 0
+    agent_event_count = 0
     start_message = _MagenticStartMessage.from_string("compose summary")
     async for event in workflow.run_stream(start_message):
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            orchestrator_events.append(event)
-        if isinstance(event, MagenticAgentMessageEvent):
-            agent_events.append(event)
+        if isinstance(event, AgentRunUpdateEvent):
+            props = event.data.additional_properties if event.data else None
+            event_type = props.get("magentic_event_type") if props else None
+            if event_type == MAGENTIC_EVENT_TYPE_ORCHESTRATOR:
+                orchestrator_event_count += 1
+            elif event_type == MAGENTIC_EVENT_TYPE_AGENT_DELTA:
+                agent_event_count += 1
         if isinstance(event, WorkflowOutputEvent):
             msg = event.data
             if isinstance(msg, ChatMessage):
@@ -172,8 +176,8 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
     final = outputs[-1]
     assert final.text == "final"
     assert final.author_name == "magentic_manager"
-    assert orchestrator_events, "Expected orchestrator events to be emitted"
-    assert agent_events, "Expected agent message events to be emitted"
+    assert orchestrator_event_count > 0, "Expected orchestrator events to be emitted"
+    assert agent_event_count > 0, "Expected agent delta events to be emitted"
 
 
 async def test_group_chat_as_agent_accepts_conversation() -> None:
