@@ -543,6 +543,188 @@ class TestVectorFieldAutoDiscovery:
         assert provider.vector_field_name is None
         assert provider._auto_discovered_vector_field is True
 
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_single_vector_field_with_embedding_function(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test auto-discovery with single vector field and embedding function provided."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Create single vector field
+        mock_vector_field = MagicMock()
+        mock_vector_field.name = "embedding_vector"
+        mock_vector_field.vector_search_dimensions = 1536
+
+        mock_index.fields = [mock_vector_field]
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Mock embedding function
+        async def mock_embed(text: str) -> list[float]:
+            return [0.1] * 1536
+
+        # Create provider WITH embedding function
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+            embedding_function=mock_embed,
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Vector field should be auto-discovered and kept (has embedding function)
+        assert provider._auto_discovered_vector_field is True
+        assert provider.vector_field_name == "embedding_vector"
+
+        # Verify index client was closed
+        mock_index_client.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_single_vector_field_warning_without_embedding(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that warning is logged when vector field found but no embedding function."""
+        import logging
+
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Create single vector field
+        mock_vector_field = MagicMock()
+        mock_vector_field.name = "embedding_vector"
+        mock_vector_field.vector_search_dimensions = 1536
+
+        mock_index.fields = [mock_vector_field]
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider WITHOUT embedding function
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery with logging captured
+        with patch.object(logging, "warning") as mock_warning:
+            await provider._auto_discover_vector_field()
+            # Should warn about missing embedding function
+            mock_warning.assert_called_once()
+            warning_msg = str(mock_warning.call_args)
+            assert "Auto-discovered vector field" in warning_msg
+            assert "no embedding_function provided" in warning_msg
+
+        # Vector field should be cleared
+        assert provider._auto_discovered_vector_field is True
+        assert provider.vector_field_name is None
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_multiple_vector_fields_warning(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that warning is logged when multiple vector fields are found."""
+        import logging
+
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Create multiple vector fields
+        mock_fields = []
+        for name in ["embedding_v1", "embedding_v2"]:
+            field = MagicMock()
+            field.name = name
+            field.vector_search_dimensions = 1536
+            mock_fields.append(field)
+
+        mock_index.fields = mock_fields
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery with logging captured
+        with patch.object(logging, "warning") as mock_warning:
+            await provider._auto_discover_vector_field()
+            # Should warn about multiple vector fields
+            mock_warning.assert_called_once()
+            warning_msg = str(mock_warning.call_args)
+            assert "Multiple vector fields found" in warning_msg
+
+        # Should not auto-select any field
+        assert provider._auto_discovered_vector_field is True
+        assert provider.vector_field_name is None
+
+    @pytest.mark.asyncio
+    @patch("azure.search.documents.indexes.aio.SearchIndexClient")
+    @patch("azure.search.documents.aio.SearchClient")
+    async def test_index_client_cleanup_when_not_provided(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that index client is closed when created internally."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+        mock_index.fields = []  # No vector fields
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider without index client
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Ensure no external index client
+        assert provider._index_client is None
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Index client should have been closed
+        mock_index_client.close.assert_called_once()
+
 
 class TestAgenticMode:
     """Test agentic mode functionality with Knowledge Bases."""
