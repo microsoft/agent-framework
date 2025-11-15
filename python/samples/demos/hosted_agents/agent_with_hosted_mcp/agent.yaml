@@ -2,10 +2,8 @@
 name: agent-with-hosted-mcp
 # Brief description of what this agent does
 description: >
-  An AI agent that uses OpenAI Responses with a Hosted Model Context Protocol (MCP) server.
+  An AI agent that uses Azure OpenAI with a Hosted Model Context Protocol (MCP) server.
   The agent answers questions by searching Microsoft Learn documentation using MCP tools.
-  This demonstrates how MCP tools can be integrated with OpenAI Responses where the service
-  itself handles tool invocation.
 metadata:
   # Categorization tags for organizing and discovering agents
   authors:
