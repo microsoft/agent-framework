@@ -61,6 +61,7 @@ def create_test_anthropic_client(
     client._last_call_id_name = None
     client.additional_properties = {}
     client.middleware = None
+    client.additional_beta_flags = []
 
     return client
 
