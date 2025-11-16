@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -60,9 +61,14 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
+    public async ValueTask InitializeAsync() =>
         this._agent = await this.CreateChatClientAgentAsync();
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        // https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1816
+        GC.SuppressFinalize(this);
+
+        return default;
+    }
 }

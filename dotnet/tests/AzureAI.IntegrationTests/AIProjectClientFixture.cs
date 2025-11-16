@@ -144,17 +144,18 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         }
     }
 
-    public Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (this._client is not null && this._agent is not null)
         {
-            return this._client.Agents.DeleteAgentAsync(this._agent.Name);
+            await this._client.Agents.DeleteAgentAsync(this._agent.Name);
         }
 
-        return Task.CompletedTask;
+        // https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1816
+        GC.SuppressFinalize(this);
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();

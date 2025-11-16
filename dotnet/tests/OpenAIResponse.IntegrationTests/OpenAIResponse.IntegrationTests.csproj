@@ -4,6 +4,7 @@
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <NoWarn>$(NoWarn);OPENAI001;</NoWarn>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>

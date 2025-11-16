@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
     <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);OPENAI001;CA1812</NoWarn>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>

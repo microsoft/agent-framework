@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>

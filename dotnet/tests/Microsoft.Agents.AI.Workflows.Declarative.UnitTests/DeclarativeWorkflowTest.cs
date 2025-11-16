@@ -12,7 +12,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;

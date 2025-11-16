@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>

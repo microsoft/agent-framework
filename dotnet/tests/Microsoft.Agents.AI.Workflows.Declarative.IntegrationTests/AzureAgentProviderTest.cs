@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 

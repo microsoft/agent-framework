@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <PropertyGroup>

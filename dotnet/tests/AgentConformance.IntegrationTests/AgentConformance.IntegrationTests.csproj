@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <IsTestProject>false</IsTestProject>
+    <IsTestUtilityProject>true</IsTestUtilityProject>
   </PropertyGroup>
 
   <ItemGroup>
