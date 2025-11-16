@@ -28,7 +28,11 @@ internal static class EntitiesApiExtensions
     /// </remarks>
     public static IEndpointConventionBuilder MapEntities(this IEndpointRouteBuilder endpoints)
     {
-        var registeredAIAgents = endpoints.ServiceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey);
+        var nonKeyedAgent = endpoints.ServiceProvider.GetService<AIAgent>();
+        var registeredAIAgents = endpoints.ServiceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey)
+            .Concat(nonKeyedAgent is not null ? [nonKeyedAgent] : []);
+
+        var nonKeyedWorkflow = endpoints.ServiceProvider.GetService<Workflow>();
         var registeredWorkflows = endpoints.ServiceProvider.GetKeyedServices<Workflow>(KeyedService.AnyKey);
 
         var group = endpoints.MapGroup("/v1/entities")

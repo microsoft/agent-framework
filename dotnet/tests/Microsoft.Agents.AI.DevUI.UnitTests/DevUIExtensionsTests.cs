@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -230,6 +231,32 @@ public class DevUIExtensionsTests
         // Assert
         Assert.NotNull(resolvedAgent);
         Assert.Null(resolvedAgent.Name);
+    }
+
+    /// <summary>
+    /// Verifies that an agent with null name can be resolved by its workflow.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_WorkflowWithName_CanBeResolved_AsAIAgent()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var mockChatClient = new Mock<IChatClient>();
+        var agent1 = new ChatClientAgent(mockChatClient.Object, "Test 1", name: null);
+        var agent2 = new ChatClientAgent(mockChatClient.Object, "Test 2", name: null);
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+
+        services.AddKeyedSingleton("workflow", workflow);
+        services.AddDevUI();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        // Act
+        var resolvedWorkflowAsAgent = serviceProvider.GetKeyedService<AIAgent>("workflow");
+
+        // Assert
+        Assert.NotNull(resolvedWorkflowAsAgent);
+        Assert.Null(resolvedWorkflowAsAgent.Name);
     }
 
     /// <summary>

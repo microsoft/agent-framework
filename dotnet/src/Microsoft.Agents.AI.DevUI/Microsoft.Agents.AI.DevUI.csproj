@@ -38,4 +38,7 @@
     <Description>Provides Microsoft Agent Framework support for developer UI.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.DevUI.UnitTests"/>
+  </ItemGroup>
 </Project>
