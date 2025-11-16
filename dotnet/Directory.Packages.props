@@ -17,6 +17,8 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.435" />
     <!-- Azure.* -->
+    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.1" />
+    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.1" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
@@ -93,24 +95,24 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.16.2" />
     <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.16.2-preview.1" />
     <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.16.2" />
     <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.16.2-preview.1" />
     <!-- Azure Functions -->
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.2.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.0.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.9.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.5" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
     <!-- Community -->
     <PackageVersion Include="System.Linq.Async" Version="6.0.3" />
     <!-- Test -->
@@ -118,8 +120,6 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="9.0.11" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.67.0" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.67.0-beta" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />

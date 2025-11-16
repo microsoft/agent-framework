@@ -9,13 +9,13 @@ trigger:
       id: invoke_greet
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_TOOL
+        name: MenuAgent
 
     - kind: InvokeAzureAgent
       id: invoke_menu
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_TOOL
+        name: MenuAgent
       input:
         messages: =UserMessage("What's on today's menu?")
 
@@ -23,6 +23,6 @@ trigger:
       id: invoke_item
       conversationId: =System.ConversationId  
       agent:
-        name: =Env.FOUNDRY_AGENT_TOOL
+        name: MenuAgent
       input:
         messages: =UserMessage("How much is the clam chowder?")

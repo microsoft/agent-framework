@@ -161,6 +161,16 @@ async def test_azure_ai_client_get_agent_reference_or_create_existing_version(
     assert agent_ref == {"name": "existing-agent", "version": "1.0", "type": "agent_reference"}
 
 
+async def test_azure_ai_client_get_agent_reference_or_create_missing_agent_name(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test _get_agent_reference_or_create raises when agent_name is missing."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name=None)
+
+    with pytest.raises(ServiceInitializationError, match="Agent name is required"):
+        await client._get_agent_reference_or_create({}, None)  # type: ignore
+
+
 async def test_azure_ai_client_get_agent_reference_or_create_new_agent(
     mock_project_client: MagicMock,
     azure_ai_unit_test_env: dict[str, str],

@@ -40,6 +40,12 @@ internal static class PortableValueExtensions
     private static TableValue ToTable(this PortableValue[] values)
     {
         FormulaValue[] formulaValues = values.Select(value => value.ToFormula()).ToArray();
+
+        if (formulaValues.Length == 0)
+        {
+            return FormulaValue.NewTable(RecordType.Empty());
+        }
+
         if (formulaValues[0] is RecordValue recordValue)
         {
             return FormulaValue.NewTable(ParseRecordType(recordValue), formulaValues.OfType<RecordValue>());

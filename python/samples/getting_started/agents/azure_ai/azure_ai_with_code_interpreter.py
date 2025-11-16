@@ -22,6 +22,7 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AzureAIClient(async_credential=credential).create_agent(
+            name="MyCodeInterpreterAgent",
             instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
             tools=HostedCodeInterpreterTool(),
         ) as agent,

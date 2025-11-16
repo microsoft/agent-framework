@@ -92,7 +92,7 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
 def test_anthropic_settings_missing_api_key(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings when API key is missing."""
-    settings = AnthropicSettings()
+    settings = AnthropicSettings(env_file_path="test.env")
     assert settings.api_key is None
     assert settings.chat_model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
 
