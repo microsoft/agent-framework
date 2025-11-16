@@ -217,6 +217,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/observability/azure_ai_chat_client_with_observability.py`](./getting_started/observability/azure_ai_chat_client_with_observability.py) | Azure AI chat client with observability example |
 | [`getting_started/observability/setup_observability_with_env_var.py`](./getting_started/observability/setup_observability_with_env_var.py) | Setup observability using environment variables |
 | [`getting_started/observability/setup_observability_with_parameters.py`](./getting_started/observability/setup_observability_with_parameters.py) | Setup observability using parameters |
+| [`getting_started/observability/self_reflection.py`](./getting_started/observability/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
 | [`getting_started/observability/workflow_observability.py`](./getting_started/observability/workflow_observability.py) | Workflow observability example |
 
 ## Threads
