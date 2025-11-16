@@ -290,6 +290,60 @@ public class DevUIExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that an agent with null name can be resolved by its workflow.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_NonKeyedWorkflow_CanBeResolved_AsAIAgent()
+    {
+        var services = new ServiceCollection();
+        var mockChatClient = new Mock<IChatClient>();
+        var agent1 = new ChatClientAgent(mockChatClient.Object, "Test 1", name: null);
+        var agent2 = new ChatClientAgent(mockChatClient.Object, "Test 2", name: null);
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+
+        services.AddKeyedSingleton("workflow", workflow);
+        services.AddDevUI();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        var resolvedWorkflowAsAgent = serviceProvider.GetKeyedService<AIAgent>("workflow");
+        Assert.NotNull(resolvedWorkflowAsAgent);
+        Assert.Null(resolvedWorkflowAsAgent.Name);
+    }
+
+    /// <summary>
+    /// Verifies that an agent with null name can be resolved by its workflow.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_NonKeyedWorkflow_PlusKeyedWorkflow_CanBeResolved_AsAIAgent()
+    {
+        var services = new ServiceCollection();
+        var mockChatClient = new Mock<IChatClient>();
+        var agent1 = new ChatClientAgent(mockChatClient.Object, "Test 1", name: null);
+        var agent2 = new ChatClientAgent(mockChatClient.Object, "Test 2", name: null);
+        var workflow = AgentWorkflowBuilder.BuildSequential("standardname", agent1, agent2);
+        var keyedWorkflow = AgentWorkflowBuilder.BuildSequential("keyedname", agent1, agent2);
+
+        services.AddSingleton(workflow);
+        services.AddKeyedSingleton("keyed", keyedWorkflow);
+        services.AddDevUI();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        // resolve a workflow with the same name as workflow's name (which is registered without a key)
+        var standardAgent = serviceProvider.GetKeyedService<AIAgent>("standardname");
+        Assert.NotNull(standardAgent);
+        Assert.Equal("standardname", standardAgent.Name);
+
+        var keyedAgent = serviceProvider.GetKeyedService<AIAgent>("keyed");
+        Assert.NotNull(keyedAgent);
+        Assert.Equal("keyedname", keyedAgent.Name);
+
+        var nonExisting = serviceProvider.GetKeyedService<AIAgent>("random-non-existing!!!");
+        Assert.Null(nonExisting);
+    }
+
+    /// <summary>
     /// Verifies that an agent registered with a different key than its name can be resolved by key.
     /// </summary>
     [Fact]

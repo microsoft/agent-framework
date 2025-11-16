@@ -29,7 +29,14 @@ public static class MicrosoftAgentAIDevUIServiceCollectionsExtensions
             var workflow = sp.GetKeyedService<Workflow>(keyAsStr);
             if (workflow is null)
             {
-                return null!;
+                // another thing we can do is resolve a non-keyed workflow.
+                // however, we can't rely on anything than key to be equal to the workflow.Name.
+                // so we try: if we fail, we return null.
+                workflow = sp.GetService<Workflow>();
+                if (workflow is null || workflow.Name?.Equals(keyAsStr, StringComparison.Ordinal) == false)
+                {
+                    return null!;
+                }
             }
 
             return workflow.AsAgent(name: workflow.Name);
