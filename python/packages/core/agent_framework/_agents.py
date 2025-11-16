@@ -589,7 +589,7 @@ class ChatAgent(BaseAgent):
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
-        # chat option params
+        # chat options
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
         frequency_penalty: float | None = None,

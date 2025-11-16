@@ -59,6 +59,7 @@
         "OPENAI",
         "opentelemetry",
         "OTEL",
+        "powerfx",
         "protos",
         "pydantic",
         "pytestmark",
