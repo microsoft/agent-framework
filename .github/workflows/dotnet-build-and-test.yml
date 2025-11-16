@@ -133,7 +133,7 @@ jobs:
             
             # Check if the project supports the target framework
             if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
-              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --project $project --no-progress --no-build -v Normal --report-trx --coverage --results-directory "TestResults/Coverage/" --coverage-settings "${{ github.workspace }}/dotnet/coverage.config"
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --project $project --no-progress --no-build -v Normal --report-trx --results-directory "TestResults/Coverage/" --coverage --coverage-output-format cobertura --coverage-settings "${{ github.workspace }}/dotnet/coverage.config"
             else
               echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
             fi
