@@ -260,6 +260,36 @@ public class DevUIExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that an agent with null name can be resolved by its workflow.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_MultipleWorkflowsWithName_CanBeResolved_AsAIAgent()
+    {
+        var services = new ServiceCollection();
+        var mockChatClient = new Mock<IChatClient>();
+        var agent1 = new ChatClientAgent(mockChatClient.Object, "Test 1", name: null);
+        var agent2 = new ChatClientAgent(mockChatClient.Object, "Test 2", name: null);
+        var workflow1 = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+        var workflow2 = AgentWorkflowBuilder.BuildSequential(agent1, agent2);
+
+        services.AddKeyedSingleton("workflow1", workflow1);
+        services.AddKeyedSingleton("workflow2", workflow2);
+        services.AddDevUI();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        var resolvedWorkflow1AsAgent = serviceProvider.GetKeyedService<AIAgent>("workflow1");
+        Assert.NotNull(resolvedWorkflow1AsAgent);
+        Assert.Null(resolvedWorkflow1AsAgent.Name);
+
+        var resolvedWorkflow2AsAgent = serviceProvider.GetKeyedService<AIAgent>("workflow2");
+        Assert.NotNull(resolvedWorkflow2AsAgent);
+        Assert.Null(resolvedWorkflow2AsAgent.Name);
+
+        Assert.False(resolvedWorkflow1AsAgent == resolvedWorkflow2AsAgent);
+    }
+
+    /// <summary>
     /// Verifies that an agent registered with a different key than its name can be resolved by key.
     /// </summary>
     [Fact]
