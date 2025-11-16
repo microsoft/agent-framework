@@ -80,7 +80,7 @@ jobs:
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.0.0
         with:
-          global-json-file: ${{ github.workspace }}/dotnet/global.json
+          global-json-file: ${{ github.workspace }}/global.json
       - name: Build dotnet solutions
         shell: bash
         run: |
