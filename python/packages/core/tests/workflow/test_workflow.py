@@ -199,7 +199,10 @@ async def test_fan_out():
 
     # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # executor_b will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    assert len(events) == 7
+    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # This workflow will converge in 2 supersteps because executor_c will send one more message
+    # after executor_b completes
+    assert len(events) == 11
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()
@@ -220,7 +223,9 @@ async def test_fan_out_multiple_completed_events():
 
     # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # executor_b and executor_c will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    assert len(events) == 8
+    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    # This workflow will converge in 1 superstep because executor_a and executor_b will not send further messages
+    assert len(events) == 10
 
     # Multiple outputs are expected from both executors
     outputs = events.get_outputs()
@@ -246,7 +251,8 @@ async def test_fan_in():
 
     # Each executor will emit two events: ExecutorInvokedEvent and ExecutorCompletedEvent
     # aggregator will also emit a WorkflowOutputEvent (no WorkflowCompletedEvent anymore)
-    assert len(events) == 9
+    # Each superstep will emit also emit a WorkflowStartedEvent and WorkflowCompletedEvent
+    assert len(events) == 13
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()

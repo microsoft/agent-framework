@@ -109,9 +109,9 @@ class Workflow(DictConvertible):
     """A graph-based execution engine that orchestrates connected executors.
 
     ## Overview
-    A workflow executes a directed graph of executors connected via edge groups using a Pregel-like model,
-    running in supersteps until the graph becomes idle. Workflows are created using the
-    WorkflowBuilder class - do not instantiate this class directly.
+    A workflow executes a directed graph of executors connected via edge groups using a
+    Pregel-like model, running in supersteps until the graph becomes idle. Workflows
+    are created using the WorkflowBuilder class - do not instantiate this class directly.
 
     ## Execution Model
     Executors run in synchronized supersteps where each executor:
@@ -141,6 +141,10 @@ class Workflow(DictConvertible):
     - Checkpoint restoration: Provide `checkpoint_id` (and optionally `checkpoint_storage`)
     - HIL continuation: Provide `responses` to continue after RequestInfoExecutor requests
     - Runtime checkpointing: Provide `checkpoint_storage` to enable/override checkpointing for this run
+
+    ## State Management
+    Workflow instances contain states and states are preserved across calls to `run` and `run_stream`.
+    To execute multiple independent runs, create separate Workflow instances via WorkflowBuilder.
 
     ## External Input Requests
     Executors within a workflow can request external input using `ctx.request_info()`:

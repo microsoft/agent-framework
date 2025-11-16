@@ -4,6 +4,7 @@
 
 import inspect
 import logging
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
@@ -12,6 +13,12 @@ from .._types import ChatMessage
 from ._executor import Executor
 from ._orchestrator_helpers import ParticipantRegistry
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 
@@ -210,11 +217,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
     # State persistence (shared across all patterns)
 
-    def snapshot_state(self) -> dict[str, Any]:
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing.
 
         Default implementation uses OrchestrationState to serialize common state.
-        Subclasses should override _snapshot_pattern_metadata() to add pattern-specific data.
+        Subclasses can override this method or _snapshot_pattern_metadata() to add pattern-specific data.
 
         Returns:
             Serialized state dict
@@ -238,11 +246,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """
         return {}
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore orchestrator state from checkpoint.
 
         Default implementation uses OrchestrationState to deserialize common state.
-        Subclasses should override _restore_pattern_metadata() to restore pattern-specific data.
+        Subclasses can override this method or _restore_pattern_metadata() to restore pattern-specific data.
 
         Args:
             state: Serialized state dict

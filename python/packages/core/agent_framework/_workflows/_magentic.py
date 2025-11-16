@@ -45,9 +45,15 @@ from ._workflow import Workflow, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 
@@ -673,11 +679,11 @@ class MagenticManagerBase(ABC):
         """Prepare the final answer."""
         ...
 
-    def snapshot_state(self) -> dict[str, Any]:
+    def on_checkpoint_save(self) -> dict[str, Any]:
         """Serialize runtime state for checkpointing."""
         return {}
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore runtime state from checkpoint data."""
         return
 
@@ -694,22 +700,6 @@ class StandardMagenticManager(MagenticManagerBase):
     """
 
     task_ledger: _MagenticTaskLedger | None
-
-    def snapshot_state(self) -> dict[str, Any]:
-        state = super().snapshot_state()
-        if self.task_ledger is not None:
-            state = dict(state)
-            state["task_ledger"] = self.task_ledger.to_dict()
-        return state
-
-    def restore_state(self, state: dict[str, Any]) -> None:
-        super().restore_state(state)
-        ledger = state.get("task_ledger")
-        if ledger is not None:
-            try:
-                self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
-            except Exception:  # pragma: no cover - defensive
-                logger.warning("Failed to restore manager task ledger from checkpoint state")
 
     def __init__(
         self,
@@ -940,6 +930,22 @@ class StandardMagenticManager(MagenticManagerBase):
             author_name=response.author_name or MAGENTIC_MANAGER_NAME,
         )
 
+    @override
+    def on_checkpoint_save(self) -> dict[str, Any]:
+        state: dict[str, Any] = {}
+        if self.task_ledger is not None:
+            state["task_ledger"] = self.task_ledger.to_dict()
+        return state
+
+    @override
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        ledger = state.get("task_ledger")
+        if ledger is not None:
+            try:
+                self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore manager task ledger from checkpoint state")
+
 
 # endregion Magentic Manager
 
@@ -997,7 +1003,6 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         # Terminal state marker to stop further processing after completion/limits
         self._terminated = False
         # Tracks whether checkpoint state has been applied for this run
-        self._state_restored = False
 
     def _get_author_name(self) -> str:
         """Get the magentic manager name for orchestrator-generated messages."""
@@ -1036,7 +1041,8 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         )
         await ctx.add_event(event)
 
-    def snapshot_state(self) -> dict[str, Any]:
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current orchestrator state for checkpointing.
 
         Uses OrchestrationState for structure but maintains Magentic's complex metadata
@@ -1055,14 +1061,16 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
             state["magentic_context"] = self._context.to_dict()
         if self._task_ledger is not None:
             state["task_ledger"] = _message_to_payload(self._task_ledger)
-        manager_state: dict[str, Any] | None = None
-        with contextlib.suppress(Exception):
-            manager_state = self._manager.snapshot_state()
-        if manager_state:
-            state["manager_state"] = manager_state
+
+        try:
+            state["manager_state"] = self._manager.on_checkpoint_save()
+        except Exception as exc:
+            logger.warning("Failed to save manager state for checkpoint: %s\nSkipping...", exc)
+
         return state
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore orchestrator state from checkpoint.
 
         Maintains backward compatibility with existing Magentic checkpoints
@@ -1112,7 +1120,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         manager_state = state.get("manager_state")
         if manager_state is not None:
             try:
-                self._manager.restore_state(manager_state)
+                self._manager.on_checkpoint_restore(manager_state)
             except Exception as exc:  # pragma: no cover
                 logger.warning("Failed to restore manager state: %s", exc)
 
@@ -1142,49 +1150,6 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         for name, description in expected.items():
             restored[name] = description
 
-    def _snapshot_pattern_metadata(self) -> dict[str, Any]:
-        """Serialize pattern-specific state.
-
-        Magentic uses custom snapshot_state() instead of base class hooks.
-        This method exists to satisfy the base class contract.
-
-        Returns:
-            Empty dict (Magentic manages its own state)
-        """
-        return {}
-
-    def _restore_pattern_metadata(self, metadata: dict[str, Any]) -> None:
-        """Restore pattern-specific state.
-
-        Magentic uses custom restore_state() instead of base class hooks.
-        This method exists to satisfy the base class contract.
-
-        Args:
-            metadata: Pattern-specific state dict (ignored)
-        """
-        pass
-
-    async def _ensure_state_restored(
-        self,
-        context: WorkflowContext[Any, Any],
-    ) -> None:
-        if self._state_restored and self._context is not None:
-            return
-        state = await context.get_executor_state()
-        if not state:
-            self._state_restored = True
-            return
-        if not isinstance(state, dict):
-            self._state_restored = True
-            return
-        try:
-            self.restore_state(state)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Magentic Orchestrator: Failed to apply checkpoint state: %s", exc, exc_info=True)
-            raise
-        else:
-            self._state_restored = True
-
     @handler
     async def handle_start_message(
         self,
@@ -1204,7 +1169,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         )
         if message.messages:
             self._context.chat_history.extend(message.messages)
-        self._state_restored = True
+
         # Non-streaming callback for the orchestrator receipt of the task
         await self._emit_orchestrator_message(context, message.task, ORCH_MSG_KIND_USER_TASK)
 
@@ -1269,7 +1234,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         """Handle responses from agents."""
         if getattr(self, "_terminated", False):
             return
-        await self._ensure_state_restored(context)
+
         if self._context is None:
             raise RuntimeError("Magentic Orchestrator: Received response but not initialized")
 
@@ -1301,7 +1266,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
     ) -> None:
         if getattr(self, "_terminated", False):
             return
-        await self._ensure_state_restored(context)
+
         if self._context is None:
             return
 
@@ -1636,9 +1601,9 @@ class MagenticAgentExecutor(Executor):
         self._agent = agent
         self._agent_id = agent_id
         self._chat_history: list[ChatMessage] = []
-        self._state_restored = False
 
-    def snapshot_state(self) -> dict[str, Any]:
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
         Returns:
@@ -1650,7 +1615,8 @@ class MagenticAgentExecutor(Executor):
             "chat_history": encode_chat_messages(self._chat_history),
         }
 
-    def restore_state(self, state: dict[str, Any]) -> None:
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint.
 
         Args:
@@ -1668,32 +1634,12 @@ class MagenticAgentExecutor(Executor):
         else:
             self._chat_history = []
 
-    async def _ensure_state_restored(self, context: WorkflowContext[Any, Any]) -> None:
-        if self._state_restored and self._chat_history:
-            return
-        state = await context.get_executor_state()
-        if not state:
-            self._state_restored = True
-            return
-        if not isinstance(state, dict):
-            self._state_restored = True
-            return
-        try:
-            self.restore_state(state)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Agent %s: Failed to apply checkpoint state: %s", self._agent_id, exc, exc_info=True)
-            raise
-        else:
-            self._state_restored = True
-
     @handler
     async def handle_response_message(
         self, message: _MagenticResponseMessage, context: WorkflowContext[_MagenticResponseMessage]
     ) -> None:
         """Handle response message (task ledger broadcast)."""
         logger.debug("Agent %s: Received response message", self._agent_id)
-
-        await self._ensure_state_restored(context)
 
         # Check if this message is intended for this agent
         if message.target_agent is not None and message.target_agent != self._agent_id and not message.broadcast:
@@ -1734,8 +1680,6 @@ class MagenticAgentExecutor(Executor):
             return
 
         logger.info("Agent %s: Received request to respond", self._agent_id)
-
-        await self._ensure_state_restored(context)
 
         # Add persona adoption message with appropriate role
         persona_role = self._get_persona_adoption_role()
@@ -1783,7 +1727,6 @@ class MagenticAgentExecutor(Executor):
         """Reset the internal chat history of the agent (internal operation)."""
         logger.debug("Agent %s: Resetting chat history", self._agent_id)
         self._chat_history.clear()
-        self._state_restored = True
 
     async def _emit_agent_delta_event(
         self,

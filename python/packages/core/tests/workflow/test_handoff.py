@@ -288,57 +288,6 @@ def test_build_fails_without_participants():
         HandoffBuilder().build()
 
 
-async def test_multiple_runs_dont_leak_conversation():
-    """Verify that running the same workflow multiple times doesn't leak conversation history."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist")
-    specialist = _RecordingAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
-        .build()
-    )
-
-    # First run
-    events = await _drain(workflow.run_stream("First run message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "First run should emit output"
-
-    first_run_conversation = outputs[-1].data
-    assert isinstance(first_run_conversation, list)
-    first_run_conv_list = cast(list[ChatMessage], first_run_conversation)
-    first_run_user_messages = [msg for msg in first_run_conv_list if msg.role == Role.USER]
-    assert len(first_run_user_messages) == 2
-    assert any("First run message" in msg.text for msg in first_run_user_messages if msg.text)
-
-    # Second run - should start fresh, not include first run's messages
-    triage.calls.clear()
-    specialist.calls.clear()
-
-    events = await _drain(workflow.run_stream("Second run different message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Another message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "Second run should emit output"
-
-    second_run_conversation = outputs[-1].data
-    assert isinstance(second_run_conversation, list)
-    second_run_conv_list = cast(list[ChatMessage], second_run_conversation)
-    second_run_user_messages = [msg for msg in second_run_conv_list if msg.role == Role.USER]
-    assert len(second_run_user_messages) == 2, (
-        "Second run should have exactly 2 user messages, not accumulate first run"
-    )
-    assert any("Second run different message" in msg.text for msg in second_run_user_messages if msg.text)
-    assert not any("First run message" in msg.text for msg in second_run_user_messages if msg.text), (
-        "Second run should NOT contain first run's messages"
-    )
-
-
 async def test_handoff_async_termination_condition() -> None:
     """Test that async termination conditions work correctly."""
     termination_call_count = 0
@@ -585,7 +534,7 @@ async def test_return_to_previous_state_serialization():
     coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
 
     # Snapshot the state
-    state = coordinator.snapshot_state()
+    state = await coordinator.on_checkpoint_save()
 
     # Verify pattern metadata includes current_agent_id
     assert "metadata" in state
@@ -603,7 +552,7 @@ async def test_return_to_previous_state_serialization():
     )
 
     # Restore state
-    coordinator2.restore_state(state)
+    await coordinator2.on_checkpoint_restore(state)
 
     # Verify current_agent_id was restored
     assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]

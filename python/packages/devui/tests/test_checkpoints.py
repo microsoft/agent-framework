@@ -37,10 +37,14 @@ class WorkflowHILRequest:
 class WorkflowTestExecutor(Executor):
     """Test executor with HIL."""
 
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+        self._data_value: str | None = None
+
     @handler
     async def process(self, data: WorkflowTestData, ctx: WorkflowContext) -> None:
         """Process data and request approval."""
-        await ctx.set_executor_state({"data_value": data.value})
+        self._data_value = data.value
 
         # Request HIL (checkpoint created here)
         await ctx.request_info(request_data=WorkflowHILRequest(question=f"Approve {data.value}?"), response_type=str)
@@ -50,8 +54,7 @@ class WorkflowTestExecutor(Executor):
         self, original_request: WorkflowHILRequest, response: str, ctx: WorkflowContext[str]
     ) -> None:
         """Handle HIL response."""
-        state = await ctx.get_executor_state() or {}
-        value = state.get("data_value", "")
+        value = self._data_value or ""
         await ctx.send_message(f"{value}_approved" if response.lower() == "yes" else f"{value}_rejected")
 
 

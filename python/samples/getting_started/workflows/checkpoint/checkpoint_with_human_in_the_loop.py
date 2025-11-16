@@ -3,6 +3,7 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, override
 
 # NOTE: the Azure client imports above are real dependencies. When running this
 # sample outside of Azure-enabled environments you may wish to swap in the
@@ -116,19 +117,19 @@ class ReviewGateway(Executor):
     def __init__(self, id: str, writer_id: str) -> None:
         super().__init__(id=id)
         self._writer_id = writer_id
+        self._iteration = 0
 
     @handler
     async def on_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
         # Capture the agent output so we can surface it to the reviewer and persist iterations.
-        draft = response.agent_run_response.text or ""
-        iteration = int((await ctx.get_executor_state() or {}).get("iteration", 0)) + 1
-        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
+        self._iteration += 1
+
         # Emit a human approval request.
         await ctx.request_info(
             request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
-                draft=draft,
-                iteration=iteration,
+                draft=response.agent_run_response.text,
+                iteration=self._iteration,
             ),
             response_type=str,
         )
@@ -142,27 +143,32 @@ class ReviewGateway(Executor):
     ) -> None:
         # The `original_request` is the request we sent earlier that is now being answered.
         reply = feedback.strip()
-        state = await ctx.get_executor_state() or {}
-        draft = state.get("last_draft") or (original_request.draft or "")
 
-        if reply.lower() == "approve":
+        if len(reply) == 0 or reply.lower() == "approve":
             # Workflow is completed when the human approves.
-            await ctx.yield_output(draft)
+            await ctx.yield_output(original_request.draft)
             return
 
         # Any other response loops us back to the writer with fresh guidance.
-        guidance = reply or "Tighten the copy and emphasise customer benefit."
-        iteration = int(state.get("iteration", 1)) + 1
-        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         prompt = (
             "Revise the launch note. Respond with the new copy only.\n\n"
-            f"Previous draft:\n{draft}\n\n"
-            f"Human guidance: {guidance}"
+            f"Previous draft:\n{original_request.draft}\n\n"
+            f"Human guidance: {reply}"
         )
         await ctx.send_message(
             AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
+
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        # Save the current iteration count in executor state for checkpointing.
+        return {"iteration": self._iteration}
+
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        # Restore the iteration count from executor state during checkpoint recovery.
+        self._iteration = state.get("iteration", 0)
 
 
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
@@ -247,10 +253,10 @@ async def run_interactive_session(
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")
-                event_stream = workflow.run_stream(initial_message)
+                event_stream = workflow.run_stream(message=initial_message)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream(checkpoint_id)
+                event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 
