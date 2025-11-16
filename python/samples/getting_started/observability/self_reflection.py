@@ -68,7 +68,7 @@ async def do_query_with_self_reflection(
     context: str,
     evaluator: GroundednessEvaluator,
     max_self_reflections: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Execute a query with self-reflection loop.
     
@@ -179,8 +179,8 @@ async def run_self_reflection_batch(
     agent_model: str = DEFAULT_AGENT_MODEL,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     max_self_reflections: int = 3,
-    env_file: Optional[str] = None,
-    limit: Optional[int] = None
+    env_file: str | None = None,
+    limit: int | None = None
 ) -> pd.DataFrame:
     """
     Run self-reflection on a batch of prompts.
