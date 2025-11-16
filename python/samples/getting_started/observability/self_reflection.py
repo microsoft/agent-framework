@@ -8,16 +8,16 @@ and saves the results.
 Can be used as a library or as a standalone CLI tool.
 
 Usage as CLI:
-    python self_reflection_runner.py
+    python self_reflection.py
 
 Usage as CLI with extra options:
-    python self_reflection_runner.py --input resources/suboptimal_groundedness_prompts.parquet \\
-                                     --output resources/results.parquet \\
-                                     --max-reflections 3 \\
-                                     -n 10  # Optional: process only first 10 prompts
+    python self_reflection.py --input resources/suboptimal_groundedness_prompts.parquet \\
+                              --output resources/results.parquet \\
+                              --max-reflections 3 \\
+                              -n 10  # Optional: process only first 10 prompts
 
 Usage as library:
-    from self_reflection_runner import run_self_reflection_batch
+    from self_reflection import run_self_reflection_batch
     
     results_df = run_self_reflection_batch(
         input_file='resources/suboptimal_groundedness_prompts.parquet',
@@ -33,7 +33,7 @@ import pandas as pd
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
-from agent_framework import ChatAgent
+from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 from azure.ai.evaluation import GroundednessEvaluator, AzureOpenAIModelConfiguration
@@ -91,7 +91,8 @@ async def do_query_with_self_reflection(
             - total_groundedness_eval_time: Time spent on evaluations (seconds)
             - total_end_to_end_time: Total execution time (seconds)
     """
-    messages = [{"role": "user", "content": full_user_query}]
+    messages = [ChatMessage(role="user", text=full_user_query)]
+
     best_score = 0
     max_score = 5
     best_response = None
@@ -104,8 +105,8 @@ async def do_query_with_self_reflection(
     for i in range(max_self_reflections):
         print(f"  Self-reflection iteration {i+1}/{max_self_reflections}...")
         
-        response = await agent.run(full_user_query)
-        agent_response = response.text
+        raw_response = await agent.run(messages=messages)
+        agent_response = raw_response.text
 
         # Evaluate groundedness
         start_time_eval = time.time()
@@ -140,8 +141,8 @@ async def do_query_with_self_reflection(
             print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
         
         # Add to conversation history
-        messages.append({"role": "assistant", "content": agent_response})
-        
+        messages = [ChatMessage(role="assistant", text=agent_response)]
+
         # Request improvement
         reflection_prompt = (
             f"The groundedness score of your response is {score}/{max_score}. "
@@ -151,14 +152,14 @@ async def do_query_with_self_reflection(
             f"account the feedback, but make your answer sound as if it was your first response. "
             f"Don't refer to the feedback in your answer."
         )
-        messages.append({"role": "user", "content": reflection_prompt})
+        messages = [ChatMessage(role="user", text=reflection_prompt)]
     
     end_time = time.time()
     latency = end_time - start_time
 
     # Handle edge case where no response improved the score
-    if best_response is None and raw_response is not None:
-        best_response = raw_response.choices[0].message.content
+    if best_response is None and raw_response is not None and len(raw_response.messages) > 0:
+        best_response = raw_response.messages[0].text
         best_iteration = i + 1
 
     return {
@@ -166,7 +167,7 @@ async def do_query_with_self_reflection(
         "best_response_score": best_score,
         "best_iteration": best_iteration,
         "iteration_scores": iteration_scores,  # Structured list of all scores
-        "messages": messages,
+        "messages": [message.to_json() for message in messages],
         "num_retries": i + 1,
         "total_groundedness_eval_time": total_groundedness_eval_time,
         "total_end_to_end_time": latency,
@@ -210,7 +211,7 @@ async def run_self_reflection_batch(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
         endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
     ).create_agent(
-        instructions="You are a helpful helpful agent.",
+        instructions="You are a helpful agent.",
     )
 
     # Load input data
@@ -370,7 +371,7 @@ async def main():
 
     # Run the batch processing
     try:
-        results_df = await run_self_reflection_batch(
+        await run_self_reflection_batch(
             input_file=args.input,
             output_file=args.output,
             agent_model=args.agent_model,
