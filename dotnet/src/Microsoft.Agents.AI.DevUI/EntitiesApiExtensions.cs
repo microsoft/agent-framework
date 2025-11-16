@@ -28,8 +28,8 @@ internal static class EntitiesApiExtensions
     /// </remarks>
     public static IEndpointConventionBuilder MapEntities(this IEndpointRouteBuilder endpoints)
     {
-        var registeredAIAgents = endpoints.ServiceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey);
-        var registeredWorkflows = endpoints.ServiceProvider.GetKeyedServices<Workflow>(KeyedService.AnyKey);
+        var registeredAIAgents = GetRegisteredEntities<AIAgent>(endpoints.ServiceProvider);
+        var registeredWorkflows = GetRegisteredEntities<Workflow>(endpoints.ServiceProvider);
 
         var group = endpoints.MapGroup("/v1/entities")
             .WithTags("Entities");
@@ -289,5 +289,15 @@ internal static class EntitiesApiExtensions
             InputTypeName = "string",
             StartExecutorId = workflow.StartExecutorId
         };
+    }
+
+    private static IEnumerable<T> GetRegisteredEntities<T>(IServiceProvider serviceProvider)
+    {
+        var keyedEntities = serviceProvider.GetKeyedServices<T>(KeyedService.AnyKey);
+        var defaultEntity = serviceProvider.GetService<T>();
+
+        return keyedEntities
+            .Concat(defaultEntity is not null ? [defaultEntity] : [])
+            .Where(entity => entity is not null);
     }
 }
