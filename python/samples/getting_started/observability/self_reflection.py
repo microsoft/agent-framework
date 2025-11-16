@@ -141,7 +141,7 @@ async def do_query_with_self_reflection(
             print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
         
         # Add to conversation history
-        messages = [ChatMessage(role="assistant", text=agent_response)]
+        messages.append(ChatMessage(role="assistant", text=agent_response))
 
         # Request improvement
         reflection_prompt = (
@@ -152,7 +152,7 @@ async def do_query_with_self_reflection(
             f"account the feedback, but make your answer sound as if it was your first response. "
             f"Don't refer to the feedback in your answer."
         )
-        messages = [ChatMessage(role="user", text=reflection_prompt)]
+        messages.append(ChatMessage(role="user", text=reflection_prompt))
     
     end_time = time.time()
     latency = end_time - start_time
