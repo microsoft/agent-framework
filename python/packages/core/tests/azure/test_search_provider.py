@@ -258,8 +258,8 @@ class TestKnowledgeBaseSetup:
         mock_index_client = AsyncMock()
         mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
         mock_index_client.create_knowledge_source = AsyncMock()
-        mock_index_client.get_agent.side_effect = ResourceNotFoundError("Not found")
-        mock_index_client.create_agent = AsyncMock()
+        mock_index_client.get_knowledge_base.side_effect = ResourceNotFoundError("Not found")
+        mock_index_client.create_or_update_knowledge_base = AsyncMock()
         mock_index_class.return_value = mock_index_client
 
         mock_search_client = AsyncMock()
@@ -281,8 +281,8 @@ class TestKnowledgeBaseSetup:
 
         # Verify knowledge source was created
         mock_index_client.create_knowledge_source.assert_called_once()
-        # Verify agent (Knowledge Base) was created
-        mock_index_client.create_agent.assert_called_once()
+        # Verify Knowledge Base was created
+        mock_index_client.create_or_update_knowledge_base.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("agent_framework.azure._search_provider.SearchIndexClient")
@@ -294,7 +294,7 @@ class TestKnowledgeBaseSetup:
         # Setup mocks
         mock_index_client = AsyncMock()
         mock_index_client.get_knowledge_source.return_value = MagicMock()  # Exists
-        mock_index_client.get_agent.return_value = MagicMock()  # Exists
+        mock_index_client.get_knowledge_base.return_value = MagicMock()  # Exists
         mock_index_class.return_value = mock_index_client
 
         mock_search_client = AsyncMock()

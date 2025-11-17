@@ -21,11 +21,9 @@ from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.aio import SearchIndexClient
 from azure.search.documents.indexes.models import (
     AzureOpenAIVectorizerParameters,
-    KnowledgeAgent,
-    KnowledgeAgentAzureOpenAIModel,
-    KnowledgeAgentOutputConfiguration,
-    KnowledgeAgentOutputConfigurationModality,
-    KnowledgeAgentRequestLimits,
+    KnowledgeBase,
+    KnowledgeBaseAzureOpenAIModel,
+    KnowledgeRetrievalOutputMode,
     KnowledgeSourceReference,
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
@@ -33,6 +31,7 @@ from azure.search.documents.indexes.models import (
 from azure.search.documents.models import (
     QueryCaptionType,
     QueryType,
+    VectorizableTextQuery,
     VectorizedQuery,
 )
 
@@ -40,20 +39,20 @@ from agent_framework import ChatMessage, Context, ContextProvider
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
-    from azure.search.documents.agent.aio import KnowledgeAgentRetrievalClient
-    from azure.search.documents.agent.models import (
-        KnowledgeAgentMessage,
-        KnowledgeAgentMessageTextContent,
-        KnowledgeAgentRetrievalRequest,
+    from azure.search.documents.knowledgebases.aio import KnowledgeBaseRetrievalClient
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseMessage,
+        KnowledgeBaseMessageTextContent,
+        KnowledgeBaseRetrievalRequest,
     )
 
 # Runtime imports for agentic mode (optional dependency)
 try:
-    from azure.search.documents.agent.aio import KnowledgeAgentRetrievalClient
-    from azure.search.documents.agent.models import (
-        KnowledgeAgentMessage,
-        KnowledgeAgentMessageTextContent,
-        KnowledgeAgentRetrievalRequest,
+    from azure.search.documents.knowledgebases.aio import KnowledgeBaseRetrievalClient
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeBaseMessage,
+        KnowledgeBaseMessageTextContent,
+        KnowledgeBaseRetrievalRequest,
     )
 
     _agentic_retrieval_available = True
@@ -213,6 +212,7 @@ class AzureAISearchContextProvider(ContextProvider):
 
         # Auto-discover vector field if not specified
         self._auto_discovered_vector_field = False
+        self._use_vectorizable_query = False  # Will be set to True if server-side vectorization detected
         if not vector_field_name and mode == "semantic":
             # Attempt to auto-discover vector field from index schema
             # This will be done lazily on first search to avoid blocking initialization
@@ -249,7 +249,7 @@ class AzureAISearchContextProvider(ContextProvider):
 
         # Create index client and retrieval client for agentic mode (Knowledge Base)
         self._index_client: SearchIndexClient | None = None
-        self._retrieval_client: KnowledgeAgentRetrievalClient | None = None
+        self._retrieval_client: KnowledgeBaseRetrievalClient | None = None
         if mode == "agentic":
             self._index_client = SearchIndexClient(
                 endpoint=endpoint,
@@ -327,12 +327,60 @@ class AzureAISearchContextProvider(ContextProvider):
 
         return Context(messages=[ChatMessage(role="system", text=context_text)])
 
+    def _find_vector_fields(self, index: Any) -> list[str]:
+        """Find all fields that can store vectors (have dimensions defined).
+
+        Args:
+            index: SearchIndex object from Azure Search.
+
+        Returns:
+            List of vector field names.
+        """
+        return [
+            field.name
+            for field in index.fields
+            if field.vector_search_dimensions is not None and field.vector_search_dimensions > 0
+        ]
+
+    def _find_vectorizable_fields(self, index: Any, vector_fields: list[str]) -> list[str]:
+        """Find vector fields that have auto-vectorization configured.
+
+        These are fields that have a vectorizer in their profile, meaning the index
+        can automatically vectorize text queries without needing a client-side embedding function.
+
+        Args:
+            index: SearchIndex object from Azure Search.
+            vector_fields: List of vector field names.
+
+        Returns:
+            List of vectorizable field names (subset of vector_fields).
+        """
+        vectorizable_fields = []
+
+        # Check if index has vector search configuration
+        if not index.vector_search or not index.vector_search.profiles:
+            return vectorizable_fields
+
+        # For each vector field, check if it has a vectorizer configured
+        for field in index.fields:
+            if field.name in vector_fields and field.vector_search_profile_name:
+                # Find the profile for this field
+                profile = next(
+                    (p for p in index.vector_search.profiles if p.name == field.vector_search_profile_name), None
+                )
+
+                if profile and hasattr(profile, "vectorizer_name") and profile.vectorizer_name:
+                    # This field has server-side vectorization configured
+                    vectorizable_fields.append(field.name)
+
+        return vectorizable_fields
+
     async def _auto_discover_vector_field(self) -> None:
         """Auto-discover vector field from index schema.
 
-        Attempts to find vector fields in the index and use the vectorizer configuration.
-        If successful, sets self.vector_field_name. If embedding function is not provided,
-        logs a warning that vector search is recommended for RAG.
+        Attempts to find vector fields in the index and detect which have server-side
+        vectorization configured. Prioritizes vectorizable fields (which can auto-embed text)
+        over regular vector fields (which require client-side embedding).
         """
         if self._auto_discovered_vector_field or self.vector_field_name:
             return  # Already discovered or manually specified
@@ -349,37 +397,65 @@ class AzureAISearchContextProvider(ContextProvider):
             # Get index schema
             index = await index_client.get_index(self.index_name)
 
-            # Find vector fields - must have vector_search_dimensions set (not None)
-            vector_fields = [
-                field
-                for field in index.fields
-                if field.vector_search_dimensions is not None and field.vector_search_dimensions > 0
-            ]
+            # Step 1: Find all vector fields
+            vector_fields = self._find_vector_fields(index)
 
-            if len(vector_fields) == 1:
-                # Exactly one vector field found - auto-select it
-                self.vector_field_name = vector_fields[0].name
+            if not vector_fields:
+                # No vector fields found - keyword search only
+                import logging
+
+                logging.info(f"No vector fields found in index '{self.index_name}'. Using keyword-only search.")
                 self._auto_discovered_vector_field = True
+                if not self._index_client:
+                    await index_client.close()
+                return
 
-                # Warn if no embedding function provided
+            # Step 2: Find which vector fields have server-side vectorization
+            vectorizable_fields = self._find_vectorizable_fields(index, vector_fields)
+
+            # Step 3: Decide which field to use
+            if vectorizable_fields:
+                # Prefer vectorizable fields (server-side embedding)
+                if len(vectorizable_fields) == 1:
+                    self.vector_field_name = vectorizable_fields[0]
+                    self._auto_discovered_vector_field = True
+                    self._use_vectorizable_query = True  # Use VectorizableTextQuery
+                    import logging
+
+                    logging.info(
+                        f"Auto-discovered vectorizable field '{self.vector_field_name}' "
+                        f"with server-side vectorization. No embedding_function needed."
+                    )
+                else:
+                    # Multiple vectorizable fields
+                    import logging
+
+                    logging.warning(
+                        f"Multiple vectorizable fields found: {vectorizable_fields}. "
+                        f"Please specify vector_field_name explicitly. Using keyword-only search."
+                    )
+            elif len(vector_fields) == 1:
+                # Single vector field without vectorizer - needs client-side embedding
+                self.vector_field_name = vector_fields[0]
+                self._auto_discovered_vector_field = True
+                self._use_vectorizable_query = False
+
                 if not self.embedding_function:
                     import logging
 
                     logging.warning(
-                        f"Auto-discovered vector field '{self.vector_field_name}' but no embedding_function provided. "
-                        "Vector search is recommended for RAG use cases. Falling back to keyword-only search."
+                        f"Auto-discovered vector field '{self.vector_field_name}' without server-side vectorization. "
+                        f"Provide embedding_function for vector search, or it will fall back to keyword-only search."
                     )
-                    self.vector_field_name = None  # Clear it since we can't use it
-            elif len(vector_fields) > 1:
-                # Multiple vector fields - warn and continue with keyword search
+                    self.vector_field_name = None
+            else:
+                # Multiple vector fields without vectorizers
                 import logging
 
                 logging.warning(
-                    f"Multiple vector fields found in index '{self.index_name}': "
-                    f"{[f.name for f in vector_fields]}. "
-                    "Please specify vector_field_name explicitly. Using keyword-only search."
+                    f"Multiple vector fields found: {vector_fields}. "
+                    f"Please specify vector_field_name explicitly. Using keyword-only search."
                 )
-            # If no vector fields found, silently continue with keyword search
 
             # Close index client if we created it
             if not self._index_client:
@@ -412,18 +488,31 @@ class AzureAISearchContextProvider(ContextProvider):
 
         vector_queries = []
 
-        # Generate vector query if embedding function provided
-        if self.embedding_function and self.vector_field_name:
-            query_vector = await self.embedding_function(query)
+        # Build vector query based on server-side vectorization or client-side embedding
+        if self.vector_field_name:
             # Use larger k for vector query when semantic reranker is enabled for better ranking quality
             vector_k = max(self.top_k, 50) if self.semantic_configuration_name else self.top_k
-            vector_queries = [
-                VectorizedQuery(
-                    vector=query_vector,
-                    k_nearest_neighbors=vector_k,
-                    fields=self.vector_field_name,
-                )
-            ]
+
+            if self._use_vectorizable_query:
+                # Server-side vectorization: Index will auto-embed the text query
+                vector_queries = [
+                    VectorizableTextQuery(
+                        text=query,
+                        k_nearest_neighbors=vector_k,
+                        fields=self.vector_field_name,
+                    )
+                ]
+            elif self.embedding_function:
+                # Client-side embedding: We provide the vector
+                query_vector = await self.embedding_function(query)
+                vector_queries = [
+                    VectorizedQuery(
+                        vector=query_vector,
+                        k_nearest_neighbors=vector_k,
+                        fields=self.vector_field_name,
+                    )
+                ]
+            # else: vector_field_name is set but no vectorization available - skip vector search
 
         # Build search parameters
         search_params: dict[str, Any] = {
@@ -476,8 +565,6 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("model_deployment_name is required for agentic mode")
 
         knowledge_base_name = self.knowledge_base_name
-        azure_openai_resource_url = self.azure_openai_resource_url
-        azure_openai_deployment_name = self.azure_openai_deployment_name
 
         # Step 1: Create or get knowledge source
         knowledge_source_name = f"{self.index_name}-source"
@@ -496,50 +583,37 @@ class AzureAISearchContextProvider(ContextProvider):
             )
             await self._index_client.create_knowledge_source(knowledge_source)
 
-        # Step 2: Create or get Knowledge Base (using KnowledgeAgent SDK class)
-        try:
-            # Try to get existing Knowledge Base
-            await self._index_client.get_agent(knowledge_base_name)
-        except ResourceNotFoundError:
-            # Create new Knowledge Base if it doesn't exist
-            aoai_params = AzureOpenAIVectorizerParameters(
-                resource_url=azure_openai_resource_url,
-                deployment_name=azure_openai_deployment_name,
-                model_name=self.model_name,  # Underlying model name (e.g., "gpt-4o")
-                api_key=self.azure_openai_api_key,  # Optional: for API key auth instead of managed identity
-            )
+        # Step 2: Create or update Knowledge Base
+        # Always create/update to ensure configuration is current
+        # Note: EXTRACTIVE_DATA mode returns raw chunks without synthesis
+        # Model is still needed for query planning and multi-hop reasoning
+        aoai_params = AzureOpenAIVectorizerParameters(
+            resource_url=self.azure_openai_resource_url,
+            deployment_name=self.azure_openai_deployment_name,
+            model_name=self.model_name,
+            api_key=self.azure_openai_api_key,
+        )
 
-            # Note: SDK uses KnowledgeAgent class name, but this represents a Knowledge Base
-            knowledge_base = KnowledgeAgent(
-                name=knowledge_base_name,
-                description=f"Knowledge Base for multi-hop retrieval across {self.index_name}",
-                models=[KnowledgeAgentAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
-                knowledge_sources=[
-                    KnowledgeSourceReference(
-                        name=knowledge_source_name,
-                        include_references=True,
-                        include_reference_source_data=True,
-                    )
-                ],
-                output_configuration=KnowledgeAgentOutputConfiguration(
-                    modality=KnowledgeAgentOutputConfigurationModality.ANSWER_SYNTHESIS,
-                    attempt_fast_path=True,
-                ),
-                request_limits=KnowledgeAgentRequestLimits(
-                    max_output_size=10000,
-                    max_runtime_in_seconds=60,
-                ),
-                retrieval_instructions=self.retrieval_instructions,
-            )
-            await self._index_client.create_agent(knowledge_base)
+        knowledge_base = KnowledgeBase(
+            name=knowledge_base_name,
+            description=f"Knowledge Base for multi-hop retrieval across {self.index_name}",
+            knowledge_sources=[
+                KnowledgeSourceReference(
+                    name=knowledge_source_name,
+                )
+            ],
+            models=[KnowledgeBaseAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
+            output_mode=KnowledgeRetrievalOutputMode.EXTRACTIVE_DATA,
+        )
+        await self._index_client.create_or_update_knowledge_base(knowledge_base)
 
         self._knowledge_base_initialized = True
 
         # Create retrieval client now that Knowledge Base is initialized
         if _agentic_retrieval_available and self._retrieval_client is None:
-            self._retrieval_client = KnowledgeAgentRetrievalClient(
+            self._retrieval_client = KnowledgeBaseRetrievalClient(
                 endpoint=self.endpoint,
-                agent_name=knowledge_base_name,
+                knowledge_base_name=knowledge_base_name,
                 credential=self.credential,
             )
 
@@ -564,18 +638,17 @@ class AzureAISearchContextProvider(ContextProvider):
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
 
-        # Convert ChatMessage list to KnowledgeAgent message format
-        # Note: SDK uses KnowledgeAgent class names, but represents Knowledge Base operations
+        # Convert ChatMessage list to KnowledgeBase message format
         kb_messages = [
-            KnowledgeAgentMessage(
+            KnowledgeBaseMessage(
                 role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
-                content=[KnowledgeAgentMessageTextContent(text=msg.text)],
+                content=[KnowledgeBaseMessageTextContent(text=msg.text)],
             )
             for msg in messages
             if msg.text
         ]
 
-        retrieval_request = KnowledgeAgentRetrievalRequest(messages=kb_messages)
+        retrieval_request = KnowledgeBaseRetrievalRequest(messages=kb_messages)
 
         # Use reusable retrieval client
         if not self._retrieval_client:
@@ -593,7 +666,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 answer_parts: list[str] = []
                 for content_item in assistant_message.content:
                     # Check if this is a text content item
-                    if isinstance(content_item, KnowledgeAgentMessageTextContent) and content_item.text:
+                    if isinstance(content_item, KnowledgeBaseMessageTextContent) and content_item.text:
                         answer_parts.append(content_item.text)
 
                 if answer_parts:
