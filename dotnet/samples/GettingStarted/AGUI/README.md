@@ -18,7 +18,7 @@ export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
-For the client sample, you can optionally set:
+For the client samples, you can optionally set:
 
 ```bash
 export AGUI_SERVER_URL="http://localhost:8888"
@@ -26,7 +26,11 @@ export AGUI_SERVER_URL="http://localhost:8888"
 
 ## Samples
 
-### AGUI_Step01_ServerBasic
+### Step01_GettingStarted
+
+A basic AG-UI server and client that demonstrate the foundational concepts.
+
+#### Server (`Step01_GettingStarted/Server`)
 
 A basic AG-UI server that hosts an AI agent accessible via HTTP. Demonstrates:
 
@@ -35,109 +39,165 @@ A basic AG-UI server that hosts an AI agent accessible via HTTP. Demonstrates:
 - Creating an AI agent from an Azure OpenAI chat client
 - Streaming responses via Server-Sent Events (SSE)
 
-**Run the sample:**
+**Run the server:**
 
 ```bash
-cd AGUI_Step01_ServerBasic
+cd Step01_GettingStarted/Server
 dotnet run --urls http://localhost:8888
 ```
 
-### AGUI_Step02_ClientBasic
+#### Client (`Step01_GettingStarted/Client`)
 
 An interactive console client that connects to an AG-UI server. Demonstrates:
 
-- Creating an AG-UI client with `AGUIAgent`
+- Creating an AG-UI client with `AGUIChatClient`
 - Managing conversation threads
 - Streaming responses with `RunStreamingAsync`
 - Displaying colored console output for different content types
-- Using System.CommandLine for interactive input
+- Supporting both interactive and automated modes
 
-**Prerequisites:** AGUI_Step01_ServerBasic (or any AG-UI server) must be running.
+**Prerequisites:** The Step01_GettingStarted server (or any AG-UI server) must be running.
 
-**Run the sample:**
+**Run the client:**
 
 ```bash
-cd AGUI_Step02_ClientBasic
+cd Step01_GettingStarted/Client
 dotnet run
 ```
 
 Type messages and press Enter to interact with the agent. Type `:q` or `quit` to exit.
 
-### AGUI_Step03_ServerWithTools
+### Step02_BackendTools
 
-An AG-UI server with function tools that execute on the backend. Demonstrates:
+An AG-UI server with function tools that execute on the backend.
+
+#### Server (`Step02_BackendTools/Server`)
+
+Demonstrates:
 
 - Creating function tools using `AIFunctionFactory.Create`
 - Using `[Description]` attributes for tool documentation
 - Defining explicit request/response types for type safety
 - Setting up JSON serialization contexts for source generation
-- Handling both simple (string) and complex (object) return types
+- Backend tool rendering (tools execute on the server)
 
-**Run the sample:**
+**Run the server:**
 
 ```bash
-cd AGUI_Step03_ServerWithTools
+cd Step02_BackendTools/Server
 dotnet run --urls http://localhost:8888
 ```
 
-This server can be used with the AGUI_Step02_ClientBasic client. Try asking about weather or searching for restaurants.
+#### Client (`Step02_BackendTools/Client`)
 
-### AGUI_Step04_ServerWithState
+A client that works with the backend tools server. Try asking: "Find Italian restaurants in Seattle" or "Search for Mexican food in Portland".
 
-An AG-UI server that demonstrates state management with predictive updates. Demonstrates:
-
-- Defining state schemas using C# records
-- Streaming predictive state updates as tools execute
-- Managing shared state between client and server
-- Using JSON serialization contexts for state types
-
-**Run the sample:**
+**Run the client:**
 
 ```bash
-cd AGUI_Step04_ServerWithState
+cd Step02_BackendTools/Client
+dotnet run
+```
+
+### Step03_FrontendTools
+
+Demonstrates frontend tool rendering (tools defined on client, executed on server).
+
+#### Server (`Step03_FrontendTools/Server`)
+
+A basic AG-UI server that accepts tool definitions from the client.
+
+**Run the server:**
+
+```bash
+cd Step03_FrontendTools/Server
 dotnet run --urls http://localhost:8888
 ```
 
-### AGUI_Step05_Approvals
+#### Client (`Step03_FrontendTools/Client`)
+
+A client that defines and sends tools to the server for execution.
+
+**Run the client:**
+
+```bash
+cd Step03_FrontendTools/Client
+dotnet run
+```
+
+### Step04_HumanInLoop
 
 Demonstrates human-in-the-loop approval workflows for sensitive operations. This sample includes both a server and client component.
 
-#### Server (`AGUI_Step05_Approvals/Server`)
+#### Server (`Step04_HumanInLoop/Server`)
 
 An AG-UI server that implements approval workflows. Demonstrates:
 
 - Wrapping tools with `ApprovalRequiredAIFunction`
-- Converting `FunctionApprovalRequestContent` to client tool calls
-- Middleware pattern for approval request/response handling
+- Converting `FunctionApprovalRequestContent` to approval requests
+- Middleware pattern with `ServerFunctionApprovalServerAgent`
 - Complete function call capture and restoration
 
 **Run the server:**
 
 ```bash
-cd AGUI_Step05_Approvals/Server
+cd Step04_HumanInLoop/Server
 dotnet run --urls http://localhost:8888
 ```
 
-#### Client (`AGUI_Step05_Approvals/Client`)
+#### Client (`Step04_HumanInLoop/Client`)
 
 An interactive client that handles approval requests from the server. Demonstrates:
 
-- Detecting and parsing `"request_approval"` tool calls
+- Using `ServerFunctionApprovalClientAgent` middleware
+- Detecting `FunctionApprovalRequestContent`
 - Displaying approval details to users
 - Prompting for approval/rejection
-- Sending approval responses as tool results
+- Sending approval responses with `FunctionApprovalResponseContent`
 - Resuming conversation after approval
-
-**Prerequisites:** The approval server must be running.
 
 **Run the client:**
 
 ```bash
-cd AGUI_Step05_Approvals/Client
+cd Step04_HumanInLoop/Client
 dotnet run
 ```
 
-Try asking the agent to perform sensitive operations like "Send an email to user@example.com" or "Transfer $500 from account 1234 to account 5678".
+Try asking the agent to perform sensitive operations like "Approve expense report EXP-12345".
+
+### Step05_StateManagement
+
+An AG-UI server and client that demonstrate state management with predictive updates.
+
+#### Server (`Step05_StateManagement/Server`)
+
+Demonstrates:
+
+- Defining state schemas using C# records
+- Using `SharedStateAgent` middleware for state management
+- Streaming predictive state updates with `AgentState` content
+- Managing shared state between client and server
+- Using JSON serialization contexts for state types
+
+**Run the server:**
+
+```bash
+cd Step05_StateManagement/Server
+dotnet run
+```
+
+The server runs on port 8888 by default.
+
+#### Client (`Step05_StateManagement/Client`)
+
+A client that displays and updates shared state from the server. Try asking: "Create a recipe for chocolate chip cookies" or "Suggest a pasta dish".
+
+**Run the client:**
+
+```bash
+cd Step05_StateManagement/Client
+dotnet run
+```
 
 ## How AG-UI Works
 
@@ -236,9 +296,9 @@ For the most up-to-date AG-UI features, see the [Python samples](../../../../pyt
 
 ### Related Documentation
 
-- [AG-UI Overview](https://learn.microsoft.com/azure/agent-framework/integrations/ag-ui/) - Complete AG-UI documentation
-- [Getting Started Tutorial](https://learn.microsoft.com/azure/agent-framework/integrations/ag-ui/getting-started) - Step-by-step walkthrough
-- [Backend Tool Rendering](https://learn.microsoft.com/azure/agent-framework/integrations/ag-ui/backend-tool-rendering) - Function tools tutorial
-- [Human-in-the-Loop](https://learn.microsoft.com/azure/agent-framework/integrations/ag-ui/human-in-the-loop) - Approval workflows tutorial
-- [State Management](https://learn.microsoft.com/azure/agent-framework/integrations/ag-ui/state-management) - State management tutorial
-- [Agent Framework Overview](https://learn.microsoft.com/azure/agent-framework/overview/agent-framework-overview) - Core framework concepts
+- [AG-UI Overview](https://learn.microsoft.com/agent-framework/integrations/ag-ui/) - Complete AG-UI documentation
+- [Getting Started Tutorial](https://learn.microsoft.com/agent-framework/integrations/ag-ui/getting-started) - Step-by-step walkthrough
+- [Backend Tool Rendering](https://learn.microsoft.com/agent-framework/integrations/ag-ui/backend-tool-rendering) - Function tools tutorial
+- [Human-in-the-Loop](https://learn.microsoft.com/agent-framework/integrations/ag-ui/human-in-the-loop) - Approval workflows tutorial
+- [State Management](https://learn.microsoft.com/agent-framework/integrations/ag-ui/state-management) - State management tutorial
+- [Agent Framework Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview) - Core framework concepts
