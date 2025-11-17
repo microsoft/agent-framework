@@ -29,6 +29,7 @@ members = [
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
+    "agent-framework-bedrock",
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-core",
@@ -267,6 +268,23 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "azure-functions" },
     { name = "azure-functions-durable" },
+]
+
+[[package]]
+name = "agent-framework-bedrock"
+version = "1.0.0b251112.post1"
+source = { editable = "packages/bedrock" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "boto3", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "botocore", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "boto3", specifier = ">=1.35.0,<2" },
+    { name = "botocore", specifier = ">=1.35.0,<2" },
 ]
 
 [[package]]
