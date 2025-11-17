@@ -117,6 +117,12 @@ builder.Services.AddKeyedSingleton("NonAgentAndNonmatchingDINameWorkflow", (sp, 
     return AgentWorkflowBuilder.BuildSequential(workflowName: "random-name", agents: agents);
 });
 
+builder.Services.AddSingleton<AIAgent>(sp =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(chatClient, name: "default-agent", instructions: "you are a default agent.");
+});
+
 builder.Services.AddKeyedSingleton<AIAgent>("my-di-nonmatching-agent", (sp, name) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");

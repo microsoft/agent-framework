@@ -371,6 +371,34 @@ public class DevUIExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that an agent registered with a different key than its name can be resolved by key.
+    /// </summary>
+    [Fact]
+    public void AddDevUI_Keyed_AndStandard_BothCanBeResolved()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var mockChatClient = new Mock<IChatClient>();
+        var defaultAgent = new ChatClientAgent(mockChatClient.Object, "default", "default");
+        var keyedAgent = new ChatClientAgent(mockChatClient.Object, "keyed", "keyed");
+
+        services.AddSingleton<AIAgent>(defaultAgent);
+        services.AddKeyedSingleton<AIAgent>("keyed-registration", keyedAgent);
+        services.AddDevUI();
+
+        var serviceProvider = services.BuildServiceProvider();
+
+        var resolvedKeyedAgent = serviceProvider.GetKeyedService<AIAgent>("keyed-registration");
+        Assert.NotNull(resolvedKeyedAgent);
+        Assert.Equal("keyed", resolvedKeyedAgent.Name);
+
+        // resolving default agent based on its name, not on the registration-key
+        var resolvedDefaultAgent = serviceProvider.GetKeyedService<AIAgent>("default");
+        Assert.NotNull(resolvedDefaultAgent);
+        Assert.Equal("default", resolvedDefaultAgent.Name);
+    }
+
+    /// <summary>
     /// Verifies that trying to resolve with null key throws appropriate exception.
     /// </summary>
     [Fact]
