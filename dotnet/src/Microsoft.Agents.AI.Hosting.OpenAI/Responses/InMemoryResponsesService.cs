@@ -22,7 +22,6 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
     private readonly IResponseExecutor _executor;
     private readonly MemoryCache _cache;
     private readonly InMemoryStorageOptions _options;
-    private readonly Conversations.IConversationStorage? _conversationStorage;
 
     private sealed class ResponseState
     {
@@ -144,7 +143,6 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         this._executor = executor;
         this._options = options;
         this._cache = new MemoryCache(options.ToMemoryCacheOptions());
-        this._conversationStorage = conversationStorage;
     }
 
     public async ValueTask<ResponseError?> ValidateRequestAsync(
@@ -437,21 +435,6 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
                 if (streamingEvent is StreamingOutputItemDone itemDone)
                 {
                     outputItems.Add(itemDone.Item);
-                }
-            }
-
-            // Add both input and output items to conversation storage if available
-            // This happens AFTER successful execution, in line with OpenAI's behavior
-            if (this._conversationStorage is not null && request.Conversation?.Id is not null)
-            {
-                var inputItems = GetInputItems(responseId, state);
-                var allItems = new List<ItemResource>(inputItems.Count + outputItems.Count);
-                allItems.AddRange(inputItems);
-                allItems.AddRange(outputItems);
-
-                if (allItems.Count > 0)
-                {
-                    await this._conversationStorage.AddItemsAsync(request.Conversation.Id, allItems, linkedCts.Token).ConfigureAwait(false);
                 }
             }
 

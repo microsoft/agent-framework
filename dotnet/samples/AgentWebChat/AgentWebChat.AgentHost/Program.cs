@@ -6,6 +6,7 @@ using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -20,6 +21,17 @@ builder.Services.AddProblemDetails();
 
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
+
+var testAgent = builder.AddAIAgent("problemCheck", (sp, name) =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(chatClient, options: new()
+    {
+        ChatMessageStoreFactory = ctx => new ConversationAgentThreadStore(ctx),
+        Name = "problemCheck",
+        Instructions = "You need to state a problem and fix it!"
+    });
+});
 
 var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
