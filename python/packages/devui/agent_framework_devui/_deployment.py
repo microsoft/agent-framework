@@ -7,6 +7,7 @@ import logging
 import re
 import secrets
 import uuid
+from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -467,11 +468,16 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                         await event_queue.put(
                             DeploymentEvent(type="deploy.progress", message=f"Docker build: {line_text}")
                         )
-                    elif "https://" in line_text and ".azurecontainerapps.io" in line_text:
-                        # Deployment URL detected
-                        await event_queue.put(
-                            DeploymentEvent(type="deploy.progress", message="Deployment URL generated!")
-                        )
+                    elif "https://" in line_text:
+                        # Try to extract all URLs and check if any is on azurecontainerapps.io
+                        urls = re.findall(r'https://[^\s]+', line_text)
+                        for url in urls:
+                            host = urlparse(url).hostname
+                            if host and (host == "azurecontainerapps.io" or host.endswith(".azurecontainerapps.io")):
+                                await event_queue.put(
+                                    DeploymentEvent(type="deploy.progress", message="Deployment URL generated!")
+                                )
+                                break
 
             # Wait for process to complete
             return_code = await process.wait()
