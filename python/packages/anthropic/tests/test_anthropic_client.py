@@ -50,7 +50,9 @@ def create_test_anthropic_client(
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
     if anthropic_settings is None:
-        anthropic_settings = AnthropicSettings(api_key="test-api-key-12345", chat_model_id="claude-3-5-sonnet-20241022")
+        anthropic_settings = AnthropicSettings(
+            api_key="test-api-key-12345", chat_model_id="claude-3-5-sonnet-20241022", env_file_path="test.env"
+        )
 
     # Create client instance directly
     client = object.__new__(AnthropicClient)
@@ -61,6 +63,7 @@ def create_test_anthropic_client(
     client._last_call_id_name = None
     client.additional_properties = {}
     client.middleware = None
+    client.additional_beta_flags = []
 
     return client
 
@@ -70,7 +73,7 @@ def create_test_anthropic_client(
 
 def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> None:
     """Test AnthropicSettings initialization."""
-    settings = AnthropicSettings()
+    settings = AnthropicSettings(env_file_path="test.env")
 
     assert settings.api_key is not None
     assert settings.api_key.get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
@@ -80,8 +83,7 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
 def test_anthropic_settings_init_with_explicit_values() -> None:
     """Test AnthropicSettings initialization with explicit values."""
     settings = AnthropicSettings(
-        api_key="custom-api-key",
-        chat_model_id="claude-3-opus-20240229",
+        api_key="custom-api-key", chat_model_id="claude-3-opus-20240229", env_file_path="test.env"
     )
 
     assert settings.api_key is not None
@@ -114,6 +116,7 @@ def test_anthropic_client_init_auto_create_client(anthropic_unit_test_env: dict[
     client = AnthropicClient(
         api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
         model_id=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"],
+        env_file_path="test.env",
     )
 
     assert client.anthropic_client is not None
@@ -307,7 +310,7 @@ def test_convert_tools_to_anthropic_format_code_interpreter(mock_anthropic_clien
     assert "tools" in result
     assert len(result["tools"]) == 1
     assert result["tools"][0]["type"] == "code_execution_20250825"
-    assert result["tools"][0]["name"] == "code_interpreter"
+    assert result["tools"][0]["name"] == "code_execution"
 
 
 def test_convert_tools_to_anthropic_format_mcp_tool(mock_anthropic_client: MagicMock) -> None:
@@ -723,6 +726,32 @@ async def test_anthropic_client_integration_function_calling() -> None:
         isinstance(content, FunctionCallContent) for msg in response.messages for content in msg.contents
     )
     assert has_function_call
+
+
+@pytest.mark.flaky
+@skip_if_anthropic_integration_tests_disabled
+async def test_anthropic_client_integration_hosted_tools() -> None:
+    """Integration test for hosted tools."""
+    client = AnthropicClient()
+
+    messages = [ChatMessage(role=Role.USER, text="What tools do you have available?")]
+    tools = [
+        HostedWebSearchTool(),
+        HostedCodeInterpreterTool(),
+        HostedMCPTool(
+            name="example-mcp",
+            url="https://learn.microsoft.com/api/mcp",
+            approval_mode="never_require",
+        ),
+    ]
+
+    response = await client.get_response(
+        messages=messages,
+        chat_options=ChatOptions(tools=tools, max_tokens=100),
+    )
+
+    assert response is not None
+    assert response.text is not None
 
 
 @pytest.mark.flaky

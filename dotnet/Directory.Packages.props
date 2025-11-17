@@ -15,8 +15,10 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.435" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.440" />
     <!-- Azure.* -->
+    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.3" />
+    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.3" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.5.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
@@ -93,10 +95,10 @@
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->
-    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1003.2" />
-    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.4.0" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.Json" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1106.1" />
+    <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
     <!-- Durable Task -->
     <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.16.2" />
     <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.16.2-preview.1" />
@@ -118,8 +120,6 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="9.0.11" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Abstractions" Version="1.67.0" />
-    <PackageVersion Include="Microsoft.SemanticKernel.Agents.Yaml" Version="1.67.0-beta" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.abstractions" Version="2.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.3" />

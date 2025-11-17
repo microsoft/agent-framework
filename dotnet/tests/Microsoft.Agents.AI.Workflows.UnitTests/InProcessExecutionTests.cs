@@ -66,7 +66,7 @@ public class InProcessExecutionTests
         messageSent.Should().BeTrue("TurnToken should be accepted");
 
         // Collect events
-        List<WorkflowEvent> events = new();
+        List<WorkflowEvent> events = [];
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             events.Add(evt);
