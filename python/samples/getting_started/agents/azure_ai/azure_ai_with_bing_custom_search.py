@@ -26,8 +26,8 @@ async def main() -> None:
             instructions="""You are a helpful agent that can use Bing Custom Search tools to assist users.
             Use the available Bing Custom Search tools to answer questions and perform tasks.""",
             tools={
-                "type": "bing_custom_search",
-                "bing_custom_search": {
+                "type": "bing_custom_search_preview",
+                "bing_custom_search_preview": {
                     "search_configurations": [
                         {
                             "project_connection_id": os.environ["BING_CUSTOM_SEARCH_PROJECT_CONNECTION_ID"],

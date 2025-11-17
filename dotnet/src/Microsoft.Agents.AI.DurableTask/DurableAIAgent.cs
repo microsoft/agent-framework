@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.DurableTask;
+using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.DurableTask;
@@ -59,6 +60,9 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The response from the agent.</returns>
+    /// <exception cref="AgentNotRegisteredException">Thrown when the agent has not been registered.</exception>
+    /// <exception cref="ArgumentException">Thrown when the provided thread is not valid for a durable agent.</exception>
+    /// <exception cref="NotSupportedException">Thrown when cancellation is requested (cancellation is not supported for durable agents).</exception>
     public override async Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
@@ -95,7 +99,17 @@ public sealed class DurableAIAgent : AIAgent
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
-        return await this._context.Entities.CallEntityAsync<AgentRunResponse>(durableThread.SessionId, nameof(AgentEntity.RunAgentAsync), request);
+        try
+        {
+            return await this._context.Entities.CallEntityAsync<AgentRunResponse>(
+                durableThread.SessionId,
+                nameof(AgentEntity.RunAgentAsync),
+                request);
+        }
+        catch (EntityOperationFailedException e) when (e.FailureDetails.ErrorType == "EntityTaskNotFound")
+        {
+            throw new AgentNotRegisteredException(this._agentName, e);
+        }
     }
 
     /// <summary>

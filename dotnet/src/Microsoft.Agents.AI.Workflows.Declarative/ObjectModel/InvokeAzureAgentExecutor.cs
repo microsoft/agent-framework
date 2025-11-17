@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
@@ -21,14 +22,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
 {
     public static class Steps
     {
-        public static string UserInput(string id) => $"{id}_{nameof(UserInput)}";
-        public static string FunctionTool(string id) => $"{id}_{nameof(FunctionTool)}";
+        public static string ExternalInput(string id) => $"{id}_{nameof(ExternalInput)}";
         public static string Resume(string id) => $"{id}_{nameof(Resume)}";
     }
 
-    public static bool RequiresFunctionCall(object? message) => message is AgentFunctionToolRequest;
-
-    public static bool RequiresUserInput(object? message) => message is UserInputRequest;
+    public static bool RequiresInput(object? message) => message is ExternalInputRequest;
 
     public static bool RequiresNothing(object? message) => message is ActionExecutorResult;
 
@@ -46,8 +44,11 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return default;
     }
 
-    public ValueTask ResumeAsync(IWorkflowContext context, AgentFunctionToolResponse message, CancellationToken cancellationToken) =>
-        this.InvokeAgentAsync(context, [message.FunctionResults.ToChatMessage()], cancellationToken);
+    public async ValueTask ResumeAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
+    {
+        await context.SetLastMessageAsync(response.Messages.Last()).ConfigureAwait(false);
+        await this.InvokeAgentAsync(context, response.Messages, cancellationToken).ConfigureAwait(false);
+    }
 
     public async ValueTask CompleteAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
@@ -58,40 +59,69 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
     {
         string? conversationId = this.GetConversationId();
         string agentName = this.GetAgentName();
-        string? additionalInstructions = this.GetAdditionalInstructions();
         bool autoSend = this.GetAutoSendValue();
+        Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();
+        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, messages, inputParameters, cancellationToken).ConfigureAwait(false);
 
-        bool isComplete = true;
-
-        AgentRunResponse agentResponse = await agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, messages, cancellationToken).ConfigureAwait(false);
-
-        if (string.IsNullOrEmpty(agentResponse.Text))
+        ChatMessage[] actionableMessages = FilterActionableContent(agentResponse).ToArray();
+        if (actionableMessages.Length > 0)
         {
-            // Identify function calls that have no associated result.
-            List<UserInputRequestContent> inputRequests = GetUserInputRequests(agentResponse);
-            if (inputRequests.Count > 0)
-            {
-                isComplete = false;
-                UserInputRequest approvalRequest = new(agentName, inputRequests.OfType<AIContent>().ToArray());
-                await context.SendMessageAsync(approvalRequest, cancellationToken).ConfigureAwait(false);
-            }
-
-            // Identify function calls that have no associated result.
-            List<FunctionCallContent> functionCalls = GetOrphanedFunctionCalls(agentResponse);
-            if (functionCalls.Count > 0)
-            {
-                isComplete = false;
-                AgentFunctionToolRequest toolRequest = new(agentName, functionCalls);
-                await context.SendMessageAsync(toolRequest, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        if (isComplete)
-        {
-            await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+            AgentRunResponse filteredResponse =
+                new(actionableMessages)
+                {
+                    AdditionalProperties = agentResponse.AdditionalProperties,
+                    AgentId = agentResponse.AgentId,
+                    CreatedAt = agentResponse.CreatedAt,
+                    ResponseId = agentResponse.ResponseId,
+                    Usage = agentResponse.Usage,
+                };
+            await context.SendMessageAsync(new ExternalInputRequest(filteredResponse), cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         await this.AssignAsync(this.AgentOutput?.Messages?.Path, agentResponse.Messages.ToTable(), context).ConfigureAwait(false);
+
+        // Attempt to parse the last message as JSON and assign to the response object variable.
+        try
+        {
+            JsonDocument jsonDocument = JsonDocument.Parse(agentResponse.Messages.Last().Text);
+            Dictionary<string, object?> objectProperties = jsonDocument.ParseRecord(VariableType.RecordType);
+            await this.AssignAsync(this.AgentOutput?.ResponseObject?.Path, objectProperties.ToFormula(), context).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Not valid json, skip assignment.
+        }
+
+        if (this.Model.Input?.ExternalLoop?.When is not null)
+        {
+            bool requestInput = this.Evaluator.GetValue(this.Model.Input.ExternalLoop.When).Value;
+            if (requestInput)
+            {
+                ExternalInputRequest inputRequest = new(agentResponse);
+                await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Dictionary<string, object?>? GetStructuredInputs()
+    {
+        Dictionary<string, object?>? inputs = null;
+
+        if (this.AgentInput?.Arguments is not null)
+        {
+            inputs = [];
+
+            foreach (KeyValuePair<string, ValueExpression> argument in this.AgentInput.Arguments)
+            {
+                inputs[argument.Key] = this.Evaluator.GetValue(argument.Value).Value.ToObject();
+            }
+        }
+
+        return inputs;
     }
 
     private IEnumerable<ChatMessage>? GetInputMessages()
@@ -107,7 +137,7 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
         return userInput?.ToChatMessages();
     }
 
-    private static List<FunctionCallContent> GetOrphanedFunctionCalls(AgentRunResponse agentResponse)
+    private static IEnumerable<ChatMessage> FilterActionableContent(AgentRunResponse agentResponse)
     {
         HashSet<string> functionResultIds =
             [.. agentResponse.Messages
@@ -117,20 +147,20 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
                                 .OfType<FunctionResultContent>()
                                 .Select(functionCall => functionCall.CallId))];
 
-        List<FunctionCallContent> functionCalls = [];
-        foreach (FunctionCallContent functionCall in agentResponse.Messages.SelectMany(m => m.Contents.OfType<FunctionCallContent>()))
+        foreach (ChatMessage responseMessage in agentResponse.Messages)
         {
-            if (!functionResultIds.Contains(functionCall.CallId))
+            if (responseMessage.Contents.Any(content => content is UserInputRequestContent))
             {
-                functionCalls.Add(functionCall);
+                yield return responseMessage;
+                continue;
+            }
+
+            if (responseMessage.Contents.OfType<FunctionCallContent>().Any(functionCall => !functionResultIds.Contains(functionCall.CallId)))
+            {
+                yield return responseMessage;
             }
         }
-
-        return functionCalls;
     }
-
-    private static List<UserInputRequestContent> GetUserInputRequests(AgentRunResponse agentResponse) =>
-        agentResponse.Messages.SelectMany(m => m.Contents.OfType<UserInputRequestContent>()).ToList();
 
     private string? GetConversationId()
     {
@@ -148,18 +178,6 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, WorkflowA
             Throw.IfNull(
                 this.AgentUsage.Name,
                 $"{nameof(this.Model)}.{nameof(this.Model.Agent)}.{nameof(this.Model.Agent.Name)}")).Value;
-
-    private string? GetAdditionalInstructions()
-    {
-        string? additionalInstructions = null;
-
-        if (this.AgentInput?.AdditionalInstructions is not null)
-        {
-            additionalInstructions = this.Engine.Format(this.AgentInput.AdditionalInstructions);
-        }
-
-        return additionalInstructions;
-    }
 
     private bool GetAutoSendValue()
     {

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -19,6 +20,11 @@ from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +185,8 @@ class AgentExecutor(Executor):
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
 
-    async def snapshot_state(self) -> dict[str, Any]:
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
         NOTE: if the thread storage is on the server side, the full thread state
@@ -196,9 +203,6 @@ class AgentExecutor(Executor):
             client_module = self._agent.chat_client.__class__.__module__
 
             if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
-                # TODO(TaoChenOSU): update this warning when we surface the hooks for
-                # custom executor checkpointing.
-                # https://github.com/microsoft/agent-framework/issues/1816
                 logger.warning(
                     "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side threads. "
                     "Currently, checkpointing does not capture messages from server-side threads "
@@ -217,7 +221,8 @@ class AgentExecutor(Executor):
             "pending_responses_to_agent": encode_checkpoint_value(self._pending_responses_to_agent),
         }
 
-    async def restore_state(self, state: dict[str, Any]) -> None:
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint.
 
         Args:
