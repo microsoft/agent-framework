@@ -77,10 +77,14 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string agentName = GetAgentName(request)!;
-        AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        var conversationId = request.Conversation?.Id;
+
+        var agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        var threadStore = this._serviceProvider.GetKeyedService<AgentThreadStore>(agent.Name);
+
         var chatOptions = new ChatOptions
         {
-            ConversationId = request.Conversation?.Id,
+            ConversationId = conversationId,
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
             MaxOutputTokens = request.MaxOutputTokens,
@@ -90,15 +94,26 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         var options = new ChatClientAgentRunOptions(chatOptions);
         var messages = new List<ChatMessage>();
 
+        AgentThread? thread = default;
+        if (conversationId is not null && threadStore is not null)
+        {
+            thread = await threadStore.GetThreadAsync(agent, conversationId, cancellationToken).ConfigureAwait(false);
+        }
+
         foreach (var inputMessage in request.Input.GetInputMessages())
         {
             messages.Add(inputMessage.ToChatMessage());
         }
 
-        await foreach (var streamingEvent in agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
+        await foreach (var streamingEvent in agent.RunStreamingAsync(messages, thread, options: options, cancellationToken: cancellationToken)
             .ToStreamingResponseAsync(request, context, cancellationToken).ConfigureAwait(false))
         {
             yield return streamingEvent;
+        }
+
+        if (conversationId is not null && threadStore is not null && thread is not null)
+        {
+            await threadStore.SaveThreadAsync(agent, conversationId, thread, cancellationToken).ConfigureAwait(false);
         }
     }
 
