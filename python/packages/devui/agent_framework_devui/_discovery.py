@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import logging
@@ -31,6 +32,7 @@ class EntityDiscovery:
         self.entities_dir = entities_dir
         self._entities: dict[str, EntityInfo] = {}
         self._loaded_objects: dict[str, Any] = {}
+        self._cleanup_hooks: dict[str, list[Any]] = {}
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Scan for Agent Framework entities.
@@ -70,14 +72,15 @@ class EntityDiscovery:
         """
         return self._loaded_objects.get(entity_id)
 
-    async def load_entity(self, entity_id: str) -> Any:
-        """Load entity on-demand (lazy loading).
+    async def load_entity(self, entity_id: str, checkpoint_manager: Any = None) -> Any:
+        """Load entity on-demand and inject checkpoint storage for workflows.
 
         This method implements lazy loading by importing the entity module only when needed.
         In-memory entities are returned from cache immediately.
 
         Args:
             entity_id: Entity identifier
+            checkpoint_manager: Optional checkpoint manager for workflow storage injection
 
         Returns:
             Loaded entity object
@@ -107,8 +110,12 @@ class EntityDiscovery:
         else:
             raise ValueError(
                 f"Unsupported entity source: {entity_info.source}. "
-                f"Only 'directory' and 'in_memory' sources are supported."
+                f"Only 'directory' and 'in-memory' sources are supported."
             )
+
+        # Note: Checkpoint storage is now injected at runtime via run_stream() parameter,
+        # not at load time. This provides cleaner architecture and explicit control flow.
+        # See _executor.py _execute_workflow() for runtime checkpoint storage injection.
 
         # Enrich metadata with actual entity data
         # Don't pass entity_type if it's "unknown" - let inference determine the real type
@@ -122,11 +129,27 @@ class EntityDiscovery:
         # Preserve the original path from sparse metadata
         if "path" in entity_info.metadata:
             enriched_info.metadata["path"] = entity_info.metadata["path"]
+            # Now that we have the path, properly check deployment support
+            entity_path = Path(entity_info.metadata["path"])
+            deployment_supported, deployment_reason = self._check_deployment_support(entity_path, entity_info.source)
+            enriched_info.deployment_supported = deployment_supported
+            enriched_info.deployment_reason = deployment_reason
         enriched_info.metadata["lazy_loaded"] = True
         self._entities[entity_id] = enriched_info
 
         # Cache the loaded object
         self._loaded_objects[entity_id] = entity_obj
+
+        # Check module-level registry for cleanup hooks
+        from . import _get_registered_cleanup_hooks
+
+        registered_hooks = _get_registered_cleanup_hooks(entity_obj)
+        if registered_hooks:
+            if entity_id not in self._cleanup_hooks:
+                self._cleanup_hooks[entity_id] = []
+            self._cleanup_hooks[entity_id].extend(registered_hooks)
+            logger.debug(f"Discovered {len(registered_hooks)} registered cleanup hook(s) for: {entity_id}")
+
         logger.info(f"Successfully loaded entity: {entity_id} (type: {enriched_info.type})")
 
         return entity_obj
@@ -187,6 +210,17 @@ class EntityDiscovery:
         """
         return list(self._entities.values())
 
+    def get_cleanup_hooks(self, entity_id: str) -> list[Any]:
+        """Get cleanup hooks registered for an entity.
+
+        Args:
+            entity_id: Entity identifier
+
+        Returns:
+            List of cleanup hooks for the entity
+        """
+        return self._cleanup_hooks.get(entity_id, [])
+
     def invalidate_entity(self, entity_id: str) -> None:
         """Invalidate (clear cache for) an entity to enable hot reload.
 
@@ -239,6 +273,17 @@ class EntityDiscovery:
         """
         self._entities[entity_id] = entity_info
         self._loaded_objects[entity_id] = entity_object
+
+        # Check module-level registry for cleanup hooks
+        from . import _get_registered_cleanup_hooks
+
+        registered_hooks = _get_registered_cleanup_hooks(entity_object)
+        if registered_hooks:
+            if entity_id not in self._cleanup_hooks:
+                self._cleanup_hooks[entity_id] = []
+            self._cleanup_hooks[entity_id].extend(registered_hooks)
+            logger.debug(f"Discovered {len(registered_hooks)} registered cleanup hook(s) for: {entity_id}")
+
         logger.debug(f"Registered entity: {entity_id} ({entity_info.type})")
 
     async def create_entity_info_from_object(
@@ -305,6 +350,17 @@ class EntityDiscovery:
             elif not has_run_stream and not has_run:
                 logger.warning(f"Agent '{entity_id}' lacks both run() and run_stream() methods. May not work.")
 
+        # Check deployment support based on source
+        # For directory-based entities, we need the path to verify deployment support
+        deployment_supported = False
+        deployment_reason = "In-memory entities cannot be deployed (no source directory)"
+
+        if source == "directory":
+            # Directory-based entity - will be checked properly after enrichment when path is available
+            # For now, mark as potentially deployable - will be re-evaluated after enrichment
+            deployment_supported = True
+            deployment_reason = "Ready for deployment (pending path verification)"
+
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
             id=entity_id,
@@ -321,6 +377,8 @@ class EntityDiscovery:
             executors=tools_list if entity_type == "workflow" else [],
             input_schema={"type": "string"},  # Default schema
             start_executor_id=tools_list[0] if tools_list and entity_type == "workflow" else None,
+            deployment_supported=deployment_supported,
+            deployment_reason=deployment_reason,
             metadata={
                 "source": "agent_framework_object",
                 "class_name": entity_object.__class__.__name__
@@ -404,6 +462,31 @@ class EntityDiscovery:
         # Has __init__.py but no specific file
         return "unknown"
 
+    def _check_deployment_support(self, entity_path: Path, source: str) -> tuple[bool, str | None]:
+        """Check if entity can be deployed to Azure Container Apps.
+
+        Args:
+            entity_path: Path to entity directory or file
+            source: Entity source ("directory" or "in_memory")
+
+        Returns:
+            Tuple of (supported, reason) explaining deployment eligibility
+        """
+        # In-memory entities cannot be deployed
+        if source == "in_memory":
+            return False, "In-memory entities cannot be deployed (no source directory)"
+
+        # File-based entities need a directory structure for deployment
+        if not entity_path.is_dir():
+            return False, "Only directory-based entities can be deployed"
+
+        # Must have __init__.py
+        if not (entity_path / "__init__.py").exists():
+            return False, "Missing __init__.py file"
+
+        # Passed all checks
+        return True, "Ready for deployment"
+
     def _register_sparse_entity(self, dir_path: Path) -> None:
         """Register entity with sparse metadata (no import).
 
@@ -413,6 +496,9 @@ class EntityDiscovery:
         entity_id = dir_path.name
         entity_type = self._detect_entity_type(dir_path)
 
+        # Check deployment support
+        deployment_supported, deployment_reason = self._check_deployment_support(dir_path, "directory")
+
         entity_info = EntityInfo(
             id=entity_id,
             name=entity_id.replace("_", " ").title(),
@@ -421,6 +507,8 @@ class EntityDiscovery:
             tools=[],  # Sparse - will be populated on load
             description="",  # Sparse - will be populated on load
             source="directory",
+            deployment_supported=deployment_supported,
+            deployment_reason=deployment_reason,
             metadata={
                 "path": str(dir_path),
                 "discovered": True,
@@ -431,13 +519,51 @@ class EntityDiscovery:
         self._entities[entity_id] = entity_info
         logger.debug(f"Registered sparse entity: {entity_id} (type: {entity_type})")
 
+    def _has_entity_exports(self, file_path: Path) -> bool:
+        """Check if a Python file has entity exports (agent or workflow) using AST parsing.
+
+        This safely checks for module-level assignments like:
+        - agent = ChatAgent(...)
+        - workflow = WorkflowBuilder()...
+
+        Args:
+            file_path: Python file to check
+
+        Returns:
+            True if file has 'agent' or 'workflow' exports
+        """
+        try:
+            # Read and parse the file's AST
+            source = file_path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(file_path))
+
+            # Look for module-level assignments of 'agent' or 'workflow'
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id in ("agent", "workflow"):
+                            return True
+        except Exception as e:
+            logger.debug(f"Could not parse {file_path} for entity exports: {e}")
+            return False
+
+        return False
+
     def _register_sparse_file_entity(self, file_path: Path) -> None:
         """Register file-based entity with sparse metadata (no import).
 
         Args:
             file_path: Entity Python file
         """
+        # Check if file has valid entity exports using AST parsing
+        if not self._has_entity_exports(file_path):
+            logger.debug(f"Skipping {file_path.name} - no 'agent' or 'workflow' exports found")
+            return
+
         entity_id = file_path.stem
+
+        # Check deployment support (file-based entities cannot be deployed)
+        deployment_supported, deployment_reason = self._check_deployment_support(file_path, "directory")
 
         # File-based entities are typically agents, but we can't know for sure without importing
         entity_info = EntityInfo(
@@ -448,6 +574,8 @@ class EntityDiscovery:
             tools=[],
             description="",
             source="directory",
+            deployment_supported=deployment_supported,
+            deployment_reason=deployment_reason,
             metadata={
                 "path": str(file_path),
                 "discovered": True,

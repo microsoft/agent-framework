@@ -8,7 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
 from agent_framework._workflows._executor import Executor, handler
-from agent_framework._workflows._runner_context import InProcRunnerContext, Message
+from agent_framework._workflows._runner_context import InProcRunnerContext, Message, MessageType
 from agent_framework._workflows._shared_state import SharedState
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -127,7 +127,9 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
         }
         with (
-            create_processing_span("executor-456", "TestExecutor", "TestMessage") as processing_span,
+            create_processing_span(
+                "executor-456", "TestExecutor", str(MessageType.STANDARD), "TestMessage"
+            ) as processing_span,
             create_workflow_span(
                 OtelAttr.MESSAGE_SEND_SPAN, sending_attributes, kind=trace.SpanKind.PRODUCER
             ) as sending_span,
@@ -155,7 +157,8 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "executor-456"
     assert processing_span.attributes.get("executor.type") == "TestExecutor"
-    assert processing_span.attributes.get("message.type") == "TestMessage"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "TestMessage"
 
     # Check sending span
     sending_span = next(s for s in spans if s.name == "message.send")
@@ -175,7 +178,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
     # Test trace context propagation in messages
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,
@@ -218,18 +221,20 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert processing_span.attributes is not None
     assert processing_span.attributes.get("executor.id") == "test-executor"
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
-    assert processing_span.attributes.get("message.type") == "str"
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
+    assert processing_span.attributes.get("message.payload_type") == "str"
 
 
 @pytest.mark.parametrize("enable_otel", [False], indirect=True)
 async def test_trace_context_disabled_when_tracing_disabled(enable_otel, span_exporter: InMemorySpanExporter) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
+    executor = MockExecutor("test-executor")
     shared_state = SharedState()
     ctx = InProcRunnerContext()
 
     workflow_ctx: WorkflowContext[str] = WorkflowContext(
-        "test-executor",
+        executor,
         ["source"],
         shared_state,
         ctx,

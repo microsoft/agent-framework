@@ -2,27 +2,8 @@
 # This workflow demonstrates conversation between two agents: a student and a teacher.
 # The student attempts to solve the input problem and the teacher provides guidance.
 #
-# For this workflow, two agents are used, each with a prompt specific to their role.
-#
-# Student:
-# See: ./setup/StudentAgent.yaml
-#
-# With instructions: 
-#    
-# Your job is help a math teacher practice teaching by making intentional mistakes.  
-# You Attempt to solve the given math problem, but with intentional mistakes so the teacher can help.
-# Always incorporate the teacher's advice to fix your next response.
-# You have the math-skills of a 6th grader.    
-
-# Teacher:
-# See: ./setup/TeacherAgent.yaml
-#
-# With instructions: 
-#    
-# Review and coach the student's approach to solving the given math problem.  
-# Don't repeat the solution or try and solve it.  
-# If the student has demonstrated comprehension and responded to all of your feedback, 
-# give the student your congratulations by using the word "congratulations".    
+# Example input: 
+# How would you compute the value of PI?
 #
 kind: Workflow
 trigger:
@@ -35,13 +16,13 @@ trigger:
       id: question_student
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_STUDENT
+        name: StudentAgent
 
     - kind: InvokeAzureAgent
       id: question_teacher
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_TEACHER
+        name: TeacherAgent
       output:
         messages: Local.TeacherResponse
 
@@ -54,7 +35,7 @@ trigger:
       id: check_completion
       conditions:
 
-        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(Last(Local.TeacherResponse).Text)))
+        - condition: =!IsBlank(Find("CONGRATULATIONS", Upper(MessageText(Local.TeacherResponse))))
           id: check_turn_done
           actions:
 
