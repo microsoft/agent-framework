@@ -614,6 +614,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             **kwargs,
         )
         self.func = func
+        self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -631,6 +632,37 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     def declaration_only(self) -> bool:
         """Indicate whether the function is declaration only (i.e., has no implementation)."""
         return self.func is None
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> "AIFunction[ArgsT, ReturnT]":
+        """Implement the descriptor protocol to support bound methods.
+
+        When an AIFunction is accessed as an attribute of a class instance,
+        this method is called to bind the instance to the function.
+
+        Args:
+            obj: The instance that owns the descriptor, or None for class access.
+            objtype: The type that owns the descriptor.
+
+        Returns:
+            A new AIFunction with the instance bound to the wrapped function.
+        """
+        if obj is None:
+            # Accessed from the class, not an instance
+            return self
+
+        # Check if the wrapped function is a method (has 'self' parameter)
+        if self.func is not None:
+            sig = inspect.signature(self.func)
+            params = list(sig.parameters.keys())
+            if params and params[0] in {"self", "cls"}:
+                # Create a new AIFunction with the bound method
+                import copy
+
+                bound_func = copy.copy(self)
+                bound_func._instance = obj
+                return bound_func
+
+        return self
 
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
         """Resolve the input model for the function."""
@@ -662,6 +694,9 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             )
         self.invocation_count += 1
         try:
+            # If we have a bound instance, call the function with self
+            if self._instance is not None:
+                return self.func(self._instance, *args, **kwargs)
             return self.func(*args, **kwargs)
         except Exception:
             self.invocation_exception_count += 1
