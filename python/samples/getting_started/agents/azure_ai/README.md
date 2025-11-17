@@ -1,6 +1,6 @@
 # Azure AI Agent Examples
 
-This folder contains examples demonstrating different ways to create and use agents with the Azure AI client from the `agent_framework.azure` package.
+This folder contains examples demonstrating different ways to create and use agents with the Azure AI client from the `agent_framework.azure` package. These examples use the `AzureAIClient` with the `azure-ai-projects` 2.x (V2) API surface (see [changelog](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/CHANGELOG.md#200b1-2025-11-11)). For V1 (`azure-ai-agents` 1.x) samples using `AzureAIAgentClient`, see the [Azure AI V1 examples folder](../azure_ai_agent/).
 
 ## Examples
 
