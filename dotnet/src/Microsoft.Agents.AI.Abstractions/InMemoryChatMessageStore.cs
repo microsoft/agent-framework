@@ -97,8 +97,9 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
 
         if (serializedStoreState.ValueKind is JsonValueKind.Object)
         {
+            var jso = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
             var state = serializedStoreState.Deserialize(
-                AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState))) as StoreState;
+                jso.GetTypeInfo(typeof(StoreState))) as StoreState;
             if (state?.Messages is { } messages)
             {
                 this._messages = messages;
@@ -164,7 +165,8 @@ public sealed class InMemoryChatMessageStore : ChatMessageStore, IList<ChatMessa
             Messages = this._messages,
         };
 
-        return JsonSerializer.SerializeToElement(state, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(StoreState)));
+        var jso = jsonSerializerOptions ?? AgentAbstractionsJsonUtilities.DefaultOptions;
+        return JsonSerializer.SerializeToElement(state, jso.GetTypeInfo(typeof(StoreState)));
     }
 
     /// <inheritdoc />

@@ -27,5 +27,6 @@ trigger:
               id: sendActivity_even
               activity: EVEN
 
-    - kind: EndConversation
-      id: end_all
+    - kind: SendActivity
+      id: activity_final
+      activity: All done!

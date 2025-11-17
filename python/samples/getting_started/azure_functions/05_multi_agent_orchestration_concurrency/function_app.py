@@ -12,10 +12,9 @@ import json
 import logging
 from typing import Any
 
-import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
@@ -80,7 +79,7 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_multi_agent_concurrent_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Kick off the orchestration with a plain text prompt."""
 
@@ -121,7 +120,7 @@ async def start_multi_agent_concurrent_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     instance_id = req.route_params.get("instanceId")
     if not instance_id:

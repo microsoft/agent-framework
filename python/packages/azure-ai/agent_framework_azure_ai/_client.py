@@ -73,7 +73,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         Keyword Args:
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
-            agent_name: The name to use when creating new agents.
+            agent_name: The name to use when creating new agents or using existing agents.
             agent_version: The version of the agent to use.
             conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
@@ -194,17 +194,21 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Determine which agent to use and create if needed.
 
         Returns:
-            str: The agent_name to use
+            dict[str, str]: The agent reference to use.
         """
-        agent_name = self.agent_name or "UnnamedAgent"
+        # Agent name must be explicitly provided by the user.
+        if self.agent_name is None:
+            raise ServiceInitializationError(
+                "Agent name is required. Provide 'agent_name' when initializing AzureAIClient "
+                "or 'name' when initializing ChatAgent."
+            )
 
         # If no agent_version is provided, either use latest version or create a new agent:
         if self.agent_version is None:
             # Try to use latest version if requested and agent exists
             if self.use_latest_version:
                 try:
-                    existing_agent = await self.project_client.agents.get(agent_name)
-                    self.agent_name = existing_agent.name
+                    existing_agent = await self.project_client.agents.get(self.agent_name)
                     self.agent_version = existing_agent.versions.latest.version
                     return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
                 except ResourceNotFoundError:
@@ -241,13 +245,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 args["instructions"] = "".join(combined_instructions)
 
             created_agent = await self.project_client.agents.create_version(
-                agent_name=agent_name, definition=PromptAgentDefinition(**args)
+                agent_name=self.agent_name, definition=PromptAgentDefinition(**args)
             )
 
-            self.agent_name = created_agent.name
             self.agent_version = created_agent.version
 
-        return {"name": agent_name, "version": self.agent_version, "type": "agent_reference"}
+        return {"name": self.agent_name, "version": self.agent_version, "type": "agent_reference"}
 
     async def _close_client_if_needed(self) -> None:
         """Close project_client session if we created it."""
@@ -276,6 +279,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
     async def prepare_options(
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
+        """Take ChatOptions and create the specific options for Azure AI."""
         chat_options.store = bool(chat_options.store or chat_options.store is None)
         prepared_messages, instructions = self._prepare_input(messages)
         run_options = await super().prepare_options(prepared_messages, chat_options)

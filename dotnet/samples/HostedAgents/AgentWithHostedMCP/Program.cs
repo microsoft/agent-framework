@@ -24,7 +24,7 @@ AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAd
 // Create an agent with the MCP tool using Azure OpenAI Responses.
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
-    new AzureCliCredential())
+    new DefaultAzureCredential())
     .GetOpenAIResponseClient(deploymentName)
     .CreateAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",

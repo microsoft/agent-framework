@@ -1,0 +1,25 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+  
+    - kind: SetVariable
+      id: setVariable_test
+      variable: Local.TestValue
+      value: =Value(System.LastMessageText)
+
+    - kind: ConditionGroup
+      id: conditionGroup_test
+      conditions:
+        - id: conditionItem_odd
+          condition: =Mod(Local.TestValue, 2) = 1
+          actions:
+            - kind: SendActivity
+              id: sendActivity_odd
+              activity: ODD
+
+    - kind: SendActivity
+      id: activity_final
+      activity: All done!
