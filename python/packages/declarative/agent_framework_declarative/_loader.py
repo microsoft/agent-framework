@@ -371,14 +371,17 @@ class AgentFactory:
                     elif tool_resource.approvalMode.kind == "never":
                         approval_mode = "never_require"
                     elif isinstance(tool_resource.approvalMode, McpServerToolSpecifyApprovalMode):
+                        approval_mode = {}
                         if tool_resource.approvalMode.alwaysRequireApprovalTools:
-                            approval_mode = {
-                                "always_require_approval": tool_resource.approvalMode.alwaysRequireApprovalTools
-                            }
-                        else:
-                            approval_mode = {
-                                "never_require_approval": tool_resource.approvalMode.neverRequireApprovalTools
-                            }
+                            approval_mode["always_require_approval"] = (
+                                tool_resource.approvalMode.alwaysRequireApprovalTools
+                            )
+                        if tool_resource.approvalMode.neverRequireApprovalTools:
+                            approval_mode["never_require_approval"] = (
+                                tool_resource.approvalMode.neverRequireApprovalTools
+                            )
+                        if not approval_mode:
+                            approval_mode = None
                 return HostedMCPTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,

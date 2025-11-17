@@ -93,11 +93,8 @@ class Property(SerializationMixin):
             # We're being called on a subclass, use the normal from_dict
             return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
 
-        # Filter out 'type' field which is not a Property parameter
-        if "type" in value:
-            value = dict(value) if "enum" not in value else value  # Only copy if not already copied
-            value.pop("type", None)
-
+        # Filter out 'type' (if it exists) field which is not a Property parameter
+        value.pop("type", None)
         kind = value.get("kind", "")
         if kind == "array":
             return ArrayProperty.from_dict(value, dependencies=dependencies)
