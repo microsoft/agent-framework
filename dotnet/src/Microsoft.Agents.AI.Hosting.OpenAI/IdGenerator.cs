@@ -61,7 +61,7 @@ internal sealed partial class IdGenerator
     public string ConversationId { get; }
 
     /// <summary>
-    /// 
+    /// Gets a value indicating whether this is a new conversation.
     /// </summary>
     public bool IsNewConversation { get; }
 
