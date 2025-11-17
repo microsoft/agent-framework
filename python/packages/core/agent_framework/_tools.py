@@ -700,7 +700,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             # If we have a bound instance, call the function with self
             if self._instance is not None:
                 return self.func(self._instance, *args, **kwargs)
-            return self.func(*args, **kwargs)
+            return self.func(*args, **kwargs)  # type:ignore[misc]
         except Exception:
             self.invocation_exception_count += 1
             raise
