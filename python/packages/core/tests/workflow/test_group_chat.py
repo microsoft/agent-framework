@@ -742,3 +742,73 @@ class TestRoundLimitEnforcement:
         # The last message should be about round limit
         final_output = outputs[-1]
         assert "round limit" in final_output.text.lower()
+
+
+async def test_group_chat_checkpoint_runtime_only() -> None:
+    """Test checkpointing configured ONLY at runtime, not at build time."""
+    from agent_framework import WorkflowRunState, WorkflowStatusEvent
+
+    storage = InMemoryCheckpointStorage()
+
+    agent_a = StubAgent("agentA", "Reply from A")
+    agent_b = StubAgent("agentB", "Reply from B")
+    selector = make_sequence_selector()
+
+    wf = GroupChatBuilder().participants([agent_a, agent_b]).select_speakers(selector).build()
+
+    baseline_output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("runtime checkpoint test", checkpoint_storage=storage):
+        if isinstance(ev, WorkflowOutputEvent):
+            baseline_output = ev.data  # type: ignore[assignment]
+        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    assert baseline_output is not None
+
+    checkpoints = await storage.list_checkpoints()
+    assert len(checkpoints) > 0, "Runtime-only checkpointing should have created checkpoints"
+
+
+async def test_group_chat_checkpoint_runtime_overrides_buildtime() -> None:
+    """Test that runtime checkpoint storage overrides build-time configuration."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as temp_dir1, tempfile.TemporaryDirectory() as temp_dir2:
+        from agent_framework import WorkflowRunState, WorkflowStatusEvent
+        from agent_framework._workflows._checkpoint import FileCheckpointStorage
+
+        buildtime_storage = FileCheckpointStorage(temp_dir1)
+        runtime_storage = FileCheckpointStorage(temp_dir2)
+
+        agent_a = StubAgent("agentA", "Reply from A")
+        agent_b = StubAgent("agentB", "Reply from B")
+        selector = make_sequence_selector()
+
+        wf = (
+            GroupChatBuilder()
+            .participants([agent_a, agent_b])
+            .select_speakers(selector)
+            .with_checkpointing(buildtime_storage)
+            .build()
+        )
+
+        baseline_output: list[ChatMessage] | None = None
+        async for ev in wf.run_stream("override test", checkpoint_storage=runtime_storage):
+            if isinstance(ev, WorkflowOutputEvent):
+                baseline_output = ev.data  # type: ignore[assignment]
+            if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+                WorkflowRunState.IDLE,
+                WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+            ):
+                break
+
+        assert baseline_output is not None
+
+        buildtime_checkpoints = await buildtime_storage.list_checkpoints()
+        runtime_checkpoints = await runtime_storage.list_checkpoints()
+
+        assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
+        assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"

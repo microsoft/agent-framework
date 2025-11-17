@@ -67,15 +67,15 @@ async def test_server_execution_sync(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
-    # Use model as entity_id (new simplified routing)
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # model IS the entity_id now!
+        metadata={"entity_id": agent_id},
         input="San Francisco",
         stream=False,
     )
 
     response = await executor.execute_sync(request)
-    assert response.model == agent_id  # Should echo back the model (entity_id)
+    assert response.model == "devui"  # Response model defaults to 'devui' when not specified
     assert len(response.output) > 0
 
 
@@ -87,9 +87,9 @@ async def test_server_execution_streaming(test_entities_dir):
     entities = await executor.discover_entities()
     agent_id = entities[0].id
 
-    # Use model as entity_id (new simplified routing)
+    # Use metadata.entity_id for routing
     request = AgentFrameworkRequest(
-        model=agent_id,  # model IS the entity_id now!
+        metadata={"entity_id": agent_id},
         input="New York",
         stream=True,
     )
@@ -241,6 +241,97 @@ async def test_multiple_credential_attributes() -> None:
     assert mock_cred2.close.called, "Async credential should be closed"
 
 
+def test_ui_mode_configuration():
+    """Test UI mode configuration."""
+    dev_server = DevServer(mode="developer")
+    assert dev_server.mode == "developer"
+
+    user_server = DevServer(mode="user")
+    assert user_server.mode == "user"
+
+
+@pytest.mark.asyncio
+async def test_api_restrictions_in_user_mode():
+    """Test that developer APIs are restricted in user mode."""
+    from fastapi.testclient import TestClient
+
+    # Create servers with different modes
+    dev_server = DevServer(mode="developer")
+    user_server = DevServer(mode="user")
+
+    dev_app = dev_server.create_app()
+    user_app = user_server.create_app()
+
+    dev_client = TestClient(dev_app)
+    user_client = TestClient(user_app)
+
+    # Test 1: Health endpoint should work in both modes
+    assert dev_client.get("/health").status_code == 200
+    assert user_client.get("/health").status_code == 200
+
+    # Test 2: Meta endpoint should reflect correct mode
+    dev_meta = dev_client.get("/meta").json()
+    assert dev_meta["ui_mode"] == "developer"
+
+    user_meta = user_client.get("/meta").json()
+    assert user_meta["ui_mode"] == "user"
+
+    # Test 3: Entity listing should work in both modes
+    assert dev_client.get("/v1/entities").status_code == 200
+    assert user_client.get("/v1/entities").status_code == 200
+
+    # Test 4: Entity info should be accessible in both modes (UI needs this)
+    dev_response = dev_client.get("/v1/entities/test_agent/info")
+    assert dev_response.status_code in [200, 404, 500]  # Not 403
+
+    user_response = user_client.get("/v1/entities/test_agent/info")
+    # Should return 404 (entity doesn't exist) or 500 (other error), but NOT 403 (forbidden)
+    # User mode needs entity info to display workflows/agents in the UI
+    assert user_response.status_code in [200, 404, 500]  # Not 403
+
+    # Test 5: Hot reload should be restricted in user mode
+    dev_response = dev_client.post("/v1/entities/test_agent/reload")
+    assert dev_response.status_code in [200, 404, 500]  # Not 403
+
+    user_response = user_client.post("/v1/entities/test_agent/reload")
+    assert user_response.status_code == 403
+    error_data = user_response.json()
+    error = error_data.get("detail", {}).get("error") or error_data.get("error")
+    assert "developer mode" in error["message"].lower()
+
+    # Test 6: Deployment endpoints should be restricted in user mode
+    # List deployments (simplest test - no payload needed)
+    user_response = user_client.get("/v1/deployments")
+    assert user_response.status_code == 403
+    error_data = user_response.json()
+    error = error_data.get("detail", {}).get("error") or error_data.get("error")
+    assert "developer mode" in error["message"].lower()
+
+    # Get deployment
+    user_response = user_client.get("/v1/deployments/test-id")
+    assert user_response.status_code == 403
+
+    # Delete deployment
+    user_response = user_client.delete("/v1/deployments/test-id")
+    assert user_response.status_code == 403
+
+    # Test 7: Conversation endpoints should work in both modes
+    dev_response = dev_client.post("/v1/conversations", json={})
+    assert dev_response.status_code == 200
+
+    user_response = user_client.post("/v1/conversations", json={})
+    assert user_response.status_code == 200
+
+    # Test 8: Chat endpoint should work in both modes
+    chat_payload = {"model": "test_agent", "input": "Hello"}
+    dev_response = dev_client.post("/v1/responses", json=chat_payload)
+    # 200=success, 400=missing entity_id in metadata, 404=entity not found
+    assert dev_response.status_code in [200, 400, 404]
+
+    user_response = user_client.post("/v1/responses", json=chat_payload)
+    assert user_response.status_code in [200, 400, 404]
+
+
 if __name__ == "__main__":
     # Simple test runner
     async def run_tests():
@@ -265,7 +356,7 @@ class WeatherAgent:
 
             if entities:
                 request = AgentFrameworkRequest(
-                    model=entities[0].id,  # model IS the entity_id now!
+                    metadata={"entity_id": entities[0].id},
                     input="test location",
                     stream=False,
                 )
@@ -273,3 +364,44 @@ class WeatherAgent:
                 await executor.execute_sync(request)
 
     asyncio.run(run_tests())
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_api_endpoints(test_entities_dir):
+    """Test checkpoint list and delete API endpoints."""
+    from agent_framework._workflows._checkpoint import WorkflowCheckpoint
+
+    server = DevServer(entities_dir=test_entities_dir)
+    executor = await server._ensure_executor()
+
+    # Create a conversation
+    conversation = executor.conversation_store.create_conversation(metadata={"name": "Test Session"})
+    conv_id = conversation.id
+
+    # Get checkpoint storage and add a checkpoint
+    storage = executor.checkpoint_manager.get_checkpoint_storage(conv_id)
+    checkpoint = WorkflowCheckpoint(
+        checkpoint_id="test_checkpoint_1",
+        workflow_id="test_workflow",
+        shared_state={"key": "value"},
+        iteration_count=1,
+    )
+    await storage.save_checkpoint(checkpoint)
+
+    # Test list checkpoints endpoint
+    checkpoints = await storage.list_checkpoints()
+    assert len(checkpoints) == 1
+    assert checkpoints[0].checkpoint_id == "test_checkpoint_1"
+    assert checkpoints[0].workflow_id == "test_workflow"
+
+    # Test delete checkpoint endpoint
+    deleted = await storage.delete_checkpoint("test_checkpoint_1")
+    assert deleted is True
+
+    # Verify checkpoint was deleted
+    remaining = await storage.list_checkpoints()
+    assert len(remaining) == 0
+
+    # Test delete non-existent checkpoint
+    deleted = await storage.delete_checkpoint("nonexistent")
+    assert deleted is False

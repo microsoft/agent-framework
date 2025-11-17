@@ -12,7 +12,9 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectSharedWorkflowsExecution>true</InjectSharedWorkflowsExecution>
+    <InjectSharedWorkflowsSettings>true</InjectSharedWorkflowsSettings>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +29,7 @@
   
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
   </ItemGroup>
 
 </Project>

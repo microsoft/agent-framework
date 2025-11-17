@@ -29,6 +29,6 @@
   
   <ItemGroup>
     <InternalsVisibleTo Include="AgentWebChat.Web" />
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.A2A.Tests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.A2A.UnitTests" />
   </ItemGroup>
 </Project>

@@ -36,7 +36,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         ]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -76,7 +76,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         ]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -111,7 +111,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         ]);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -144,7 +144,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateErrorContentAgentAsync(AgentName, ErrorMessage);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -179,7 +179,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateErrorContentAgentAsync(AgentName, ErrorMessage);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -213,7 +213,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateErrorContentAgentAsync(AgentName, "Error message");
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -240,7 +240,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateImageContentAgentAsync(AgentName, ImageUrl, isDataUri: false);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -264,7 +264,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateImageContentAgentAsync(AgentName, DataUri, isDataUri: true);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -289,7 +289,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateImageContentWithDetailAgentAsync(AgentName, ImageUrl, Detail);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -313,7 +313,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateImageContentAgentAsync(AgentName, "https://example.com/test.png", isDataUri: false);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -339,7 +339,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateAudioContentAgentAsync(AgentName, AudioDataUri, "audio/mpeg");
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -364,7 +364,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateAudioContentAgentAsync(AgentName, AudioDataUri, "audio/wav");
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -390,7 +390,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateAudioContentAgentAsync(AgentName, AudioDataUri, mediaType);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -415,7 +415,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateHostedFileContentAgentAsync(AgentName, FileId);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -438,7 +438,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateHostedFileContentAgentAsync(AgentName, "file-xyz789");
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -465,7 +465,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateFileContentAgentAsync(AgentName, FileDataUri, Filename);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -490,7 +490,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateFileContentAgentAsync(AgentName, FileDataUri, null);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -516,7 +516,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateMixedContentAgentAsync(AgentName);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
@@ -535,7 +535,7 @@ public sealed class ContentTypeEventGeneratorTests : ConformanceTestBase
         HttpClient client = await this.CreateErrorAndTextContentAgentAsync(AgentName);
 
         // Act
-        HttpResponseMessage httpResponse = await this.SendRequestAsync(client, AgentName, StreamingRequestJson);
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
         string sseContent = await httpResponse.Content.ReadAsStringAsync();
         var events = ParseSseEvents(sseContent);
 
