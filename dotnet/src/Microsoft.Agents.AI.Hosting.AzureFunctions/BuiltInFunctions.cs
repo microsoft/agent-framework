@@ -83,12 +83,13 @@ internal static class BuiltInFunctions
 
         string? threadIdValue = threadIdFromBody ?? threadIdFromQuery;
 
-        // If no session ID is provided, use a new one based on the function name and invocation ID.
-        // This may be better than a random one because it can be correlated with the function invocation.
-        // Specifying a session ID is how the caller correlates multiple calls to the same agent session.
+        // The thread_id is treated as a session key (not a full session ID).
+        // If no session key is provided, use the function invocation ID as the session key
+        // to help correlate the session with the function invocation.
+        string agentName = GetAgentName(context);
         AgentSessionId sessionId = string.IsNullOrEmpty(threadIdValue)
-            ? new AgentSessionId(GetAgentName(context), context.InvocationId)
-            : AgentSessionId.Parse(threadIdValue);
+            ? new AgentSessionId(agentName, context.InvocationId)
+            : new AgentSessionId(agentName, threadIdValue);
 
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -110,7 +111,7 @@ internal static class BuiltInFunctions
             }
         }
 
-        AIAgent agentProxy = client.AsDurableAgentProxy(context, GetAgentName(context));
+        AIAgent agentProxy = client.AsDurableAgentProxy(context, agentName);
 
         DurableAgentRunOptions options = new() { IsFireAndForget = !waitForResponse };
 
@@ -126,7 +127,7 @@ internal static class BuiltInFunctions
                 req,
                 context,
                 HttpStatusCode.OK,
-                sessionId.ToString(),
+                sessionId.Key,
                 agentResponse);
         }
 
@@ -140,7 +141,7 @@ internal static class BuiltInFunctions
         return await CreateAcceptedResponseAsync(
             req,
             context,
-            sessionId.ToString());
+            sessionId.Key);
     }
 
     public static async Task<string?> RunMcpToolAsync(
