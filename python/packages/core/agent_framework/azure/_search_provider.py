@@ -124,7 +124,7 @@ class AzureAISearchContextProvider(ContextProvider):
             )
     """
 
-    DEFAULT_CONTEXT_PROMPT = "Use the following context to answer the question:"
+    DEFAULT_CONTEXT_PROMPT: str = "Use the following context to answer the question:"
 
     def __init__(
         self,
@@ -355,7 +355,7 @@ class AzureAISearchContextProvider(ContextProvider):
         Returns:
             List of vectorizable field names (subset of vector_fields).
         """
-        vectorizable_fields = []
+        vectorizable_fields: list[str] = []
 
         # Check if index has vector search configuration
         if not index.vector_search or not index.vector_search.profiles:
@@ -486,7 +486,7 @@ class AzureAISearchContextProvider(ContextProvider):
         # Auto-discover vector field if not already done
         await self._auto_discover_vector_field()
 
-        vector_queries = []
+        vector_queries: list[VectorizableTextQuery | VectorizedQuery] = []
 
         # Build vector query based on server-side vectorization or client-side embedding
         if self.vector_field_name:
