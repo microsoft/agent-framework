@@ -405,8 +405,6 @@ class TestAgentEntityReset:
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        len(entity.state.data.conversationHistory) == 10
-
         mock_context = Mock()
         entity.reset(mock_context)
 
@@ -492,7 +490,7 @@ class TestCreateAgentEntity:
                 ).to_dict()
             ],
             "message_count": 0,
-            "last_response": None
+            "last_response": None,
         }
 
         # Execute
@@ -548,7 +546,7 @@ class TestCreateAgentEntity:
         assert result["status"] == "reset"
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["data"] == {'conversationHistory': [], 'extensionData': None}
+        assert state["data"] == {"conversationHistory": [], "extensionData": None}
 
     def test_entity_function_restores_existing_state(self) -> None:
         """Test that the entity function restores existing state."""
@@ -718,12 +716,13 @@ class TestConversationHistory:
 
         # Verify order
         history = entity.state.data.conversationHistory
-        assert history[0].messages[0].text == "Message 1"
-        assert history[0].messages[1].text == "Response 1"
-        assert history[1].messages[0].text == "Message 2"
-        assert history[1].messages[1].text == "Response 2"
-        assert history[2].messages[0].text == "Message 3"
-        assert history[2].messages[1].text == "Response 3"
+        # Each conversation turn creates 2 entries: request and response
+        assert history[0].messages[0].text == "Message 1"  # Request 1
+        assert history[1].messages[0].text == "Response 1"  # Response 1
+        assert history[2].messages[0].text == "Message 2"  # Request 2
+        assert history[3].messages[0].text == "Response 2"  # Response 2
+        assert history[4].messages[0].text == "Message 3"  # Request 3
+        assert history[5].messages[0].text == "Response 3"  # Response 3
 
     async def test_conversation_history_role_alternation(self) -> None:
         """Test that conversation history alternates between user and assistant roles."""
@@ -744,10 +743,11 @@ class TestConversationHistory:
 
         # Check role alternation
         history = entity.state.data.conversationHistory
-        assert history[0].messages[0].role == "user"
-        assert history[0].messages[1].role == "assistant"
-        assert history[1].messages[0].role == "user"
-        assert history[1].messages[1].role == "assistant"
+        # Each conversation turn creates 2 entries: request and response
+        assert history[0].messages[0].role == "user"  # Request 1
+        assert history[1].messages[0].role == "assistant"  # Response 1
+        assert history[2].messages[0].role == "user"  # Request 2
+        assert history[3].messages[0].role == "assistant"  # Response 2
 
 
 class TestRunRequestSupport:

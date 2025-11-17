@@ -358,16 +358,19 @@ class TestAgentEntityOperations:
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-2"}
         )
 
-        history = entity.state.data.conversationHistory[0].messages
-        assert len(history) == 1  # User + assistant
+        # Each conversation turn creates 2 entries: request and response
+        history = entity.state.data.conversationHistory[0].messages  # Request entry
+        assert len(history) == 1  # Just the user message
 
         # Send second message
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2b"}
         )
 
-        history2= entity.state.data.conversationHistory[1].messages
-        assert len(history2) == 1  # User + assistant
+        # Now we have 4 entries total (2 requests + 2 responses)
+        # Access the first request entry
+        history2 = entity.state.data.conversationHistory[2].messages  # Second request entry
+        assert len(history2) == 1  # Just the user message
 
         user_msg = history[0]
         user_role = getattr(user_msg.role, "value", user_msg.role)

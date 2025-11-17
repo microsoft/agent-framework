@@ -10,9 +10,9 @@ allows for long-running agent conversations.
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from datetime import datetime, timezone
-from typing import Any, cast, Callable
+from typing import Any, cast
 
 import azure.durable_functions as df
 from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
@@ -21,9 +21,9 @@ from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateData,
+    DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
-    DurableAgentStateMessage
 )
 from ._models import AgentResponse, RunRequest
 
@@ -124,19 +124,14 @@ class AgentEntity:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
 
             # Build messages from conversation history plus the current request
-            chat_messages = [
-                m.to_chat_message()
-                for entry in self.state.data.conversationHistory
-                for m in entry.messages
+            chat_messages: list[Any] = [
+                m.to_chat_message() for entry in self.state.data.conversationHistory for m in entry.messages
             ]
-            # Add the current request message
-            # for m in state_request.messages:
-            #     chat_messages.append(m.to_chat_message())
 
             # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
             # Azure OpenAI doesn't support the 'metadata' field in messages
             for msg in chat_messages:
-                if hasattr(msg, 'additional_properties'):
+                if hasattr(msg, "additional_properties"):
                     msg.additional_properties = {}
 
             run_kwargs: dict[str, Any] = {"messages": chat_messages}
@@ -160,12 +155,10 @@ class AgentEntity:
             # Convert response into DurableAgentStateResponse and combine with request
             state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
 
-            # Get the pending request and combine its messages with the response messages
-            # pending_request = self._pending_requests.pop(correlationId, None)
-            # if pending_request:
-            #     # Combine request and response messages into a single entry
-            #     state_response.messages = pending_request.messages + state_response.messages
+            # Remove from pending requests
+            self._pending_requests.pop(correlationId, None)
 
+            # Append the response as a separate entry
             self.state.data.conversationHistory.append(state_response)
 
             response_text = None
@@ -221,27 +214,22 @@ class AgentEntity:
             # Create error response and store it in conversation history so polling can find it
             from agent_framework import ChatMessage, ErrorContent
 
-            # Get the pending request
-            pending_request = self._pending_requests.pop(correlationId, None)
+            # Remove the pending request from tracking
+            self._pending_requests.pop(correlationId, None)
 
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(
                 ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
             )
 
-            # Combine request and error response messages
-            messages = []
-            if pending_request:
-                messages.extend(pending_request.messages)
-            messages.append(error_message)
-
             # Create and store error response in conversation history
             error_state_response = DurableAgentStateResponse(
+                json_type="response",
                 correlationId=correlationId,
-                createdAt=datetime.now(tz=timezone.utc),
-                messages=messages,
+                created_at=datetime.now(tz=timezone.utc),
+                messages=[error_message],
                 extensionData=None,
-                usage=None
+                usage=None,
             )
             self.state.data.conversationHistory.append(error_state_response)
 
@@ -456,7 +444,7 @@ def create_agent_entity(
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
-            logger.info("State dict: %s", str(entity.state.to_dict()))
+            logger.info("State dict: %s", entity.state.to_dict())
             context.set_state(entity.state.to_dict())
             logger.info(f"[entity_function] Operation {operation} completed successfully")
 
