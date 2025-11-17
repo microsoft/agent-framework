@@ -7,10 +7,6 @@ using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 using RecipeClient;
 
-// Check for command-line arguments for automated testing
-string[] queries = args.Length > 0 ? args : [];
-int queryIndex = 0;
-
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 
 Console.WriteLine($"Connecting to AG-UI server at: {serverUrl}\n");
@@ -44,42 +40,25 @@ try
 {
     while (true)
     {
-        string? message;
+        // Get user input
+        Console.Write("\nUser (:q to quit, :state to show state): ");
+        string? message = Console.ReadLine();
 
-        if (queries.Length > 0)
+        if (string.IsNullOrWhiteSpace(message))
         {
-            if (queryIndex >= queries.Length)
-            {
-                Console.WriteLine("\n[Auto-mode complete]\n");
-                break;
-            }
-            message = queries[queryIndex++];
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.WriteLine($"\nQuery: {message}");
-            Console.ResetColor();
+            Console.WriteLine("Request cannot be empty.");
+            continue;
         }
-        else
+
+        if (message is ":q" or "quit")
         {
-            // Get user input
-            Console.Write("\nUser (:q to quit, :state to show state): ");
-            message = Console.ReadLine();
+            break;
+        }
 
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                Console.WriteLine("Request cannot be empty.");
-                continue;
-            }
-
-            if (message is ":q" or "quit")
-            {
-                break;
-            }
-
-            if (message.Equals(":state", StringComparison.OrdinalIgnoreCase))
-            {
-                DisplayState(agent.State.Recipe);
-                continue;
-            }
+        if (message.Equals(":state", StringComparison.OrdinalIgnoreCase))
+        {
+            DisplayState(agent.State.Recipe);
+            continue;
         }
 
         messages.Add(new ChatMessage(ChatRole.User, message));
@@ -141,12 +120,6 @@ try
         if (stateReceived)
         {
             DisplayState(agent.State.Recipe);
-        }
-
-        // Exit after one query in automated mode
-        if (queries.Length > 0 && queryIndex >= queries.Length)
-        {
-            break;
         }
     }
 }

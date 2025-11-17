@@ -198,17 +198,17 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 var functionCallArgs = (Dictionary<string, object?>?)approvalRequest.FunctionArguments?
                     .Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
 
-                var aprovalRequestContent = new FunctionApprovalRequestContent(
+                var approvalRequestContent = new FunctionApprovalRequestContent(
                     id: approvalRequest.ApprovalId,
                     new FunctionCallContent(
                         callId: approvalRequest.ApprovalId,
                         name: approvalRequest.FunctionName,
                         arguments: functionCallArgs));
 
-                aprovalRequestContent.AdditionalProperties ??= [];
-                aprovalRequestContent.AdditionalProperties["original_function"] = content;
+                approvalRequestContent.AdditionalProperties ??= [];
+                approvalRequestContent.AdditionalProperties["original_function"] = content;
 
-                updatedContents[i] = aprovalRequestContent;
+                updatedContents[i] = approvalRequestContent;
             }
         }
 

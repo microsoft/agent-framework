@@ -28,41 +28,21 @@ List<ChatMessage> messages =
 
 try
 {
-    // Check if command-line argument provided
-    bool autoMode = args.Length > 0;
-    List<string> queries = autoMode ? new List<string>(args) : new List<string>();
-    int queryIndex = 0;
-
     while (true)
     {
-        string? message;
+        // Get user input
+        Console.Write("\nUser (:q or quit to exit): ");
+        string? message = Console.ReadLine();
 
-        if (autoMode)
+        if (string.IsNullOrWhiteSpace(message))
         {
-            if (queryIndex >= queries.Count)
-            {
-                Console.WriteLine("\n[Auto-mode complete]\n");
-                break;
-            }
-            message = queries[queryIndex++];
-            Console.WriteLine($"\nUser: {message}");
+            Console.WriteLine("Request cannot be empty.");
+            continue;
         }
-        else
+
+        if (message is ":q" or "quit")
         {
-            // Get user input
-            Console.Write("\nUser (:q or quit to exit): ");
-            message = Console.ReadLine();
-
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                Console.WriteLine("Request cannot be empty.");
-                continue;
-            }
-
-            if (message is ":q" or "quit")
-            {
-                break;
-            }
+            break;
         }
 
         messages.Add(new ChatMessage(ChatRole.User, message));
