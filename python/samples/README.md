@@ -17,7 +17,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/anthropic/anthropic_basic.py`](./getting_started/agents/anthropic/anthropic_basic.py) | Agent with Anthropic Client |
 | [`getting_started/agents/anthropic/anthropic_advanced.py`](./getting_started/agents/anthropic/anthropic_advanced.py) | Advanced sample with `thinking` and hosted tools. |
 
-### Azure AI (based on `azure-ai-agents` V1)
+### Azure AI (based on `azure-ai-agents` V1 package)
 
 | File | Description |
 |------|-------------|
@@ -36,7 +36,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
 
-### Azure AI (based on `azure-ai-projects` V2)
+### Azure AI (based on `azure-ai-projects` V2 package)
 
 | File | Description |
 |------|-------------|
