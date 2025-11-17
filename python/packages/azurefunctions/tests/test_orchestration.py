@@ -160,10 +160,11 @@ class TestDurableAIAgent:
         # Create thread
         thread = agent.get_new_thread()
 
-        # Call run() - it should return the Task directly
-        task = agent.run(messages="Test message", thread=thread, enable_tool_calls=True)
+        # Call run() - advance the generator to get the Task durable functions will yield
+        run_gen = agent.run(messages="Test message", thread=thread, enable_tool_calls=True)
+        task = next(run_gen)
 
-        # Verify run() returns the Task from call_entity
+        # Verify run() yields the Task from call_entity
         assert task == mock_task
 
         # Verify call_entity was called with correct parameters
@@ -193,7 +194,8 @@ class TestDurableAIAgent:
         agent = DurableAIAgent(mock_context, "TestAgent")
 
         # Call without thread
-        task = agent.run(messages="Test message")
+        run_gen = agent.run(messages="Test message")
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -224,7 +226,8 @@ class TestDurableAIAgent:
         # Create thread and call
         thread = agent.get_new_thread()
 
-        task = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        run_gen = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -267,7 +270,8 @@ class TestDurableAIAgent:
 
         # Call with ChatMessage
         msg = ChatMessage(role="user", text="Hello")
-        task = agent.run(messages=msg, thread=thread)
+        run_gen = agent.run(messages=msg, thread=thread)
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -299,7 +303,8 @@ class TestDurableAIAgent:
         thread = agent.get_new_thread()
 
         # Call run() to trigger entity ID creation
-        agent.run("Test", thread=thread)
+        run_gen = agent.run("Test", thread=thread)
+        next(run_gen)
 
         # Verify call_entity was called with correct EntityId
         call_args = mock_context.call_entity.call_args
@@ -368,12 +373,12 @@ class TestOrchestrationIntegration:
         # Create thread
         thread = agent.get_new_thread()
 
-        # First call - returns Task
-        task1 = agent.run("Write something", thread=thread)
+        # First call - returns Task when generator is advanced
+        task1 = next(agent.run("Write something", thread=thread))
         assert hasattr(task1, "_is_scheduled")
 
         # Second call - returns Task
-        task2 = agent.run("Improve: something", thread=thread)
+        task2 = next(agent.run("Improve: something", thread=thread))
         assert hasattr(task2, "_is_scheduled")
 
         # Verify both calls used the same entity (same session key)
@@ -410,8 +415,8 @@ class TestOrchestrationIntegration:
         editor_thread = editor.get_new_thread()
 
         # Call both agents - returns Tasks
-        writer_task = writer.run("Write", thread=writer_thread)
-        editor_task = editor.run("Edit", thread=editor_thread)
+        writer_task = next(writer.run("Write", thread=writer_thread))
+        editor_task = next(editor.run("Edit", thread=editor_thread))
 
         assert hasattr(writer_task, "_is_scheduled")
         assert hasattr(editor_task, "_is_scheduled")

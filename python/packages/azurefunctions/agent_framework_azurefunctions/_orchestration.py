@@ -91,12 +91,14 @@ class DurableAIAgent(AgentProtocol):
 
     # We return a Generator[Any, Any, ...] here because Durable Functions orchestrations
     # require yielding Tasks, and the run method must return a Task that can be yielded.
-    # AgentProtocol defines run() as async, so we use type: ignore[override] to suppress the warning.
+    # This is an intentional deviation from AgentProtocol which defines run() as async.
+    # The Generator type is correct for Durable Functions orchestrations.
     def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        response_format: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> Generator[Any, Any, AgentRunResponse]:
         """Execute the agent with messages and return a Task for orchestrations.
@@ -107,6 +109,7 @@ class DurableAIAgent(AgentProtocol):
         Args:
             messages: The message(s) to send to the agent
             thread: Optional agent thread for conversation context
+            response_format: Optional Pydantic model for response parsing
             **kwargs: Additional arguments (enable_tool_calls, response_format, etc.)
 
         Returns:
@@ -124,8 +127,6 @@ class DurableAIAgent(AgentProtocol):
 
         # Extract optional parameters from kwargs
         enable_tool_calls = kwargs.get("enable_tool_calls", True)
-        response_format = kwargs.get("response_format")
-        response_format = cast(type[BaseModel], response_format)
 
         # Get the session ID for the entity
         if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
