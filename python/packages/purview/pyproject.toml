@@ -4,7 +4,7 @@ description = "Microsoft Purview (Graph dataSecurityAndGovernance) integration f
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251016"
+version = "1.0.0b251114"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -19,6 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Framework :: Pydantic :: 2",
   "Typing :: Typed",
 ]
@@ -54,8 +55,8 @@ omit = [
 ]
 
 [tool.pyright]
-extend = "../../pyproject.toml"
-exclude = ['tests']
+extends = "../../pyproject.toml"
+
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -112,6 +114,46 @@ public class InMemoryChatMessageStoreTests
         Assert.Equal(2, newStore.Count);
         Assert.Equal("A", newStore[0].Text);
         Assert.Equal("B", newStore[1].Text);
+    }
+
+    [Fact]
+    public async Task SerializeAndDeserializeConstructorRoundtripsWithCustomAIContentAsync()
+    {
+        JsonSerializerOptions options = new(TestJsonSerializerContext.Default.Options)
+        {
+            TypeInfoResolver = JsonTypeInfoResolver.Combine(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver, TestJsonSerializerContext.Default),
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+        options.AddAIContentType<TestAIContent>(typeDiscriminatorId: "testContent");
+
+        var store = new InMemoryChatMessageStore
+        {
+            new ChatMessage(ChatRole.User, [new TestAIContent("foo data")]),
+        };
+
+        var jsonElement = store.Serialize(options);
+        var newStore = new InMemoryChatMessageStore(jsonElement, options);
+
+        Assert.Single(newStore);
+        var actualTestAIContent = Assert.IsType<TestAIContent>(newStore[0].Contents[0]);
+        Assert.Equal("foo data", actualTestAIContent.TestData);
+    }
+
+    [Fact]
+    public async Task SerializeAndDeserializeWorksWithExperimentalContentTypesAsync()
+    {
+        var store = new InMemoryChatMessageStore
+        {
+            new ChatMessage(ChatRole.User, [new FunctionApprovalRequestContent("call123", new FunctionCallContent("call123", "some_func"))]),
+            new ChatMessage(ChatRole.Assistant, [new FunctionApprovalResponseContent("call123", true, new FunctionCallContent("call123", "some_func"))])
+        };
+
+        var jsonElement = store.Serialize();
+        var newStore = new InMemoryChatMessageStore(jsonElement);
+
+        Assert.Equal(2, newStore.Count);
+        Assert.IsType<FunctionApprovalRequestContent>(newStore[0].Contents[0]);
+        Assert.IsType<FunctionApprovalResponseContent>(newStore[1].Contents[0]);
     }
 
     [Fact]
@@ -540,5 +582,10 @@ public class InMemoryChatMessageStoreTests
         Assert.Single(result);
         Assert.Equal("Hello", result[0].Text);
         reducerMock.Verify(r => r.ReduceAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    public class TestAIContent(string testData) : AIContent
+    {
+        public string TestData => testData;
     }
 }

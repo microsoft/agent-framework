@@ -4,7 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-namespace WorkflowAsAnAgentsSample;
+namespace WorkflowAsAnAgentSample;
 
 internal static class WorkflowFactory
 {
@@ -16,15 +16,15 @@ internal static class WorkflowFactory
     internal static Workflow BuildWorkflow(IChatClient chatClient)
     {
         // Create executors
-        var startExecutor = new ConcurrentStartExecutor();
+        var startExecutor = new ChatForwardingExecutor("Start");
         var aggregationExecutor = new ConcurrentAggregationExecutor();
         AIAgent frenchAgent = GetLanguageAgent("French", chatClient);
         AIAgent englishAgent = GetLanguageAgent("English", chatClient);
 
         // Build the workflow by adding executors and connecting them
         return new WorkflowBuilder(startExecutor)
-            .AddFanOutEdge(startExecutor, targets: [frenchAgent, englishAgent])
-            .AddFanInEdge(aggregationExecutor, sources: [frenchAgent, englishAgent])
+            .AddFanOutEdge(startExecutor, [frenchAgent, englishAgent])
+            .AddFanInEdge([frenchAgent, englishAgent], aggregationExecutor)
             .WithOutputFrom(aggregationExecutor)
             .Build();
     }
@@ -39,52 +39,36 @@ internal static class WorkflowFactory
         new(chatClient, instructions: $"You're a helpful assistant who always responds in {targetLanguage}.", name: $"{targetLanguage}Agent");
 
     /// <summary>
-    /// Executor that starts the concurrent processing by sending messages to the agents.
-    /// </summary>
-    private sealed class ConcurrentStartExecutor() :
-        Executor<List<ChatMessage>>("ConcurrentStartExecutor")
-    {
-        /// <summary>
-        /// Starts the concurrent processing by sending messages to the agents.
-        /// </summary>
-        /// <param name="message">The user message to process</param>
-        /// <param name="context">Workflow context for accessing workflow services and adding events</param>
-        /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
-        /// The default is <see cref="CancellationToken.None"/>.</param>
-        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
-        {
-            // Broadcast the message to all connected agents. Receiving agents will queue
-            // the message but will not start processing until they receive a turn token.
-            await context.SendMessageAsync(message, cancellationToken: cancellationToken);
-            // Broadcast the turn token to kick off the agents.
-            await context.SendMessageAsync(new TurnToken(emitEvents: true), cancellationToken: cancellationToken);
-        }
-    }
-
-    /// <summary>
     /// Executor that aggregates the results from the concurrent agents.
     /// </summary>
     private sealed class ConcurrentAggregationExecutor() :
-        Executor<ChatMessage>("ConcurrentAggregationExecutor")
+        Executor<List<ChatMessage>>("ConcurrentAggregationExecutor"), IResettableExecutor
     {
         private readonly List<ChatMessage> _messages = [];
 
         /// <summary>
         /// Handles incoming messages from the agents and aggregates their responses.
         /// </summary>
-        /// <param name="message">The message from the agent</param>
+        /// <param name="message">The messages from the agent</param>
         /// <param name="context">Workflow context for accessing workflow services and adding events</param>
         /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.
         /// The default is <see cref="CancellationToken.None"/>.</param>
-        public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+        public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
         {
-            this._messages.Add(message);
+            this._messages.AddRange(message);
 
             if (this._messages.Count == 2)
             {
                 var formattedMessages = string.Join(Environment.NewLine, this._messages.Select(m => $"{m.Text}"));
                 await context.YieldOutputAsync(formattedMessages, cancellationToken);
             }
+        }
+
+        /// <inheritdoc/>
+        public ValueTask ResetAsync()
+        {
+            this._messages.Clear();
+            return default;
         }
     }
 }

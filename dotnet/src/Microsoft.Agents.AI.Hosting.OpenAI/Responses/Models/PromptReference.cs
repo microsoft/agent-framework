@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 /// <summary>
 /// Reference to a prompt template and its variables.
 /// </summary>
-internal sealed record PromptReference
+internal sealed class PromptReference
 {
     /// <summary>
     /// The ID of the prompt template to use.

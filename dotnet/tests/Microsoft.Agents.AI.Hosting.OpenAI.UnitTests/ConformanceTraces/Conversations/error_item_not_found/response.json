@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "Item with id 'msg_msg_nonexistent123nonexistent123' not found in conversation.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": null
+  }
+}
