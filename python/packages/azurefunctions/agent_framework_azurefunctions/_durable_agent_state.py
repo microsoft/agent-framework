@@ -392,7 +392,7 @@ class DurableAgentStateEntry:
         if created_at_value is None:
             created_at_value = datetime.now(tz=timezone.utc)
 
-        data = {
+        data: dict[str, Any] = {
             "$type": self.json_type,
             "correlationId": self.correlationId,
             "createdAt": created_at_value.isoformat() if isinstance(created_at_value, datetime) else created_at_value,
