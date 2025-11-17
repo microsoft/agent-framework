@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -43,16 +44,28 @@ internal static class JsonDocumentExtensions
 
     private static Dictionary<string, object?> ParseRecord(this JsonElement currentElement, VariableType targetType)
     {
-        if (targetType.Schema is null)
-        {
-            throw new DeclarativeActionException($"Object schema not defined for. {targetType.Type.Name}.");
-        }
+        IEnumerable<KeyValuePair<string, object?>> keyValuePairs =
+            targetType.Schema is null ?
+            ParseValues() :
+            ParseSchema(targetType.Schema);
 
-        return ParseValues().ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        return keyValuePairs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
         IEnumerable<KeyValuePair<string, object?>> ParseValues()
         {
-            foreach (KeyValuePair<string, VariableType> property in targetType.Schema)
+            foreach (JsonProperty objectProperty in currentElement.EnumerateObject())
+            {
+                if (!objectProperty.Value.TryParseValue(targetType: null, out object? parsedValue))
+                {
+                    throw new DeclarativeActionException($"Unsupported data type '{objectProperty.Value.ValueKind}' for property '{objectProperty.Name}'");
+                }
+                yield return new KeyValuePair<string, object?>(objectProperty.Name, parsedValue);
+            }
+        }
+
+        IEnumerable<KeyValuePair<string, object?>> ParseSchema(FrozenDictionary<string, VariableType> schema)
+        {
+            foreach (KeyValuePair<string, VariableType> property in schema)
             {
                 object? parsedValue = null;
                 if (!currentElement.TryGetProperty(property.Key, out JsonElement propertyElement))
@@ -131,22 +144,22 @@ internal static class JsonDocumentExtensions
         return value;
     }
 
-    private static bool TryParseValue(this JsonElement propertyElement, VariableType targetType, out object? value) =>
+    private static bool TryParseValue(this JsonElement propertyElement, VariableType? targetType, out object? value) =>
         propertyElement.ValueKind switch
         {
-            JsonValueKind.String => TryParseString(propertyElement, targetType.Type, out value),
-            JsonValueKind.Number => TryParseNumber(propertyElement, targetType.Type, out value),
+            JsonValueKind.String => TryParseString(propertyElement, targetType?.Type, out value),
+            JsonValueKind.Number => TryParseNumber(propertyElement, targetType?.Type, out value),
             JsonValueKind.True or JsonValueKind.False => TryParseBoolean(propertyElement, out value),
             JsonValueKind.Object => TryParseObject(propertyElement, targetType, out value),
             JsonValueKind.Array => TryParseList(propertyElement, targetType, out value),
-            JsonValueKind.Null => TryParseNull(targetType.Type, out value),
+            JsonValueKind.Null => TryParseNull(targetType?.Type, out value),
             _ => throw new DeclarativeActionException($"JSON element of type {propertyElement.ValueKind} is not supported."),
         };
 
-    private static bool TryParseNull(Type valueType, out object? value)
+    private static bool TryParseNull(Type? valueType, out object? value)
     {
         // If the target type is not nullable, we cannot assign null to it
-        if (!valueType.IsNullable())
+        if (valueType?.IsNullable() == false)
         {
             value = null;
             return false;
@@ -170,7 +183,7 @@ internal static class JsonDocumentExtensions
         }
     }
 
-    private static bool TryParseString(JsonElement propertyElement, Type valueType, out object? value)
+    private static bool TryParseString(JsonElement propertyElement, Type? valueType, out object? value)
     {
         try
         {
@@ -178,23 +191,30 @@ internal static class JsonDocumentExtensions
             if (propertyValue is null)
             {
                 value = null;
-                return valueType.IsNullable(); // Parse fails if value is null and requested type is not.
+                return valueType?.IsNullable() ?? false; // Parse fails if value is null and requested type is not.
             }
 
-            switch (valueType)
+            if (valueType is null)
             {
-                case Type targetType when targetType == typeof(string):
-                    value = propertyValue;
-                    break;
-                case Type targetType when targetType == typeof(DateTime):
-                    value = DateTime.Parse(propertyValue, provider: null, styles: DateTimeStyles.RoundtripKind);
-                    break;
-                case Type targetType when targetType == typeof(TimeSpan):
-                    value = TimeSpan.Parse(propertyValue);
-                    break;
-                default:
-                    value = null;
-                    return false;
+                value = propertyValue;
+            }
+            else
+            {
+                switch (valueType)
+                {
+                    case Type targetType when targetType == typeof(string):
+                        value = propertyValue;
+                        break;
+                    case Type targetType when targetType == typeof(DateTime):
+                        value = DateTime.Parse(propertyValue, provider: null, styles: DateTimeStyles.RoundtripKind);
+                        break;
+                    case Type targetType when targetType == typeof(TimeSpan):
+                        value = TimeSpan.Parse(propertyValue);
+                        break;
+                    default:
+                        value = null;
+                        return false;
+                }
             }
 
             return true;
@@ -206,7 +226,7 @@ internal static class JsonDocumentExtensions
         }
     }
 
-    private static bool TryParseNumber(JsonElement element, Type valueType, out object? value)
+    private static bool TryParseNumber(JsonElement element, Type? valueType, out object? value)
     {
         // Try parsing as integer types first (most precise representation)
         if (element.TryGetInt32(out int intValue))
@@ -234,8 +254,14 @@ internal static class JsonDocumentExtensions
         value = null;
         return false;
 
-        static bool ConvertToExpectedType(Type valueType, object sourceValue, out object? value)
+        static bool ConvertToExpectedType(Type? valueType, object sourceValue, out object? value)
         {
+            if (valueType is null)
+            {
+                value = sourceValue;
+                return true;
+            }
+
             try
             {
                 value = Convert.ChangeType(sourceValue, valueType);
@@ -249,23 +275,17 @@ internal static class JsonDocumentExtensions
         }
     }
 
-    private static bool TryParseObject(JsonElement propertyElement, VariableType targetType, out object? value)
+    private static bool TryParseObject(JsonElement propertyElement, VariableType? targetType, out object? value)
     {
-        if (!targetType.HasSchema)
-        {
-            value = null;
-            return false;
-        }
-
-        value = propertyElement.ParseRecord(targetType);
+        value = propertyElement.ParseRecord(targetType ?? VariableType.RecordType);
         return true;
     }
 
-    private static bool TryParseList(JsonElement propertyElement, VariableType targetType, out object? value)
+    private static bool TryParseList(JsonElement propertyElement, VariableType? targetType, out object? value)
     {
         try
         {
-            value = ParseTable(propertyElement, targetType);
+            value = ParseTable(propertyElement, targetType ?? VariableType.ListType);
             return true;
         }
         catch
