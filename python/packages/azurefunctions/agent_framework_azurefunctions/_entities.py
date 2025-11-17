@@ -9,15 +9,14 @@ allows for long-running agent conversations.
 
 import asyncio
 import inspect
-import json
 from collections.abc import AsyncIterable, Callable
 from typing import Any, cast
 
 import azure.durable_functions as df
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
+from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role, get_logger
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
-from ._models import AgentResponse, RunRequest
+from ._models import RunRequest
 from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions.entities")
@@ -65,7 +64,7 @@ class AgentEntity:
         self,
         context: df.DurableEntityContext,
         request: RunRequest | dict[str, Any] | str,
-    ) -> dict[str, Any]:
+    ) -> AgentRunResponse:
         """Execute the agent with a message directly in the entity.
 
         Args:
@@ -73,13 +72,8 @@ class AgentEntity:
             request: RunRequest object, dict, or string message (for backward compatibility)
 
         Returns:
-            Dict with status information and response (serialized AgentResponse)
-
-        Note:
-            The agent returns an AgentRunResponse object which is stored in state.
-            This method extracts the text/structured response and returns an AgentResponse dict.
+            AgentRunResponse enriched with execution metadata.
         """
-        # Convert string or dict to RunRequest
         if isinstance(request, str):
             run_request = RunRequest(message=request, role=Role.USER)
         elif isinstance(request, dict):
@@ -103,16 +97,16 @@ class AgentEntity:
         logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlation_id}")
         logger.debug(f"[AgentEntity.run_agent] Role: {role.value}")
         logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
-        logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
+        logger.debug(
+            "[AgentEntity.run_agent] Response format: %s",
+            "provided" if response_format else "none",
+        )
 
-        # Store message in history with role
         self.state.add_user_message(message, role=role, correlation_id=correlation_id)
 
         logger.debug("[AgentEntity.run_agent] Executing agent...")
 
         try:
-            logger.debug("[AgentEntity.run_agent] Starting agent invocation")
-
             run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
@@ -131,46 +125,38 @@ class AgentEntity:
                 type(agent_run_response).__name__,
             )
 
-            response_text = None
-            structured_response = None
+            response_text: str | None = None
 
-            response_str: str | None = None
             try:
-                if response_format:
-                    try:
-                        response_str = agent_run_response.text
-                        structured_response = json.loads(response_str)
-                        logger.debug("Parsed structured JSON response")
-                    except json.JSONDecodeError as decode_error:
-                        logger.warning(f"Failed to parse JSON response: {decode_error}")
-                        response_text = response_str
-                else:
-                    raw_text = agent_run_response.text
-                    response_text = raw_text if raw_text else "No response"
-                    preview = response_text
-                    logger.debug(f"Response: {preview[:100]}..." if len(preview) > 100 else f"Response: {preview}")
+                raw_text = agent_run_response.text
+                response_text = raw_text if raw_text else "No response"
+                logger.debug(f"Response: {response_text[:100]}...")
             except Exception as extraction_error:
                 logger.error(
-                    f"Error extracting response: {extraction_error}",
+                    "Error extracting response text: %s",
+                    extraction_error,
                     exc_info=True,
                 )
                 response_text = "Error extracting response"
 
-            agent_response = AgentResponse(
-                response=response_text,
-                message=str(message),
-                thread_id=str(thread_id),
-                status="success",
-                message_count=self.state.message_count,
-                structured_response=structured_response,
-            )
-            result = agent_response.to_dict()
+            message_count = self.state.message_count
+            metadata: dict[str, Any] = {
+                "status": "success",
+                "message": str(message),
+                "thread_id": str(thread_id),
+                "correlation_id": correlation_id,
+                "message_count": message_count,
+            }
 
-            content = json.dumps(structured_response) if structured_response else (response_text or "")
+            metadata["response"] = response_text
+            content = response_text or ""
+
+            agent_run_response.additional_properties.update(metadata)
+
             self.state.add_assistant_message(content, agent_run_response, correlation_id)
             logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
 
-            return result
+            return agent_run_response
 
         except Exception as exc:
             import traceback
@@ -181,16 +167,28 @@ class AgentEntity:
             logger.error(f"Error type: {type(exc).__name__}")
             logger.error(f"Full traceback:\n{error_traceback}")
 
-            error_response = AgentResponse(
-                response=f"Error: {exc!s}",
-                message=str(message),
-                thread_id=str(thread_id),
-                status="error",
-                message_count=self.state.message_count,
-                error=str(exc),
-                error_type=type(exc).__name__,
+            error_text = f"Error: {exc!s}"
+            error_metadata = {
+                "status": "error",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "message": str(message),
+                "thread_id": str(thread_id),
+                "correlation_id": correlation_id,
+                "message_count": self.state.message_count,
+            }
+
+            error_response = AgentRunResponse(
+                messages=[ChatMessage(role="assistant", text=error_text)],
+                additional_properties=error_metadata,
             )
-            return error_response.to_dict()
+
+            try:
+                self.state.add_assistant_message(error_text, error_response, correlation_id)
+            except Exception:  # pragma: no cover - defensive logging only
+                logger.warning("[AgentEntity.run_agent] Failed to record error response in state", exc_info=True)
+
+            return error_response
 
     async def _invoke_agent(
         self,
@@ -382,7 +380,7 @@ def create_agent_entity(
                     request = "" if input_data is None else str(cast(object, input_data))
 
                 result = await entity.run_agent(context, request)
-                context.set_result(result)
+                context.set_result(result.to_dict())
 
             elif operation == "reset":
                 entity.reset(context)

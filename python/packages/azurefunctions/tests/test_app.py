@@ -336,10 +336,12 @@ class TestAgentEntityOperations:
             {"message": "Test message", "thread_id": "test-conv-123", "correlation_id": "corr-app-entity-1"},
         )
 
-        assert result["status"] == "success"
-        assert result["response"] == "Test response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "test-conv-123"
+        assert isinstance(result, AgentRunResponse)
+        metadata = result.additional_properties
+        assert metadata["status"] == "success"
+        assert metadata["response"] == "Test response"
+        assert metadata["message"] == "Test message"
+        assert metadata["thread_id"] == "test-conv-123"
         assert entity.state.message_count == 1
 
     async def test_entity_stores_conversation_history(self) -> None:
@@ -527,10 +529,11 @@ class TestErrorHandling:
             mock_context, {"message": "Test message", "thread_id": "conv-1", "correlation_id": "corr-app-error-1"}
         )
 
-        assert result["status"] == "error"
-        assert "error" in result
-        assert "Agent error" in result["error"]
-        assert result["error_type"] == "Exception"
+        assert isinstance(result, AgentRunResponse)
+        metadata = result.additional_properties
+        assert metadata["status"] == "error"
+        assert "Agent error" in metadata["error"]
+        assert metadata["error_type"] == "Exception"
 
     def test_entity_function_handles_exception(self) -> None:
         """Test that the entity function handles exceptions gracefully."""

@@ -51,22 +51,22 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
     writer = app.get_agent(context, WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
-    initial = yield writer.run(
+    initial = yield from writer.run(
         messages="Write a concise inspirational sentence about learning.",
         thread=writer_thread,
     )
 
     improved_prompt = (
         "Improve this further while keeping it under 25 words: "
-        f"{initial.get('response', '').strip()}"
+        f"{initial.text}"
     )
 
-    refined = yield writer.run(
+    refined = yield from writer.run(
         messages=improved_prompt,
         thread=writer_thread,
     )
 
-    return refined.get("response", "")
+    return refined.text
 
 
 # 5. HTTP endpoint to kick off the orchestration and return the status query URI.

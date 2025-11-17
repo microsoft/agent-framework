@@ -6,19 +6,27 @@ This module provides support for using agents inside Durable Function orchestrat
 """
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Generator
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage, get_logger
+from agent_framework import (
+    AgentProtocol,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    AgentThread,
+    ChatMessage,
+    get_logger,
+)
+from pydantic import BaseModel
 
 from ._models import AgentSessionId, DurableAgentThread, RunRequest
 
 logger = get_logger("agent_framework.azurefunctions.orchestration")
 
 if TYPE_CHECKING:
-    from azure.durable_functions import DurableOrchestrationContext as _DurableOrchestrationContext
+    from azure.durable_functions import DurableOrchestrationContext
 
-    AgentOrchestrationContextType: TypeAlias = _DurableOrchestrationContext
+    AgentOrchestrationContextType: TypeAlias = DurableOrchestrationContext
 else:
     AgentOrchestrationContextType = Any
 
@@ -81,13 +89,16 @@ class DurableAIAgent(AgentProtocol):
         """Get the description of the agent."""
         return self._description
 
-    def run(
+    # We return a Generator[Any, Any, ...] here because Durable Functions orchestrations
+    # require yielding Tasks, and the run method must return a Task that can be yielded.
+    # AgentProtocol defines run() as async, so we use type: ignore[override] to suppress the warning.
+    def run(  # type: ignore[override]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> Any:  # TODO(msft-team): Add a wrapper to respond correctly with `AgentRunResponse`
+    ) -> Generator[Any, Any, AgentRunResponse]:
         """Execute the agent with messages and return a Task for orchestrations.
 
         This method implements AgentProtocol and returns a Task that can be yielded
@@ -106,13 +117,15 @@ class DurableAIAgent(AgentProtocol):
             def my_orchestration(context):
                 agent = app.get_agent(context, "MyAgent")
                 thread = agent.get_new_thread()
-                result = yield agent.run("Hello", thread=thread)
+                result = yield from agent.run("Hello", thread=thread)
         """
         message_str = self._normalize_messages(messages)
+        logger.debug(f"[DurableAIAgent] Running agent '{self.agent_name}' with message: {message_str[:100]}...")
 
         # Extract optional parameters from kwargs
         enable_tool_calls = kwargs.get("enable_tool_calls", True)
         response_format = kwargs.get("response_format")
+        response_format = cast(type[BaseModel], response_format)
 
         # Get the session ID for the entity
         if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
@@ -130,6 +143,12 @@ class DurableAIAgent(AgentProtocol):
         # Generate a deterministic correlation ID for this call
         # This is required by the entity and must be unique per call
         correlation_id = str(self.context.new_uuid())
+        logger.debug(
+            "[DurableAIAgent] Using correlation_id: %s for entity_id: %s for session_id: %s",
+            correlation_id,
+            entity_id,
+            session_id,
+        )
 
         # Prepare the request using RunRequest model
         run_request = RunRequest(
@@ -144,7 +163,59 @@ class DurableAIAgent(AgentProtocol):
 
         # Call the entity and return the Task directly
         # The orchestration will yield this Task
-        return self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
+        result = yield self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
+
+        logger.debug(
+            "[DurableAIAgent] Entity call completed for correlation_id %s; raw result type: %s",
+            correlation_id,
+            type(result),
+        )
+
+        response = self._load_agent_response(result)
+
+        if response_format is not None:
+            self._ensure_response_format(response_format, correlation_id, response)
+
+        return response
+
+    def _load_agent_response(self, agent_response: AgentRunResponse | dict[str, Any] | None) -> AgentRunResponse:
+        """Convert raw payloads into AgentRunResponse instance."""
+        if agent_response is None:
+            raise ValueError("agent_response cannot be None")
+
+        logger.debug(f"[load_agent_response] Loading agent response of type: {type(agent_response)}")
+
+        response = None
+        if isinstance(agent_response, AgentRunResponse):
+            response = agent_response
+        elif isinstance(agent_response, dict):
+            logger.debug("[load_agent_response] Converting dict payload using AgentRunResponse.from_dict")
+            response = AgentRunResponse.from_dict(agent_response)
+
+        return response
+
+    def _ensure_response_format(
+        self,
+        response_format: type[BaseModel] | None,
+        correlation_id: str,
+        response: AgentRunResponse,
+    ) -> None:
+        """Ensure the AgentRunResponse value is parsed into the expected response_format."""
+        if response_format is not None and not isinstance(response.value, response_format):
+            logger.debug(
+                "[DurableAIAgent] Response value type %s does not match expected %s for correlation_id %s",
+                type(response.value),
+                response_format,
+                correlation_id,
+            )
+
+            response.try_parse_value(response_format)
+
+            logger.debug(
+                "[DurableAIAgent] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
+                correlation_id,
+                type(response.value),
+            )
 
     def run_stream(
         self,

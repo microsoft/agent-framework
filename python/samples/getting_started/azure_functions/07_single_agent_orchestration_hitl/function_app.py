@@ -12,10 +12,11 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 import azure.durable_functions as df
 import azure.functions as func
+from agent_framework import AgentRunResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationContext
 from azure.identity import AzureCliCredential
@@ -96,12 +97,17 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
 
     context.set_custom_status(f"Starting content generation for topic: {payload.topic}")
 
-    initial_raw = yield writer.run(
+    initial_raw = yield from writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
         response_format=GeneratedContent,
     )
-    content = _coerce_generated_content(initial_raw)
+
+    content = initial_raw.value
+    logger.info("Type of content after extraction: %s", type(content))
+    
+    if content is None or not isinstance(content, GeneratedContent):
+        raise ValueError("Agent returned no content after extraction.")
 
     attempt = 0
     while attempt < payload.max_review_attempts:
@@ -138,12 +144,13 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
                 "The content was rejected by a human reviewer. Please rewrite the article incorporating their feedback.\n\n"
                 f"Human Feedback: {approval_payload.feedback or 'No feedback provided.'}"
             )
-            rewritten_raw = yield writer.run(
+            rewritten_raw = yield from writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
                 response_format=GeneratedContent,
             )
-            content = _coerce_generated_content(rewritten_raw)
+
+            content = cast(GeneratedContent, rewritten_raw.value)
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
@@ -316,23 +323,6 @@ def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     if not base_url:
         base_url = request_url.rstrip("/")
     return f"{base_url}/api/{route}/status/{instance_id}"
-
-
-def _coerce_generated_content(result: Mapping[str, Any]) -> GeneratedContent:
-    structured = result.get("structured_response") if isinstance(result, Mapping) else None
-    if structured is not None:
-        return GeneratedContent.model_validate(structured)
-
-    response_text = result.get("response") if isinstance(result, Mapping) else None
-    if isinstance(response_text, str) and response_text.strip():
-        try:
-            parsed = json.loads(response_text)
-            if isinstance(parsed, Mapping):
-                return GeneratedContent.model_validate(parsed)
-        except json.JSONDecodeError:
-            logger.warning("[HITL] Failed to parse agent JSON response; falling back to defaults.")
-
-    raise ValueError("Agent response could not be parsed as GeneratedContent.")
 
 
 def _parse_human_approval(raw: Any) -> HumanApproval:

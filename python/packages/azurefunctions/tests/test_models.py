@@ -7,7 +7,7 @@ import pytest
 from agent_framework import Role
 from pydantic import BaseModel
 
-from agent_framework_azurefunctions._models import AgentResponse, AgentSessionId, RunRequest
+from agent_framework_azurefunctions._models import AgentSessionId, RunRequest
 
 
 class ModuleStructuredResponse(BaseModel):
@@ -337,107 +337,6 @@ class TestRunRequest:
         assert restored.thread_id == original.thread_id
 
 
-class TestAgentResponse:
-    """Test suite for AgentResponse."""
-
-    def test_init_with_required_fields(self) -> None:
-        """Test AgentResponse initialization with required fields."""
-        response = AgentResponse(
-            response="Test response", message="Test message", thread_id="thread-123", status="success"
-        )
-
-        assert response.response == "Test response"
-        assert response.message == "Test message"
-        assert response.thread_id == "thread-123"
-        assert response.status == "success"
-        assert response.message_count == 0
-        assert response.error is None
-        assert response.error_type is None
-        assert response.structured_response is None
-
-    def test_init_with_all_fields(self) -> None:
-        """Test AgentResponse initialization with all fields."""
-        structured = {"answer": "42"}
-        response = AgentResponse(
-            response=None,
-            message="What is the answer?",
-            thread_id="thread-456",
-            status="success",
-            message_count=5,
-            error=None,
-            error_type=None,
-            structured_response=structured,
-        )
-
-        assert response.response is None
-        assert response.structured_response == structured
-        assert response.message_count == 5
-
-    def test_to_dict_with_text_response(self) -> None:
-        """Test to_dict with text response."""
-        response = AgentResponse(
-            response="Text response", message="Message", thread_id="thread-1", status="success", message_count=3
-        )
-        data = response.to_dict()
-
-        assert data["response"] == "Text response"
-        assert data["message"] == "Message"
-        assert data["thread_id"] == "thread-1"
-        assert data["status"] == "success"
-        assert data["message_count"] == 3
-        assert "structured_response" not in data
-        assert "error" not in data
-        assert "error_type" not in data
-
-    def test_to_dict_with_structured_response(self) -> None:
-        """Test to_dict with structured response."""
-        structured = {"answer": 42, "confidence": 0.95}
-        response = AgentResponse(
-            response=None,
-            message="Question",
-            thread_id="thread-2",
-            status="success",
-            structured_response=structured,
-        )
-        data = response.to_dict()
-
-        assert data["structured_response"] == structured
-        assert "response" not in data
-
-    def test_to_dict_with_error(self) -> None:
-        """Test to_dict with error."""
-        response = AgentResponse(
-            response=None,
-            message="Failed message",
-            thread_id="thread-3",
-            status="error",
-            error="Something went wrong",
-            error_type="ValueError",
-        )
-        data = response.to_dict()
-
-        assert data["status"] == "error"
-        assert data["error"] == "Something went wrong"
-        assert data["error_type"] == "ValueError"
-
-    def test_to_dict_prefers_structured_over_text(self) -> None:
-        """Test to_dict prefers structured_response over response."""
-        structured = {"result": "structured"}
-        response = AgentResponse(
-            response="Text response",
-            message="Message",
-            thread_id="thread-4",
-            status="success",
-            structured_response=structured,
-        )
-        data = response.to_dict()
-
-        assert "structured_response" in data
-        assert data["structured_response"] == structured
-        # Text response should not be included when structured is present
-        assert "response" not in data
-
-
 class TestModelIntegration:
     """Test suite for integration between models."""
 
@@ -449,21 +348,6 @@ class TestModelIntegration:
         assert request.thread_id is not None
         assert request.thread_id == str(session_id)
         assert request.thread_id.startswith("@AgentEntity@")
-
-    def test_response_from_run_request(self) -> None:
-        """Test creating AgentResponse from RunRequest."""
-        request = RunRequest(message="What is 2+2?", thread_id="thread-123", role=Role.USER)
-
-        response = AgentResponse(
-            response="4",
-            message=request.message,
-            thread_id=request.thread_id,
-            status="success",
-            message_count=1,
-        )
-
-        assert response.message == request.message
-        assert response.thread_id == request.thread_id
 
 
 if __name__ == "__main__":

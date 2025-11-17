@@ -127,10 +127,11 @@ class TestAgentEntityRunAgent:
         assert _role_value(sent_message) == "user"
 
         # Verify result
-        assert result["status"] == "success"
-        assert result["response"] == "Test response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties["response"] == "Test response"
+        assert result.additional_properties["message"] == "Test message"
+        assert result.additional_properties["thread_id"] == "conv-123"
 
     async def test_run_agent_streaming_callbacks_invoked(self) -> None:
         """Ensure streaming updates trigger callbacks and run() is not used."""
@@ -162,8 +163,9 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert result["status"] == "success"
-        assert "Hello" in result.get("response", "")
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert "Hello" in result.additional_properties.get("response", "")
         assert callback.stream_mock.await_count == len(updates)
         assert callback.response_mock.await_count == 1
         mock_agent.run.assert_not_called()
@@ -209,8 +211,9 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert result["status"] == "success"
-        assert result.get("response") == "Final response"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties.get("response") == "Final response"
         assert callback.stream_mock.await_count == 0
         assert callback.response_mock.await_count == 1
 
@@ -326,8 +329,9 @@ class TestAgentEntityRunAgent:
         )
 
         # Should handle gracefully
-        assert result["status"] == "success"
-        assert result["response"] == "Error extracting response"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties["response"] == "Error extracting response"
 
     async def test_run_agent_handles_none_response_text(self) -> None:
         """Test that run_agent handles responses with None text."""
@@ -341,8 +345,9 @@ class TestAgentEntityRunAgent:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-7"}
         )
 
-        assert result["status"] == "success"
-        assert result["response"] == "No response"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties["response"] == "No response"
 
     async def test_run_agent_multiple_conversations(self) -> None:
         """Test that run_agent maintains history across multiple messages."""
@@ -594,10 +599,12 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-1"}
         )
 
-        assert result["status"] == "error"
-        assert "error" in result
-        assert "Agent failed" in result["error"]
-        assert result["error_type"] == "Exception"
+        assert isinstance(result, AgentRunResponse)
+        error_metadata = result.additional_properties
+        assert error_metadata["status"] == "error"
+        assert "error" in error_metadata
+        assert "Agent failed" in error_metadata["error"]
+        assert error_metadata["error_type"] == "Exception"
 
     async def test_run_agent_handles_value_error(self) -> None:
         """Test that run_agent handles ValueError instances."""
@@ -611,9 +618,11 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-2"}
         )
 
-        assert result["status"] == "error"
-        assert result["error_type"] == "ValueError"
-        assert "Invalid input" in result["error"]
+        assert isinstance(result, AgentRunResponse)
+        error_metadata = result.additional_properties
+        assert error_metadata["status"] == "error"
+        assert error_metadata["error_type"] == "ValueError"
+        assert "Invalid input" in error_metadata["error"]
 
     async def test_run_agent_handles_timeout_error(self) -> None:
         """Test that run_agent handles TimeoutError instances."""
@@ -627,8 +636,10 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlation_id": "corr-entity-error-3"}
         )
 
-        assert result["status"] == "error"
-        assert result["error_type"] == "TimeoutError"
+        assert isinstance(result, AgentRunResponse)
+        error_metadata = result.additional_properties
+        assert error_metadata["status"] == "error"
+        assert error_metadata["error_type"] == "TimeoutError"
 
     def test_entity_function_handles_exception_in_operation(self) -> None:
         """Test that the entity function handles exceptions gracefully."""
@@ -663,9 +674,11 @@ class TestErrorHandling:
         )
 
         # Even on error, message info should be preserved
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
-        assert result["status"] == "error"
+        assert isinstance(result, AgentRunResponse)
+        error_metadata = result.additional_properties
+        assert error_metadata["message"] == "Test message"
+        assert error_metadata["thread_id"] == "conv-123"
+        assert error_metadata["status"] == "error"
 
 
 class TestConversationHistory:
@@ -771,10 +784,11 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
-        assert result["response"] == "Response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties["response"] == "Response"
+        assert result.additional_properties["message"] == "Test message"
+        assert result.additional_properties["thread_id"] == "conv-123"
 
     async def test_run_agent_with_dict_request(self) -> None:
         """Test run_agent with a dictionary request."""
@@ -794,9 +808,10 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request_dict)
 
-        assert result["status"] == "success"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-456"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
+        assert result.additional_properties["message"] == "Test message"
+        assert result.additional_properties["thread_id"] == "conv-456"
 
     async def test_run_agent_with_string_raises_without_correlation(self) -> None:
         """Test that run_agent rejects legacy string input without correlation ID."""
@@ -850,10 +865,12 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
-        # Should have structured_response
-        if "structured_response" in result:
-            assert result["structured_response"]["answer"] == 42
+        assert isinstance(result, AgentRunResponse)
+        metadata = result.additional_properties
+        assert metadata["status"] == "success"
+        assert "structured_response" not in metadata
+        assert metadata["response"] == '{"answer": 42}'
+        assert result.value is None
 
     async def test_run_agent_disable_tool_calls(self) -> None:
         """Test run_agent with tool calls disabled."""
@@ -869,7 +886,8 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
+        assert isinstance(result, AgentRunResponse)
+        assert result.additional_properties["status"] == "success"
         # Agent should have been called (tool disabling is framework-dependent)
         mock_agent.run.assert_called_once()
 
@@ -896,8 +914,11 @@ class TestRunRequestSupport:
         # Verify result was set
         assert mock_context.set_result.called
         result = mock_context.set_result.call_args[0][0]
-        assert result["status"] == "success"
-        assert result["message"] == "Test message"
+        assert isinstance(result, dict)
+        assert result["type"] == "agent_run_response"
+        metadata = result.get("additional_properties", {})
+        assert metadata["status"] == "success"
+        assert metadata["message"] == "Test message"
 
 
 if __name__ == "__main__":
