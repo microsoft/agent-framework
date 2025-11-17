@@ -18,25 +18,25 @@ namespace Microsoft.Agents.AI;
 /// An AI context provider is a component that participates in the agent invocation lifecycle by:
 /// <list type="bullet">
 /// <item><description>Listening to changes in conversations</description></item>
-/// <item><description>Providing additional context to AI models or agents before invocation</description></item>
+/// <item><description>Providing additional context to agents during invocation</description></item>
 /// <item><description>Supplying additional function tools for enhanced capabilities</description></item>
 /// <item><description>Processing invocation results for state management or learning</description></item>
 /// </list>
 /// </para>
 /// <para>
-/// Context providers operate through a two-phase lifecycle: they are called before invocation via
-/// <see cref="InvokingAsync"/> to provide context, and optionally called after invocation via
+/// Context providers operate through a two-phase lifecycle: they are called at the start of invocation via
+/// <see cref="InvokingAsync"/> to provide context, and optionally called at the end of invocation via
 /// <see cref="InvokedAsync"/> to process results.
 /// </para>
 /// </remarks>
 public abstract class AIContextProvider
 {
     /// <summary>
-    /// Called immediately before an AI model or agent is invoked to provide additional context.
+    /// Called at the start of agent invocation to provide additional context.
     /// </summary>
-    /// <param name="context">Contains the request context including the messages that will be sent to the AI model or agent.</param>
+    /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous operation. The task result contains the <see cref="AIContext"/> with additional context to be provided to the AI model or agent.</returns>
+    /// <returns>A task that represents the asynchronous operation. The task result contains the <see cref="AIContext"/> with additional context to be used by the agent during this invocation.</returns>
     /// <remarks>
     /// <para>
     /// Implementers can load any additional context required at this time, such as:
@@ -47,14 +47,11 @@ public abstract class AIContextProvider
     /// <item><description>Injecting contextual messages from conversation history</description></item>
     /// </list>
     /// </para>
-    /// <para>
-    /// The returned context will be combined with context from other providers before being passed to the AI model or agent.
-    /// </para>
     /// </remarks>
     public abstract ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Called immediately after an AI model or agent has been invoked to process the results.
+    /// Called at the end of the agent invocation to process the invocation results.
     /// </summary>
     /// <param name="context">Contains the invocation context including request messages, response messages, and any exception that occurred.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -123,8 +120,8 @@ public abstract class AIContextProvider
     /// Contains the context information provided to <see cref="InvokingAsync(InvokingContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
-    /// This class provides context about the upcoming AI model or agent invocation, including the messages
-    /// that will be sent. Context providers can use this information to determine what additional context
+    /// This class provides context about the invocation before the underlying AI model is invoked, including the messages
+    /// that will be used. Context providers can use this information to determine what additional context
     /// should be provided for the invocation.
     /// </remarks>
     public class InvokingContext
@@ -132,7 +129,7 @@ public abstract class AIContextProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
         /// </summary>
-        /// <param name="requestMessages">The messages to be sent to the AI model or agent for this invocation.</param>
+        /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
         public InvokingContext(IEnumerable<ChatMessage> requestMessages)
         {
@@ -140,11 +137,10 @@ public abstract class AIContextProvider
         }
 
         /// <summary>
-        /// Gets the messages that will be sent to the AI model or agent for this invocation.
+        /// Gets the caller provided messages that will be used by the agent for this invocation.
         /// </summary>
         /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances representing the conversation history
-        /// and new messages that will be processed by the AI model or agent.
+        /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
         /// </value>
         public IEnumerable<ChatMessage> RequestMessages { get; }
     }
@@ -153,8 +149,8 @@ public abstract class AIContextProvider
     /// Contains the context information provided to <see cref="InvokedAsync(InvokedContext, CancellationToken)"/>.
     /// </summary>
     /// <remarks>
-    /// This class provides context about a completed AI model or agent invocation, including both the
-    /// request messages that were sent and the response messages that were generated. It also indicates
+    /// This class provides context about a completed agent invocation, including both the
+    /// request messages that were used and the response messages that were generated. It also indicates
     /// whether the invocation succeeded or failed.
     /// </remarks>
     public class InvokedContext
@@ -162,30 +158,41 @@ public abstract class AIContextProvider
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.
         /// </summary>
-        /// <param name="requestMessages">The messages that were sent to the AI model or agent for this invocation.</param>
+        /// <param name="requestMessages">The caller provided messages that were used by the agent for this invocation.</param>
+        /// <param name="aiContextProviderMessages">The messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
-        public InvokedContext(IEnumerable<ChatMessage> requestMessages)
+        public InvokedContext(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatMessage>? aiContextProviderMessages)
         {
             this.RequestMessages = requestMessages ?? throw new ArgumentNullException(nameof(requestMessages));
+            this.AIContextProviderMessages = aiContextProviderMessages;
         }
 
         /// <summary>
-        /// Gets the messages that were sent to the AI model or agent for this invocation.
+        /// Gets the caller provided messages that were used by the agent for this invocation.
         /// </summary>
         /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances representing the conversation history
-        /// and new messages that were processed by the AI model or agent.
+        /// A collection of <see cref="ChatMessage"/> instances representing new messages that were provided by the caller.
+        /// This does not include any <see cref="AIContextProvider"/> supplied messages.
         /// </value>
         public IEnumerable<ChatMessage> RequestMessages { get; }
 
         /// <summary>
-        /// Gets the collection of response messages generated by the AI model or agent if the invocation succeeded.
+        /// Gets the messages provided by the <see cref="AIContextProvider"/> for this invocation, if any.
         /// </summary>
         /// <value>
-        /// A collection of <see cref="ChatMessage"/> instances representing the response from the AI model or agent,
+        /// A collection of <see cref="ChatMessage"/> instances that were provided by the <see cref="AIContextProvider"/>,
+        /// and were used by the agent as part of the invocation.
+        /// </value>
+        public IEnumerable<ChatMessage>? AIContextProviderMessages { get; }
+
+        /// <summary>
+        /// Gets the collection of response messages generated during this invocation if the invocation succeeded.
+        /// </summary>
+        /// <value>
+        /// A collection of <see cref="ChatMessage"/> instances representing the response,
         /// or <see langword="null"/> if the invocation failed or did not produce response messages.
         /// </value>
-        public IEnumerable<ChatMessage>? ResponseMessages { get; init; }
+        public IEnumerable<ChatMessage>? ResponseMessages { get; set; }
 
         /// <summary>
         /// Gets the <see cref="Exception"/> that was thrown during the invocation, if the invocation failed.
@@ -193,6 +200,6 @@ public abstract class AIContextProvider
         /// <value>
         /// The exception that caused the invocation to fail, or <see langword="null"/> if the invocation succeeded.
         /// </value>
-        public Exception? InvokeException { get; init; }
+        public Exception? InvokeException { get; set; }
     }
 }

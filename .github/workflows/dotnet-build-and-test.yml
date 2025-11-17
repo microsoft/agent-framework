@@ -8,11 +8,11 @@ name: dotnet-build-and-test
 on:
   workflow_dispatch:
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   merge_group:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   push:
-    branches: ["main"]
+    branches: ["main", "feature*"]
   schedule:
     - cron: "0 0 * * *" # Run at midnight UTC daily
 
@@ -74,6 +74,7 @@ jobs:
             .
             .github
             dotnet
+            python
             workflow-samples
 
       - name: Setup dotnet
@@ -127,7 +128,15 @@ jobs:
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
           for project in $UT_PROJECTS; do
-            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            # Query the project's target frameworks using MSBuild with the current configuration
+            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+            
+            # Check if the project supports the target framework
+            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+            else
+              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
+            fi
           done
       
       - name: Log event name and matrix integration-tests
@@ -142,19 +151,38 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+        # This setup action is required for both Durable Task and Azure Functions integration tests.
+        # We only run it on Ubuntu since the Durable Task and Azure Functions features are not available
+        # on .NET Framework (net472) which is what we use the Windows runner for.
+      - name: Set up Durable Task and Azure Functions Integration Test Emulators
+        if: github.event_name != 'pull_request' && matrix.integration-tests && matrix.os == 'ubuntu-latest'
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
+
       - name: Run Integration Tests
         shell: bash
         if: github.event_name != 'pull_request' && matrix.integration-tests
         run: |
           export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | tr '\n' ' ')
           for project in $INTEGRATION_TEST_PROJECTS; do
-            dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+            # Query the project's target frameworks using MSBuild with the current configuration
+            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+            
+            # Check if the project supports the target framework
+            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
+              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+            else
+              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
+            fi
           done
         env:
           # OpenAI Models
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
           OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}
+          # Azure OpenAI Models
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
           # Azure AI Foundry
           AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
           AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
@@ -166,14 +194,14 @@ jobs:
 
       # Generate test reports and check coverage
       - name: Generate test reports
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.16
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.18
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"
           reporttypes: "HtmlInline;JsonSummary"
 
       - name: Upload coverage report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload

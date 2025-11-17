@@ -63,6 +63,26 @@ def test_ai_function_decorator_without_args():
     assert test_tool(1, 2) == 3
 
 
+def test_ai_function_without_args():
+    """Test the ai_function decorator."""
+
+    @ai_function
+    def test_tool() -> int:
+        """A simple function that adds two numbers."""
+        return 1 + 2
+
+    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, AIFunction)
+    assert test_tool.name == "test_tool"
+    assert test_tool.description == "A simple function that adds two numbers."
+    assert test_tool.parameters() == {
+        "properties": {},
+        "title": "test_tool_input",
+        "type": "object",
+    }
+    assert test_tool() == 3
+
+
 async def test_ai_function_decorator_with_async():
     """Test the ai_function decorator with an async function."""
 

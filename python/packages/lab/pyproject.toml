@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251001"
+version = "1.0.0b251114"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,13 +12,14 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "agent-framework-core",
@@ -32,12 +33,12 @@ gaia = [
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
   "orjson>=3.8.0",
+  "pyarrow>=10.0.0",  # For reading parquet files
 ]
 
 # Lightning RL training module dependencies
 lightning = [
-  # Till 0.2.0 is released
-  "agentlightning @ git+https://github.com/microsoft/agent-lightning@138ad0e48780b65ccefa628ee7a5fb9fb27aca01",
+  "agentlightning>=0.2.0,<0.3.0",
 ]
 
 # TAU2 benchmark module dependencies
@@ -46,7 +47,6 @@ tau2 = [
   "tiktoken>=0.11.0",
   "loguru>=0.7.3",
   "numpy",
-  "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
 
 # Dependencies for math-related training
@@ -56,7 +56,7 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv>=0.8.2,<0.9.0",
+    "uv",
     "pre-commit >= 3.7",
     "ruff>=0.11.8",
     "pytest>=8.4.1",
@@ -73,6 +73,8 @@ dev = [
     "rich",
     "tomli",
     "tomli-w",
+    # tau2 from source (not available on PyPI)
+    "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
 
 [project.scripts]
@@ -111,7 +113,13 @@ extend = "../../pyproject.toml"
 extend-exclude = ["**/data/**"]
 
 [tool.ruff.lint]
-ignore = ["T201", "ASYNC230", "INP001"]  # Allow print statements, blocking file operations, and implicit namespace packages in lab modules
+ignore = [
+    "T201",  # Allow print statements in experimental/lab code for debugging purposes.
+    "ASYNC230",  # Allow 'await' outside of async functions in test and experimental code.
+    "INP001",  # Ignore missing __init__.py in namespace packages.
+    "RUF029",  # Allow use of 'assert' statements; assertions are used for internal checks in experimental code.
+    "ASYNC240",  # Allow 'async for' outside of async functions in test and experimental code.
+]
 
 [tool.coverage.run]
 omit = [
@@ -119,7 +127,7 @@ omit = [
 ]
 
 [tool.pyright]
-extend = "../../pyproject.toml"
+extends = "../../pyproject.toml"
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
 [tool.mypy]

@@ -1,0 +1,30 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Simple string input - Ask about MCP Tools
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": "Please summarize the Azure AI Agent documentation related to MCP Tool calling?"
+}
+
+### Explicit input - Ask about Agent Framework
+POST {{endpoint}}
+Content-Type: application/json
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "What is the Microsoft Agent Framework?"
+                }
+            ]
+        }
+    ]
+}

@@ -138,99 +138,194 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that providing a null builder to AddConcurrentWorkflow throws an ArgumentNullException.
+    /// Verifies that AddAsAIAgent without a name parameter uses the workflow name as the agent name.
     /// </summary>
     [Fact]
-    public void AddConcurrentWorkflow_NullBuilder_ThrowsArgumentNullException()
+    public void AddAsAIAgent_WithoutName_UsesWorkflowName()
     {
-        Assert.Throws<ArgumentNullException>(() =>
-            HostApplicationBuilderWorkflowExtensions.AddConcurrentWorkflow(null!, "workflow", [null!]));
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+
+        var agentBuilder = workflowBuilder.AddAsAIAgent();
+
+        Assert.NotNull(agentBuilder);
+
+        // Verify workflow is registered with workflow name
+        var workflowDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(Workflow));
+        Assert.NotNull(workflowDescriptor);
+
+        // Verify agent is registered with workflow name
+        var agentDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(AIAgent));
+        Assert.NotNull(agentDescriptor);
     }
 
     /// <summary>
-    /// Verifies that AddConcurrentWorkflow throws ArgumentNullException for null name.
+    /// Verifies that AddAsAIAgent with a name parameter uses that name instead of the workflow name.
     /// </summary>
     [Fact]
-    public void AddConcurrentWorkflow_NullName_ThrowsArgumentNullException()
+    public void AddAsAIAgent_WithName_UsesProvidedName()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        const string AgentName = "testAgent";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddConcurrentWorkflow(null!, [new HostedAgentBuilder("test", builder)]));
-        Assert.Equal("name", exception.ParamName);
+        var agentBuilder = workflowBuilder.AddAsAIAgent(AgentName);
+
+        Assert.NotNull(agentBuilder);
+
+        // Verify workflow is registered with workflow name
+        var workflowDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(Workflow));
+        Assert.NotNull(workflowDescriptor);
+
+        // Verify agent is registered with agent name (not workflow name)
+        var agentDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == AgentName && d.ServiceType == typeof(AIAgent));
+        Assert.NotNull(agentDescriptor);
+
+        // Verify no agent registered with workflow name
+        var wrongAgentDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(AIAgent));
+        Assert.NotSame(workflowDescriptor, wrongAgentDescriptor);
     }
 
     /// <summary>
-    /// Verifies that AddConcurrentWorkflow throws ArgumentNullException for null agent builders.
+    /// Verifies that AddAsAIAgent correctly retrieves the workflow using the workflow name, not the agent name.
     /// </summary>
     [Fact]
-    public void AddConcurrentWorkflow_NullAgentBuilders_ThrowsArgumentNullException()
+    public void AddAsAIAgent_WithDifferentName_RetrievesWorkflowCorrectly()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "myWorkflow";
+        const string AgentName = "myAgent";
 
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddConcurrentWorkflow("workflowName", null!));
-        Assert.Equal("agentBuilders", exception.ParamName);
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        workflowBuilder.AddAsAIAgent(AgentName);
+
+        var serviceProvider = builder.Build().Services;
+
+        // Act - Get the agent using the agent name
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>(AgentName);
+
+        Assert.NotNull(agent);
+        Assert.Equal(AgentName, agent.Name);
+
+        // Verify that we can still get the workflow using the workflow name
+        var workflow = serviceProvider.GetRequiredKeyedService<Workflow>(WorkflowName);
+        Assert.NotNull(workflow);
+        Assert.Equal(WorkflowName, workflow.Name);
     }
 
     /// <summary>
-    /// Verifies that AddConcurrentWorkflow returns IHostWorkflowBuilder instance.
+    /// Verifies that AddAsAIAgent returns IHostedAgentBuilder with correct name.
     /// </summary>
     [Fact]
-    public void AddConcurrentWorkflow_ValidParameters_ReturnsBuilder()
+    public void AddAsAIAgent_ReturnsHostedAgentBuilder()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        const string AgentName = "testAgent";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
-        var result = builder.AddConcurrentWorkflow("concurrentWorkflow", [new HostedAgentBuilder("test", builder)]);
+        var agentBuilder = workflowBuilder.AddAsAIAgent(AgentName);
 
-        Assert.NotNull(result);
-        Assert.IsAssignableFrom<IHostedWorkflowBuilder>(result);
+        Assert.NotNull(agentBuilder);
+        Assert.IsAssignableFrom<IHostedAgentBuilder>(agentBuilder);
+        Assert.Equal(AgentName, agentBuilder.Name);
     }
 
     /// <summary>
-    /// Verifies that providing a null builder to AddSequentialWorkflow throws an ArgumentNullException.
+    /// Verifies that AddAsAIAgent without name returns IHostedAgentBuilder with workflow name.
     /// </summary>
     [Fact]
-    public void AddSequentialWorkflow_NullBuilder_ThrowsArgumentNullException()
+    public void AddAsAIAgent_WithoutName_ReturnsHostedAgentBuilderWithWorkflowName()
     {
-        Assert.Throws<ArgumentNullException>(() =>
-            HostApplicationBuilderWorkflowExtensions.AddSequentialWorkflow(null!, "workflow", [null!]));
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+
+        var agentBuilder = workflowBuilder.AddAsAIAgent();
+
+        Assert.NotNull(agentBuilder);
+        Assert.IsAssignableFrom<IHostedAgentBuilder>(agentBuilder);
+        Assert.Equal(WorkflowName, agentBuilder.Name);
     }
 
     /// <summary>
-    /// Verifies that AddSequentialWorkflow throws ArgumentNullException for null name.
+    /// Verifies that AddAsAIAgent can chain multiple agents from the same workflow.
     /// </summary>
     [Fact]
-    public void AddSequentialWorkflow_NullName_ThrowsArgumentNullException()
+    public void AddAsAIAgent_MultipleAgents_FromSameWorkflow()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddSequentialWorkflow(null!, [new HostedAgentBuilder("test", builder)]));
-        Assert.Equal("name", exception.ParamName);
+        var agentBuilder1 = workflowBuilder.AddAsAIAgent("agent1");
+        var agentBuilder2 = workflowBuilder.AddAsAIAgent("agent2");
+
+        Assert.NotNull(agentBuilder1);
+        Assert.NotNull(agentBuilder2);
+
+        // Verify both agents are registered
+        var agentDescriptor1 = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "agent1" && d.ServiceType == typeof(AIAgent));
+        var agentDescriptor2 = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "agent2" && d.ServiceType == typeof(AIAgent));
+
+        Assert.NotNull(agentDescriptor1);
+        Assert.NotNull(agentDescriptor2);
+
+        // Verify workflow is registered only once
+        var workflowDescriptors = builder.Services.Where(
+                d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(Workflow)).ToList();
+        Assert.Single(workflowDescriptors);
     }
 
     /// <summary>
-    /// Verifies that AddSequentialWorkflow throws ArgumentNullException for null agent builders.
+    /// Verifies that AddAsAIAgent with null name behaves the same as the parameterless overload.
     /// </summary>
     [Fact]
-    public void AddSequentialWorkflow_NullAgentBuilders_ThrowsArgumentNullException()
+    public void AddAsAIAgent_WithNullName_UsesWorkflowName()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddSequentialWorkflow("workflowName", null!));
-        Assert.Equal("agentBuilders", exception.ParamName);
+        var agentBuilder = workflowBuilder.AddAsAIAgent(name: null);
+
+        Assert.NotNull(agentBuilder);
+        Assert.Equal(WorkflowName, agentBuilder.Name);
+
+        // Verify agent is registered with workflow name
+        var agentDescriptor = builder.Services.FirstOrDefault(
+            d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(AIAgent));
+        Assert.NotNull(agentDescriptor);
     }
 
+    /// <summary>
+    /// Verifies that AddAsAIAgent with empty string name uses empty string as agent name.
+    /// </summary>
     [Fact]
-    public void AddSequentialWorkflow_EmptyAgentBuilders_Throws()
+    public void AddAsAIAgent_WithEmptyName_UsesEmptyStringAsAgentName()
     {
         var builder = new HostApplicationBuilder();
+        const string WorkflowName = "testWorkflow";
+        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
-        var exception = Assert.Throws<ArgumentException>(() =>
-            builder.AddSequentialWorkflow("sequentialWorkflow", Array.Empty<IHostedAgentBuilder>()));
-        Assert.Equal("agentBuilders", exception.ParamName);
+        var agentBuilder = workflowBuilder.AddAsAIAgent(name: "");
+
+        Assert.NotNull(agentBuilder);
+        Assert.Equal("", agentBuilder.Name);
+
+        // Verify agent is registered with empty string name
+        var agentDescriptor = builder.Services.FirstOrDefault(
+            d => d.ServiceKey is string s && s.Length == 0 && d.ServiceType == typeof(AIAgent));
+        Assert.NotNull(agentDescriptor);
     }
 
     /// <summary>

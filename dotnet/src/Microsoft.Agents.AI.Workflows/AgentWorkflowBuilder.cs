@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -16,7 +17,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public static partial class AgentWorkflowBuilder
 {
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
     /// <returns>The built workflow composed of the supplied <paramref name="agents"/>, in the order in which they were yielded from the source.</returns>
@@ -24,7 +25,7 @@ public static partial class AgentWorkflowBuilder
         => BuildSequentialCore(workflowName: null, agents);
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of a pipeline of agents where the output of one agent is the input to the next.
+    /// Builds a <see cref="Workflow"/> composed of a pipeline of agents where the output of one agent is the input to the next.
     /// </summary>
     /// <param name="workflowName">The name of workflow.</param>
     /// <param name="agents">The sequence of agents to compose into a sequential workflow.</param>
@@ -39,7 +40,7 @@ public static partial class AgentWorkflowBuilder
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
         WorkflowBuilder? builder = null;
-        ExecutorIsh? previous = null;
+        ExecutorBinding? previous = null;
         foreach (var agent in agents)
         {
             AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
@@ -76,7 +77,7 @@ public static partial class AgentWorkflowBuilder
     }
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="agents">The set of agents to compose into a concurrent workflow.</param>
@@ -92,7 +93,7 @@ public static partial class AgentWorkflowBuilder
         => BuildConcurrentCore(workflowName: null, agents, aggregator);
 
     /// <summary>
-    /// Builds a <see cref="Workflow{T}"/> composed of agents that operate concurrently on the same input,
+    /// Builds a <see cref="Workflow"/> composed of agents that operate concurrently on the same input,
     /// aggregating their outputs into a single collection.
     /// </summary>
     /// <param name="workflowName">The name of the workflow.</param>
@@ -124,9 +125,9 @@ public static partial class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorIsh[] agentExecutors = (from agent in agents select (ExecutorIsh)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
-        ExecutorIsh[] accumulators = [.. from agent in agentExecutors select (ExecutorIsh)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
-        builder.AddFanOutEdge(start, targets: agentExecutors);
+        ExecutorBinding[] agentExecutors = (from agent in agents select (ExecutorBinding)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+        ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new CollectChatMessagesExecutor($"Batcher/{agent.Id}")];
+        builder.AddFanOutEdge(start, agentExecutors);
         for (int i = 0; i < agentExecutors.Length; i++)
         {
             builder.AddEdge(agentExecutors[i], accumulators[i]);
@@ -136,8 +137,13 @@ public static partial class AgentWorkflowBuilder
         // each agent's accumulator to it. If no aggregation function was provided, we default to returning
         // the last message from each agent
         aggregator ??= static lists => (from list in lists where list.Count > 0 select list.Last()).ToList();
-        ConcurrentEndExecutor end = new(agentExecutors.Length, aggregator);
-        builder.AddFanInEdge(end, sources: accumulators);
+
+        Func<string, string, ValueTask<ConcurrentEndExecutor>> endFactory =
+            (string _, string __) => new(new ConcurrentEndExecutor(agentExecutors.Length, aggregator));
+
+        ExecutorBinding end = endFactory.BindExecutor(ConcurrentEndExecutor.ExecutorId);
+
+        builder.AddFanInEdge(accumulators, end);
 
         builder = builder.WithOutputFrom(end);
         if (workflowName is not null)

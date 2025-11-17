@@ -26,13 +26,10 @@ public static class HostedWorkflowBuilderExtensions
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
     public static IHostedAgentBuilder AddAsAIAgent(this IHostedWorkflowBuilder builder, string? name)
     {
-        var agentName = name ?? builder.Name;
+        var workflowName = builder.Name;
+        var agentName = name ?? workflowName;
+
         return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>
-        {
-            var workflow = sp.GetRequiredKeyedService<Workflow>(key);
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-            return workflow.AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002 // Avoid problematic synchronous waits
-        });
+            sp.GetRequiredKeyedService<Workflow>(workflowName).AsAgent(name: key));
     }
 }

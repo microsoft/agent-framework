@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Agents.AI.Workflows;
@@ -16,46 +15,6 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </summary>
 public static class HostApplicationBuilderWorkflowExtensions
 {
-    /// <summary>
-    /// Registers a concurrent workflow that executes multiple agents in parallel.
-    /// </summary>
-    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
-    /// <param name="name">The unique name for the workflow.</param>
-    /// <param name="agentBuilders">A collection of <see cref="IHostedAgentBuilder"/> instances representing agents to execute concurrently.</param>
-    /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
-    public static IHostedWorkflowBuilder AddConcurrentWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostedAgentBuilder> agentBuilders)
-    {
-        Throw.IfNullOrEmpty(agentBuilders);
-
-        return builder.AddWorkflow(name, (sp, key) =>
-        {
-            var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-            return AgentWorkflowBuilder.BuildConcurrent(workflowName: name, agents: agents);
-        });
-    }
-
-    /// <summary>
-    /// Registers a sequential workflow that executes agents in a specific order.
-    /// </summary>
-    /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
-    /// <param name="name">The unique name for the workflow.</param>
-    /// <param name="agentBuilders">A collection of <see cref="IHostedAgentBuilder"/> instances representing agents to execute in sequence.</param>
-    /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="agentBuilders"/> is null.</exception>
-    /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> or <paramref name="agentBuilders"/> is empty.</exception>
-    public static IHostedWorkflowBuilder AddSequentialWorkflow(this IHostApplicationBuilder builder, string name, IEnumerable<IHostedAgentBuilder> agentBuilders)
-    {
-        Throw.IfNullOrEmpty(agentBuilders);
-
-        return builder.AddWorkflow(name, (sp, key) =>
-        {
-            var agents = agentBuilders.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
-            return AgentWorkflowBuilder.BuildSequential(workflowName: name, agents: agents);
-        });
-    }
-
     /// <summary>
     /// Registers a custom workflow using a factory delegate.
     /// </summary>

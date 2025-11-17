@@ -163,6 +163,24 @@ internal static class FormulaValueExtensions
             }
         }
     }
+
+    public static JsonNode ToJson(this FormulaValue value) =>
+        value switch
+        {
+            BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
+            DecimalValue decimalValue => JsonValue.Create(decimalValue.Value),
+            NumberValue numberValue => JsonValue.Create(numberValue.Value),
+            DateValue dateValue => JsonValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            DateTimeValue datetimeValue => JsonValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
+            TimeValue timeValue => JsonValue.Create($"{timeValue.Value}"),
+            StringValue stringValue => JsonValue.Create(stringValue.Value),
+            GuidValue guidValue => JsonValue.Create(guidValue.Value),
+            RecordValue recordValue => recordValue.ToJson(),
+            TableValue tableValue => tableValue.ToJson(),
+            BlankValue => JsonValue.Create(string.Empty),
+            _ => $"[{value.GetType().Name}]",
+        };
+
     public static RecordValue ToRecord(this Dictionary<string, PortableValue> value) =>
         FormulaValue.NewRecordFromFields(
             value.Select(
@@ -219,6 +237,22 @@ internal static class FormulaValueExtensions
             elementType switch
             {
                 null => FormulaValue.NewTable(RecordType.EmptySealed(), []),
+                _ when elementType == typeof(string) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<string>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(bool) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<bool>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(int) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<int>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(long) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<long>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(decimal) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<decimal>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(float) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<float>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(DateTime) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<DateTime>().Select(element => FormulaValue.New(element))]),
+                _ when elementType == typeof(TimeSpan) =>
+                    FormulaValue.NewSingleColumnTable([.. value.OfType<TimeSpan>().Select(element => FormulaValue.New(element))]),
                 _ when elementType == typeof(ExpandoObject) =>
                     FormulaValue.NewTable(
                         value.ToTableType().ToRecord(),
@@ -239,23 +273,6 @@ internal static class FormulaValueExtensions
     }
 
     private static KeyValuePair<string, DataValue> GetKeyValuePair(this NamedValue value) => new(value.Name, value.Value.ToDataValue());
-
-    private static JsonNode ToJson(this FormulaValue value) =>
-        value switch
-        {
-            BooleanValue booleanValue => JsonValue.Create(booleanValue.Value),
-            DecimalValue decimalValue => JsonValue.Create(decimalValue.Value),
-            NumberValue numberValue => JsonValue.Create(numberValue.Value),
-            DateValue dateValue => JsonValue.Create(dateValue.GetConvertedValue(TimeZoneInfo.Utc)),
-            DateTimeValue datetimeValue => JsonValue.Create(datetimeValue.GetConvertedValue(TimeZoneInfo.Utc)),
-            TimeValue timeValue => JsonValue.Create($"{timeValue.Value}"),
-            StringValue stringValue => JsonValue.Create(stringValue.Value),
-            GuidValue guidValue => JsonValue.Create(guidValue.Value),
-            RecordValue recordValue => recordValue.ToJson(),
-            TableValue tableValue => tableValue.ToJson(),
-            BlankValue => JsonValue.Create(string.Empty),
-            _ => $"[{value.GetType().Name}]",
-        };
 
     private static JsonArray ToJson(this TableValue value)
     {

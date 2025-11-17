@@ -18,7 +18,7 @@
  * - Horizontal rules (---)
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 interface MarkdownRendererProps {
   content: string;
@@ -35,10 +35,10 @@ interface CodeBlockProps {
  */
 function CodeBlock({ code, language }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
-  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup timeout on unmount
-  React.useEffect(() => {
+  useEffect(() => {
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);

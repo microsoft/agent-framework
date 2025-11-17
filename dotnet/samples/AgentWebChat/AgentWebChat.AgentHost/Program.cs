@@ -2,11 +2,10 @@
 
 using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
+using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
-using Microsoft.Agents.AI.Hosting.A2A.AspNetCore;
-using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -22,13 +21,16 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
-    chatClientServiceKey: "chat-model");
+    chatClientServiceKey: "chat-model")
+    .WithAITool(new CustomAITool())
+    .WithAITool(new CustomFunctionTool())
+    .WithInMemoryThreadStore();
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
@@ -60,10 +62,7 @@ builder.AddAIAgent("knights-and-knaves", (sp, key) =>
         If the user asks a general question about their surrounding, make something up which is consistent with the scenario.
         """, "Narrator");
 
-    // TODO: How to avoid sync-over-async here?
-#pragma warning disable VSTHRD002 // Avoid problematic synchronous waits
-    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgentAsync(name: key).AsTask().GetAwaiter().GetResult();
-#pragma warning restore VSTHRD002
+    return AgentWorkflowBuilder.BuildConcurrent([knight, knave, narrator]).AsAgent(name: key);
 });
 
 // Workflow consisting of multiple specialized agents
@@ -82,8 +81,22 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
-builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
+var scienceSequentialWorkflow = builder.AddWorkflow("science-sequential-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
+var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
+builder.AddOpenAIChatCompletions();
+builder.AddOpenAIResponses();
 
 var app = builder.Build();
 
@@ -94,8 +107,8 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 app.UseExceptionHandler();
 
 // attach a2a with simple message communication
-app.MapA2A(agentName: "pirate", path: "/a2a/pirate");
-app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
+app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",
@@ -105,15 +118,10 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
-app.MapOpenAIResponses("pirate");
-app.MapOpenAIResponses("knights-and-knaves");
+app.MapOpenAIResponses();
 
-app.MapOpenAIChatCompletions("pirate");
-app.MapOpenAIChatCompletions("knights-and-knaves");
-
-// workflow-agents
-app.MapOpenAIResponses("science-sequential-workflow");
-app.MapOpenAIResponses("science-concurrent-workflow");
+app.MapOpenAIChatCompletions(pirateAgentBuilder);
+app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

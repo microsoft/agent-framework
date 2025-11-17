@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.AI.Hosting;
 
@@ -15,7 +15,7 @@ public interface IHostedAgentBuilder
     string Name { get; }
 
     /// <summary>
-    /// Gets the application host builder for configuring additional services.
+    /// Gets the service collection for configuration.
     /// </summary>
-    IHostApplicationBuilder HostApplicationBuilder { get; }
+    IServiceCollection ServiceCollection { get; }
 }

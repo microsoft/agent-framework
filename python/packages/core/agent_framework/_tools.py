@@ -71,6 +71,7 @@ logger = get_logger()
 __all__ = [
     "FUNCTION_INVOKING_CHAT_CLIENT_MARKER",
     "AIFunction",
+    "FunctionInvocationConfiguration",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
     "HostedMCPSpecificApproval",
@@ -84,7 +85,8 @@ __all__ = [
 
 logger = get_logger()
 FUNCTION_INVOKING_CHAT_CLIENT_MARKER: Final[str] = "__function_invoking_chat_client__"
-DEFAULT_MAX_ITERATIONS: Final[int] = 10
+DEFAULT_MAX_ITERATIONS: Final[int] = 40
+DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 TChatClient = TypeVar("TChatClient", bound="ChatClientProtocol")
 # region Helpers
 
@@ -156,34 +158,19 @@ def _parse_inputs(
 # region Tools
 @runtime_checkable
 class ToolProtocol(Protocol):
-    """Represents a generic tool that can be specified to an AI service.
+    """Represents a generic tool.
 
     This protocol defines the interface that all tools must implement to be compatible
-    with the agent framework.
+    with the agent framework. It is implemented by various tool classes such as HostedMCPTool,
+    HostedWebSearchTool, and AIFunction's. A AIFunction is usually created by the `ai_function` decorator.
+
+    Since each connector needs to parse tools differently, users can pass a dict to
+    specify a service-specific tool when no abstraction is available.
 
     Attributes:
         name: The name of the tool.
         description: A description of the tool, suitable for use in describing the purpose to a model.
         additional_properties: Additional properties associated with the tool.
-
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import ToolProtocol
-
-
-            class CustomTool:
-                def __init__(self, name: str, description: str) -> None:
-                    self.name = name
-                    self.description = description
-                    self.additional_properties = None
-
-                def __str__(self) -> str:
-                    return f"CustomTool(name={self.name})"
-
-
-            # Tool now implements ToolProtocol
-            tool: ToolProtocol = CustomTool("my_tool", "Does something useful")
     """
 
     name: str
@@ -201,22 +188,11 @@ class ToolProtocol(Protocol):
 class BaseTool(SerializationMixin):
     """Base class for AI tools, providing common attributes and methods.
 
-    This class provides the foundation for creating custom tools with serialization support.
+    Used as the base class for the various tools in the agent framework, such as HostedMCPTool,
+    HostedWebSearchTool, and AIFunction.
 
-    Examples:
-        .. code-block:: python
-
-            from agent_framework import BaseTool
-
-
-            class MyCustomTool(BaseTool):
-                def __init__(self, name: str, custom_param: str) -> None:
-                    super().__init__(name=name, description="My custom tool")
-                    self.custom_param = custom_param
-
-
-            tool = MyCustomTool(name="custom", custom_param="value")
-            print(tool)  # MyCustomTool(name=custom, description=My custom tool)
+    Since each connector needs to parse tools differently, this class is not exposed directly to end users.
+    In most cases, users can pass a dict to specify a service-specific tool when no abstraction is available.
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
@@ -551,6 +527,10 @@ def _default_histogram() -> Histogram:
 TClass = TypeVar("TClass", bound="SerializationMixin")
 
 
+class EmptyInputModel(BaseModel):
+    """An empty input model for functions with no parameters."""
+
+
 class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """A tool that wraps a Python function to make it callable by AI models.
 
@@ -602,8 +582,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         name: str,
         description: str = "",
         approval_mode: Literal["always_require", "never_require"] | None = None,
+        max_invocations: int | None = None,
+        max_invocation_exceptions: int | None = None,
         additional_properties: dict[str, Any] | None = None,
-        func: Callable[..., Awaitable[ReturnT] | ReturnT],
+        func: Callable[..., Awaitable[ReturnT] | ReturnT] | None = None,
         input_model: type[ArgsT] | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -614,6 +596,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             description: A description of the function.
             approval_mode: Whether or not approval is required to run this tool.
                 Default is that approval is not needed.
+            max_invocations: The maximum number of times this function can be invoked.
+                If None, there is no limit. Should be at least 1.
+            max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
+                If None, there is no limit. Should be at least 1.
             additional_properties: Additional properties to set on the function.
             func: The function to wrap.
             input_model: The Pydantic model that defines the input parameters for the function.
@@ -630,21 +616,56 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self.input_model = self._resolve_input_model(input_model)
         self.approval_mode = approval_mode or "never_require"
+        if max_invocations is not None and max_invocations < 1:
+            raise ValueError("max_invocations must be at least 1 or None.")
+        if max_invocation_exceptions is not None and max_invocation_exceptions < 1:
+            raise ValueError("max_invocation_exceptions must be at least 1 or None.")
+        self.max_invocations = max_invocations
+        self.invocation_count = 0
+        self.max_invocation_exceptions = max_invocation_exceptions
+        self.invocation_exception_count = 0
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
 
+    @property
+    def declaration_only(self) -> bool:
+        """Indicate whether the function is declaration only (i.e., has no implementation)."""
+        return self.func is None
+
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
-        if input_model:
-            if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
-                return input_model
-            if isinstance(input_model, Mapping):
-                return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
-            raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
-        return cast(type[ArgsT], _create_input_model_from_func(self.func, self.name))
+        """Resolve the input model for the function."""
+        if input_model is None:
+            if self.func is None:
+                return cast(type[ArgsT], EmptyInputModel)
+            return cast(type[ArgsT], _create_input_model_from_func(func=self.func, name=self.name))
+        if inspect.isclass(input_model) and issubclass(input_model, BaseModel):
+            return input_model
+        if isinstance(input_model, Mapping):
+            return cast(type[ArgsT], _create_model_from_json_schema(self.name, input_model))
+        raise TypeError("input_model must be a Pydantic BaseModel subclass or a JSON schema dict.")
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        return self.func(*args, **kwargs)
+        if self.func is None:
+            raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
+        if self.max_invocations is not None and self.invocation_count >= self.max_invocations:
+            raise ToolException(
+                f"Function '{self.name}' has reached its maximum invocation limit, you can no longer use this tool."
+            )
+        if (
+            self.max_invocation_exceptions is not None
+            and self.invocation_exception_count >= self.max_invocation_exceptions
+        ):
+            raise ToolException(
+                f"Function '{self.name}' has reached its maximum exception limit, "
+                f"you tried to use this tool too many times and it kept failing."
+            )
+        self.invocation_count += 1
+        try:
+            return self.func(*args, **kwargs)
+        except Exception:
+            self.invocation_exception_count += 1
+            raise
 
     async def invoke(
         self,
@@ -664,6 +685,8 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         Raises:
             TypeError: If arguments is not an instance of the expected input model.
         """
+        if self.declaration_only:
+            raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
 
@@ -833,7 +856,7 @@ def _parse_annotation(annotation: Any) -> Any:
     return annotation
 
 
-def _create_input_model_from_func(func: Callable[..., Any], tool_name: str) -> type[BaseModel]:
+def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
     sig = inspect.signature(func)
     fields = {
@@ -844,7 +867,7 @@ def _create_input_model_from_func(func: Callable[..., Any], tool_name: str) -> t
         for pname, param in sig.parameters.items()
         if pname not in {"self", "cls"}
     }
-    return create_model(f"{tool_name}_input", **fields)  # type: ignore[call-overload, no-any-return]
+    return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
 
 
 # Map JSON Schema types to Pydantic types
@@ -907,6 +930,8 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    max_invocations: int | None = None,
+    max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
 ) -> AIFunction[Any, ReturnT]: ...
 
@@ -918,6 +943,8 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    max_invocations: int | None = None,
+    max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
 ) -> Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]: ...
 
@@ -928,6 +955,8 @@ def ai_function(
     name: str | None = None,
     description: str | None = None,
     approval_mode: Literal["always_require", "never_require"] | None = None,
+    max_invocations: int | None = None,
+    max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
 ) -> AIFunction[Any, ReturnT] | Callable[[Callable[..., ReturnT | Awaitable[ReturnT]]], AIFunction[Any, ReturnT]]:
     """Decorate a function to turn it into a AIFunction that can be passed to models and executed automatically.
@@ -939,6 +968,22 @@ def ai_function(
     To add descriptions to parameters, use the ``Annotated`` type from ``typing``
     with a string description as the second argument. You can also use Pydantic's
     ``Field`` class for more advanced configuration.
+
+    Args:
+        func: The function to decorate.
+
+    Keyword Args:
+        name: The name of the function. If not provided, the function's ``__name__``
+            attribute will be used.
+        description: A description of the function. If not provided, the function's
+            docstring will be used.
+        approval_mode: Whether or not approval is required to run this tool.
+            Default is that approval is not needed.
+        max_invocations: The maximum number of times this function can be invoked.
+            If None, there is no limit, should be at least 1.
+        max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
+            If None, there is no limit, should be at least 1.
+        additional_properties: Additional properties to set on the function.
 
     Note:
         When approval_mode is set to "always_require", the function will not be executed
@@ -997,6 +1042,8 @@ def ai_function(
                 name=tool_name,
                 description=tool_desc,
                 approval_mode=approval_mode,
+                max_invocations=max_invocations,
+                max_invocation_exceptions=max_invocation_exceptions,
                 additional_properties=additional_properties or {},
                 func=f,
             )
@@ -1009,10 +1056,123 @@ def ai_function(
 # region Function Invoking Chat Client
 
 
+class FunctionInvocationConfiguration(SerializationMixin):
+    """Configuration for function invocation in chat clients.
+
+    This class is created automatically on every chat client that supports function invocation.
+    This means that for most cases you can just alter the attributes on the instance, rather then creating a new one.
+
+    Example:
+        .. code-block:: python
+            from agent_framework.openai import OpenAIChatClient
+
+            # Create an OpenAI chat client
+            client = OpenAIChatClient(api_key="your_api_key")
+
+            # Disable function invocation
+            client.function_invocation_config.enabled = False
+
+            # Set maximum iterations to 10
+            client.function_invocation_config.max_iterations = 10
+
+            # Enable termination on unknown function calls
+            client.function_invocation_config.terminate_on_unknown_calls = True
+
+            # Add additional tools for function execution
+            client.function_invocation_config.additional_tools = [my_custom_tool]
+
+            # Enable detailed error information in function results
+            client.function_invocation_config.include_detailed_errors = True
+
+            # You can also create a new configuration instance if needed
+            new_config = FunctionInvocationConfiguration(
+                enabled=True,
+                max_iterations=20,
+                terminate_on_unknown_calls=False,
+                additional_tools=[another_tool],
+                include_detailed_errors=False,
+            )
+
+            # and then assign it to the client
+            client.function_invocation_config = new_config
+
+
+    Attributes:
+        enabled: Whether function invocation is enabled.
+            When this is set to False, the client will not attempt to invoke any functions,
+            because the tool mode will be set to None.
+        max_iterations: Maximum number of function invocation iterations.
+            Each request to this client might end up making multiple requests to the model. Each time the model responds
+            with a function call request, this client might perform that invocation and send the results back to the
+            model in a new request. This property limits the number of times such a roundtrip is performed. The value
+            must be at least one, as it includes the initial request.
+            If you want to fully disable function invocation, use the ``enabled`` property.
+            The default is 40.
+        max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
+            The maximum number of consecutive function call errors allowed before stopping
+            further function calls for the request.
+            The default is 3.
+        terminate_on_unknown_calls: Whether to terminate on unknown function calls.
+            When False, call requests to any tools that aren't available to the client
+            will result in a response message automatically being created and returned to the inner client stating that
+            the tool couldn't be found. This behavior can help in cases where a model hallucinates a function, but it's
+            problematic if the model has been made aware of the existence of tools outside of the normal mechanisms, and
+            requests one of those. ``additional_tools`` can be used to help with that. But if instead the consumer wants
+            to know about all function call requests that the client can't handle, this can be set to True. Upon
+            receiving a request to call a function that the client doesn't know about, it will terminate the function
+            calling loop and return the response, leaving the handling of the function call requests to the consumer of
+            the client.
+        additional_tools: Additional tools to include for function execution.
+            These will not impact the requests sent by the client, which will pass through the
+            ``tools`` unmodified. However, if the inner client requests the invocation of a tool
+            that was not in ``ChatOptions.tools``, this ``additional_tools`` collection will also be consulted to look
+            for a corresponding tool. This is useful when the service might have been pre-configured to be aware of
+            certain tools that aren't also sent on each individual request. These tools are treated the same as
+            ``declaration_only`` tools and will be returned to the user.
+        include_detailed_errors: Whether to include detailed error information in function results.
+            When set to True, detailed error information such as exception type and message
+            will be included in the function result content when a function invocation fails.
+            When False, only a generic error message will be included.
+
+
+    """
+
+    def __init__(
+        self,
+        enabled: bool = True,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        max_consecutive_errors_per_request: int = DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
+        terminate_on_unknown_calls: bool = False,
+        additional_tools: Sequence[ToolProtocol] | None = None,
+        include_detailed_errors: bool = False,
+    ) -> None:
+        """Initialize FunctionInvocationConfiguration.
+
+        Args:
+            enabled: Whether function invocation is enabled.
+            max_iterations: Maximum number of function invocation iterations.
+            max_consecutive_errors_per_request: Maximum consecutive errors allowed per request.
+            terminate_on_unknown_calls: Whether to terminate on unknown function calls.
+            additional_tools: Additional tools to include for function execution.
+            include_detailed_errors: Whether to include detailed error information in function results.
+        """
+        self.enabled = enabled
+        if max_iterations < 1:
+            raise ValueError("max_iterations must be at least 1.")
+        self.max_iterations = max_iterations
+        if max_consecutive_errors_per_request < 0:
+            raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
+        self.max_consecutive_errors_per_request = max_consecutive_errors_per_request
+        self.terminate_on_unknown_calls = terminate_on_unknown_calls
+        self.additional_tools = additional_tools or []
+        self.include_detailed_errors = include_detailed_errors
+
+
 async def _auto_invoke_function(
     function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
     custom_args: dict[str, Any] | None = None,
     *,
+    config: FunctionInvocationConfiguration,
     tool_map: dict[str, AIFunction[BaseModel, Any]],
     sequence_index: int | None = None,
     request_index: int | None = None,
@@ -1025,6 +1185,7 @@ async def _auto_invoke_function(
         custom_args: Additional custom arguments to merge with parsed arguments.
 
     Keyword Args:
+        config: The function invocation configuration.
         tool_map: A mapping of tool names to AIFunction instances.
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
@@ -1037,29 +1198,33 @@ async def _auto_invoke_function(
         KeyError: If the requested function is not found in the tool map.
     """
     from ._types import (
-        FunctionApprovalRequestContent,
-        FunctionApprovalResponseContent,
-        FunctionCallContent,
         FunctionResultContent,
     )
 
+    # Note: The scenarios for approval_mode="always_require", declaration_only, and
+    # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
+    # this function is called. This function only handles the actual execution of approved,
+    # non-declaration-only functions.
+
     tool: AIFunction[BaseModel, Any] | None = None
-    if isinstance(function_call_content, FunctionCallContent):
+    if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)
+        # Tool should exist because _try_execute_function_calls validates this
         if tool is None:
-            raise KeyError(f"No tool or function named '{function_call_content.name}'")
-        if tool.approval_mode == "always_require":
-            return FunctionApprovalRequestContent(id=function_call_content.call_id, function_call=function_call_content)
+            exc = KeyError(f'Function "{function_call_content.name}" not found.')
+            return FunctionResultContent(
+                call_id=function_call_content.call_id,
+                result=f'Error: Requested function "{function_call_content.name}" not found.',
+                exception=exc,
+            )
     else:
-        if isinstance(function_call_content, FunctionApprovalResponseContent):
-            if function_call_content.approved:
-                tool = tool_map.get(function_call_content.function_call.name)
-                if tool is None:
-                    # we assume it is a hosted tool
-                    return function_call_content
-                function_call_content = function_call_content.function_call
-            else:
-                raise ToolException("Unapproved tool cannot be executed.")
+        # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
+        # and never reach this function, so we only handle approved=True cases here.
+        tool = tool_map.get(function_call_content.function_call.name)
+        if tool is None:
+            # we assume it is a hosted tool
+            return function_call_content
+        function_call_content = function_call_content.function_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
@@ -1068,10 +1233,10 @@ async def _auto_invoke_function(
     try:
         args = tool.input_model.model_validate(merged_args)
     except ValidationError as exc:
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            exception=exc,
-        )
+        message = "Error: Argument parsing failed."
+        if config.include_detailed_errors:
+            message = f"{message} Exception: {exc}"
+        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
     if not middleware_pipeline or (
         not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
     ):
@@ -1086,10 +1251,10 @@ async def _auto_invoke_function(
                 result=function_result,
             )
         except Exception as exc:
-            return FunctionResultContent(
-                call_id=function_call_content.call_id,
-                exception=exc,
-            )
+            message = "Error: Function failed."
+            if config.include_detailed_errors:
+                message = f"{message} Exception: {exc}"
+            return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
     # Execute through middleware pipeline if available
     from ._middleware import FunctionInvocationContext
 
@@ -1117,10 +1282,10 @@ async def _auto_invoke_function(
             result=function_result,
         )
     except Exception as exc:
-        return FunctionResultContent(
-            call_id=function_call_content.call_id,
-            exception=exc,
-        )
+        message = "Error: Function failed."
+        if config.include_detailed_errors:
+            message = f"{message} Exception: {exc}"
+        return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
 
 
 def _get_tool_map(
@@ -1141,7 +1306,7 @@ def _get_tool_map(
     return ai_function_list
 
 
-async def _execute_function_calls(
+async def _try_execute_function_calls(
     custom_args: dict[str, Any],
     attempt_idx: int,
     function_calls: Sequence["FunctionCallContent"] | Sequence["FunctionApprovalResponseContent"],
@@ -1149,6 +1314,7 @@ async def _execute_function_calls(
     | Callable[..., Any] \
     | MutableMapping[str, Any] \
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]",
+    config: FunctionInvocationConfiguration,
     middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
 ) -> Sequence["Contents"]:
     """Execute multiple function calls concurrently.
@@ -1158,22 +1324,33 @@ async def _execute_function_calls(
         attempt_idx: The index of the current attempt iteration.
         function_calls: A sequence of FunctionCallContent to execute.
         tools: The tools available for execution.
+        config: Configuration for function invocation.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
-        A list of Contents containing the results of each function call.
+        A list of Contents containing the results of each function call,
+        or the approval requests if any function requires approval,
+        or the original function calls if any are declaration only.
     """
     from ._types import FunctionApprovalRequestContent, FunctionCallContent
 
     tool_map = _get_tool_map(tools)
     approval_tools = [tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"]
+    declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
+    additional_tool_names = [tool.name for tool in config.additional_tools] if config.additional_tools else []
     # check if any are calling functions that need approval
     # if so, we return approval request for all
     approval_needed = False
+    declaration_only_flag = False
     for fcc in function_calls:
         if isinstance(fcc, FunctionCallContent) and fcc.name in approval_tools:
             approval_needed = True
             break
+        if isinstance(fcc, FunctionCallContent) and (fcc.name in declaration_only or fcc.name in additional_tool_names):
+            declaration_only_flag = True
+            break
+        if config.terminate_on_unknown_calls and isinstance(fcc, FunctionCallContent) and fcc.name not in tool_map:
+            raise KeyError(f'Error: Requested function "{fcc.name}" not found.')
     if approval_needed:
         # approval can only be needed for Function Call Contents, not Approval Responses.
         return [
@@ -1181,6 +1358,9 @@ async def _execute_function_calls(
             for fcc in function_calls
             if isinstance(fcc, FunctionCallContent)
         ]
+    if declaration_only_flag:
+        # return the declaration only tools to the user, since we cannot execute them.
+        return [fcc for fcc in function_calls if isinstance(fcc, FunctionCallContent)]
 
     # Run all function calls concurrently
     return await asyncio.gather(*[
@@ -1191,6 +1371,7 @@ async def _execute_function_calls(
             sequence_index=seq_idx,
             request_index=attempt_idx,
             middleware_pipeline=middleware_pipeline,
+            config=config,
         )
         for seq_idx, function_call in enumerate(function_calls)
     ])
@@ -1318,13 +1499,13 @@ def _handle_function_calls_response(
             messages: "str | ChatMessage | list[str] | list[ChatMessage]",
             **kwargs: Any,
         ) -> "ChatResponse":
-            from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
                 FunctionApprovalRequestContent,
                 FunctionCallContent,
                 FunctionResultContent,
+                prepare_messages,
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
@@ -1334,17 +1515,23 @@ def _handle_function_calls_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
-            # Get max_iterations from instance additional_properties or class attribute
-            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
-            if hasattr(self, "additional_properties") and self.additional_properties:
-                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
-            elif hasattr(self.__class__, "MAX_ITERATIONS"):
-                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
+            if not config:
+                # Default config if not set
+                config = FunctionInvocationConfiguration()
 
+            errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
-            for attempt_idx in range(instance_max_iterations):
+
+            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
+            tools = _extract_tools(kwargs)
+            if tools and kwargs.get("tool_choice") is None:
+                kwargs["tool_choice"] = "auto"
+
+            for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
@@ -1352,13 +1539,29 @@ def _handle_function_calls_response(
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
                     if approved_responses:
-                        approved_function_results = await _execute_function_calls(
+                        approved_function_results = await _try_execute_function_calls(
                             custom_args=kwargs,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
+                            config=config,
                         )
+                        if any(
+                            fcr.exception is not None
+                            for fcr in approved_function_results
+                            if isinstance(fcr, FunctionResultContent)
+                        ):
+                            errors_in_a_row += 1
+                            # no need to reset the counter here, since this is the start of a new attempt.
+                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                            logger.warning(
+                                "Maximum consecutive function call errors reached (%d). "
+                                "Stopping further function calls for this request.",
+                                config.max_consecutive_errors_per_request,
+                            )
+                            # break out of the loop and do the fallback response
+                            break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 response = await func(self, messages=prepped_messages, **kwargs)
@@ -1381,15 +1584,15 @@ def _handle_function_calls_response(
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    function_call_results: list[Contents] = await _execute_function_calls(
+                    function_call_results: list[Contents] = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
+                        config=config,
                     )
-
-                    # Check if we have approval requests in the results
+                    # Check if we have approval requests or function calls (not results) in the results
                     if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
@@ -1402,6 +1605,26 @@ def _handle_function_calls_response(
                             result_message = ChatMessage(role="assistant", contents=function_call_results)
                             response.messages.append(result_message)
                         return response
+                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                        # the function calls are already in the response, so we just continue
+                        return response
+
+                    if any(
+                        fcr.exception is not None
+                        for fcr in function_call_results
+                        if isinstance(fcr, FunctionResultContent)
+                    ):
+                        errors_in_a_row += 1
+                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                            logger.warning(
+                                "Maximum consecutive function call errors reached (%d). "
+                                "Stopping further function calls for this request.",
+                                config.max_consecutive_errors_per_request,
+                            )
+                            # break out of the loop and do the fallback response
+                            break
+                    else:
+                        errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
@@ -1413,7 +1636,7 @@ def _handle_function_calls_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
@@ -1465,7 +1688,6 @@ def _handle_function_calls_streaming_response(
             **kwargs: Any,
         ) -> AsyncIterable["ChatResponseUpdate"]:
             """Wrap the inner get streaming response method to handle tool calls."""
-            from ._clients import prepare_messages
             from ._middleware import extract_and_merge_function_middleware
             from ._types import (
                 ChatMessage,
@@ -1473,6 +1695,7 @@ def _handle_function_calls_streaming_response(
                 ChatResponseUpdate,
                 FunctionCallContent,
                 FunctionResultContent,
+                prepare_messages,
             )
 
             # Extract and merge function middleware from chat client with kwargs pipeline
@@ -1482,16 +1705,16 @@ def _handle_function_calls_streaming_response(
             # because the underlying function may not preserve it in kwargs
             stored_middleware_pipeline = kwargs.get("_function_middleware_pipeline")
 
-            # Get max_iterations from instance additional_properties or class attribute
-            instance_max_iterations: int = DEFAULT_MAX_ITERATIONS
-            if hasattr(self, "additional_properties") and self.additional_properties:
-                instance_max_iterations = self.additional_properties.get("max_iterations", DEFAULT_MAX_ITERATIONS)
-            elif hasattr(self.__class__, "MAX_ITERATIONS"):
-                instance_max_iterations = getattr(self.__class__, "MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)
+            # Get the config for function invocation (not part of ChatClientProtocol, hence getattr)
+            config: FunctionInvocationConfiguration | None = getattr(self, "function_invocation_configuration", None)
+            if not config:
+                # Default config if not set
+                config = FunctionInvocationConfiguration()
 
+            errors_in_a_row: int = 0
             prepped_messages = prepare_messages(messages)
             fcc_messages: "list[ChatMessage]" = []
-            for attempt_idx in range(instance_max_iterations):
+            for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
                     tools = _extract_tools(kwargs)
@@ -1499,13 +1722,21 @@ def _handle_function_calls_streaming_response(
                     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
                     approved_function_results: list[Contents] = []
                     if approved_responses:
-                        approved_function_results = await _execute_function_calls(
+                        approved_function_results = await _try_execute_function_calls(
                             custom_args=kwargs,
                             attempt_idx=attempt_idx,
                             function_calls=approved_responses,
                             tools=tools,  # type: ignore
                             middleware_pipeline=stored_middleware_pipeline,
+                            config=config,
                         )
+                        if any(
+                            fcr.exception is not None
+                            for fcr in approved_function_results
+                            if isinstance(fcr, FunctionResultContent)
+                        ):
+                            errors_in_a_row += 1
+                            # no need to reset the counter here, since this is the start of a new attempt.
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
@@ -1551,15 +1782,16 @@ def _handle_function_calls_streaming_response(
                 if function_calls and tools:
                     # Use the stored middleware pipeline instead of extracting from kwargs
                     # because kwargs may have been modified by the underlying function
-                    function_call_results: list[Contents] = await _execute_function_calls(
+                    function_call_results: list[Contents] = await _try_execute_function_calls(
                         custom_args=kwargs,
                         attempt_idx=attempt_idx,
                         function_calls=function_calls,
                         tools=tools,  # type: ignore
                         middleware_pipeline=stored_middleware_pipeline,
+                        config=config,
                     )
 
-                    # Check if we have approval requests in the results
+                    # Check if we have approval requests or function calls (not results) in the results
                     if any(isinstance(fccr, FunctionApprovalRequestContent) for fccr in function_call_results):
                         # Add approval requests to the existing assistant message (with tool_calls)
                         # instead of creating a separate tool message
@@ -1575,6 +1807,26 @@ def _handle_function_calls_streaming_response(
                             yield ChatResponseUpdate(contents=function_call_results, role="assistant")
                             response.messages.append(result_message)
                         return
+                    if any(isinstance(fccr, FunctionCallContent) for fccr in function_call_results):
+                        # the function calls were already yielded.
+                        return
+
+                    if any(
+                        fcr.exception is not None
+                        for fcr in function_call_results
+                        if isinstance(fcr, FunctionResultContent)
+                    ):
+                        errors_in_a_row += 1
+                        if errors_in_a_row >= config.max_consecutive_errors_per_request:
+                            logger.warning(
+                                "Maximum consecutive function call errors reached (%d). "
+                                "Stopping further function calls for this request.",
+                                config.max_consecutive_errors_per_request,
+                            )
+                            # break out of the loop and do the fallback response
+                            break
+                    else:
+                        errors_in_a_row = 0
 
                     # add a single ChatMessage to the response with the results
                     result_message = ChatMessage(role="tool", contents=function_call_results)
@@ -1587,7 +1839,7 @@ def _handle_function_calls_streaming_response(
                     # this runs in every but the first run
                     # we need to keep track of all function call messages
                     fcc_messages.extend(response.messages)
-                    if getattr(kwargs.get("chat_options"), "store", False):
+                    if response.conversation_id is not None:
                         prepped_messages.clear()
                         prepped_messages.append(result_message)
                     else:
@@ -1647,10 +1899,6 @@ def use_function_invocation(
     """
     if getattr(chat_client, FUNCTION_INVOKING_CHAT_CLIENT_MARKER, False):
         return chat_client
-
-    # Set MAX_ITERATIONS as a class variable if not already set
-    if not hasattr(chat_client, "MAX_ITERATIONS"):
-        chat_client.MAX_ITERATIONS = DEFAULT_MAX_ITERATIONS  # type: ignore
 
     try:
         chat_client.get_response = _handle_function_calls_response(  # type: ignore
