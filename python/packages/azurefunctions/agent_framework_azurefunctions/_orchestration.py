@@ -186,14 +186,13 @@ class DurableAIAgent(AgentProtocol):
 
         logger.debug(f"[load_agent_response] Loading agent response of type: {type(agent_response)}")
 
-        response = None
         if isinstance(agent_response, AgentRunResponse):
-            response = agent_response
-        elif isinstance(agent_response, dict):
+            return agent_response
+        if isinstance(agent_response, dict):
             logger.debug("[load_agent_response] Converting dict payload using AgentRunResponse.from_dict")
-            response = AgentRunResponse.from_dict(agent_response)
+            return AgentRunResponse.from_dict(agent_response)
 
-        return response
+        raise TypeError(f"Unsupported type for agent_response: {type(agent_response)}")
 
     def _ensure_response_format(
         self,

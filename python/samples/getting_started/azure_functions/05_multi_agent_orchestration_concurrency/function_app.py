@@ -52,8 +52,10 @@ app.add_agent(agents[1])
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     """Fan out to two domain-specific agents and aggregate their responses.
-    
-    Note: This uses generator protocol to achieve true parallelism.
+
+    Note: The generator protocol lets us extract the Durable Task objects so we
+    can pass them to task_all for true parallelism. If you only use `yield
+    from` on each run call, the agents execute sequentially.
     For sequential execution, you can simply use:
         physicist_result = yield from physicist.run(messages=prompt, thread=physicist_thread)
         chemist_result = yield from chemist.run(messages=prompt, thread=chemist_thread)
@@ -84,7 +86,7 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     # Each generator returns its final value via StopIteration.value
     physicist_result = None
     chemist_result = None
-    
+
     try:
         physicist_gen.send(task_results[0])
     except StopIteration as e:

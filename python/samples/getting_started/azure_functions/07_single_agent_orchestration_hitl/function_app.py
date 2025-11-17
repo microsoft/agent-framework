@@ -12,10 +12,9 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any
 
 import azure.functions as func
-from agent_framework import AgentRunResponse
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
@@ -104,7 +103,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
 
     content = initial_raw.value
     logger.info("Type of content after extraction: %s", type(content))
-    
+
     if content is None or not isinstance(content, GeneratedContent):
         raise ValueError("Agent returned no content after extraction.")
 
@@ -149,7 +148,11 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
                 response_format=GeneratedContent,
             )
 
-            content = cast(GeneratedContent, rewritten_raw.value)
+            rewritten_value = rewritten_raw.value
+            if rewritten_value is None or not isinstance(rewritten_value, GeneratedContent):
+                raise ValueError("Agent returned no content after rewrite.")
+
+            content = rewritten_value
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
@@ -282,7 +285,7 @@ async def get_orchestration_status(
         show_history_output=False,
         show_input=True,
     )
-    
+
     # Check if status is None or if the instance doesn't exist (runtime_status is None)
     if status is None or getattr(status, "runtime_status", None) is None:
         return func.HttpResponse(
