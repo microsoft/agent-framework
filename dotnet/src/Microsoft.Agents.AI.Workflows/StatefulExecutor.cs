@@ -110,7 +110,7 @@ public abstract class StatefulExecutor<TState> : Executor
     {
         if (!skipCache && !context.ConcurrentRunsEnabled)
         {
-            TState newState = await invocation(this._stateCache ?? (this._initialStateFactory()),
+            TState newState = await invocation(this._stateCache ?? this._initialStateFactory(),
                                                context,
                                                cancellationToken).ConfigureAwait(false)
                            ?? this._initialStateFactory();

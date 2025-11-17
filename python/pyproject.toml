@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251112.post1"
+version = "1.0.0b251114"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -215,11 +215,6 @@ executor.type = "uv"
 
 [tool.poe.tasks]
 markdown-code-lint = "uv run python check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
-docs-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --group=docs"
-docs-clean = "rm -rf docs/build"
-docs-build = "uv run python ./docs/generate_docs.py"
-docs-debug = "uv run python -m debugpy --listen 5678 ./docs/generate_docs.py"
-docs-rename = "mv docs/build/agent-framework-core docs/build/agent-framework"
 pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
 install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
 test = "python run_tasks_in_packages_if_exists.py test"
@@ -239,21 +234,23 @@ build = ["build-packages", "build-meta"]
 publish = "uv publish"
 # combined checks
 check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint"]
-pre-commit-check = ["fmt", "lint", "pyright", "markdown-code-lint"]
 
 [tool.poe.tasks.all-tests-cov]
 cmd = """
 pytest --import-mode=importlib
 --cov=agent_framework
+--cov=agent_framework_core
 --cov=agent_framework_a2a
 --cov=agent_framework_ag_ui
+--cov=agent_framework_anthropic
 --cov=agent_framework_azure_ai
 --cov=agent_framework_azurefunctions
 --cov=agent_framework_chatkit
 --cov=agent_framework_copilotstudio
 --cov=agent_framework_mem0
---cov=agent_framework_redis
 --cov=agent_framework_purview
+--cov=agent_framework_redis
+--cov-config=pyproject.toml
 --cov-report=term-missing:skip-covered
 --ignore-glob=packages/lab/**
 --ignore-glob=packages/devui/**
@@ -282,6 +279,7 @@ packages/azure-ai/tests
 [tool.poe.tasks.venv]
 cmd = "uv venv --clear --python $python"
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+
 [tool.poe.tasks.setup]
 sequence = [
     { ref = "venv --python $python"},
@@ -289,43 +287,46 @@ sequence = [
     { ref = "pre-commit-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
-[tool.poe.tasks.docs-full]
+
+[tool.poe.tasks.pre-commit-markdown-code-lint]
+cmd = "uv run python check_md_code_blocks.py ${files} --no-glob --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+[tool.poe.tasks.pre-commit-pyright]
+cmd = "uv run python run_tasks_in_changed_packages.py pyright ${files}"
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+
+[tool.poe.tasks.ci-mypy]
+shell = """
+# Try multiple strategies to get changed files
+if [ -n "$GITHUB_BASE_REF" ]; then
+    # In GitHub Actions PR context
+    git fetch origin $GITHUB_BASE_REF --depth=1 2>/dev/null || true
+    CHANGED_FILES=$(git diff --name-only origin/$GITHUB_BASE_REF...HEAD -- . 2>/dev/null || \
+                    git diff --name-only FETCH_HEAD...HEAD -- . 2>/dev/null || \
+                    git diff --name-only HEAD^...HEAD -- . 2>/dev/null || \
+                    echo ".")
+else
+    # Local development
+    CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- . 2>/dev/null || \
+                    git diff --name-only main...HEAD -- . 2>/dev/null || \
+                    git diff --name-only HEAD~1 -- . 2>/dev/null || \
+                    echo ".")
+fi
+echo "Changed files: $CHANGED_FILES"
+uv run python run_tasks_in_changed_packages.py mypy $CHANGED_FILES
+"""
+interpreter = "bash"
+
+[tool.poe.tasks.pre-commit-check]
 sequence = [
-    { ref = "clean-dist" },
-    { ref = 'build' },
-    { ref = "docs-clean" },
-    { ref = "docs-build" },
-    { ref = "docs-rename" }
+    { ref = "fmt" },
+    { ref = "lint" },
+    { ref = "pre-commit-pyright ${files}" },
+    { ref = "pre-commit-markdown-code-lint ${files}" }
 ]
-[tool.poe.tasks.docs-full-setup-install]
-sequence = [
-    { ref = "setup --python 3.11" },
-    { ref = "docs-install" },
-    { ref = 'build' },
-    { ref = "docs-clean" },
-    { ref = "docs-build" },
-    { ref = "docs-rename" }
-]
-[tool.poe.tasks.docs-full-install]
-sequence = [
-    { ref = "docs-install" },
-    { ref = 'build' },
-    { ref = "docs-clean" },
-    { ref = "docs-build" },
-    { ref = "docs-rename" }
-]
-[tool.poe.tasks.docs-rebuild]
-sequence = [
-    { ref = "docs-clean" },
-    { ref = "docs-build" },
-    { ref = "docs-rename" }
-]
-[tool.poe.tasks.docs-rebuild-debug]
-sequence = [
-    { ref = "docs-clean" },
-    { ref = "docs-debug" },
-    { ref = "docs-rename" }
-]
+args = [{ name = "files", default = ".", positional = true, multiple = true }]
 
 [tool.setuptools.packages.find]
 where = ["packages"]

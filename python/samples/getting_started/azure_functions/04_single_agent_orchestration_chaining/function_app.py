@@ -12,10 +12,9 @@ import json
 import logging
 from typing import Any
 
-import azure.durable_functions as df
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
@@ -74,7 +73,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_single_agent_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Start the orchestration and return status metadata."""
 
@@ -104,7 +103,7 @@ async def start_single_agent_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Return orchestration runtime status."""
 

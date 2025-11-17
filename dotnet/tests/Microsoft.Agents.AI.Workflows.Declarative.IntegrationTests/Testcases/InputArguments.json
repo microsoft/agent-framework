@@ -1,0 +1,23 @@
+﻿{
+  "description": "Authors a poem in the style specified by the input argument.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "Why is the sky blue?"
+    }
+  },
+  "validation": {
+    "conversation_count": 1,
+    "min_action_count": 1,
+    "min_response_count": 1,
+    "min_message_count": 2,
+    "actions": {
+      "start": [
+        "invoke_poem"
+      ],
+      "final": [
+        "invoke_poem"
+      ]
+    }
+  }
+}
