@@ -69,8 +69,51 @@ def _mcp_prompt_message_to_chat_message(
 def _mcp_call_tool_result_to_ai_contents(
     mcp_type: types.CallToolResult,
 ) -> list[Contents]:
-    """Convert a MCP container type to a Agent Framework type."""
-    return [_mcp_type_to_ai_content(item) for item in mcp_type.content]
+    """Convert a MCP container type to a Agent Framework type.
+
+    This function extracts the complete _meta field from CallToolResult objects
+    and merges all metadata into the additional_properties field of converted
+    content items. This includes error state handling via the isError field
+    and preservation of arbitrary metadata such as token usage, costs, etc.
+
+    Args:
+        mcp_type: The MCP CallToolResult object to convert.
+
+    Returns:
+        A list of Agent Framework content items with metadata merged into
+        additional_properties.
+    """
+    # Extract _meta field using getattr for compatibility
+    meta_data = getattr(mcp_type, "_meta", None)
+
+    # Convert each content item and merge metadata
+    result_contents = []
+    for item in mcp_type.content:
+        content = _mcp_type_to_ai_content(item)
+
+        # Merge _meta data into additional_properties if available
+        if meta_data:
+            # Get existing additional_properties or create empty dict
+            existing_props = getattr(content, "additional_properties", None) or {}
+
+            # Create merged properties with _meta data
+            merged_props = existing_props.copy()
+
+            # Handle dict-like _meta data
+            if hasattr(meta_data, "__dict__"):
+                merged_props.update(meta_data.__dict__)
+            elif isinstance(meta_data, dict):
+                merged_props.update(meta_data)
+            else:
+                # If _meta is not dict-like, store it under a special key
+                merged_props["_meta"] = meta_data
+
+            # Update the content's additional_properties
+            content.additional_properties = merged_props
+
+        result_contents.append(content)
+
+    return result_contents
 
 
 def _mcp_type_to_ai_content(
