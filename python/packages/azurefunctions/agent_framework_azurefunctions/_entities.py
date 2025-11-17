@@ -65,9 +65,49 @@ class AgentEntity:
         self.agent = agent
         self.state = DurableAgentState()
         self.callback = callback
-        self._pending_requests: dict[str, DurableAgentStateRequest] = {}
 
         logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
+
+    def _is_error_response(self, entry: Any) -> bool:
+        """Check if a conversation history entry is an error response.
+
+        Error responses should be kept in history for tracking but not sent to the agent
+        since Azure OpenAI doesn't support 'error' content type.
+
+        Args:
+            entry: A conversation history entry (DurableAgentStateRequest or DurableAgentStateResponse)
+
+        Returns:
+            True if the entry is a response containing error content, False otherwise
+        """
+        from ._durable_agent_state import DurableAgentStateErrorContent, DurableAgentStateResponse
+
+        # Handle both object and dictionary forms
+        is_response = isinstance(entry, DurableAgentStateResponse)
+        if isinstance(entry, dict):
+            is_response = entry.get("json_type") == "response" or entry.get("$type") == "response"
+
+        if not is_response:
+            return False
+
+        # Get messages from entry (handle both object and dict forms)
+        messages = entry.messages if hasattr(entry, "messages") else entry.get("messages", [])
+
+        # Check if any message in the response contains error content
+        for message in messages:
+            # Handle both object and dict forms of message
+            contents = message.contents if hasattr(message, "contents") else message.get("contents", [])
+
+            for content in contents:
+                # Check content type (handle both object and dict forms)
+                if isinstance(content, DurableAgentStateErrorContent):
+                    return True
+                if isinstance(content, dict):
+                    content_type = content.get("type") or content.get("$type")
+                    if content_type == "error":
+                        return True
+
+        return False
 
     async def run_agent(
         self,
@@ -106,10 +146,8 @@ class AgentEntity:
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
-        # Store request in pending (will be combined with response later)
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self.state.data.conversationHistory.append(state_request)
-        self._pending_requests[correlationId] = state_request
 
         logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
         logger.debug(f"[AgentEntity.run_agent] Thread ID: {thread_id}")
@@ -123,9 +161,13 @@ class AgentEntity:
         try:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
 
-            # Build messages from conversation history plus the current request
+            # Build messages from conversation history, excluding error responses
+            # Error responses are kept in history for tracking but not sent to the agent
             chat_messages: list[Any] = [
-                m.to_chat_message() for entry in self.state.data.conversationHistory for m in entry.messages
+                m.to_chat_message()
+                for entry in self.state.data.conversationHistory
+                if not self._is_error_response(entry)
+                for m in entry.messages
             ]
 
             # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
@@ -152,19 +194,10 @@ class AgentEntity:
                 type(agent_run_response).__name__,
             )
 
-            # Convert response into DurableAgentStateResponse and combine with request
-            state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
-
-            # Remove from pending requests
-            self._pending_requests.pop(correlationId, None)
-
-            # Append the response as a separate entry
-            self.state.data.conversationHistory.append(state_response)
-
             response_text = None
             structured_response = None
-
             response_str: str | None = None
+
             try:
                 if response_format:
                     try:
@@ -186,6 +219,9 @@ class AgentEntity:
                 )
                 response_text = "Error extracting response"
 
+            state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
+            self.state.data.conversationHistory.append(state_response)
+
             agent_response = AgentResponse(
                 response=response_text,
                 message=str(message),
@@ -196,8 +232,6 @@ class AgentEntity:
             )
             result = agent_response.to_dict()
 
-            content = json.dumps(structured_response) if structured_response else (response_text or "")
-            self.state.add_assistant_message(content, agent_run_response, correlationId)
             logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
 
             return result
@@ -213,9 +247,6 @@ class AgentEntity:
 
             # Create error response and store it in conversation history so polling can find it
             from agent_framework import ChatMessage, ErrorContent
-
-            # Remove the pending request from tracking
-            self._pending_requests.pop(correlationId, None)
 
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(

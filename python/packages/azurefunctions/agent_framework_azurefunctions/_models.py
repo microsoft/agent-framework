@@ -283,6 +283,9 @@ class RunRequest:
         enable_tool_calls: Whether to enable tool calls for this request
         thread_id: Optional thread ID for tracking
         correlationId: Optional correlation ID for tracking the response to this specific request
+        author_name: Optional name of the message author
+        created_at: Optional timestamp when the request was created
+        extension_data: Optional additional metadata
     """
 
     message: str
@@ -303,6 +306,9 @@ class RunRequest:
         enable_tool_calls: bool = True,
         thread_id: str | None = None,
         correlationId: str | None = None,
+        author_name: str | None = None,
+        created_at: str | None = None,
+        extension_data: dict[str, Any] | None = None,
     ) -> None:
         self.message = message
         self.role = self.coerce_role(role)
@@ -310,6 +316,9 @@ class RunRequest:
         self.enable_tool_calls = enable_tool_calls
         self.thread_id = thread_id
         self.correlationId = correlationId
+        self.author_name = author_name
+        self.created_at = created_at
+        self.extension_data = extension_data
 
     @staticmethod
     def coerce_role(value: Role | str | None) -> Role:
@@ -354,6 +363,9 @@ class RunRequest:
             enable_tool_calls=data.get("enable_tool_calls", True),
             thread_id=data.get("thread_id"),
             correlationId=data.get("correlationId"),
+            author_name=data.get("author_name"),
+            created_at=data.get("created_at"),
+            extension_data=data.get("extension_data"),
         )
 
 

@@ -29,7 +29,8 @@ RESPONSE_FORMAT_JSON: str = "json"
 RESPONSE_FORMAT_TEXT: str = "text"
 WAIT_FOR_RESPONSE_FIELD: str = "wait_for_response"
 WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
-
+DEFAULT_MAX_POLL_RETRIES: int = 30
+DEFAULT_POLL_INTERVAL_SECONDS: float = 1.0
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
@@ -71,16 +72,16 @@ class AgentFunctionApp(DFAppBase):
     .. code-block:: python
 
         from agent_framework.azure import AgentFunctionApp
-        from agent_framework.azure import AzureOpenAIAssistantsClient
+        from agent_framework.azure import AzureOpenAIChatClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIAssistantsClient(...).create_agent(
+        weather_agent = AzureOpenAIChatClient(...).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIAssistantsClient(...).create_agent(
+        math_agent = AzureOpenAIChatClient(...).create_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -128,23 +129,23 @@ class AgentFunctionApp(DFAppBase):
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
-        max_poll_retries: int = 30,
-        poll_interval_seconds: float = 1,
+        max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
 
-        Args:
-            agents: List of agent instances to register
-            http_auth_level: HTTP authentication level (default: FUNCTION)
-            enable_health_check: Enable built-in health check endpoint (default: True)
-            enable_http_endpoints: Enable HTTP endpoints for agents (default: True)
-            max_poll_retries: Maximum number of polling attempts when waiting for a response
-            poll_interval_seconds: Delay (in seconds) between polling attempts
-            default_callback: Optional callback invoked for agents without specific callbacks
+        :param agents: List of agent instances to register.
+        :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
+        :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
+        :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
+        :param max_poll_retries: Maximum polling attempts when waiting for a response.
+            Defaults to ``DEFAULT_MAX_POLL_RETRIES``.
+        :param poll_interval_seconds: Delay in seconds between polling attempts.
+            Defaults to ``DEFAULT_POLL_INTERVAL_SECONDS``.
+        :param default_callback: Optional callback invoked for agents without specific callbacks.
 
-        Note:
-            If no agents are provided, they can be added later using add_agent().
+        :note: If no agents are provided, they can be added later using :meth:`add_agent`.
         """
         logger.debug("[AgentFunctionApp] Initializing with Durable Entities...")
 
@@ -161,14 +162,14 @@ class AgentFunctionApp(DFAppBase):
         try:
             retries = int(max_poll_retries)
         except (TypeError, ValueError):
-            retries = 10
+            retries = DEFAULT_MAX_POLL_RETRIES
         self.max_poll_retries = max(1, retries)
 
         try:
             interval = float(poll_interval_seconds)
         except (TypeError, ValueError):
-            interval = 0.5
-        self.poll_interval_seconds = interval if interval > 0 else 0.5
+            interval = DEFAULT_POLL_INTERVAL_SECONDS
+        self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
         if agents:
             # Register all provided agents
@@ -771,13 +772,8 @@ class AgentFunctionApp(DFAppBase):
 
     def _should_wait_for_response(self, req: func.HttpRequest, req_body: dict[str, Any]) -> bool:
         """Determine whether the caller requested to wait for the response."""
-        header_value = None
-        raw_headers = req.headers
-        if isinstance(raw_headers, Mapping):
-            for key, value in raw_headers.items():
-                if str(key).lower() == WAIT_FOR_RESPONSE_HEADER:
-                    header_value = value
-                    break
+        headers: dict[str, str] = self._extract_normalized_headers(req)
+        header_value: str | None = headers.get(WAIT_FOR_RESPONSE_HEADER)
 
         if header_value is not None:
             return self._coerce_to_bool(header_value)

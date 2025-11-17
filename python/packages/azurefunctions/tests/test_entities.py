@@ -15,7 +15,13 @@ import pytest
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role
 from pydantic import BaseModel
 
-from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
+from agent_framework_azurefunctions._durable_agent_state import (
+    DurableAgentState,
+    DurableAgentStateData,
+    DurableAgentStateMessage,
+    DurableAgentStateRequest,
+    DurableAgentStateTextContent,
+)
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 from agent_framework_azurefunctions._models import RunRequest
 
@@ -275,25 +281,6 @@ class TestAgentEntityRunAgent:
         )
         assert len(entity.state.data.conversationHistory) == 6
 
-    async def test_run_agent_stores_last_response(self) -> None:
-        """Test that run_agent stores the last response."""
-        mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=_agent_response("Response 1"))
-
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
-
-        await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-entity-4a"}
-        )
-        assert entity.state.last_response == "Response 1"
-
-        mock_agent.run = AsyncMock(return_value=_agent_response("Response 2"))
-        await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-entity-4b"}
-        )
-        assert entity.state.last_response == "Response 2"
-
     async def test_run_agent_with_none_thread_id(self) -> None:
         """Test run_agent with a None thread identifier."""
         mock_agent = Mock()
@@ -377,10 +364,19 @@ class TestAgentEntityReset:
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        # Add some history
+        # Add some history with proper DurableAgentStateEntry objects
         entity.state.data.conversationHistory = [
-            ChatMessage(role="user", text="msg1"),
-            ChatMessage(role="assistant", text="resp1"),
+            DurableAgentStateRequest(
+                json_type="request",
+                correlationId="test-1",
+                created_at=datetime.now(),
+                messages=[
+                    DurableAgentStateMessage(
+                        role="user",
+                        contents=[DurableAgentStateTextContent(text="msg1")],
+                    )
+                ],
+            ),
         ]
 
         mock_context = Mock()
@@ -388,12 +384,13 @@ class TestAgentEntityReset:
 
         assert entity.state.data.conversationHistory == []
 
-    def test_reset_clears_last_response(self) -> None:
-        """Test that reset clears the last response."""
+    def test_reset_with_extension_data(self) -> None:
+        """Test that reset works when entity has extension data."""
         mock_agent = Mock()
         entity = AgentEntity(mock_agent)
 
-        entity.state.data = {"some_key": "some_value"}
+        # Set up some initial state with conversation history
+        entity.state.data = DurableAgentStateData(conversationHistory=[], extensionData={"some_key": "some_value"})
 
         mock_context = Mock()
         entity.reset(mock_context)
@@ -436,7 +433,6 @@ class TestAgentEntityReset:
         # Verify state after reset
         assert entity.state.message_count == 0
         assert len(entity.state.data.conversationHistory) == 0
-        assert entity.state.last_response is None
 
 
 class TestCreateAgentEntity:
@@ -484,13 +480,22 @@ class TestCreateAgentEntity:
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = {
-            "conversationHistory": [
-                ChatMessage(
-                    role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
-                ).to_dict()
-            ],
-            "message_count": 0,
-            "last_response": None,
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [
+                    {
+                        "$type": "request",
+                        "correlationId": "test-correlation-id",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [{"$type": "text", "text": "test"}],
+                            }
+                        ],
+                    }
+                ]
+            },
         }
 
         # Execute
@@ -504,9 +509,7 @@ class TestCreateAgentEntity:
         # Verify state was cleared
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["message_count"] == 0
         assert state["data"]["conversationHistory"] == []
-        assert state["last_response"] is None
 
     def test_entity_function_handles_unknown_operation(self) -> None:
         """Test that the entity function handles unknown operations."""
@@ -546,7 +549,7 @@ class TestCreateAgentEntity:
         assert result["status"] == "reset"
         assert mock_context.set_state.called
         state = mock_context.set_state.call_args[0][0]
-        assert state["data"] == {"conversationHistory": [], "extensionData": None}
+        assert state["data"] == {"conversationHistory": []}
 
     def test_entity_function_restores_existing_state(self) -> None:
         """Test that the entity function restores existing state."""
@@ -555,16 +558,17 @@ class TestCreateAgentEntity:
         entity_function = create_agent_entity(mock_agent)
 
         existing_state = {
-            "message_count": 5,
-            "conversationHistory": [
-                ChatMessage(
-                    role="user", text="msg1", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
-                ).to_dict(),
-                ChatMessage(
-                    role="assistant", text="resp1", additional_properties={"timestamp": "2024-01-01T00:05:00Z"}
-                ).to_dict(),
-            ],
-            "last_response": "resp1",
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [
+                    ChatMessage(
+                        role="user", text="msg1", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
+                    ).to_dict(),
+                    ChatMessage(
+                        role="assistant", text="resp1", additional_properties={"timestamp": "2024-01-01T00:05:00Z"}
+                    ).to_dict(),
+                ],
+            },
         }
 
         mock_context = Mock()

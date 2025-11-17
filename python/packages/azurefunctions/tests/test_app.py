@@ -402,7 +402,7 @@ class TestAgentEntityOperations:
         await entity.run_agent(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"}
         )
-        assert len(entity.state.data.conversationHistory[0].messages) == 1
+        assert len(entity.state.data.conversationHistory) == 4
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -464,9 +464,10 @@ class TestAgentEntityFactory:
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = {
-            "message_count": 5,
-            "conversationHistory": [{"role": "user", "content": "test"}],
-            "last_response": "Test",
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [{"role": "user", "content": "test"}],
+            },
         }
 
         # Execute entity function
@@ -503,9 +504,10 @@ class TestAgentEntityFactory:
 
         # Mock context with existing state
         existing_state = {
-            "message_count": 3,
-            "conversationHistory": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
-            "last_response": "resp1",
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
+            },
         }
 
         mock_context = Mock()
