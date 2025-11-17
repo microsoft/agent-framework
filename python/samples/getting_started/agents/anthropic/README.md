@@ -8,6 +8,7 @@ This folder contains examples demonstrating how to use Anthropic's Claude models
 |------|-------------|
 | [`anthropic_basic.py`](anthropic_basic.py) | Demonstrates how to setup a simple agent using the AnthropicClient, with both streaming and non-streaming responses. |
 | [`anthropic_advanced.py`](anthropic_advanced.py) | Shows advanced usage of the AnthropicClient, including hosted tools and `thinking`. |
+| [`anthropic_skills.py`](anthropic_skills.py) | Illustrates how to use Anthropic-managed Skills with an agent, including the Code Interpreter tool and file generation and saving. |
 
 ## Environment Variables
 

@@ -11,9 +11,6 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
-    experimental:
-      nuget-native-updater: false
-      enable-cooldown-metrics-collection: false
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
@@ -28,6 +25,14 @@ updates:
       - "dependencies"
 
   # Maintain dependencies for python
+  - package-ecosystem: "pip"
+    directory: "python/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "python"
+      - "dependencies"
   - package-ecosystem: "uv"
     directory: "python/"
     schedule:
