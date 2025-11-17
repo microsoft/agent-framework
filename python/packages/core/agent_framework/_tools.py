@@ -631,6 +631,9 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     @property
     def declaration_only(self) -> bool:
         """Indicate whether the function is declaration only (i.e., has no implementation)."""
+        # Check for explicit _declaration_only attribute first (used in tests)
+        if hasattr(self, "_declaration_only") and self._declaration_only:
+            return True
         return self.func is None
 
     def __get__(self, obj: Any, objtype: type | None = None) -> "AIFunction[ArgsT, ReturnT]":
@@ -678,7 +681,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        if self.func is None:
+        if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         if self.max_invocations is not None and self.invocation_count >= self.max_invocations:
             raise ToolException(
@@ -893,6 +896,12 @@ def _parse_annotation(annotation: Any) -> Any:
 
 def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
+    # Unwrap AIFunction objects to get the underlying function
+    from agent_framework._tools import AIFunction
+
+    if isinstance(func, AIFunction):
+        func = func.func  # type: ignore[assignment]
+
     sig = inspect.signature(func)
     fields = {
         pname: (
