@@ -124,7 +124,7 @@ class AzureAISearchContextProvider(ContextProvider):
             )
     """
 
-    DEFAULT_CONTEXT_PROMPT: str = "Use the following context to answer the question:"
+    _DEFAULT_SEARCH_CONTEXT_PROMPT = "Use the following context to answer the question:"
 
     def __init__(
         self,
@@ -168,7 +168,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 Signature: async def embed(text: str) -> list[float]
                 Required if vector_field_name is specified.
             context_prompt: Custom prompt to prepend to retrieved context.
-                Default: Uses DEFAULT_CONTEXT_PROMPT.
+                Default: "Use the following context to answer the question:"
             azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
                 Required for agentic mode. Example: "https://myproject.services.ai.azure.com"
             model_deployment_name: Model deployment name in the Azure AI project.
@@ -195,7 +195,7 @@ class AzureAISearchContextProvider(ContextProvider):
         self.semantic_configuration_name = semantic_configuration_name
         self.vector_field_name = vector_field_name
         self.embedding_function = embedding_function
-        self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
+        self.context_prompt = context_prompt or self._DEFAULT_SEARCH_CONTEXT_PROMPT
 
         # Agentic mode parameters (Knowledge Base)
         # azure_openai_resource_url: The actual Azure OpenAI endpoint for model calls

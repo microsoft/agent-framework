@@ -158,7 +158,7 @@ class TestSearchProviderInitialization:
             credential=AzureKeyCredential("test-key"),
             mode="semantic",
         )
-        assert provider.context_prompt == provider.DEFAULT_CONTEXT_PROMPT
+        assert provider.context_prompt == provider._DEFAULT_SEARCH_CONTEXT_PROMPT
 
 
 class TestSemanticSearch:
