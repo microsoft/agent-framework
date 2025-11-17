@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates a basic AG-UI server hosting a chat agent for the Blazor web client.
 
@@ -19,7 +19,7 @@ string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new In
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
 // Create the AI agent
-AzureOpenAIClient azureOpenAIClient = new AzureOpenAIClient(
+AzureOpenAIClient azureOpenAIClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 

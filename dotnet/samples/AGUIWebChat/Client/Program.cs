@@ -1,3 +1,5 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
 using AGUIWebChatClient.Components;
 using Microsoft.Agents.AI.AGUI;
 

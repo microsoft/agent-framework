@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using ServerFunctionApproval;
 
 /// <summary>
 /// A delegating agent that handles server function approval requests and responses.
@@ -38,7 +39,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Process and transform approval messages, creating a new message list
-        var processedMessages = ProcessOutgoingServerFunctionApprovals(messages, this._jsonSerializerOptions);
+        var processedMessages = ProcessOutgoingServerFunctionApprovals(messages.ToList(), this._jsonSerializerOptions);
 
         // Run the inner agent and intercept any approval requests
         await foreach (var update in this.InnerAgent.RunStreamingAsync(
@@ -62,7 +63,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 jsonOptions));
     }
 
-    private static List<ChatMessage> CopyMessagesUpToIndex(IList<ChatMessage> messages, int index)
+    private static List<ChatMessage> CopyMessagesUpToIndex(List<ChatMessage> messages, int index)
     {
         var result = new List<ChatMessage>(index);
         for (int i = 0; i < index; i++)
@@ -82,17 +83,16 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         return result;
     }
 
-    private static IEnumerable<ChatMessage> ProcessOutgoingServerFunctionApprovals(
-        IEnumerable<ChatMessage> messages,
+    private static List<ChatMessage> ProcessOutgoingServerFunctionApprovals(
+        List<ChatMessage> messages,
         JsonSerializerOptions jsonSerializerOptions)
     {
-        var messagesList = messages.ToList();
         List<ChatMessage>? result = null;
 
         Dictionary<string, FunctionApprovalRequestContent> approvalRequests = [];
-        for (var messageIndex = 0; messageIndex < messagesList.Count; messageIndex++)
+        for (var messageIndex = 0; messageIndex < messages.Count; messageIndex++)
         {
-            var message = messagesList[messageIndex];
+            var message = messages[messageIndex];
             List<AIContent>? transformedContents = null;
 
             // Process each content item in the message
@@ -152,7 +152,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                     RawRepresentation = message.RawRepresentation,
                     AdditionalProperties = message.AdditionalProperties
                 };
-                result ??= CopyMessagesUpToIndex(messagesList, messageIndex);
+                result ??= CopyMessagesUpToIndex(messages, messageIndex);
                 result.Add(newMessage);
             }
             else if (result != null)
@@ -163,7 +163,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
             // If result is null, we haven't made any changes yet, so keep processing
         }
 
-        return result ?? messagesList;
+        return result ?? messages;
     }
 
     private static AgentRunResponseUpdate ProcessIncomingServerApprovalRequests(
@@ -237,26 +237,29 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
 }
 #pragma warning restore MEAI001
 
-public sealed class ApprovalRequest
+namespace ServerFunctionApproval
 {
-    [JsonPropertyName("approval_id")]
-    public required string ApprovalId { get; init; }
+    public sealed class ApprovalRequest
+    {
+        [JsonPropertyName("approval_id")]
+        public required string ApprovalId { get; init; }
 
-    [JsonPropertyName("function_name")]
-    public required string FunctionName { get; init; }
+        [JsonPropertyName("function_name")]
+        public required string FunctionName { get; init; }
 
-    [JsonPropertyName("function_arguments")]
-    public JsonElement? FunctionArguments { get; init; }
+        [JsonPropertyName("function_arguments")]
+        public JsonElement? FunctionArguments { get; init; }
 
-    [JsonPropertyName("message")]
-    public string? Message { get; init; }
-}
+        [JsonPropertyName("message")]
+        public string? Message { get; init; }
+    }
 
-public sealed class ApprovalResponse
-{
-    [JsonPropertyName("approval_id")]
-    public required string ApprovalId { get; init; }
+    public sealed class ApprovalResponse
+    {
+        [JsonPropertyName("approval_id")]
+        public required string ApprovalId { get; init; }
 
-    [JsonPropertyName("approved")]
-    public required bool Approved { get; init; }
+        [JsonPropertyName("approved")]
+        public required bool Approved { get; init; }
+    }
 }

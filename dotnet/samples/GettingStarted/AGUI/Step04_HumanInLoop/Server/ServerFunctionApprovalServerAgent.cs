@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using ServerFunctionApproval;
 
 /// <summary>
 /// A delegating agent that handles function approval requests on the server side.
@@ -38,7 +39,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Process and transform incoming approval responses from client, creating a new message list
-        var processedMessages = ProcessIncomingFunctionApprovals(messages, this._jsonSerializerOptions);
+        var processedMessages = ProcessIncomingFunctionApprovals(messages.ToList(), this._jsonSerializerOptions);
 
         // Run the inner agent and intercept any approval requests
         await foreach (var update in this.InnerAgent.RunStreamingAsync(
@@ -91,7 +92,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
     }
 #pragma warning restore MEAI001
 
-    private static List<ChatMessage> CopyMessagesUpToIndex(IList<ChatMessage> messages, int index)
+    private static List<ChatMessage> CopyMessagesUpToIndex(List<ChatMessage> messages, int index)
     {
         var result = new List<ChatMessage>(index);
         for (int i = 0; i < index; i++)
@@ -111,27 +112,26 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         return result;
     }
 
-    private static IList<ChatMessage> ProcessIncomingFunctionApprovals(
-        IEnumerable<ChatMessage> messages,
+    private static List<ChatMessage> ProcessIncomingFunctionApprovals(
+        List<ChatMessage> messages,
         JsonSerializerOptions jsonSerializerOptions)
     {
-        var messagesList = messages.ToList();
         List<ChatMessage>? result = null;
 
         // Track approval ID to original call ID mapping
         _ = new Dictionary<string, string>();
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         Dictionary<string, FunctionApprovalRequestContent> trackedRequestApprovalToolCalls = new(); // Remote approvals
-        for (int messageIndex = 0; messageIndex < messagesList.Count; messageIndex++)
+        for (int messageIndex = 0; messageIndex < messages.Count; messageIndex++)
         {
-            var message = messagesList[messageIndex];
+            var message = messages[messageIndex];
             List<AIContent>? transformedContents = null;
             for (int j = 0; j < message.Contents.Count; j++)
             {
                 var content = message.Contents[j];
                 if (content is FunctionCallContent { Name: "request_approval" } toolCall)
                 {
-                    result ??= CopyMessagesUpToIndex(messagesList, messageIndex);
+                    result ??= CopyMessagesUpToIndex(messages, messageIndex);
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, j);
                     var approvalRequest = ConvertToolCallToApprovalRequest(toolCall, jsonSerializerOptions);
                     transformedContents.Add(approvalRequest);
@@ -148,7 +148,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
                 else if (content is FunctionResultContent toolResult &&
                     trackedRequestApprovalToolCalls.TryGetValue(toolResult.CallId, out var approval) == true)
                 {
-                    result ??= CopyMessagesUpToIndex(messagesList, messageIndex);
+                    result ??= CopyMessagesUpToIndex(messages, messageIndex);
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, j);
                     var approvalResponse = ConvertToolResultToApprovalResponse(toolResult, approval, jsonSerializerOptions);
                     transformedContents.Add(approvalResponse);
@@ -169,7 +169,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         }
 #pragma warning restore MEAI001
 
-        return result ?? messagesList;
+        return result ?? messages;
     }
 
     private static AgentRunResponseUpdate ProcessOutgoingApprovalRequests(
@@ -228,32 +228,35 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
     }
 }
 
-// Define approval models
-public sealed class ApprovalRequest
+namespace ServerFunctionApproval
 {
-    [JsonPropertyName("approval_id")]
-    public required string ApprovalId { get; init; }
+    // Define approval models
+    public sealed class ApprovalRequest
+    {
+        [JsonPropertyName("approval_id")]
+        public required string ApprovalId { get; init; }
 
-    [JsonPropertyName("function_name")]
-    public required string FunctionName { get; init; }
+        [JsonPropertyName("function_name")]
+        public required string FunctionName { get; init; }
 
-    [JsonPropertyName("function_arguments")]
-    public IDictionary<string, object?>? FunctionArguments { get; init; }
+        [JsonPropertyName("function_arguments")]
+        public IDictionary<string, object?>? FunctionArguments { get; init; }
 
-    [JsonPropertyName("message")]
-    public string? Message { get; init; }
+        [JsonPropertyName("message")]
+        public string? Message { get; init; }
+    }
+
+    public sealed class ApprovalResponse
+    {
+        [JsonPropertyName("approval_id")]
+        public required string ApprovalId { get; init; }
+
+        [JsonPropertyName("approved")]
+        public required bool Approved { get; init; }
+    }
+
+    [JsonSerializable(typeof(ApprovalRequest))]
+    [JsonSerializable(typeof(ApprovalResponse))]
+    [JsonSerializable(typeof(Dictionary<string, object?>))]
+    public sealed partial class ApprovalJsonContext : JsonSerializerContext;
 }
-
-public sealed class ApprovalResponse
-{
-    [JsonPropertyName("approval_id")]
-    public required string ApprovalId { get; init; }
-
-    [JsonPropertyName("approved")]
-    public required bool Approved { get; init; }
-}
-
-[JsonSerializable(typeof(ApprovalRequest))]
-[JsonSerializable(typeof(ApprovalResponse))]
-[JsonSerializable(typeof(Dictionary<string, object?>))]
-public sealed partial class ApprovalJsonContext : JsonSerializerContext;
