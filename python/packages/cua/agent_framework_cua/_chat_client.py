@@ -42,7 +42,7 @@ class CuaChatClient(BaseChatClient):
                 # Create middleware
                 middleware = CuaAgentMiddleware(computer=computer)
 
-                # Create agent - no dummy variables needed!
+                # Create agent
                 agent = ChatAgent(
                     chat_client=chat_client,
                     middleware=[middleware],

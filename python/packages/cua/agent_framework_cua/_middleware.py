@@ -115,7 +115,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         self.require_approval = require_approval
         self.approval_interval = approval_interval
 
-        # Will be initialized in first process() call when we have access to chat_client
+        # Will be initialized in first process() call when chat_client is available
         self.cua_agent: ComputerAgent | None = None
 
         self._step_count = 0
@@ -140,7 +140,7 @@ class CuaAgentMiddleware(ChatMiddleware):
 
         Args:
             context: Chat context containing messages and options
-            next: Function to call next middleware (not used - we override execution)
+            next: Function to call next middleware (not used; execution is handled by Cua)
         """
         # Initialize Cua agent on first call
         if self.cua_agent is None:
@@ -169,7 +169,7 @@ class CuaAgentMiddleware(ChatMiddleware):
                 max_trajectory_budget=self.max_trajectory_budget,
             )
 
-        # Check if we need approval before proceeding
+        # Check if approval is required before proceeding
         if self.require_approval and self._should_request_approval():
             approved = await self._request_approval(context, next)
             if not approved:
@@ -195,7 +195,7 @@ class CuaAgentMiddleware(ChatMiddleware):
         except Exception as e:
             context.result = self._create_error_response(str(e))
 
-        # Terminate execution - we've handled it
+        # Terminate execution since Cua handles the complete agent loop
         context.terminate = True
 
     def _extract_messages(self, context: ChatContext) -> list[dict[str, Any]]:
@@ -355,7 +355,7 @@ class CuaAgentMiddleware(ChatMiddleware):
             if block.get("type") == "image":
                 return {"type": "image", "source": block.get("source")}
             return block
-        # If it's an object with attributes
+        # If the block is an object with attributes
         if hasattr(block, "text"):
             return {"type": "text", "text": block.text}
         return {"type": "text", "text": str(block)}

@@ -73,7 +73,7 @@ async def main():
             require_approval=True,
         )
 
-        # Create Agent Framework agent - no dummy variables!
+        # Create Agent Framework agent
         agent = ChatAgent(
             chat_client=chat_client,
             middleware=[cua_middleware],

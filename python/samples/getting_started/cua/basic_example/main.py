@@ -21,7 +21,7 @@ async def main():
         provider_type="docker",
         image="trycua/cua-xfce:latest",
     ) as computer:
-        # Create Cua chat client with model only (Anthropic rejects extra fields)
+        # Create Cua chat client with model configuration
         chat_client = CuaChatClient(
             model="anthropic/claude-sonnet-4-5-20250929",
         )
