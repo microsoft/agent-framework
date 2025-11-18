@@ -19,7 +19,7 @@ class AgentCallbackContext:
     """Context supplied to callback invocations."""
 
     agent_name: str
-    correlationId: str
+    correlation_id: str
     thread_id: str | None = None
     request_message: str | None = None
 

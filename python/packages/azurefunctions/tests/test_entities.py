@@ -180,7 +180,7 @@ class TestAgentEntityRunAgent:
             assert recorded_call.args[0] is expected_update
             context = recorded_call.args[1]
             assert context.agent_name == "StreamingAgent"
-            assert context.correlationId == "corr-stream-1"
+            assert context.correlation_id == "corr-stream-1"
             assert context.thread_id == "session-1"
             assert context.request_message == "Tell me something"
 
@@ -188,7 +188,7 @@ class TestAgentEntityRunAgent:
         assert final_call is not None
         final_response, final_context = final_call.args
         assert final_context.agent_name == "StreamingAgent"
-        assert final_context.correlationId == "corr-stream-1"
+        assert final_context.correlation_id == "corr-stream-1"
         assert final_context.thread_id == "session-1"
         assert final_context.request_message == "Tell me something"
         assert getattr(final_response, "text", "").strip()
@@ -225,7 +225,7 @@ class TestAgentEntityRunAgent:
         assert final_call.args[0] is agent_response
         final_context = final_call.args[1]
         assert final_context.agent_name == "NonStreamingAgent"
-        assert final_context.correlationId == "corr-final-1"
+        assert final_context.correlation_id == "corr-final-1"
         assert final_context.thread_id == "session-2"
         assert final_context.request_message == "Hi"
 
@@ -368,7 +368,7 @@ class TestAgentEntityReset:
         entity.state.data.conversationHistory = [
             DurableAgentStateRequest(
                 json_type="request",
-                correlationId="test-1",
+                correlation_id="test-1",
                 created_at=datetime.now(),
                 messages=[
                     DurableAgentStateMessage(
@@ -770,7 +770,7 @@ class TestRunRequestSupport:
             thread_id="conv-123",
             role=Role.USER,
             enable_tool_calls=True,
-            correlationId="corr-runreq-1",
+            correlation_id="corr-runreq-1",
         )
 
         result = await entity.run_agent(mock_context, request)
@@ -826,7 +826,7 @@ class TestRunRequestSupport:
             message="System message",
             thread_id="conv-runreq-3",
             role=Role.SYSTEM,
-            correlationId="corr-runreq-3",
+            correlation_id="corr-runreq-3",
         )
 
         await entity.run_agent(mock_context, request)
@@ -849,7 +849,7 @@ class TestRunRequestSupport:
             message="What is the answer?",
             thread_id="conv-runreq-4",
             response_format=EntityStructuredResponse,
-            correlationId="corr-runreq-4",
+            correlation_id="corr-runreq-4",
         )
 
         result = await entity.run_agent(mock_context, request)
@@ -868,7 +868,7 @@ class TestRunRequestSupport:
         mock_context = Mock()
 
         request = RunRequest(
-            message="Test", thread_id="conv-runreq-5", enable_tool_calls=False, correlationId="corr-runreq-5"
+            message="Test", thread_id="conv-runreq-5", enable_tool_calls=False, correlation_id="corr-runreq-5"
         )
 
         result = await entity.run_agent(mock_context, request)

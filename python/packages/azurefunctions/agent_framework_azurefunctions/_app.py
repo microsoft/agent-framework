@@ -71,8 +71,7 @@ class AgentFunctionApp(DFAppBase):
 
     .. code-block:: python
 
-        from agent_framework.azure import AgentFunctionApp
-        from agent_framework.azure import AzureOpenAIChatClient
+        from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
         # Create agents with unique names
         weather_agent = AzureOpenAIChatClient(...).create_agent(
@@ -338,10 +337,10 @@ class AgentFunctionApp(DFAppBase):
                     )
 
                 session_id = self._create_session_id(agent_name, thread_id)
-                correlationId = self._generate_unique_id()
+                correlation_id = self._generate_unique_id()
 
                 logger.debug(f"[HTTP Trigger] Using session ID: {session_id}")
-                logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlationId}")
+                logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlation_id}")
                 logger.debug("[HTTP Trigger] Calling entity to run agent...")
 
                 entity_instance_id = session_id.to_entity_id()
@@ -349,7 +348,7 @@ class AgentFunctionApp(DFAppBase):
                     req_body,
                     message,
                     thread_id,
-                    correlationId,
+                    correlation_id,
                 )
                 logger.debug("Signalling entity %s with request: %s", entity_instance_id, run_request)
                 await client.signal_entity(entity_instance_id, "run_agent", run_request)
@@ -360,7 +359,7 @@ class AgentFunctionApp(DFAppBase):
                     result = await self._get_response_from_entity(
                         client=client,
                         entity_instance_id=entity_instance_id,
-                        correlationId=correlationId,
+                        correlation_id=correlation_id,
                         message=message,
                         thread_id=thread_id,
                     )
@@ -376,7 +375,7 @@ class AgentFunctionApp(DFAppBase):
                 logger.debug("[HTTP Trigger] wait_for_response disabled; returning correlation ID")
 
                 accepted_response = self._build_accepted_response(
-                    message=message, thread_id=thread_id, correlationId=correlationId
+                    message=message, thread_id=thread_id, correlation_id=correlation_id
                 )
 
                 return self._create_http_response(
@@ -509,7 +508,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         client: df.DurableOrchestrationClient,
         entity_instance_id: df.EntityId,
-        correlationId: str,
+        correlation_id: str,
         message: str,
         thread_id: str,
     ) -> dict[str, Any]:
@@ -521,7 +520,7 @@ class AgentFunctionApp(DFAppBase):
         retry_count = 0
         result: dict[str, Any] | None = None
 
-        logger.debug(f"[HTTP Trigger] Waiting for response with correlation ID: {correlationId}")
+        logger.debug(f"[HTTP Trigger] Waiting for response with correlation ID: {correlation_id}")
 
         while retry_count < max_retries:
             await asyncio.sleep(interval)
@@ -529,7 +528,7 @@ class AgentFunctionApp(DFAppBase):
             result = await self._poll_entity_for_response(
                 client=client,
                 entity_instance_id=entity_instance_id,
-                correlationId=correlationId,
+                correlation_id=correlation_id,
                 message=message,
                 thread_id=thread_id,
             )
@@ -543,16 +542,16 @@ class AgentFunctionApp(DFAppBase):
             return result
 
         logger.warning(
-            f"[HTTP Trigger] Response with correlation ID {correlationId} "
+            f"[HTTP Trigger] Response with correlation ID {correlation_id} "
             f"not found in time (waited {max_retries * interval} seconds)"
         )
-        return await self._build_timeout_result(message=message, thread_id=thread_id, correlationId=correlationId)
+        return await self._build_timeout_result(message=message, thread_id=thread_id, correlation_id=correlation_id)
 
     async def _poll_entity_for_response(
         self,
         client: df.DurableOrchestrationClient,
         entity_instance_id: df.EntityId,
-        correlationId: str,
+        correlation_id: str,
         message: str,
         thread_id: str,
     ) -> dict[str, Any] | None:
@@ -563,34 +562,34 @@ class AgentFunctionApp(DFAppBase):
             if state is None:
                 return None
 
-            agent_response = state.try_get_agent_response(correlationId)
+            agent_response = state.try_get_agent_response(correlation_id)
             if agent_response:
                 result = self._build_success_result(
                     response_data=agent_response,
                     message=message,
                     thread_id=thread_id,
-                    correlationId=correlationId,
+                    correlation_id=correlation_id,
                     state=state,
                 )
-                logger.debug(f"[HTTP Trigger] Found response for correlation ID: {correlationId}")
+                logger.debug(f"[HTTP Trigger] Found response for correlation ID: {correlation_id}")
 
         except Exception as exc:
             logger.warning(f"[HTTP Trigger] Error reading entity state: {exc}")
 
         return result
 
-    async def _build_timeout_result(self, message: str, thread_id: str, correlationId: str) -> dict[str, Any]:
+    async def _build_timeout_result(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:
         """Create the timeout response."""
         return {
             "response": "Agent is still processing or timed out...",
             "message": message,
             THREAD_ID_FIELD: thread_id,
             "status": "timeout",
-            "correlationId": correlationId,
+            "correlationId": correlation_id,
         }
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlationId: str, state: DurableAgentState
+        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return {
@@ -599,11 +598,11 @@ class AgentFunctionApp(DFAppBase):
             THREAD_ID_FIELD: thread_id,
             "status": "success",
             "message_count": response_data.get("message_count", state.message_count),
-            "correlationId": correlationId,
+            "correlationId": correlation_id,
         }
 
     def _build_request_data(
-        self, req_body: dict[str, Any], message: str, thread_id: str, correlationId: str
+        self, req_body: dict[str, Any], message: str, thread_id: str, correlation_id: str
     ) -> dict[str, Any]:
         """Create the durable entity request payload."""
         enable_tool_calls_value = req_body.get("enable_tool_calls")
@@ -615,17 +614,17 @@ class AgentFunctionApp(DFAppBase):
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
             thread_id=thread_id,
-            correlationId=correlationId,
+            correlation_id=correlation_id,
         ).to_dict()
 
-    def _build_accepted_response(self, message: str, thread_id: str, correlationId: str) -> dict[str, Any]:
+    def _build_accepted_response(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:
         """Build the response returned when not waiting for completion."""
         return {
             "response": "Agent request accepted",
             "message": message,
             THREAD_ID_FIELD: thread_id,
             "status": "accepted",
-            "correlationId": correlationId,
+            "correlationId": correlation_id,
         }
 
     def _create_http_response(

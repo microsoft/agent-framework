@@ -15,12 +15,21 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import azure.durable_functions as df
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, Role, get_logger
+from agent_framework import (
+    AgentProtocol,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatMessage,
+    ErrorContent,
+    Role,
+    get_logger,
+)
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._durable_agent_state import (
     DurableAgentState,
     DurableAgentStateData,
+    DurableAgentStateEntry,
     DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
@@ -68,45 +77,20 @@ class AgentEntity:
 
         logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
 
-    def _is_error_response(self, entry: Any) -> bool:
+    def _is_error_response(self, entry: DurableAgentStateEntry | dict[str, Any]) -> bool:
         """Check if a conversation history entry is an error response.
 
         Error responses should be kept in history for tracking but not sent to the agent
         since Azure OpenAI doesn't support 'error' content type.
 
         Args:
-            entry: A conversation history entry (DurableAgentStateRequest or DurableAgentStateResponse)
+            entry: A conversation history entry (DurableAgentStateEntry or dict)
 
         Returns:
             True if the entry is a response containing error content, False otherwise
         """
-        from ._durable_agent_state import DurableAgentStateErrorContent, DurableAgentStateResponse
-
-        # Handle both object and dictionary forms
-        is_response = isinstance(entry, DurableAgentStateResponse)
-        if isinstance(entry, dict):
-            is_response = entry.get("json_type") == "response" or entry.get("$type") == "response"
-
-        if not is_response:
-            return False
-
-        # Get messages from entry (handle both object and dict forms)
-        messages = entry.messages if hasattr(entry, "messages") else entry.get("messages", [])
-
-        # Check if any message in the response contains error content
-        for message in messages:
-            # Handle both object and dict forms of message
-            contents = message.contents if hasattr(message, "contents") else message.get("contents", [])
-
-            for content in contents:
-                # Check content type (handle both object and dict forms)
-                if isinstance(content, DurableAgentStateErrorContent):
-                    return True
-                if isinstance(content, dict):
-                    content_type = content.get("type") or content.get("$type")
-                    if content_type == "error":
-                        return True
-
+        if isinstance(entry, DurableAgentStateResponse):
+            return entry.is_error
         return False
 
     async def run_agent(
@@ -137,33 +121,25 @@ class AgentEntity:
 
         message = run_request.message
         thread_id = run_request.thread_id
-        correlationId = run_request.correlationId
+        correlation_id = run_request.correlation_id
         if not thread_id:
             raise ValueError("RunRequest must include a thread_id")
-        if not correlationId:
+        if not correlation_id:
             raise ValueError("RunRequest must include a correlationId")
-        role = run_request.role or Role.USER
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self.state.data.conversationHistory.append(state_request)
 
-        logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
-        logger.debug(f"[AgentEntity.run_agent] Thread ID: {thread_id}")
-        logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlationId}")
-        logger.debug(f"[AgentEntity.run_agent] Role: {role.value}")
-        logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
-        logger.debug(f"[AgentEntity.run_agent] Response format: {'provided' if response_format else 'none'}")
         logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
-        logger.debug("[AgentEntity.run_agent] Executing agent...")
 
         try:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
 
             # Build messages from conversation history, excluding error responses
             # Error responses are kept in history for tracking but not sent to the agent
-            chat_messages: list[Any] = [
+            chat_messages: list[ChatMessage] = [
                 m.to_chat_message()
                 for entry in self.state.data.conversationHistory
                 if not self._is_error_response(entry)
@@ -184,7 +160,7 @@ class AgentEntity:
 
             agent_run_response: AgentRunResponse = await self._invoke_agent(
                 run_kwargs=run_kwargs,
-                correlationId=correlationId,
+                correlation_id=correlation_id,
                 thread_id=thread_id,
                 request_message=message,
             )
@@ -219,7 +195,7 @@ class AgentEntity:
                 )
                 response_text = "Error extracting response"
 
-            state_response = DurableAgentStateResponse.from_run_response(correlationId, agent_run_response)
+            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
             self.state.data.conversationHistory.append(state_response)
 
             agent_response = AgentResponse(
@@ -245,9 +221,6 @@ class AgentEntity:
             logger.error(f"Error type: {type(exc).__name__}")
             logger.error(f"Full traceback:\n{error_traceback}")
 
-            # Create error response and store it in conversation history so polling can find it
-            from agent_framework import ChatMessage, ErrorContent
-
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(
                 ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
@@ -256,11 +229,12 @@ class AgentEntity:
             # Create and store error response in conversation history
             error_state_response = DurableAgentStateResponse(
                 json_type="response",
-                correlationId=correlationId,
+                correlation_id=correlation_id,
                 created_at=datetime.now(tz=timezone.utc),
                 messages=[error_message],
-                extensionData=None,
+                extension_data=None,
                 usage=None,
+                is_error=True,
             )
             self.state.data.conversationHistory.append(error_state_response)
 
@@ -278,7 +252,7 @@ class AgentEntity:
     async def _invoke_agent(
         self,
         run_kwargs: dict[str, Any],
-        correlationId: str,
+        correlation_id: str,
         thread_id: str,
         request_message: str,
     ) -> AgentRunResponse:
@@ -286,7 +260,7 @@ class AgentEntity:
         callback_context: AgentCallbackContext | None = None
         if self.callback is not None:
             callback_context = self._build_callback_context(
-                correlationId=correlationId,
+                correlation_id=correlation_id,
                 thread_id=thread_id,
                 request_message=request_message,
             )
@@ -400,7 +374,7 @@ class AgentEntity:
 
     def _build_callback_context(
         self,
-        correlationId: str,
+        correlation_id: str,
         thread_id: str,
         request_message: str,
     ) -> AgentCallbackContext:
@@ -408,7 +382,7 @@ class AgentEntity:
         agent_name = getattr(self.agent, "name", None) or type(self.agent).__name__
         return AgentCallbackContext(
             agent_name=agent_name,
-            correlationId=correlationId,
+            correlation_id=correlation_id,
             thread_id=thread_id,
             request_message=request_message,
         )

@@ -285,7 +285,7 @@ class DurableAgentState:
         """Get the count of conversation entries (requests + responses)."""
         return len(self.data.conversationHistory)
 
-    def try_get_agent_response(self, correlationId: str) -> dict[str, Any] | None:
+    def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
         """Try to get an agent response by correlation ID.
 
         This method searches the conversation history for a response entry matching the given
@@ -297,7 +297,7 @@ class DurableAgentState:
         the durable state structure.
 
         Args:
-            correlationId: The correlation ID to search for
+            correlation_id: The correlation ID to search for
 
         Returns:
             Response data dict with 'content', 'message_count', and 'correlationId' if found,
@@ -306,8 +306,8 @@ class DurableAgentState:
         # Search through conversation history for a response with this correlationId
         for entry in self.data.conversationHistory:
             if (
-                hasattr(entry, "correlationId")
-                and entry.correlationId == correlationId
+                hasattr(entry, "correlation_id")
+                and entry.correlation_id == correlation_id
                 and isinstance(entry, DurableAgentStateResponse)
             ):
                 # Found the entry, extract response data
@@ -323,7 +323,7 @@ class DurableAgentState:
                             elif isinstance(content_item, dict) and content_item.get("text"):
                                 content += content_item.get("text", "")
 
-                return {"content": content, "message_count": self.message_count, "correlationId": correlationId}
+                return {"content": content, "message_count": self.message_count, "correlationId": correlation_id}
         return None
 
 
@@ -354,14 +354,14 @@ class DurableAgentStateEntry:
     """
 
     json_type: str
-    correlationId: str
+    correlation_id: str
     created_at: datetime
     messages: list[DurableAgentStateMessage]
-    extensionData: dict[str, Any] | None
+    extension_data: dict[str, Any] | None
 
     # Request-only
-    responseType: str | None = None
-    responseSchema: dict[str, Any] | None = None
+    response_type: str | None = None
+    response_schema: dict[str, Any] | None = None
 
     # Response-only
     usage: DurableAgentStateUsage | None = None
@@ -369,21 +369,21 @@ class DurableAgentStateEntry:
     def __init__(
         self,
         json_type: str,
-        correlationId: str,
+        correlation_id: str,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
-        extensionData: dict[str, Any] | None = None,
-        responseType: str | None = None,
-        responseSchema: dict[str, Any] | None = None,
+        extension_data: dict[str, Any] | None = None,
+        response_type: str | None = None,
+        response_schema: dict[str, Any] | None = None,
         usage: DurableAgentStateUsage | None = None,
     ) -> None:
         self.json_type = json_type
-        self.correlationId = correlationId
+        self.correlation_id = correlation_id
         self.created_at = created_at
         self.messages = messages
-        self.extensionData = extensionData
-        self.responseType = responseType
-        self.responseSchema = responseSchema
+        self.extension_data = extension_data
+        self.response_type = response_type
+        self.response_schema = response_schema
         self.usage = usage
 
     def to_dict(self) -> dict[str, Any]:
@@ -394,16 +394,16 @@ class DurableAgentStateEntry:
 
         data: dict[str, Any] = {
             "$type": self.json_type,
-            "correlationId": self.correlationId,
+            "correlationId": self.correlation_id,
             "createdAt": created_at_value.isoformat() if isinstance(created_at_value, datetime) else created_at_value,
             "messages": [m.to_dict() if hasattr(m, "to_dict") else m for m in self.messages],
         }
         if self.json_type == "request":
             # Only include responseType and responseSchema if they're not None
-            if self.responseType is not None:
-                data["responseType"] = self.responseType
-            if self.responseSchema is not None:
-                data["responseSchema"] = self.responseSchema
+            if self.response_type is not None:
+                data["responseType"] = self.response_type
+            if self.response_schema is not None:
+                data["responseSchema"] = self.response_schema
         elif self.json_type == "response":
             # Only include usage if it's not None
             if self.usage is not None:
@@ -429,10 +429,10 @@ class DurableAgentStateEntry:
 
         return cls(
             json_type=data.get("$type", "entry"),
-            correlationId=data.get("correlationId", ""),
+            correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
-            extensionData=data.get("extensionData"),
+            extension_data=data.get("extensionData"),
         )
 
 
@@ -457,22 +457,22 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
     def __init__(
         self,
-        correlationId: str,
+        correlation_id: str,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
         json_type: str,
-        extensionData: dict[str, Any] | None = None,
+        extension_data: dict[str, Any] | None = None,
         response_type: str | None = None,
         response_schema: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             json_type=json_type,
-            correlationId=correlationId,
+            correlation_id=correlation_id,
             created_at=created_at,
             messages=messages,
-            extensionData=extensionData,
-            responseType=response_type,
-            responseSchema=response_schema,
+            extension_data=extension_data,
+            response_type=response_type,
+            response_schema=response_schema,
         )
         self.response_type = response_type
         self.response_schema = response_schema
@@ -496,10 +496,10 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
         return cls(
             json_type=data.get("$type", "request"),
-            correlationId=data.get("correlationId", ""),
+            correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
-            extensionData=data.get("extensionData"),
+            extension_data=data.get("extensionData"),
             response_type=data.get("response_type"),
             response_schema=data.get("response_schema"),
         )
@@ -518,11 +518,11 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             )
 
         return DurableAgentStateRequest(
-            correlationId=content.correlationId,
+            correlation_id=content.correlation_id,
             messages=[DurableAgentStateMessage.from_chat_message(content)],
             created_at=datetime.now(tz=timezone.utc),
             json_type="request",
-            extensionData=content.extensionData if hasattr(content, "extensionData") else None,
+            extension_data=content.extension_data if hasattr(content, "extensionData") else None,
             response_type=response_type,
             response_schema=content.response_format,
         )
@@ -537,32 +537,36 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
     Attributes:
         usage: Token usage statistics for this response (input, output, and total tokens)
-        correlationId: Unique identifier linking this response to its request
+        is_error: Flag indicating if this response represents an error (not persisted in schema)
+        correlation_id: Unique identifier linking this response to its request
         created_at: Timestamp when the response was created
         messages: List of assistant messages in this response
         json_type: Always "response" for this class
     """
 
     usage: DurableAgentStateUsage | None = None
+    is_error: bool = False
 
     def __init__(
         self,
         json_type: str,
-        correlationId: str,
+        correlation_id: str,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
-        extensionData: dict[str, Any] | None = None,
+        extension_data: dict[str, Any] | None = None,
         usage: DurableAgentStateUsage | None = None,
+        is_error: bool = False,
     ) -> None:
         super().__init__(
             json_type=json_type,
-            correlationId=correlationId,
+            correlation_id=correlation_id,
             created_at=created_at,
             messages=messages,
-            extensionData=extensionData,
+            extension_data=extension_data,
             usage=usage,
         )
         self.usage = usage
+        self.is_error = is_error
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateResponse:
@@ -590,15 +594,15 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
         return cls(
             json_type=data.get("$type", "response"),
-            correlationId=data.get("correlationId", ""),
+            correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
-            extensionData=data.get("extensionData"),
+            extension_data=data.get("extensionData"),
             usage=usage,
         )
 
     @staticmethod
-    def from_run_response(correlationId: str, response: Any) -> DurableAgentStateResponse:
+    def from_run_response(correlation_id: str, response: Any) -> DurableAgentStateResponse:
         """Creates a DurableAgentStateResponse from an AgentRunResponse."""
         # Determine the earliest created_at timestamp among messages (if available)
         timestamps = [m.created_at for m in response.messages if hasattr(m, "created_at") and m.created_at is not None]
@@ -606,7 +610,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
         return DurableAgentStateResponse(
             json_type="response",
-            correlationId=correlationId,
+            correlation_id=correlation_id,
             created_at=created_at,
             messages=[DurableAgentStateMessage.from_chat_message(m) for m in response.messages],
             usage=DurableAgentStateUsage.from_usage(response.usage)
@@ -637,14 +641,14 @@ class DurableAgentStateMessage:
         contents: List of content items (text, function calls, errors, etc.)
         author_name: Optional name of the message author (typically set for assistant messages)
         created_at: Optional timestamp when the message was created
-        extensionData: Optional additional metadata (not serialized per schema)
+        extension_data: Optional additional metadata (not serialized per schema)
     """
 
     role: str
     contents: list[DurableAgentStateContent]
     author_name: str | None = None
     created_at: datetime | None = None
-    extensionData: dict[str, Any] | None = None
+    extension_data: dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -652,13 +656,13 @@ class DurableAgentStateMessage:
         contents: list[DurableAgentStateContent],
         author_name: str | None = None,
         created_at: datetime | None = None,
-        extensionData: dict[str, Any] | None = None,
+        extension_data: dict[str, Any] | None = None,
     ) -> None:
         self.role = role
         self.contents = contents
         self.author_name = author_name
         self.created_at = created_at
-        self.extensionData = extensionData
+        self.extension_data = extension_data
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -751,7 +755,7 @@ class DurableAgentStateMessage:
             contents=contents,
             author_name=data.get("authorName"),
             created_at=created_at,
-            extensionData=data.get("extensionData"),
+            extension_data=data.get("extensionData"),
         )
 
     @property
@@ -793,7 +797,7 @@ class DurableAgentStateMessage:
             contents=contents_list,
             author_name=content.author_name if hasattr(content, "author_name") else None,
             created_at=content.created_at if hasattr(content, "created_at") else None,
-            extensionData=content.extensionData if hasattr(content, "extensionData") else None,
+            extension_data=content.extension_data if hasattr(content, "extensionData") else None,
         )
 
     def to_chat_message(self) -> Any:
@@ -819,8 +823,8 @@ class DurableAgentStateMessage:
         if self.author_name is not None:
             kwargs["author_name"] = self.author_name
 
-        if self.extensionData is not None:
-            kwargs["additional_properties"] = cast(MutableMapping[str, Any], self.extensionData)
+        if self.extension_data is not None:
+            kwargs["additional_properties"] = cast(MutableMapping[str, Any], self.extension_data)
 
         return ChatMessage(**kwargs)  # type: ignore[call-overload]
 

@@ -282,7 +282,7 @@ class RunRequest:
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
         thread_id: Optional thread ID for tracking
-        correlationId: Optional correlation ID for tracking the response to this specific request
+        correlation_id: Optional correlation ID for tracking the response to this specific request
         author_name: Optional name of the message author
         created_at: Optional timestamp when the request was created
         extension_data: Optional additional metadata
@@ -293,7 +293,7 @@ class RunRequest:
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
     thread_id: str | None = None
-    correlationId: str | None = None
+    correlation_id: str | None = None
     author_name: str | None = None
     created_at: str | None = None
     extension_data: dict[str, Any] | None = None
@@ -305,7 +305,7 @@ class RunRequest:
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
         thread_id: str | None = None,
-        correlationId: str | None = None,
+        correlation_id: str | None = None,
         author_name: str | None = None,
         created_at: str | None = None,
         extension_data: dict[str, Any] | None = None,
@@ -315,7 +315,7 @@ class RunRequest:
         self.response_format = response_format
         self.enable_tool_calls = enable_tool_calls
         self.thread_id = thread_id
-        self.correlationId = correlationId
+        self.correlation_id = correlation_id
         self.author_name = author_name
         self.created_at = created_at
         self.extension_data = extension_data
@@ -343,8 +343,8 @@ class RunRequest:
             result["response_format"] = _serialize_response_format(self.response_format)
         if self.thread_id:
             result["thread_id"] = self.thread_id
-        if self.correlationId:
-            result["correlationId"] = self.correlationId
+        if self.correlation_id:
+            result["correlationId"] = self.correlation_id
         if self.author_name:
             result["author_name"] = self.author_name
         if self.created_at:
@@ -362,7 +362,7 @@ class RunRequest:
             response_format=_deserialize_response_format(data.get("response_format")),
             enable_tool_calls=data.get("enable_tool_calls", True),
             thread_id=data.get("thread_id"),
-            correlationId=data.get("correlationId"),
+            correlation_id=data.get("correlationId"),
             author_name=data.get("author_name"),
             created_at=data.get("created_at"),
             extension_data=data.get("extension_data"),

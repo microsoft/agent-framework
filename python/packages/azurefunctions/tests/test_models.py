@@ -297,14 +297,14 @@ class TestRunRequest:
 
     def test_init_with_correlationId(self) -> None:
         """Test RunRequest initialization with correlationId."""
-        request = RunRequest(message="Test message", thread_id="thread-corr-init", correlationId="corr-123")
+        request = RunRequest(message="Test message", thread_id="thread-corr-init", correlation_id="corr-123")
 
         assert request.message == "Test message"
-        assert request.correlationId == "corr-123"
+        assert request.correlation_id == "corr-123"
 
     def test_to_dict_with_correlationId(self) -> None:
         """Test to_dict includes correlationId."""
-        request = RunRequest(message="Test", thread_id="thread-corr-to-dict", correlationId="corr-456")
+        request = RunRequest(message="Test", thread_id="thread-corr-to-dict", correlation_id="corr-456")
         data = request.to_dict()
 
         assert data["message"] == "Test"
@@ -316,7 +316,7 @@ class TestRunRequest:
         request = RunRequest.from_dict(data)
 
         assert request.message == "Test"
-        assert request.correlationId == "corr-789"
+        assert request.correlation_id == "corr-789"
         assert request.thread_id == "thread-corr-from-dict"
 
     def test_round_trip_with_correlationId(self) -> None:
@@ -325,7 +325,7 @@ class TestRunRequest:
             message="Test message",
             thread_id="thread-123",
             role=Role.SYSTEM,
-            correlationId="corr-123",
+            correlation_id="corr-123",
         )
 
         data = original.to_dict()
@@ -333,7 +333,7 @@ class TestRunRequest:
 
         assert restored.message == original.message
         assert restored.role == original.role
-        assert restored.correlationId == original.correlationId
+        assert restored.correlation_id == original.correlation_id
         assert restored.thread_id == original.thread_id
 
 
