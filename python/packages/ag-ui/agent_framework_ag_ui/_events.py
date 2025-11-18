@@ -86,6 +86,7 @@ class AgentFrameworkEventBridge:
         self.pending_tool_calls: list[dict[str, Any]] = []  # Track tool calls for assistant message
         self.tool_results: list[dict[str, Any]] = []  # Track tool results
         self.tool_calls_ended: set[str] = set()  # Track which tool calls have had ToolCallEndEvent emitted
+        self.accumulated_text_content: str = ""  # Track accumulated text for final MessagesSnapshotEvent
 
     async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
         """
@@ -99,18 +100,29 @@ class AgentFrameworkEventBridge:
         """
         events: list[BaseEvent] = []
 
-        for content in update.contents:
+        logger.info(f"Processing AgentRunUpdate with {len(update.contents)} content items")
+        for idx, content in enumerate(update.contents):
+            logger.info(f"  Content {idx}: type={type(content).__name__}")
             if isinstance(content, TextContent):
+                logger.info(
+                    f"  TextContent found: text_length={len(content.text)}, text_preview='{content.text[:100]}'"
+                )
+                logger.info(
+                    f"  Flags: skip_text_content={self.skip_text_content}, should_stop_after_confirm={self.should_stop_after_confirm}"
+                )
+
                 # Skip text content if using structured outputs (it's just the JSON)
                 if self.skip_text_content:
+                    logger.info("  SKIPPING TextContent: skip_text_content is True")
                     continue
 
                 # Skip text content if we're about to emit confirm_changes
                 # The summary should only appear after user confirms
                 if self.should_stop_after_confirm:
-                    logger.debug("Skipping text content - waiting for confirm_changes response")
+                    logger.info("  SKIPPING TextContent: waiting for confirm_changes response")
                     # Save the summary text to show after confirmation
                     self.suppressed_summary += content.text
+                    logger.info(f"  Suppressed summary now has {len(self.suppressed_summary)} chars")
                     continue
 
                 if not self.current_message_id:
@@ -119,14 +131,16 @@ class AgentFrameworkEventBridge:
                         message_id=self.current_message_id,
                         role="assistant",
                     )
-                    logger.debug(f"Emitting TextMessageStartEvent with message_id={self.current_message_id}")
+                    logger.info(f"  EMITTING TextMessageStartEvent with message_id={self.current_message_id}")
                     events.append(start_event)
 
                 event = TextMessageContentEvent(
                     message_id=self.current_message_id,
                     delta=content.text,
                 )
-                logger.debug(f"Emitting TextMessageContentEvent with delta: {content.text}")
+                # Accumulate text content for final MessagesSnapshotEvent
+                self.accumulated_text_content += content.text
+                logger.info(f"  EMITTING TextMessageContentEvent with delta: '{content.text}'")
                 events.append(event)
 
             elif isinstance(content, FunctionCallContent):
@@ -427,7 +441,24 @@ class AgentFrameworkEventBridge:
 
                 # Emit MessagesSnapshotEvent with the complete conversation including tool calls and results
                 # This is required for CopilotKit's useCopilotAction to detect tool result
-                if self.pending_tool_calls and self.tool_results:
+                # HOWEVER: Skip this for predictive tools when require_confirmation=False, because
+                # the agent will generate a follow-up text message and we'll emit a complete snapshot at the end.
+                # Emitting here would create an incomplete snapshot that gets replaced, causing UI flicker.
+                should_emit_snapshot = self.pending_tool_calls and self.tool_results
+
+                # Check if this is a predictive tool that will have a follow-up message
+                is_predictive_without_confirmation = False
+                if should_emit_snapshot and self.current_tool_call_name and self.predict_state_config:
+                    for state_key, config in self.predict_state_config.items():
+                        if config["tool"] == self.current_tool_call_name and not self.require_confirmation:
+                            is_predictive_without_confirmation = True
+                            logger.info(
+                                f"Skipping intermediate MessagesSnapshotEvent for predictive tool '{self.current_tool_call_name}' "
+                                "- will emit complete snapshot after follow-up message"
+                            )
+                            break
+
+                if should_emit_snapshot and not is_predictive_without_confirmation:
                     # Import message adapter
                     from ._message_adapters import agent_framework_messages_to_agui
 
