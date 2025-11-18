@@ -14,7 +14,7 @@ This sample demonstrates using Anthropic with:
 - Using the `thinking` feature.
 - Displaying both thinking and usage information during streaming responses.
 
-This example requires `anthropic>=0.74.0` and a endpoint in Foundry for Anthropic.
+This example requires `anthropic>=0.74.0` and an endpoint in Foundry for Anthropic.
 
 To use the Foundry integration ensure you have the following environment variables set:
 - ANTHROPIC_FOUNDRY_API_KEY
