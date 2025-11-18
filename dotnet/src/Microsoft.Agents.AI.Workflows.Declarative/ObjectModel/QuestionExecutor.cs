@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Entities;
@@ -75,22 +76,22 @@ internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider age
     public async ValueTask PrepareResponseAsync(IWorkflowContext context, ActionExecutorResult message, CancellationToken cancellationToken)
     {
         int count = await this._promptCount.ReadAsync(context).ConfigureAwait(false);
-        InputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
-        await context.SendMessageAsync(inputRequest, targetId: null, cancellationToken).ConfigureAwait(false);
+        ExternalInputRequest inputRequest = new(this.FormatPrompt(this.Model.Prompt));
+        await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
         await this._promptCount.WriteAsync(context, count + 1).ConfigureAwait(false);
     }
 
-    public async ValueTask CaptureResponseAsync(IWorkflowContext context, InputResponse message, CancellationToken cancellationToken)
+    public async ValueTask CaptureResponseAsync(IWorkflowContext context, ExternalInputResponse response, CancellationToken cancellationToken)
     {
         FormulaValue? extractedValue = null;
-        if (message.Value is null)
+        if (!response.HasMessages)
         {
             string unrecognizedResponse = this.FormatPrompt(this.Model.UnrecognizedPrompt);
             await context.AddEventAsync(new MessageActivityEvent(unrecognizedResponse.Trim()), cancellationToken).ConfigureAwait(false);
         }
         else
         {
-            EntityExtractionResult entityResult = EntityExtractor.Parse(this.Model.Entity, message.Value.Text);
+            EntityExtractionResult entityResult = EntityExtractor.Parse(this.Model.Entity, string.Concat(response.Messages.Select(message => message.Text)));
             if (entityResult.IsValid)
             {
                 extractedValue = entityResult.Value;
@@ -121,7 +122,7 @@ internal sealed class QuestionExecutor(Question model, WorkflowAgentProvider age
                 if (workflowConversationId is not null)
                 {
                     // Input message always defined if values has been extracted.
-                    ChatMessage input = message.Value!;
+                    ChatMessage input = response.Messages.Last();
                     await agentProvider.CreateMessageAsync(workflowConversationId, input, cancellationToken).ConfigureAwait(false);
                     await context.SetLastMessageAsync(input).ConfigureAwait(false);
                 }

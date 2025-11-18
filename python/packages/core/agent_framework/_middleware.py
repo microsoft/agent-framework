@@ -8,7 +8,7 @@ from functools import update_wrapper
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from ._serialization import SerializationMixin
-from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage
+from ._types import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, prepare_messages
 from .exceptions import MiddlewareException
 
 if TYPE_CHECKING:
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from ._agents import AgentProtocol
     from ._clients import ChatClientProtocol
+    from ._threads import AgentThread
     from ._tools import AIFunction
     from ._types import ChatOptions, ChatResponse, ChatResponseUpdate
 
@@ -61,6 +62,7 @@ class AgentRunContext(SerializationMixin):
     Attributes:
         agent: The agent being invoked.
         messages: The messages being sent to the agent.
+        thread: The agent thread for this invocation, if any.
         is_streaming: Whether this is a streaming invocation.
         metadata: Metadata dictionary for sharing data between agent middleware.
         result: Agent execution result. Can be observed after calling ``next()``
@@ -81,6 +83,7 @@ class AgentRunContext(SerializationMixin):
                 async def process(self, context: AgentRunContext, next):
                     print(f"Agent: {context.agent.name}")
                     print(f"Messages: {len(context.messages)}")
+                    print(f"Thread: {context.thread}")
                     print(f"Streaming: {context.is_streaming}")
 
                     # Store metadata
@@ -93,12 +96,13 @@ class AgentRunContext(SerializationMixin):
                     print(f"Result: {context.result}")
     """
 
-    INJECTABLE: ClassVar[set[str]] = {"agent", "result"}
+    INJECTABLE: ClassVar[set[str]] = {"agent", "thread", "result"}
 
     def __init__(
         self,
         agent: "AgentProtocol",
         messages: list[ChatMessage],
+        thread: "AgentThread | None" = None,
         is_streaming: bool = False,
         metadata: dict[str, Any] | None = None,
         result: AgentRunResponse | AsyncIterable[AgentRunResponseUpdate] | None = None,
@@ -110,6 +114,7 @@ class AgentRunContext(SerializationMixin):
         Args:
             agent: The agent being invoked.
             messages: The messages being sent to the agent.
+            thread: The agent thread for this invocation, if any.
             is_streaming: Whether this is a streaming invocation.
             metadata: Metadata dictionary for sharing data between agent middleware.
             result: Agent execution result.
@@ -118,6 +123,7 @@ class AgentRunContext(SerializationMixin):
         """
         self.agent = agent
         self.messages = messages
+        self.thread = thread
         self.is_streaming = is_streaming
         self.metadata = metadata if metadata is not None else {}
         self.result = result
@@ -1222,6 +1228,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
+                thread=thread,
                 is_streaming=False,
                 kwargs=kwargs,
             )
@@ -1269,6 +1276,7 @@ def use_agent_middleware(agent_class: type[TAgent]) -> type[TAgent]:
             context = AgentRunContext(
                 agent=self,  # type: ignore[arg-type]
                 messages=normalized_messages,
+                thread=thread,
                 is_streaming=True,
                 kwargs=kwargs,
             )
@@ -1367,7 +1375,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
         pipeline = ChatMiddlewarePipeline(chat_middleware_list)  # type: ignore[arg-type]
         context = ChatContext(
             chat_client=self,
-            messages=self.prepare_messages(messages, chat_options),
+            messages=prepare_messages(messages),
             chat_options=chat_options,
             is_streaming=False,
             kwargs=kwargs,
@@ -1417,7 +1425,7 @@ def use_chat_middleware(chat_client_class: type[TChatClient]) -> type[TChatClien
             pipeline = ChatMiddlewarePipeline(all_middleware)  # type: ignore[arg-type]
             context = ChatContext(
                 chat_client=self,
-                messages=self.prepare_messages(messages, chat_options),
+                messages=prepare_messages(messages),
                 chat_options=chat_options,
                 is_streaming=True,
                 kwargs=kwargs,

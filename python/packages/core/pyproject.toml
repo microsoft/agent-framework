@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251016"
+version = "1.0.0b251114"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -19,36 +19,37 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
 dependencies = [
-    "openai>=1.99.0,<2",
+    # utilities
+    "typing-extensions",
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
-    "typing-extensions",
+    # telemetry
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
-    "mcp[ws]>=1.13",
-    "azure-monitor-opentelemetry>=1.7.0",
-    "azure-monitor-opentelemetry-exporter>=1.0.0b41",
     "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
-    "aiofiles>=24.1.0",
+    # connectors and functions
+    "openai>=1.99.0",
     "azure-identity>=1,<2",
+    "mcp[ws]>=1.13",
+    "packaging>=24.1",
 ]
 
 [project.optional-dependencies]
-viz = [
-    "graphviz>=0.20.0"
-]
 all = [
     "agent-framework-a2a",
+    "agent-framework-ag-ui",
+    "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-copilotstudio",
-    "agent-framework-mem0",
-    "agent-framework-redis",
     "agent-framework-devui",
-    "graphviz>=0.20.0"
+    "agent-framework-mem0",
+    "agent-framework-purview",
+    "agent-framework-redis",
 ]
 
 [tool.uv]
@@ -87,8 +88,7 @@ omit = [
 extend = "../../pyproject.toml"
 
 [tool.pyright]
-extend = "../../pyproject.toml"
-exclude = ['tests']
+extends = "../../pyproject.toml"
 
 [tool.mypy]
 plugins = ['pydantic.mypy']

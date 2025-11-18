@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
@@ -195,5 +196,51 @@ public class SpecializedExecutorSmokeTests
 
             collected.Text.Should().Be(expectedText);
         }
+    }
+
+    [Fact]
+    public async Task Test_AIAgent_ExecutorId_Use_Agent_NameAsync()
+    {
+        const string AgentAName = "TestAgentAName";
+        const string AgentBName = "TestAgentBName";
+        TestAIAgent agentA = new(name: AgentAName);
+        TestAIAgent agentB = new(name: AgentBName);
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
+
+        // Verify that the agent host executor registration IDs in the workflow definition
+        // match the agent names when agent names are provided.
+        // The property DisplayName falls back to using the agent ID when Name is not set.
+        agentA.GetDescriptiveId().Should().Contain(AgentAName);
+        agentB.GetDescriptiveId().Should().Contain(AgentBName);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+
+        // This will create an instance of the start agent and verify that the ID
+        // of the executor instance matches the ID of the registration.
+        var protocolDescriptor = await workflow.DescribeProtocolAsync();
+        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
+    }
+
+    [Fact]
+    public async Task Test_AIAgent_ExecutorId_Use_Agent_ID_When_Name_Not_ProvidedAsync()
+    {
+        TestAIAgent agentA = new();
+        TestAIAgent agentB = new();
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
+
+        // Verify that the agent host executor registration IDs in the workflow definition
+        // match the agent IDs when agent names are not provided.
+        // The property DisplayName falls back to using the agent ID when Name is not set.
+        agentA.GetDescriptiveId().Should().Contain(agentA.Id);
+        agentB.GetDescriptiveId().Should().Contain(agentB.Id);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+
+        // This will create an instance of the start agent and verify that the ID
+        // of the executor instance matches the ID of the registration.
+        var protocolDescriptor = await workflow.DescribeProtocolAsync();
+        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
     }
 }

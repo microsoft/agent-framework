@@ -1,0 +1,13 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: CancelWorkflow
+      id: end_all
+
+    - kind: SendActivity
+      id: send_activity_1
+      activity: NEVER 1!
