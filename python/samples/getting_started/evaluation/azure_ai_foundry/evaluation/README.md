@@ -18,7 +18,7 @@ This sample demonstrates the self-reflection pattern using Agent Framework and A
 
 ### Python Environment
 ```bash
-pip install agent-framework azure-ai-evaluation azure-identity pandas python-dotenv
+pip install agent-framework-core azure-ai-evaluation pandas --pre
 ```
 
 ### Environment Variables
