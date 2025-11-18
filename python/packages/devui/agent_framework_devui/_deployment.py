@@ -470,9 +470,11 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                         )
                     elif "https://" in line_text:
                         # Try to extract all URLs and check if any is on azurecontainerapps.io
-                        urls = re.findall(r'https://[^\s]+', line_text)
+                        urls = re.findall(r'https://[^\s<>"]+', line_text)
                         for url in urls:
-                            host = urlparse(url).hostname
+                            # Strip common trailing punctuation to ensure clean URL parsing
+                            url_clean = url.rstrip('.,;:!?\'")}]')
+                            host = urlparse(url_clean).hostname
                             if host and (host == "azurecontainerapps.io" or host.endswith(".azurecontainerapps.io")):
                                 await event_queue.put(
                                     DeploymentEvent(type="deploy.progress", message="Deployment URL generated!")
