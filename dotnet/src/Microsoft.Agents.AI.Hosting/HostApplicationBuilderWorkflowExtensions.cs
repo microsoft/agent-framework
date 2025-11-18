@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
-using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -47,28 +45,6 @@ public static class HostApplicationBuilderWorkflowExtensions
             return workflow;
         });
 
-        // Register the workflow by name for discovery.
-        var workflowRegistry = GetWorkflowRegistry(builder);
-        workflowRegistry.WorkflowNames.Add(name);
-
         return new HostedWorkflowBuilder(name, builder);
-    }
-
-    private static LocalWorkflowRegistry GetWorkflowRegistry(IHostApplicationBuilder builder)
-    {
-        var descriptor = builder.Services.FirstOrDefault(s => !s.IsKeyedService && s.ServiceType.Equals(typeof(LocalWorkflowRegistry)));
-        if (descriptor?.ImplementationInstance is not LocalWorkflowRegistry instance)
-        {
-            instance = new LocalWorkflowRegistry();
-            ConfigureHostBuilder(builder, instance);
-        }
-
-        return instance;
-    }
-
-    private static void ConfigureHostBuilder(IHostApplicationBuilder builder, LocalWorkflowRegistry agentHostBuilderContext)
-    {
-        builder.Services.Add(ServiceDescriptor.Singleton(agentHostBuilderContext));
-        builder.Services.AddSingleton<WorkflowCatalog, LocalWorkflowCatalog>();
     }
 }
