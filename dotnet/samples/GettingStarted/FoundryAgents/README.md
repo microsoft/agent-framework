@@ -25,8 +25,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Basics](./FoundryAgents_Step01.1_Basics/)|This sample demonstrates how to create and manage AI agents with versioning|
 |[Running a simple agent](./FoundryAgents_Step01.2_Running/)|This sample demonstrates how to create and run a basic Foundry agent|
 |[Multi-turn conversation](./FoundryAgents_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a Foundry agent|
-|[Using function tools](./FoundryAgents_Step03.1_UsingFunctionTools/)|This sample demonstrates how to use function tools with a Foundry agent|
-|[Using OpenAPI function tools](./FoundryAgents_Step03.2_UsingFunctionTools_FromOpenAPI/)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a Foundry agent|
+|[Using function tools](./FoundryAgents_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a Foundry agent|
 |[Using function tools with approvals](./FoundryAgents_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output](./FoundryAgents_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a Foundry agent|
 |[Persisted conversations](./FoundryAgents_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later|

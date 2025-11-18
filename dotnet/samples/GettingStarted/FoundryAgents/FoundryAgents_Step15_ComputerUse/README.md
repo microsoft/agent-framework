@@ -24,8 +24,8 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="computer-use-preview"  # Optional, defaults to computer-use-preview
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="computer-use-preview"  # Optional, defaults to computer-use-preview
 ```
 
 ## Run the sample
