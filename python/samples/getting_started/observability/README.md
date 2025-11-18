@@ -191,11 +191,11 @@ dependencies
 Besides the Application Insights native UI, you can also use Grafana to visualize the telemetry data in Application Insights. There are two tailored dashboards for you to get started quickly:
 
 #### Agent Overview dashboard
-Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
+Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-agent>
 ![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
 
 #### Workflow Overview dashboard
-Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
+Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 ![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Aspire Dashboard

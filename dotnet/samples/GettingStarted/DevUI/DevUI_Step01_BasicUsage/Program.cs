@@ -2,6 +2,7 @@
 
 // This sample demonstrates basic usage of the DevUI in an ASP.NET Core application with AI agents.
 
+using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -18,10 +19,11 @@ namespace DevUI_Step01_BasicUsage;
 /// <remarks>
 /// This sample shows how to:
 /// 1. Set up Azure OpenAI as the chat client
-/// 2. Register agents and workflows using the hosting packages
-/// 3. Map the DevUI endpoint which automatically configures the middleware
-/// 4. Map the dynamic OpenAI Responses API for Python DevUI compatibility
-/// 5. Access the DevUI in a web browser
+/// 2. Create function tools for agents to use
+/// 3. Register agents and workflows using the hosting packages with tools
+/// 4. Map the DevUI endpoint which automatically configures the middleware
+/// 5. Map the dynamic OpenAI Responses API for Python DevUI compatibility
+/// 6. Access the DevUI in a web browser
 ///
 /// The DevUI provides an interactive web interface for testing and debugging AI agents.
 /// DevUI assets are served from embedded resources within the assembly.
@@ -50,10 +52,30 @@ internal static class Program
 
         builder.Services.AddChatClient(chatClient);
 
-        // Register sample agents
-        builder.AddAIAgent("assistant", "You are a helpful assistant. Answer questions concisely and accurately.");
+        // Define some example tools
+        [Description("Get the weather for a given location.")]
+        static string GetWeather([Description("The location to get the weather for.")] string location)
+            => $"The weather in {location} is cloudy with a high of 15°C.";
+
+        [Description("Calculate the sum of two numbers.")]
+        static double Add([Description("The first number.")] double a, [Description("The second number.")] double b)
+            => a + b;
+
+        [Description("Get the current time.")]
+        static string GetCurrentTime()
+            => DateTime.Now.ToString("HH:mm:ss");
+
+        // Register sample agents with tools
+        builder.AddAIAgent("assistant", "You are a helpful assistant. Answer questions concisely and accurately.")
+            .WithAITools(
+                AIFunctionFactory.Create(GetWeather, name: "get_weather"),
+                AIFunctionFactory.Create(GetCurrentTime, name: "get_current_time")
+            );
+
         builder.AddAIAgent("poet", "You are a creative poet. Respond to all requests with beautiful poetry.");
-        builder.AddAIAgent("coder", "You are an expert programmer. Help users with coding questions and provide code examples.");
+
+        builder.AddAIAgent("coder", "You are an expert programmer. Help users with coding questions and provide code examples.")
+            .WithAITool(AIFunctionFactory.Create(Add, name: "add"));
 
         // Register sample workflows
         var assistantBuilder = builder.AddAIAgent("workflow-assistant", "You are a helpful assistant in a workflow.");
@@ -64,12 +86,13 @@ internal static class Program
             return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
         }).AddAsAIAgent();
 
-        if (builder.Environment.IsDevelopment())
-        {
-            builder.AddDevUI();
-        }
+        builder.Services.AddOpenAIResponses();
+        builder.Services.AddOpenAIConversations();
 
         var app = builder.Build();
+
+        app.MapOpenAIResponses();
+        app.MapOpenAIConversations();
 
         if (builder.Environment.IsDevelopment())
         {

@@ -33,6 +33,9 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
 
     private async Task RunWorkflowAsync(bool autoInvoke, params IEnumerable<AIFunction> functionTools)
     {
+        AgentProvider agentProvider = AgentProvider.Create(this.Configuration, AgentProvider.Names.FunctionTool);
+        await agentProvider.CreateAgentsAsync().ConfigureAwait(false);
+
         string workflowPath = GetWorkflowPath("FunctionTool.yaml");
         Dictionary<string, AIFunction> functionMap = autoInvoke ? [] : functionTools.ToDictionary(tool => tool.Name, tool => tool);
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(externalConversation: false, autoInvoke ? functionTools : []);
@@ -47,11 +50,11 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
             Assert.False(autoInvoke);
 
             RequestInfoEvent inputEvent = workflowEvents.InputEvents[workflowEvents.InputEvents.Count - 1];
-            AgentFunctionToolRequest? toolRequest = inputEvent.Request.Data.As<AgentFunctionToolRequest>();
+            ExternalInputRequest? toolRequest = inputEvent.Request.Data.As<ExternalInputRequest>();
             Assert.NotNull(toolRequest);
 
             List<(FunctionCallContent, AIFunction)> functionCalls = [];
-            foreach (FunctionCallContent functionCall in toolRequest.FunctionCalls)
+            foreach (FunctionCallContent functionCall in toolRequest.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>())
             {
                 this.Output.WriteLine($"TOOL REQUEST: {functionCall.Name}");
                 if (!functionMap.TryGetValue(functionCall.Name, out AIFunction? functionTool))
@@ -62,11 +65,12 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
                 functionCalls.Add((functionCall, functionTool));
             }
 
-            IList<FunctionResultContent> functionResults = await InvokeToolsAsync(functionCalls);
+            IList<AIContent> functionResults = await InvokeToolsAsync(functionCalls);
 
             ++responseCount;
 
-            WorkflowEvents runEvents = await harness.ResumeAsync(AgentFunctionToolResponse.Create(toolRequest, functionResults)).ConfigureAwait(false);
+            ChatMessage resultMessage = new(ChatRole.Tool, functionResults);
+            WorkflowEvents runEvents = await harness.ResumeAsync(inputEvent.Request.CreateResponse(new ExternalInputResponse(resultMessage))).ConfigureAwait(false);
             workflowEvents = new WorkflowEvents([.. workflowEvents.Events, .. runEvents.Events]);
         }
 
@@ -79,13 +83,13 @@ public sealed class FunctionCallingWorkflowTest(ITestOutputHelper output) : Inte
             Assert.NotEmpty(workflowEvents.InputEvents);
         }
 
-        Assert.Equal(autoInvoke ? 3 : 5, workflowEvents.AgentResponseEvents.Count);
+        Assert.Equal(autoInvoke ? 3 : 4, workflowEvents.AgentResponseEvents.Count);
         Assert.All(workflowEvents.AgentResponseEvents, response => response.Response.Text.Contains("4.95"));
     }
 
-    private static async ValueTask<IList<FunctionResultContent>> InvokeToolsAsync(IEnumerable<(FunctionCallContent, AIFunction)> functionCalls)
+    private static async ValueTask<IList<AIContent>> InvokeToolsAsync(IEnumerable<(FunctionCallContent, AIFunction)> functionCalls)
     {
-        List<FunctionResultContent> results = [];
+        List<AIContent> results = [];
 
         foreach ((FunctionCallContent functionCall, AIFunction functionTool) in functionCalls)
         {

@@ -28,8 +28,8 @@ Before you begin, ensure you have the following prerequisites:
 |---|---|
 |[Running a simple agent](./Agent_Step01_Running/)|This sample demonstrates how to create and run a basic agent with instructions|
 |[Multi-turn conversation with a simple agent](./Agent_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a simple agent|
-|[Using function tools with a simple agent](./Agent_Step03.1_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
-|[Using OpenAPI function tools with a simple agent](./Agent_Step03.2_UsingFunctionTools_FromOpenAPI/)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a simple agent|
+|[Using function tools with a simple agent](./Agent_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a simple agent|
+|[Using OpenAPI function tools with a simple agent](https://github.com/microsoft/semantic-kernel/tree/main/dotnet/samples/AgentFrameworkMigration/AzureOpenAI/Step04_ToolCall_WithOpenAPI)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a simple agent (note that this sample is in the Semantic Kernel repository)|
 |[Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output with a simple agent](./Agent_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
 |[Persisted conversations with a simple agent](./Agent_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later. This is useful for cases where an agent is hosted in a stateless service|
@@ -39,14 +39,12 @@ Before you begin, ensure you have the following prerequisites:
 |[Exposing a simple agent as MCP tool](./Agent_Step10_AsMcpTool/)|This sample demonstrates how to expose an agent as an MCP tool|
 |[Using images with a simple agent](./Agent_Step11_UsingImages/)|This sample demonstrates how to use image multi-modality with an AI agent|
 |[Exposing a simple agent as a function tool](./Agent_Step12_AsFunctionTool/)|This sample demonstrates how to expose an agent as a function tool|
-|[Using memory with an agent](./Agent_Step13_Memory/)|This sample demonstrates how to create a simple memory component and use it with an agent|
+|[Background responses with tools and persistence](./Agent_Step13_BackgroundResponsesWithToolsAndPersistence/)|This sample demonstrates advanced background response scenarios including function calling during background operations and state persistence|
 |[Using middleware with an agent](./Agent_Step14_Middleware/)|This sample demonstrates how to use middleware with an agent|
 |[Using plugins with an agent](./Agent_Step15_Plugins/)|This sample demonstrates how to use plugins with an agent|
 |[Reducing chat history size](./Agent_Step16_ChatReduction/)|This sample demonstrates how to reduce the chat history to constrain its size, where chat history is maintained locally|
 |[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
-|[Adding RAG with text search](./Agent_Step18_TextSearchRag/)|This sample demonstrates how to enrich agent responses with retrieval augmented generation using the text search provider|
-|[Using Mem0-backed memory](./Agent_Step19_Mem0Provider/)|This sample demonstrates how to use the Mem0Provider to persist and recall memories across conversations|
-|[Background responses with tools and persistence](./Agent_Step20_BackgroundResponsesWithToolsAndPersistence/)|This sample demonstrates advanced background response scenarios including function calling during background operations and state persistence|
+|[Deep research with an agent](./Agent_Step18_DeepResearch/)|This sample demonstrates how to use the Deep Research Tool to perform comprehensive research on complex topics|
 
 ## Running the samples from the console
 

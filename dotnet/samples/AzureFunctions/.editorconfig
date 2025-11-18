@@ -1,0 +1,10 @@
+# .editorconfig
+[*.cs]
+
+# See https://github.com/Azure/azure-functions-durable-extension/issues/3173
+dotnet_diagnostic.DURABLE0001.severity = none
+dotnet_diagnostic.DURABLE0002.severity = none
+dotnet_diagnostic.DURABLE0003.severity = none
+dotnet_diagnostic.DURABLE0004.severity = none
+dotnet_diagnostic.DURABLE0005.severity = none
+dotnet_diagnostic.DURABLE0006.severity = none

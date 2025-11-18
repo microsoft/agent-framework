@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251117] - 2025-11-17
+
+### Fixed
+
+- **agent-framework-ag-ui**: Fix ag-ui state handling issues ([#2289](https://github.com/microsoft/agent-framework/pull/2289))
+
+## [1.0.0b251114] - 2025-11-14
+
+### Added
+
+- **samples**: Bing Custom Search sample using `HostedWebSearchTool` ([#2226](https://github.com/microsoft/agent-framework/pull/2226))
+- **samples**: Fabric and Browser Automation samples ([#2207](https://github.com/microsoft/agent-framework/pull/2207))
+- **samples**: Hosted agent samples ([#2205](https://github.com/microsoft/agent-framework/pull/2205))
+- **samples**: Azure OpenAI Responses API Hosted MCP sample ([#2108](https://github.com/microsoft/agent-framework/pull/2108))
+- **samples**: Bing Grounding and Custom Search samples ([#2200](https://github.com/microsoft/agent-framework/pull/2200))
+
+### Changed
+
+- **agent-framework-azure-ai**: Enhance Azure AI Search citations with complete URL information ([#2066](https://github.com/microsoft/agent-framework/pull/2066))
+- **agent-framework-azurefunctions**: Update samples to latest stable Azure Functions Worker packages ([#2189](https://github.com/microsoft/agent-framework/pull/2189))
+- **agent-framework-azure-ai**: Agent name now required for `AzureAIClient` ([#2198](https://github.com/microsoft/agent-framework/pull/2198))
+- **build**: Use `uv build` for packaging ([#2161](https://github.com/microsoft/agent-framework/pull/2161))
+- **tooling**: Pre-commit improvements ([#2222](https://github.com/microsoft/agent-framework/pull/2222))
+- **dependencies**: Updated package versions ([#2208](https://github.com/microsoft/agent-framework/pull/2208))
+
+### Fixed
+
+- **agent-framework-core**: Prevent duplicate MCP tools and prompts ([#1876](https://github.com/microsoft/agent-framework/pull/1876)) ([#1890](https://github.com/microsoft/agent-framework/pull/1890))
+- **agent-framework-devui**: Fix HIL regression ([#2167](https://github.com/microsoft/agent-framework/pull/2167))
+- **agent-framework-chatkit**: ChatKit sample fixes ([#2174](https://github.com/microsoft/agent-framework/pull/2174))
+
+## [1.0.0b251112.post1] - 2025-11-12
+
+### Added
+
+- **agent-framework-azurefunctions**: Merge Azure Functions feature branch (#1916)
+
+### Fixed
+
+- **agent-framework-ag-ui**: fix tool call id mismatch in ag-ui ([#2166](https://github.com/microsoft/agent-framework/pull/2166))
+
+## [1.0.0b251112] - 2025-11-12
+
+### Added
+
+- **agent-framework-azure-ai**: Azure AI client based on new `azure-ai-projects` package ([#1910](https://github.com/microsoft/agent-framework/pull/1910))
+- **agent-framework-anthropic**: Add convenience method on data content ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
+### Changed
+
+- **agent-framework-core**: Update OpenAI samples to use agents ([#2012](https://github.com/microsoft/agent-framework/pull/2012))
+
+### Fixed
+
+- **agent-framework-anthropic**: Fixed image handling in Anthropic client ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
+## [1.0.0b251111] - 2025-11-11
+
+### Added
+
+- **agent-framework-core**: Add OpenAI Responses Image Generation Stream Support with partial images and unit tests ([#1853](https://github.com/microsoft/agent-framework/pull/1853))
+- **agent-framework-ag-ui**: Add concrete AGUIChatClient implementation ([#2072](https://github.com/microsoft/agent-framework/pull/2072))
+
+### Fixed
+
+- **agent-framework-a2a**: Use the last entry in the task history to avoid empty responses ([#2101](https://github.com/microsoft/agent-framework/pull/2101))
+- **agent-framework-core**: Fix MCP Tool Parameter Descriptions not propagated to LLMs ([#1978](https://github.com/microsoft/agent-framework/pull/1978))
+- **agent-framework-core**: Handle agent user input request in AgentExecutor ([#2022](https://github.com/microsoft/agent-framework/pull/2022))
+- **agent-framework-core**: Fix Model ID attribute not showing up in `invoke_agent` span ([#2061](https://github.com/microsoft/agent-framework/pull/2061))
+- **agent-framework-core**: Fix underlying tool choice bug and enable return to previous Handoff subagent ([#2037](https://github.com/microsoft/agent-framework/pull/2037))
+
+## [1.0.0b251108] - 2025-11-08
+
+### Added
+
+- **agent-framework-devui**: Add OpenAI Responses API proxy support + HIL (Human-in-the-Loop) for Workflows ([#1737](https://github.com/microsoft/agent-framework/pull/1737))
+- **agent-framework-purview**: Add Caching and background processing in Python Purview Middleware ([#1844](https://github.com/microsoft/agent-framework/pull/1844))
+
+### Changed
+
+- **agent-framework-devui**: Use metadata.entity_id instead of model field ([#1984](https://github.com/microsoft/agent-framework/pull/1984))
+- **agent-framework-devui**: Serialize workflow input as string to maintain conformance with OpenAI Responses format ([#2021](https://github.com/microsoft/agent-framework/pull/2021))
+
 ## [1.0.0b251106.post1] - 2025-11-06
 
 ### Fixed
@@ -177,7 +260,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251104...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...HEAD
+[1.0.0b251114]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112.post1...python-1.0.0b251114
+[1.0.0b251112.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112...python-1.0.0b251112.post1
+[1.0.0b251112]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...python-1.0.0b251112
+[1.0.0b251111]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251108...python-1.0.0b251111
+[1.0.0b251108]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106.post1...python-1.0.0b251108
+[1.0.0b251106.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106...python-1.0.0b251106.post1
+[1.0.0b251106]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251105...python-1.0.0b251106
+[1.0.0b251105]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251104...python-1.0.0b251105
 [1.0.0b251104]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251028...python-1.0.0b251104
 [1.0.0b251028]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251016...python-1.0.0b251028
 [1.0.0b251016]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251007...python-1.0.0b251016

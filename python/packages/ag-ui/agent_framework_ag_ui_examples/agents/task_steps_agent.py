@@ -19,7 +19,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import ChatAgent, ai_function
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework._clients import ChatClientProtocol
 from pydantic import BaseModel, Field
 
 from agent_framework_ag_ui import AgentFrameworkAgent
@@ -54,10 +54,18 @@ def generate_task_steps(steps: list[TaskStep]) -> str:
     return "Steps generated."
 
 
-# Create the task steps agent using tool-based approach for streaming
-agent = ChatAgent(
-    name="task_steps_agent",
-    instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
+def _create_task_steps_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
+    """Create the task steps agent using tool-based approach for streaming.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A configured AgentFrameworkAgent instance
+    """
+    agent = ChatAgent(
+        name="task_steps_agent",
+        instructions="""You are a helpful assistant that breaks down tasks into actionable steps.
 
     When asked to perform a task, you MUST:
     1. Use the generate_task_steps tool to create the steps
@@ -75,25 +83,25 @@ agent = ChatAgent(
     - "Installing platform"
     - "Adding finishing touches"
     """,
-    chat_client=AzureOpenAIChatClient(),
-    tools=[generate_task_steps],
-)
+        chat_client=chat_client,
+        tools=[generate_task_steps],
+    )
 
-task_steps_agent = AgentFrameworkAgent(
-    agent=agent,
-    name="TaskStepsAgent",
-    description="Generates task steps with streaming state updates",
-    state_schema={
-        "steps": {"type": "array", "description": "The list of task steps"},
-    },
-    predict_state_config={
-        "steps": {
-            "tool": "generate_task_steps",
-            "tool_argument": "steps",
-        }
-    },
-    require_confirmation=False,  # Agentic generative UI updates automatically without confirmation
-)
+    return AgentFrameworkAgent(
+        agent=agent,
+        name="TaskStepsAgent",
+        description="Generates task steps with streaming state updates",
+        state_schema={
+            "steps": {"type": "array", "description": "The list of task steps"},
+        },
+        predict_state_config={
+            "steps": {
+                "tool": "generate_task_steps",
+                "tool_argument": "steps",
+            }
+        },
+        require_confirmation=False,  # Agentic generative UI updates automatically without confirmation
+    )
 
 
 # Wrap the agent's run method to add step execution simulation
@@ -128,51 +136,62 @@ class TaskStepsAgentWithExecution:
         import uuid
 
         logger = logging.getLogger(__name__)
-        logger.info(">>> TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
+        logger.info("TaskStepsAgentWithExecution.run_agent() called - wrapper is active")
 
         # First, run the base agent to generate the plan - buffer text messages
-        final_state: dict[str, Any] | None = None
+        final_state: dict[str, Any] = {}
         run_finished_event: Any = None
         tool_call_id: str | None = None
         buffered_text_events: list[Any] = []  # Buffer text from first LLM call
 
         async for event in self._base_agent.run_agent(input_data):
             event_type_str = str(event.type) if hasattr(event, "type") else type(event).__name__
-            logger.info(f">>> Processing event: {event_type_str}")
+            logger.info(f"Processing event: {event_type_str}")
 
             match event:
                 case StateSnapshotEvent(snapshot=snapshot):
-                    final_state = snapshot
-                    logger.info(f">>> Captured STATE_SNAPSHOT event with state: {final_state}")
+                    final_state = snapshot.copy() if snapshot else {}
+                    logger.info(f"Captured STATE_SNAPSHOT event with state: {final_state}")
+                    yield event
+                case StateDeltaEvent(delta=delta):
+                    # Apply state delta to final_state
+                    if delta:
+                        for patch in delta:
+                            if patch.get("op") == "replace" and patch.get("path") == "/steps":
+                                final_state["steps"] = patch.get("value", [])
+                                logger.info(
+                                    f"Applied STATE_DELTA: updated steps to {len(final_state.get('steps', []))} items"
+                                )
+                    logger.info(f"Yielding event immediately: {event_type_str}")
                     yield event
                 case RunFinishedEvent():
                     run_finished_event = event
-                    logger.info(">>> Captured RUN_FINISHED event - will send after step execution and summary")
+                    logger.info("Captured RUN_FINISHED event - will send after step execution and summary")
                 case ToolCallStartEvent(tool_call_id=call_id):
                     tool_call_id = call_id
-                    logger.info(f">>> Captured tool_call_id: {tool_call_id}")
+                    logger.info(f"Captured tool_call_id: {tool_call_id}")
                     yield event
                 case TextMessageStartEvent() | TextMessageContentEvent() | TextMessageEndEvent():
                     buffered_text_events.append(event)
-                    logger.info(f">>> Buffered {event_type_str} from first LLM call")
+                    logger.info(f"Buffered {event_type_str} from first LLM call")
                 case _:
-                    logger.info(f">>> Yielding event immediately: {event_type_str}")
+                    logger.info(f"Yielding event immediately: {event_type_str}")
                     yield event
 
-        logger.info(f">>> Base agent completed. Final state: {final_state}")
+        logger.info(f"Base agent completed. Final state: {final_state}")
 
         # Now simulate executing the steps
         if final_state and "steps" in final_state:
             steps = final_state["steps"]
-            logger.info(f">>> Starting step execution simulation for {len(steps)} steps")
+            logger.info(f"Starting step execution simulation for {len(steps)} steps")
 
             for i in range(len(steps)):
-                logger.info(f">>> Simulating execution of step {i + 1}/{len(steps)}: {steps[i].get('description')}")
+                logger.info(f"Simulating execution of step {i + 1}/{len(steps)}: {steps[i].get('description')}")
                 await asyncio.sleep(1.0)  # Simulate work
 
                 # Update step to completed
                 steps[i]["status"] = "completed"
-                logger.info(f">>> Step {i + 1} marked as completed")
+                logger.info(f"Step {i + 1} marked as completed")
 
                 # Send delta event with manual JSON patch format
                 delta_event = StateDeltaEvent(
@@ -185,7 +204,7 @@ class TaskStepsAgentWithExecution:
                         }
                     ],
                 )
-                logger.info(f">>> Yielding StateDeltaEvent for step {i + 1}")
+                logger.info(f"Yielding StateDeltaEvent for step {i + 1}")
                 yield delta_event
 
             # Send final snapshot
@@ -193,11 +212,11 @@ class TaskStepsAgentWithExecution:
                 type=EventType.STATE_SNAPSHOT,
                 snapshot={"steps": steps},
             )
-            logger.info(">>> Yielding final StateSnapshotEvent with all steps completed")
+            logger.info("Yielding final StateSnapshotEvent with all steps completed")
             yield final_snapshot
 
             # SECOND LLM call: Stream summary from chat client directly
-            logger.info(">>> Making SECOND LLM call to generate summary after step execution")
+            logger.info("Making SECOND LLM call to generate summary after step execution")
 
             # Get the underlying chat agent and client
             chat_agent = self._base_agent.agent  # type: ignore
@@ -236,7 +255,7 @@ class TaskStepsAgentWithExecution:
             )
 
             # Stream the LLM response and manually emit text events
-            logger.info(">>> Calling chat client for summary")
+            logger.info("Calling chat client for summary")
 
             message_id = str(uuid.uuid4())
 
@@ -268,7 +287,7 @@ class TaskStepsAgentWithExecution:
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=message_id,
                 )
-                logger.info(f">>> Summary complete: {accumulated_text}")
+                logger.info(f"Summary complete: {accumulated_text}")
 
                 # Build complete message for persistence
                 summary_message = {
@@ -285,7 +304,7 @@ class TaskStepsAgentWithExecution:
                     messages=final_messages,
                 )
             except Exception as e:
-                logger.error(f">>> Error generating summary: {e}")
+                logger.error(f"Error generating summary: {e}")
                 # Generate a new message ID for the error
                 error_message_id = str(uuid.uuid4())
                 # Yield TEXT_MESSAGE_START for error
@@ -306,13 +325,22 @@ class TaskStepsAgentWithExecution:
                     message_id=error_message_id,
                 )
         else:
-            logger.warning(f">>> No steps found in final_state to execute. final_state={final_state}")
+            logger.warning(f"No steps found in final_state to execute. final_state={final_state}")
 
         # Finally send the original RUN_FINISHED event
         if run_finished_event:
-            logger.info(">>> Yielding original RUN_FINISHED event")
+            logger.info("Yielding original RUN_FINISHED event")
             yield run_finished_event
 
 
-# Export the wrapped agent
-task_steps_agent_wrapped = TaskStepsAgentWithExecution(task_steps_agent)
+def task_steps_agent_wrapped(chat_client: ChatClientProtocol) -> TaskStepsAgentWithExecution:
+    """Create a task steps agent with execution simulation.
+
+    Args:
+        chat_client: The chat client to use for the agent
+
+    Returns:
+        A wrapped agent instance with step execution simulation
+    """
+    base_agent = _create_task_steps_agent(chat_client)
+    return TaskStepsAgentWithExecution(base_agent)

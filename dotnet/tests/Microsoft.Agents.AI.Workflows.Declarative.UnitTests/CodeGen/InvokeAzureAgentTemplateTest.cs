@@ -45,18 +45,6 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
     }
 
     [Fact]
-    public void AdditionalInstructions()
-    {
-        // Act, Assert
-        this.ExecuteTest(
-            nameof(VariableConversation),
-            StringExpression.Literal("asst_123abc"),
-            StringExpression.Variable(PropertyPath.TopicVariable("TestConversation")),
-            "MyMessages",
-            additionalInstructions: "Test instructions...");
-    }
-
-    [Fact]
     public void InputMessagesVariable()
     {
         // Act, Assert
@@ -86,7 +74,6 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         StringExpression.Builder conversation,
         string? messagesVariable = null,
         BoolExpression.Builder? autoSend = null,
-        string? additionalInstructions = null,
         ValueExpression.Builder? messages = null)
     {
         // Arrange
@@ -97,7 +84,6 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                 conversation,
                 messagesVariable,
                 autoSend,
-                additionalInstructions is null ? null : (TemplateLine.Builder)TemplateLine.Parse(additionalInstructions),
                 messages);
 
         // Act
@@ -117,7 +103,6 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
         StringExpression.Builder conversation,
         string? messagesVariable = null,
         BoolExpression.Builder? autoSend = null,
-        TemplateLine.Builder? additionalInstructions = null,
         ValueExpression.Builder? messages = null)
     {
         InitializablePropertyPath? outputMessages = null;
@@ -141,7 +126,6 @@ public class InvokeAzureAgentTemplateTest(ITestOutputHelper output) : WorkflowAc
                     new AzureAgentInput.Builder
                     {
                         Messages = messages,
-                        AdditionalInstructions = additionalInstructions,
                     },
                 Output =
                     new AzureAgentOutput.Builder

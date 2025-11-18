@@ -1,0 +1,44 @@
+### Start the HITL content generation orchestration with default timeout (30 days)
+POST http://localhost:7071/api/hitl/run
+Content-Type: application/json
+
+{
+  "topic": "The Future of Artificial Intelligence",
+  "max_review_attempts": 3
+}
+
+
+### Start the HITL content generation orchestration with very short timeout for demonstration (~4 seconds)
+POST http://localhost:7071/api/hitl/run
+Content-Type: application/json
+
+{
+  "topic": "The Future of Artificial Intelligence",
+  "max_review_attempts": 3,
+  "approval_timeout_hours": 0.001
+}
+
+
+### Copy/paste the instanceId from the response above
+@instanceId=INSTANCE_ID_GOES_HERE
+
+### Check the status of the orchestration (replace {instanceId} with the actual instance ID from the response above)
+GET http://localhost:7071/api/hitl/status/{{instanceId}}
+
+### Send human approval (replace {instanceId} with the actual instance ID)
+POST http://localhost:7071/api/hitl/approve/{{instanceId}}
+Content-Type: application/json
+
+{
+  "approved": true,
+  "feedback": "Great article! The content is well-structured and informative."
+}
+
+### Send human rejection with feedback (replace {instanceId} with the actual instance ID)
+POST http://localhost:7071/api/hitl/approve/{{instanceId}}
+Content-Type: application/json
+
+{
+  "approved": false,
+  "feedback": "The article needs more technical depth and better examples. Please add more specific use cases and implementation details."
+}
