@@ -7,10 +7,10 @@ import logging
 import re
 import secrets
 import uuid
-from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .models._discovery_models import Deployment, DeploymentConfig, DeploymentEvent
 
@@ -473,7 +473,7 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                         urls = re.findall(r'https://[^\s<>"]+', line_text)
                         for url in urls:
                             # Strip common trailing punctuation to ensure clean URL parsing
-                            url_clean = url.rstrip('.,;:!?\'")}]')
+                            url_clean = url.rstrip(".,;:!?'\")}]")
                             host = urlparse(url_clean).hostname
                             if host and (host == "azurecontainerapps.io" or host.endswith(".azurecontainerapps.io")):
                                 await event_queue.put(
