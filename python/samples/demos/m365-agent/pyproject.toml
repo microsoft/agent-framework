@@ -1,0 +1,37 @@
+[project]
+name = "m365-agent-demo"
+version = "0.1.0"
+description = "Demo application using Microsoft Agent 365 SDK"
+dependencies = [  
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+    "agent-framework-core",
+    
+    "azure-identity",
+    
+    "python-dotenv",
+    "aiohttp",
+    
+    # HTTP client
+    "httpx>=0.24.0",
+    
+    # Data validation
+    "pydantic>=2.0.0",
+    
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+]
+requires-python = ">=3.11"
+
+[project.scripts]
+m365-agent-demo = "m365_agent_demo.app:main"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.uv.sources]
+"agent-framework-core" = { path = "../../../packages/core" }
