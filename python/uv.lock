@@ -85,19 +85,8 @@ name = "agent-framework"
 version = "1.0.0b251114"
 source = { virtual = "." }
 dependencies = [
-    { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-chatkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -130,19 +119,8 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-framework-a2a", editable = "packages/a2a" },
-    { name = "agent-framework-ag-ui", editable = "packages/ag-ui" },
-    { name = "agent-framework-anthropic", editable = "packages/anthropic" },
-    { name = "agent-framework-azure-ai", editable = "packages/azure-ai" },
-    { name = "agent-framework-azurefunctions", editable = "packages/azurefunctions" },
-    { name = "agent-framework-chatkit", editable = "packages/chatkit" },
-    { name = "agent-framework-copilotstudio", editable = "packages/copilotstudio" },
-    { name = "agent-framework-core", editable = "packages/core" },
-    { name = "agent-framework-devui", editable = "packages/devui" },
+    { name = "agent-framework-core", extras = ["all"], editable = "packages/core" },
     { name = "agent-framework-lab", editable = "packages/lab" },
-    { name = "agent-framework-mem0", editable = "packages/mem0" },
-    { name = "agent-framework-purview", editable = "packages/purview" },
-    { name = "agent-framework-redis", editable = "packages/redis" },
 ]
 
 [package.metadata.requires-dev]
@@ -190,7 +168,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0b251114"
+version = "1.0.0b251117"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -323,6 +301,8 @@ all = [
     { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-chatkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -336,6 +316,8 @@ requires-dist = [
     { name = "agent-framework-ag-ui", marker = "extra == 'all'", editable = "packages/ag-ui" },
     { name = "agent-framework-anthropic", marker = "extra == 'all'", editable = "packages/anthropic" },
     { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
+    { name = "agent-framework-azurefunctions", marker = "extra == 'all'", editable = "packages/azurefunctions" },
+    { name = "agent-framework-chatkit", marker = "extra == 'all'", editable = "packages/chatkit" },
     { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
