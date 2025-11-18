@@ -130,4 +130,5 @@ def recipe_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
             "recipe": {"tool": "update_recipe", "tool_argument": "recipe"},
         },
         confirmation_strategy=RecipeConfirmationStrategy(),
+        require_confirmation=False,
     )
