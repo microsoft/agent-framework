@@ -16,6 +16,15 @@ import azure.functions as func
 from agent_framework import AgentProtocol, get_logger
 
 from ._callbacks import AgentResponseCallbackProtocol
+from ._constants import (
+    DEFAULT_MAX_POLL_RETRIES,
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    RESPONSE_FORMAT_JSON,
+    RESPONSE_FORMAT_TEXT,
+    THREAD_ID_FIELD,
+    WAIT_FOR_RESPONSE_FIELD,
+    WAIT_FOR_RESPONSE_HEADER,
+)
 from ._durable_agent_state import DurableAgentState
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
@@ -23,14 +32,6 @@ from ._models import AgentSessionId, RunRequest
 from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
 
 logger = get_logger("agent_framework.azurefunctions")
-
-THREAD_ID_FIELD: str = "thread_id"
-RESPONSE_FORMAT_JSON: str = "json"
-RESPONSE_FORMAT_TEXT: str = "text"
-WAIT_FOR_RESPONSE_FIELD: str = "wait_for_response"
-WAIT_FOR_RESPONSE_HEADER: str = "x-ms-wait-for-response"
-DEFAULT_MAX_POLL_RETRIES: int = 30
-DEFAULT_POLL_INTERVAL_SECONDS: float = 1.0
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])

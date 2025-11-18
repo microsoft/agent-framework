@@ -33,6 +33,27 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from agent_framework import (
+    AgentRunResponse,
+    BaseContent,
+    ChatMessage,
+    DataContent,
+    ErrorContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    HostedFileContent,
+    HostedVectorStoreContent,
+    TextContent,
+    TextReasoningContent,
+    UriContent,
+    UsageContent,
+    UsageDetails,
+)
+from dateutil import parser as date_parser  # type: ignore
+
+from ._constants import RESPONSE_FORMAT_JSON, RESPONSE_FORMAT_TEXT
+from ._models import RunRequest, _serialize_response_format
+
 
 class DurableAgentStateContent:
     """Base class for all content types in durable agent state messages.
@@ -88,19 +109,6 @@ class DurableAgentStateContent:
             The corresponding DurableAgentStateContent subclass instance
         """
         # Map AI content type to appropriate DurableAgentStateContent subclass
-        from agent_framework import (
-            DataContent,
-            ErrorContent,
-            FunctionCallContent,
-            FunctionResultContent,
-            HostedFileContent,
-            HostedVectorStoreContent,
-            TextContent,
-            TextReasoningContent,
-            UriContent,
-            UsageContent,
-        )
-
         if isinstance(content, DataContent):
             return DurableAgentStateDataContent.from_data_content(content)
         if isinstance(content, ErrorContent):
@@ -222,9 +230,8 @@ class DurableAgentState:
 
     @classmethod
     def from_dict(cls, obj: dict[str, Any]) -> DurableAgentState:
-        schema_version = obj.get("schemaVersion")
-        if not schema_version:
-            raise ValueError("The durable agent state is missing the 'schemaVersion' property.")
+        # Default to "1.0.0" for backward compatibility with legacy state that doesn't have schemaVersion
+        schema_version = obj.get("schemaVersion", "1.0.0")
 
         if not schema_version.startswith("1."):
             raise ValueError(f"The durable agent state schema version '{schema_version}' is not supported.")
@@ -354,7 +361,7 @@ class DurableAgentStateEntry:
     """
 
     json_type: str
-    correlation_id: str
+    correlation_id: str | None
     created_at: datetime
     messages: list[DurableAgentStateMessage]
     extension_data: dict[str, Any] | None
@@ -369,7 +376,7 @@ class DurableAgentStateEntry:
     def __init__(
         self,
         json_type: str,
-        correlation_id: str,
+        correlation_id: str | None,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
         extension_data: dict[str, Any] | None = None,
@@ -412,8 +419,6 @@ class DurableAgentStateEntry:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateEntry:
-        from dateutil import parser as date_parser  # type: ignore
-
         created_at = data.get("created_at")
         if isinstance(created_at, str):
             created_at = date_parser.parse(created_at)
@@ -457,7 +462,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
     def __init__(
         self,
-        correlation_id: str,
+        correlation_id: str | None,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
         json_type: str,
@@ -479,8 +484,6 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateRequest:
-        from dateutil import parser as date_parser  # type: ignore
-
         created_at = data.get("created_at")
         if isinstance(created_at, str):
             created_at = date_parser.parse(created_at)
@@ -505,11 +508,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
         )
 
     @staticmethod
-    def from_run_request(content: Any) -> DurableAgentStateRequest:
-        from agent_framework import TextContent
-
-        from ._app import RESPONSE_FORMAT_JSON, RESPONSE_FORMAT_TEXT
-
+    def from_run_request(content: RunRequest) -> DurableAgentStateRequest:
         # Determine response_type based on response_format
         response_type = None
         if content.response_format is not None:
@@ -524,7 +523,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             json_type="request",
             extension_data=content.extension_data if hasattr(content, "extensionData") else None,
             response_type=response_type,
-            response_schema=content.response_format,
+            response_schema=_serialize_response_format(content.response_format),
         )
 
 
@@ -570,8 +569,6 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateResponse:
-        from dateutil import parser as date_parser  # type: ignore
-
         created_at = data.get("created_at")
         if isinstance(created_at, str):
             created_at = date_parser.parse(created_at)
@@ -602,11 +599,16 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
     @staticmethod
-    def from_run_response(correlation_id: str, response: Any) -> DurableAgentStateResponse:
+    def from_run_response(correlation_id: str, response: AgentRunResponse) -> DurableAgentStateResponse:
         """Creates a DurableAgentStateResponse from an AgentRunResponse."""
-        # Determine the earliest created_at timestamp among messages (if available)
-        timestamps = [m.created_at for m in response.messages if hasattr(m, "created_at") and m.created_at is not None]
-        created_at = min(timestamps) if timestamps else datetime.now(tz=timezone.utc)
+        # Use response.created_at if available, otherwise use current time
+        created_at = datetime.now(tz=timezone.utc)
+        if hasattr(response, "created_at") and response.created_at is not None:
+            # AgentRunResponse.created_at is a string, parse it to datetime
+            if isinstance(response.created_at, str):
+                created_at = date_parser.parse(response.created_at)
+            elif isinstance(response.created_at, datetime):
+                created_at = response.created_at
 
         return DurableAgentStateResponse(
             json_type="response",
@@ -620,8 +622,6 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
     def to_run_response(self) -> Any:
         """Converts this DurableAgentStateResponse back to an AgentRunResponse."""
-        from agent_framework import AgentRunResponse
-
         return AgentRunResponse(
             created_at=self.created_at.isoformat() if self.created_at else None,
             messages=[m.to_chat_message() for m in self.messages],
@@ -683,8 +683,6 @@ class DurableAgentStateMessage:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateMessage:
-        from dateutil import parser as date_parser  # type: ignore
-
         created_at = data.get("createdAt")
         if created_at and isinstance(created_at, str):
             created_at = date_parser.parse(created_at)
@@ -806,25 +804,20 @@ class DurableAgentStateMessage:
         Returns:
             ChatMessage object with role, contents, and metadata converted back to agent framework types
         """
-        from collections.abc import MutableMapping, Sequence
-        from typing import cast
-
-        from agent_framework import ChatMessage
-
         # Convert DurableAgentStateContent objects back to agent_framework content objects
         ai_contents = [c.to_ai_content() for c in self.contents]
 
         # Build kwargs for ChatMessage
         kwargs: dict[str, Any] = {
             "role": self.role,
-            "contents": cast(Sequence[Any], ai_contents),
+            "contents": ai_contents,
         }
 
         if self.author_name is not None:
             kwargs["author_name"] = self.author_name
 
         if self.extension_data is not None:
-            kwargs["additional_properties"] = cast(MutableMapping[str, Any], self.extension_data)
+            kwargs["additional_properties"] = self.extension_data
 
         return ChatMessage(**kwargs)  # type: ignore[call-overload]
 
@@ -855,12 +848,10 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
         return {"type": "data", "uri": self.uri, "mediaType": self.media_type}
 
     @staticmethod
-    def from_data_content(content: Any) -> DurableAgentStateDataContent:
+    def from_data_content(content: DataContent) -> DurableAgentStateDataContent:
         return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import DataContent
-
         return DataContent(uri=self.uri, media_type=self.media_type)
 
 
@@ -889,14 +880,12 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
         return {"type": "error", "message": self.message, "errorCode": self.error_code, "details": self.details}
 
     @staticmethod
-    def from_error_content(content: Any) -> DurableAgentStateErrorContent:
+    def from_error_content(content: ErrorContent) -> DurableAgentStateErrorContent:
         return DurableAgentStateErrorContent(
             message=content.message, error_code=content.error_code, details=content.details
         )
 
     def to_ai_content(self) -> Any:
-        from agent_framework import ErrorContent
-
         return ErrorContent(message=self.message, error_code=self.error_code, details=self.details)
 
 
@@ -926,14 +915,22 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         return {"type": "function_call", "callId": self.call_id, "name": self.name, "arguments": self.arguments}
 
     @staticmethod
-    def from_function_call_content(content: Any) -> DurableAgentStateFunctionCallContent:
-        return DurableAgentStateFunctionCallContent(
-            call_id=content.call_id, name=content.name, arguments=content.arguments if content.arguments else {}
-        )
+    def from_function_call_content(content: FunctionCallContent) -> DurableAgentStateFunctionCallContent:
+        # Ensure arguments is a dict; parse string if needed
+        arguments: dict[str, Any] = {}
+        if content.arguments:
+            if isinstance(content.arguments, dict):
+                arguments = content.arguments
+            elif isinstance(content.arguments, str):
+                # Parse JSON string to dict
+                try:
+                    arguments = json.loads(content.arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+
+        return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import FunctionCallContent
-
         return FunctionCallContent(call_id=self.call_id, name=self.name, arguments=self.arguments)
 
 
@@ -960,12 +957,10 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
         return {"type": "function_result", "callId": self.call_id, "result": self.result}
 
     @staticmethod
-    def from_function_result_content(content: Any) -> DurableAgentStateFunctionResultContent:
+    def from_function_result_content(content: FunctionResultContent) -> DurableAgentStateFunctionResultContent:
         return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import FunctionResultContent
-
         return FunctionResultContent(call_id=self.call_id, result=self.result)
 
 
@@ -988,12 +983,10 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
         return {"type": "hosted_file", "fileId": self.file_id}
 
     @staticmethod
-    def from_hosted_file_content(content: Any) -> DurableAgentStateHostedFileContent:
+    def from_hosted_file_content(content: HostedFileContent) -> DurableAgentStateHostedFileContent:
         return DurableAgentStateHostedFileContent(file_id=content.file_id)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import HostedFileContent
-
         return HostedFileContent(file_id=self.file_id)
 
 
@@ -1017,12 +1010,12 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
         return {"type": "hosted_vector_store", "vectorStoreId": self.vector_store_id}
 
     @staticmethod
-    def from_hosted_vector_store_content(content: Any) -> DurableAgentStateHostedVectorStoreContent:
+    def from_hosted_vector_store_content(
+        content: HostedVectorStoreContent,
+    ) -> DurableAgentStateHostedVectorStoreContent:
         return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import HostedVectorStoreContent
-
         return HostedVectorStoreContent(vector_store_id=self.vector_store_id)
 
 
@@ -1045,12 +1038,10 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
         return {"type": "text", "text": self.text}
 
     @staticmethod
-    def from_text_content(content: Any) -> DurableAgentStateTextContent:
+    def from_text_content(content: TextContent) -> DurableAgentStateTextContent:
         return DurableAgentStateTextContent(text=content.text)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import TextContent
-
         return TextContent(text=self.text or "")
 
 
@@ -1073,12 +1064,10 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
         return {"type": "text_reasoning", "text": self.text}
 
     @staticmethod
-    def from_text_reasoning_content(content: Any) -> DurableAgentStateTextReasoningContent:
+    def from_text_reasoning_content(content: TextReasoningContent) -> DurableAgentStateTextReasoningContent:
         return DurableAgentStateTextReasoningContent(text=content.text)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import TextReasoningContent
-
         return TextReasoningContent(text=self.text or "")
 
 
@@ -1104,12 +1093,10 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
         return {"type": "uri", "uri": self.uri, "mediaType": self.media_type}
 
     @staticmethod
-    def from_uri_content(content: Any) -> DurableAgentStateUriContent:
+    def from_uri_content(content: UriContent) -> DurableAgentStateUriContent:
         return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import UriContent
-
         return UriContent(uri=self.uri, media_type=self.media_type)
 
 
@@ -1173,8 +1160,6 @@ class DurableAgentStateUsage:
 
     def to_usage_details(self) -> Any:
         # Convert back to AI SDK UsageDetails
-        from agent_framework import UsageDetails
-
         return UsageDetails(
             input_token_count=self.input_token_count,
             output_token_count=self.output_token_count,
@@ -1202,12 +1187,10 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
         return {"type": "usage", "usage": self.usage.to_dict() if hasattr(self.usage, "to_dict") else self.usage}
 
     @staticmethod
-    def from_usage_content(content: Any) -> DurableAgentStateUsageContent:
+    def from_usage_content(content: UsageContent) -> DurableAgentStateUsageContent:
         return DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_usage(content.details))  # type: ignore
 
     def to_ai_content(self) -> Any:
-        from agent_framework import UsageContent
-
         return UsageContent(details=self.usage.to_usage_details())
 
 
@@ -1235,8 +1218,6 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
         return DurableAgentStateUnknownContent(content=content)
 
     def to_ai_content(self) -> Any:
-        from agent_framework import BaseContent
-
         if not self.content:
             raise Exception("The content is missing and cannot be converted to valid AI content.")
         return BaseContent(content=self.content)
