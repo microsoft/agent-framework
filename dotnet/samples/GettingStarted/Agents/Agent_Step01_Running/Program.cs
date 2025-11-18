@@ -13,7 +13,6 @@ var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? throw new
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new Azure.AzureKeyCredential(apiKey))
-    // new Azure.Identity.AzureCliCredential())
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
