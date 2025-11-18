@@ -86,31 +86,28 @@ def _mcp_call_tool_result_to_ai_contents(
     # Extract _meta field using getattr for compatibility
     meta_data = getattr(mcp_type, "_meta", None)
 
+    # Prepare merged metadata once if present
+    merged_meta_props = None
+    if meta_data:
+        merged_meta_props = {}
+        if hasattr(meta_data, "__dict__"):
+            merged_meta_props.update(meta_data.__dict__)
+        elif isinstance(meta_data, dict):
+            merged_meta_props.update(meta_data)
+        else:
+            merged_meta_props["_meta"] = meta_data
+
     # Convert each content item and merge metadata
     result_contents = []
     for item in mcp_type.content:
         content = _mcp_type_to_ai_content(item)
 
-        # Merge _meta data into additional_properties if available
-        if meta_data:
-            # Get existing additional_properties or create empty dict
+        if merged_meta_props:
             existing_props = getattr(content, "additional_properties", None) or {}
-
-            # Create merged properties with _meta data
-            merged_props = existing_props.copy()
-
-            # Handle dict-like _meta data
-            if hasattr(meta_data, "__dict__"):
-                merged_props.update(meta_data.__dict__)
-            elif isinstance(meta_data, dict):
-                merged_props.update(meta_data)
-            else:
-                # If _meta is not dict-like, store it under a special key
-                merged_props["_meta"] = meta_data
-
-            # Update the content's additional_properties
-            content.additional_properties = merged_props
-
+            # Merge with content-specific properties, letting content-specific props override
+            final_props = merged_meta_props.copy()
+            final_props.update(existing_props)
+            content.additional_properties = final_props
         result_contents.append(content)
 
     return result_contents
