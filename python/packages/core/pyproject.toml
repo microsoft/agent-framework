@@ -49,6 +49,7 @@ all = [
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
     "agent-framework-devui",
+    "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-purview",
     "agent-framework-redis",

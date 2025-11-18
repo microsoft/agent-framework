@@ -86,7 +86,6 @@ version = "1.0.0b251114"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -118,10 +117,7 @@ docs = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "agent-framework-core", extras = ["all"], editable = "packages/core" },
-    { name = "agent-framework-lab", editable = "packages/lab" },
-]
+requires-dist = [{ name = "agent-framework-core", extras = ["all"], editable = "packages/core" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -305,6 +301,7 @@ all = [
     { name = "agent-framework-chatkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -320,6 +317,7 @@ requires-dist = [
     { name = "agent-framework-chatkit", marker = "extra == 'all'", editable = "packages/chatkit" },
     { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
+    { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },

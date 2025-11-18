@@ -24,7 +24,6 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core[all]",
-    "agent-framework-lab",
 ]
 
 [dependency-groups]
