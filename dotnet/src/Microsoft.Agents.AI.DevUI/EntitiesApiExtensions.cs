@@ -294,10 +294,10 @@ internal static class EntitiesApiExtensions
     private static IEnumerable<T> GetRegisteredEntities<T>(IServiceProvider serviceProvider)
     {
         var keyedEntities = serviceProvider.GetKeyedServices<T>(KeyedService.AnyKey);
-        var defaultEntity = serviceProvider.GetService<T>();
+        var defaultEntities = serviceProvider.GetServices<T>() ?? [];
 
         return keyedEntities
-            .Concat(defaultEntity is not null ? [defaultEntity] : [])
+            .Concat(defaultEntities)
             .Where(entity => entity is not null);
     }
 }
