@@ -510,15 +510,20 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
         from ._app import RESPONSE_FORMAT_JSON, RESPONSE_FORMAT_TEXT
 
+        # Determine response_type based on response_format
+        response_type = None
+        if content.response_format is not None:
+            response_type = (
+                RESPONSE_FORMAT_TEXT if isinstance(content.response_format, TextContent) else RESPONSE_FORMAT_JSON
+            )
+
         return DurableAgentStateRequest(
             correlationId=content.correlationId,
             messages=[DurableAgentStateMessage.from_chat_message(content)],
             created_at=datetime.now(tz=timezone.utc),
             json_type="request",
             extensionData=content.extensionData if hasattr(content, "extensionData") else None,
-            response_type=RESPONSE_FORMAT_TEXT
-            if isinstance(content.response_format, TextContent)
-            else RESPONSE_FORMAT_JSON,
+            response_type=response_type,
             response_schema=content.response_format,
         )
 
@@ -676,7 +681,7 @@ class DurableAgentStateMessage:
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateMessage:
         from dateutil import parser as date_parser  # type: ignore
 
-        created_at = data.get("created_at")
+        created_at = data.get("createdAt")
         if created_at and isinstance(created_at, str):
             created_at = date_parser.parse(created_at)
 
@@ -744,7 +749,7 @@ class DurableAgentStateMessage:
         return cls(
             role=data.get("role", ""),
             contents=contents,
-            author_name=data.get("author_name"),
+            author_name=data.get("authorName"),
             created_at=created_at,
             extensionData=data.get("extensionData"),
         )
