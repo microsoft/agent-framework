@@ -833,30 +833,20 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core" },
     { name = "aiohttp" },
-    { name = "azure-identity" },
-    { name = "httpx" },
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-authentication-msal" },
     { name = "microsoft-agents-hosting-aiohttp" },
     { name = "microsoft-agents-hosting-core" },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "typing-extensions" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", directory = "../../../packages/core" },
     { name = "aiohttp" },
-    { name = "azure-identity" },
-    { name = "httpx", specifier = ">=0.24.0" },
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-authentication-msal" },
     { name = "microsoft-agents-hosting-aiohttp" },
     { name = "microsoft-agents-hosting-core" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "python-dotenv" },
-    { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
 
 [[package]]

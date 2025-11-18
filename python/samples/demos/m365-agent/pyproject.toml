@@ -9,19 +9,7 @@ dependencies = [
     "microsoft-agents-activity",
     "agent-framework-core",
     
-    "azure-identity",
-    
-    "python-dotenv",
     "aiohttp",
-    
-    # HTTP client
-    "httpx>=0.24.0",
-    
-    # Data validation
-    "pydantic>=2.0.0",
-    
-    # Additional utilities
-    "typing-extensions>=4.0.0",
 ]
 requires-python = ">=3.11"
 

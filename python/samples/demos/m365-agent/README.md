@@ -21,7 +21,7 @@ export USE_ANONYMOUS_MODE=True # set to false if using auth
 
 # OpenAI
 export OPENAI_API_KEY="..."
-export OPENAI_MODEL_ID="..."
+export OPENAI_CHAT_MODEL_ID="..."
 ```
 
 ## Installing Dependencies
@@ -54,7 +54,7 @@ The agent starts on `http://localhost:3978`. Health check: `GET /api/health`.
 
 2. Start the Python agent locally: `python m365_agent_demo/app.py`
 3. Start the playground: `agentsplayground`
-3. Chat with the Weather Agent.
+4. Chat with the Weather Agent.
 
 ## QuickStart using WebChat (Azure Bot)
 

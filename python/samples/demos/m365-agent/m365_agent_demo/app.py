@@ -1,9 +1,28 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Demo application using Microsoft Agent 365 SDK.
+
+This sample demonstrates how to build an AI agent using the Agent Framework,
+integrating with Microsoft 365 authentication and hosting components.
+
+The agent provides a simple weather tool and can be run in either anonymous mode
+(no authentication required) or authenticated mode using MSAL and Azure AD.
+
+Key features:
+- Loads configuration from environment variables.
+- Demonstrates agent creation and tool registration.
+- Supports both anonymous and authenticated scenarios.
+- Uses aiohttp for web hosting.
+
+To run, set the appropriate environment variables (check .env.example file) for authentication or use
+anonymous mode for local testing.
+"""
+
 import os
 from dataclasses import dataclass
 from random import randint
-from typing import Annotated, Optional
+from typing import Annotated
 
 from agent_framework import ChatAgent
 from agent_framework.openai import OpenAIChatClient
