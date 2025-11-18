@@ -73,8 +73,12 @@ def _mcp_call_tool_result_to_ai_contents(
 
     This function extracts the complete _meta field from CallToolResult objects
     and merges all metadata into the additional_properties field of converted
-    content items. This includes error state handling via the isError field
-    and preservation of arbitrary metadata such as token usage, costs, etc.
+    content items.
+
+    Note: The _meta field from CallToolResult is applied to ALL content items
+    in the result, as the Agent Framework's content model doesn't have a
+    result-level metadata container. This ensures metadata is preserved but
+    means it will be duplicated across multiple content items if present.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.

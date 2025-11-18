@@ -109,15 +109,20 @@ def test_mcp_call_tool_result_with_meta_error():
 
 
 def test_mcp_call_tool_result_with_meta_arbitrary_data():
-    """Test conversion from MCP tool result with _meta field containing arbitrary metadata."""
+    """Test conversion from MCP tool result with _meta field containing arbitrary metadata.
+
+    Note: The _meta field is optional and can contain any structure that a specific
+    MCP server chooses to provide. This test uses example metadata to verify that
+    whatever is provided gets preserved in additional_properties.
+    """
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Success result")])
-    # Simulate _meta field with various metadata
+    # Example _meta field - different MCP servers may provide completely different structures
     mcp_result._meta = {
-        "tokenUsage": {"promptTokens": 150, "completionTokens": 75, "totalTokens": 225},
-        "cost": {"usd": 0.0034},
-        "processingTime": 1.25,
-        "model": "gpt-4",
-        "timestamp": "2024-01-15T10:30:00Z",
+        "serverVersion": "2.1.0",
+        "executionId": "exec_abc123",
+        "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
+        "source": "example-mcp-server",
+        "customField": "arbitrary_value",
     }
 
     ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
@@ -129,11 +134,11 @@ def test_mcp_call_tool_result_with_meta_arbitrary_data():
     # Check that _meta data is preserved in additional_properties
     props = ai_contents[0].additional_properties
     assert props is not None
-    assert props["tokenUsage"] == {"promptTokens": 150, "completionTokens": 75, "totalTokens": 225}
-    assert props["cost"] == {"usd": 0.0034}
-    assert props["processingTime"] == 1.25
-    assert props["model"] == "gpt-4"
-    assert props["timestamp"] == "2024-01-15T10:30:00Z"
+    assert props["serverVersion"] == "2.1.0"
+    assert props["executionId"] == "exec_abc123"
+    assert props["metrics"] == {"responseTime": 1.25, "memoryUsed": "64MB"}
+    assert props["source"] == "example-mcp-server"
+    assert props["customField"] == "arbitrary_value"
 
 
 def test_mcp_call_tool_result_with_meta_merging_existing_properties():
