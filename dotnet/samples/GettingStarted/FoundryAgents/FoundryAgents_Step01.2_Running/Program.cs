@@ -26,13 +26,8 @@ AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName:
 // You can retrieve an AIAgent for a already created server side agent version.
 AIAgent jokerAgent = aiProjectClient.GetAIAgent(agentVersion);
 
-// Invoke the agent and output the text result.
-AgentThread thread = jokerAgent.GetNewThread();
-Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", thread));
-
 // Invoke the agent with streaming support.
-thread = jokerAgent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate.", thread))
+await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
     Console.WriteLine(update);
 }

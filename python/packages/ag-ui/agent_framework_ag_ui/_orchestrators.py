@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ag_ui.core import (
     BaseEvent,
+    MessagesSnapshotEvent,
     RunErrorEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
@@ -588,32 +589,37 @@ class DefaultOrchestrator(Orchestrator):
         # We should NOT add to thread.on_new_messages() as that would cause duplication.
         # Instead, we pass messages directly to the agent via messages_to_run.
 
-        # Inject current state as system message context if we have state
+        # Inject current state as system message context if we have state and this is a new user turn
         messages_to_run: list[Any] = []
 
+        # Check if the last message is from the user (new turn) vs assistant/tool (mid-execution)
+        is_new_user_turn = False
+        if provider_messages:
+            last_msg = provider_messages[-1]
+            is_new_user_turn = last_msg.role.value == "user"
+
+        # Check if conversation has tool calls (indicates mid-execution)
         conversation_has_tool_calls = False
-        logger.debug(f"Checking {len(provider_messages)} provider messages for tool calls")
-        for i, msg in enumerate(provider_messages):
-            logger.debug(
-                f"  Message {i}: role={msg.role.value}, contents={len(msg.contents) if hasattr(msg, 'contents') and msg.contents else 0}"
-            )
         for msg in provider_messages:
             if msg.role.value == "assistant" and hasattr(msg, "contents") and msg.contents:
                 if any(isinstance(content, FunctionCallContent) for content in msg.contents):
                     conversation_has_tool_calls = True
                     break
-        if current_state and context.config.state_schema and not conversation_has_tool_calls:
+
+        # Only inject state context on new user turns AND when conversation doesn't have tool calls
+        # (tool calls indicate we're mid-execution, so state context was already injected)
+        if current_state and context.config.state_schema and is_new_user_turn and not conversation_has_tool_calls:
             state_json = json.dumps(current_state, indent=2)
             state_context_msg = ChatMessage(
                 role="system",
                 contents=[
                     TextContent(
                         text=f"""Current state of the application:
-{state_json}
+        {state_json}
 
-When modifying state, you MUST include ALL existing data plus your changes.
-For example, if adding a new ingredient, include all existing ingredients PLUS the new one.
-Never replace existing data - always append or merge."""
+        When modifying state, you MUST include ALL existing data plus your changes.
+        For example, if adding one new item to a list, include ALL existing items PLUS the one new item.
+        Never replace existing data - always preserve and append or merge."""
                     )
                 ],
             )
@@ -714,11 +720,18 @@ Never replace existing data - always append or merge."""
 
         # Collect all updates to get the final structured output
         all_updates: list[Any] = []
+        update_count = 0
         async for update in context.agent.run_stream(messages_to_run, thread=thread, tools=tools_param):
+            update_count += 1
+            logger.info(f"[STREAM] Received update #{update_count} from agent")
             all_updates.append(update)
             events = await event_bridge.from_agent_run_update(update)
+            logger.info(f"[STREAM] Update #{update_count} produced {len(events)} events")
             for event in events:
+                logger.info(f"[STREAM] Yielding event: {type(event).__name__}")
                 yield event
+
+        logger.info(f"[STREAM] Agent stream completed. Total updates: {update_count}")
 
         # After agent completes, check if we should stop (waiting for user to confirm changes)
         if event_bridge.should_stop_after_confirm:
@@ -793,9 +806,56 @@ Never replace existing data - always append or merge."""
                     yield TextMessageEndEvent(message_id=message_id)
                     logger.info(f"Emitted conversational message: {response_dict['message'][:100]}...")
 
+        logger.info(f"[FINALIZE] Checking for unclosed message. current_message_id={event_bridge.current_message_id}")
         if event_bridge.current_message_id:
+            logger.info(f"[FINALIZE] Emitting TextMessageEndEvent for message_id={event_bridge.current_message_id}")
             yield event_bridge.create_message_end_event(event_bridge.current_message_id)
 
+            # Emit MessagesSnapshotEvent to persist the final assistant text message
+            from ._message_adapters import agui_messages_to_snapshot_format
+
+            # Build the final assistant message with accumulated text content
+            assistant_text_message = {
+                "id": event_bridge.current_message_id,
+                "role": "assistant",
+                "content": event_bridge.accumulated_text_content,
+            }
+
+            # Convert input messages to snapshot format (normalize content structure)
+            # event_bridge.input_messages are already in AG-UI format, just need normalization
+            converted_input_messages = agui_messages_to_snapshot_format(event_bridge.input_messages)
+
+            # Build complete messages array
+            # Include: input messages + any pending tool calls/results + final text message
+            all_messages = converted_input_messages.copy()
+
+            # Add assistant message with tool calls if any
+            if event_bridge.pending_tool_calls:
+                tool_call_message = {
+                    "id": generate_event_id(),
+                    "role": "assistant",
+                    "tool_calls": event_bridge.pending_tool_calls.copy(),
+                }
+                all_messages.append(tool_call_message)
+
+            # Add tool results if any
+            all_messages.extend(event_bridge.tool_results.copy())
+
+            # Add final text message
+            all_messages.append(assistant_text_message)
+
+            messages_snapshot = MessagesSnapshotEvent(
+                messages=all_messages,  # type: ignore[arg-type]
+            )
+            logger.info(
+                f"[FINALIZE] Emitting MessagesSnapshotEvent with {len(all_messages)} messages "
+                f"(text content length: {len(event_bridge.accumulated_text_content)})"
+            )
+            yield messages_snapshot
+        else:
+            logger.info("[FINALIZE] No current_message_id - skipping TextMessageEndEvent")
+
+        logger.info("[FINALIZE] Emitting RUN_FINISHED event")
         yield event_bridge.create_run_finished_event()
         logger.info(f"Completed agent run for thread_id={context.thread_id}, run_id={context.run_id}")
 
