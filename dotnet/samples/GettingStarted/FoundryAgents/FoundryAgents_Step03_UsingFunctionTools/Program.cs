@@ -26,18 +26,26 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Create AIAgent directly
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [tool]);
+var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [tool]);
+
+// Getting an already existing agent by name with tools.
+/* 
+ * IMPORTANT: Since agents that are stored in the server only know the definition of the function tools (JSON Schema),
+ * you need to provided all invocable function tools when retrieving the agent so it can invoke them automatically.
+ * If no invocable tools are provided, the function calling needs to handled manually.
+ */
+var existingAgent = await aiProjectClient.GetAIAgentAsync(name: AssistantName, tools: [tool]);
 
 // Non-streaming agent interaction with function tools.
-AgentThread thread = agent.GetNewThread();
-Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?", thread));
+AgentThread thread = existingAgent.GetNewThread();
+Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", thread));
 
 // Streaming agent interaction with function tools.
-thread = agent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
+thread = existingAgent.GetNewThread();
+await foreach (AgentRunResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
 {
     Console.WriteLine(update);
 }
 
 // Cleanup by agent name removes the agent version created.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(existingAgent.Name);
