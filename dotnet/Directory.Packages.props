@@ -24,9 +24,9 @@
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- Microsoft.Azure.* -->
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.53.1" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
     <!-- Newtonsoft.Json -->
-    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
