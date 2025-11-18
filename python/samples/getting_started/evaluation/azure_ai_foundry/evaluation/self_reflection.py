@@ -7,7 +7,7 @@ In Proceedings of the 37th International Conference on Neural Information Proces
 https://arxiv.org/abs/2303.11366 
 
 This module implements a self-reflection loop for LLM responses using groundedness evaluation.
-It loads prompts from a parquet file, runs them through an LLM with self-reflection,
+It loads prompts from a JSONL file, runs them through an LLM with self-reflection,
 and saves the results.
 
 Can be used as a library or as a standalone CLI tool.
@@ -16,8 +16,8 @@ Usage as CLI:
     python self_reflection.py
 
 Usage as CLI with extra options:
-    python self_reflection.py --input resources/suboptimal_groundedness_prompts.parquet \\
-                              --output resources/results.parquet \\
+    python self_reflection.py --input resources/suboptimal_groundedness_prompts.jsonl \\
+                              --output resources/results.jsonl \\
                               --max-reflections 3 \\
                               -n 10  # Optional: process only first 10 prompts
 
@@ -25,7 +25,7 @@ Usage as library:
     from self_reflection import run_self_reflection_batch
     
     results_df = run_self_reflection_batch(
-        input_file='resources/suboptimal_groundedness_prompts.parquet',
+        input_file='resources/suboptimal_groundedness_prompts.jsonl',
         max_self_reflections=3
     )
 """
@@ -192,8 +192,8 @@ async def run_self_reflection_batch(
     Run self-reflection on a batch of prompts.
 
     Args:
-        input_file: Path to input parquet file with prompts
-        output_file: Path to save output parquet file
+        input_file: Path to input JSONL file with prompts
+        output_file: Path to save output JSONL file
         agent_model: Model to use for generating responses
         judge_model: Model to use for groundedness evaluation
         max_self_reflections: Maximum number of self-reflection iterations
@@ -209,19 +209,17 @@ async def run_self_reflection_batch(
     else:
         load_dotenv(override=True)
 
-    # Create agent
+    # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
     agent = AzureOpenAIChatClient(
         credential=AzureCliCredential(),
         deployment_name=agent_model,
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
     ).create_agent(
         instructions="You are a helpful agent.",
     )
 
     # Load input data
     print(f"Loading prompts from: {input_file}")
-    df = pd.read_parquet(input_file)
+    df = pd.read_json(input_file, lines=True)
     print(f"Loaded {len(df)} prompts")
 
     # Apply limit if specified
@@ -304,7 +302,7 @@ async def run_self_reflection_batch(
     results_df = pd.DataFrame(results)
 
     print(f"\nSaving results to: {output_file}")
-    results_df.to_parquet(output_file, index=False)
+    results_df.to_json(output_file, orient='records', lines=True)
 
     # Generate detailed summary
     successful_runs = results_df[results_df['error'].isna()]
@@ -364,8 +362,8 @@ async def run_self_reflection_batch(
 async def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Run self-reflection loop on LLM prompts with groundedness evaluation")
-    parser.add_argument('--input', '-i', default="resources/suboptimal_groundedness_prompts.parquet", help='Input parquet file with prompts')
-    parser.add_argument('--output', '-o', default="resources/results.parquet", help='Output parquet file for results')
+    parser.add_argument('--input', '-i', default="resources/suboptimal_groundedness_prompts.jsonl", help='Input JSONL file with prompts')
+    parser.add_argument('--output', '-o', default="resources/results.jsonl", help='Output JSONL file for results')
     parser.add_argument('--agent-model', '-m', default=DEFAULT_AGENT_MODEL, help=f'Agent model deployment name (default: {DEFAULT_AGENT_MODEL})')
     parser.add_argument('--judge-model', '-e', default=DEFAULT_JUDGE_MODEL, help=f'Judge model deployment name (default: {DEFAULT_JUDGE_MODEL})')
     parser.add_argument('--max-reflections', type=int, default=3, help='Maximum number of self-reflection iterations (default: 3)')
