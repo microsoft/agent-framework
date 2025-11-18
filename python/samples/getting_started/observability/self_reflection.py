@@ -61,7 +61,7 @@ def create_groundedness_evaluator(judge_model: str) -> GroundednessEvaluator:
     return GroundednessEvaluator(model_config=judge_model_config)
 
 
-async def do_query_with_self_reflection(
+async def execute_query_with_self_reflection(
     *,
     agent: ChatAgent,
     full_user_query: str,
@@ -245,7 +245,7 @@ async def run_self_reflection_batch(
         print(f"[{counter}/{len(df)}] Processing prompt {row.get('original_index', idx)}...")
         
         try:
-            result = await do_query_with_self_reflection(
+            result = await execute_query_with_self_reflection(
                 agent=agent,
                 full_user_query=row['full_prompt'],
                 context=row['context_document'],
