@@ -36,7 +36,6 @@ class TestFunctionExecutorFutureAnnotations:
             await ctx.send_message(["done"])
 
         assert isinstance(process_complex, FunctionExecutor)
-        
         spec = process_complex._handler_specs[0]
         assert spec["message_type"] == dict[str, Any]
         assert spec["output_types"] == [list[str]]
