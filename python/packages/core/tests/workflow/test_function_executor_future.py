@@ -30,9 +30,7 @@ class TestFunctionExecutorFutureAnnotations:
         """Test @executor decorator works with complex stringified annotations."""
 
         @executor
-        async def process_complex(
-            data: dict[str, Any], ctx: WorkflowContext[list[str]]
-        ) -> None:
+        async def process_complex(data: dict[str, Any], ctx: WorkflowContext[list[str]]) -> None:
             await ctx.send_message(["done"])
 
         assert isinstance(process_complex, FunctionExecutor)
