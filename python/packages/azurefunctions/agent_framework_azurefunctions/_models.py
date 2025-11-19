@@ -297,9 +297,7 @@ class RunRequest:
     enable_tool_calls: bool = True
     thread_id: str | None = None
     correlation_id: str | None = None
-    author_name: str | None = None
     created_at: str | None = None
-    extension_data: dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -310,9 +308,7 @@ class RunRequest:
         enable_tool_calls: bool = True,
         thread_id: str | None = None,
         correlation_id: str | None = None,
-        author_name: str | None = None,
         created_at: str | None = None,
-        extension_data: dict[str, Any] | None = None,
     ) -> None:
         self.message = message
         self.role = self.coerce_role(role)
@@ -321,9 +317,7 @@ class RunRequest:
         self.enable_tool_calls = enable_tool_calls
         self.thread_id = thread_id
         self.correlation_id = correlation_id
-        self.author_name = author_name
         self.created_at = created_at
-        self.extension_data = extension_data
 
     @staticmethod
     def coerce_role(value: Role | str | None) -> Role:
@@ -351,12 +345,8 @@ class RunRequest:
             result["thread_id"] = self.thread_id
         if self.correlation_id:
             result["correlationId"] = self.correlation_id
-        if self.author_name:
-            result["author_name"] = self.author_name
         if self.created_at:
             result["created_at"] = self.created_at
-        if self.extension_data:
-            result["extension_data"] = self.extension_data
 
         return result
 
@@ -371,9 +361,7 @@ class RunRequest:
             enable_tool_calls=data.get("enable_tool_calls", True),
             thread_id=data.get("thread_id"),
             correlation_id=data.get("correlationId"),
-            author_name=data.get("author_name"),
             created_at=data.get("created_at"),
-            extension_data=data.get("extension_data"),
         )
 
 

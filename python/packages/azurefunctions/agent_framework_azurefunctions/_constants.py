@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Constants used across the Azure Functions agent framework."""
+"""Constants for Azure Functions Agent Framework integration."""
 
-# Response format constants
+# Supported request/response formats and MIME types
 REQUEST_RESPONSE_FORMAT_JSON: str = "json"
 REQUEST_RESPONSE_FORMAT_TEXT: str = "text"
 MIMETYPE_APPLICATION_JSON: str = "application/json"
