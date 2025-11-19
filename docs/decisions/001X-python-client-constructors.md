@@ -22,18 +22,19 @@ There is likely not a single best solution, the goal here is consistency across 
 - Make client creation inside our classes the default and cover as many backends as possible.
 - Make clients easy to use and discover, so that users can easily find the right client for their use case.
 - Allow client creation based on environment variables, so that users can easily configure their clients without having to pass in parameters.
+- A breaking glass scenario should always be possible, so that users can pass in their own clients if needed, and it should also be easy to figure out how to do that.
 
 ## Considered Options
 
-- Separate clients for each backend, such as OpenAI and Azure OpenAI, Anthropic and AnthropicBedrock, etc.
-- Separate parameter set per backend with a single client, such as OpenAIClient with parameters, for endpoint/base_url, api_key, and entra auth.
-- Single client with a explicit parameter for the backend to use, such as OpenAIClient(backend="azure") or AnthropicClient(backend="vertex").
-- Single client with a customized `__new__` method that can create the right client based on the parameters passed in, such as OpenAIClient(api_key="...", backend="azure") which returns a AzureOpenAIClient.
-- Map clients to underlying SDK clients, OpenAI's SDK client allows both OpenAI and Azure OpenAI, so would be a single client, while Anthropic's SDK has explicit clients for Bedrock and Vertex, so would be a separate client for AnthropicBedrock and AnthropicVertex.
+1. Separate clients for each backend, such as OpenAI and Azure OpenAI, Anthropic and AnthropicBedrock, etc.
+1. Separate parameter set per backend with a single client, such as OpenAIClient with parameters, for endpoint/base_url, api_key, and entra auth.
+1. Single client with a explicit parameter for the backend to use, such as OpenAIClient(backend="azure") or AnthropicClient(backend="vertex").
+1. Single client with a customized `__new__` method that can create the right client based on the parameters passed in, such as OpenAIClient(api_key="...", backend="azure") which returns a AzureOpenAIClient.
+1. Map clients to underlying SDK clients, OpenAI's SDK client allows both OpenAI and Azure OpenAI, so would be a single client, while Anthropic's SDK has explicit clients for Bedrock and Vertex, so would be a separate client for AnthropicBedrock and AnthropicVertex.
 
 ## Pros and Cons of the Options
 
-### Separate clients for each backend, such as OpenAI and Azure OpenAI, Anthropic and AnthropicBedrock, etc.
+### 1. Separate clients for each backend, such as OpenAI and Azure OpenAI, Anthropic and AnthropicBedrock, etc.
 This option would entail potentially a large number of clients, and keeping track of additional backend implementation being created by vendors.
 - Good, because it is clear which client is used
 - Good, because we can easily have aliases of parameters, that are then mapped internally, such as `deployment_name` for Azure OpenAI mapping to `model_id` internally
@@ -54,13 +55,14 @@ openai_client = OpenAIClient(api_key="...")
 azure_client = AzureOpenAIClient(deployment_name="...", ad_token_provider=...)
 ```
 
-### Separate parameter set per backend with a single client, such as OpenAIClient with parameters, for endpoint/base_url, api_key, and entra auth.
+### 2. Separate parameter set per backend with a single client, such as OpenAIClient with parameters, for endpoint/base_url, api_key, and entra auth.
 This option would entail a single client that can be used with different backends, but requires the user to pass in the right parameters.
 - Good, because it reduces the number of clients and makes it easier to discover the right client with the right parameters
 - Good, because it allows for a single client to be used with different backends and additional backends can be added easily
 - Good, because the user does not have to worry about which client to use, they can just use the `OpenAIClient` or `AnthropicClient` and pass in the right parameters, and we create the right client for them, if that client changes, then we do that in the code, without any changes to the api.
 - Good, because in many cases, the differences between the backends are just a few parameters, such as endpoint/base_url and authentication method.
 - Good, because client resolution logic could be encapsulated in a factory method, making it easier to maintain and even extend by users.
+- Neutral, this would be a one-time breaking change for users of the existing clients, but would make it easier to use in the long run.
 - Bad, because it requires the user to know which parameters to pass in for the specific backend and when using environment variables, it is not always clear which parameters are used for which backend, or what the order of precedence is.
 - Bad, because it can lead to confusion if the user passes in the wrong parameters for the specific backend
 - Bad, because the name for a parameter that is similar but not the same between backends can be confusing, such as `deployment_name` for Azure OpenAI and `model_id` for OpenAI, would we then only have `model_id` for both, or have both parameters?
@@ -81,7 +83,7 @@ azure_client = OpenAIClient(
 )
 ```
 
-### Single client with a explicit parameter for the backend to use, such as OpenAIClient(backend="azure") or AnthropicClient(backend="vertex").
+### 3. Single client with a explicit parameter for the backend to use, such as OpenAIClient(backend="azure") or AnthropicClient(backend="vertex").
 This option would entail a single client that can be used with different backends, but requires the user to pass in the right backend as a parameter.
 - Same list as the option above, and:
 - Good, because it is explicit about which backend to try and target, including for environment variables
@@ -103,7 +105,7 @@ azure_client = OpenAIClient(
 )
 ```
 
-### Single client with a customized `__new__` method that can create the right client based on the parameters passed in, such as OpenAIClient(backend="azure") which returns a AzureOpenAIClient.
+### 4. Single client with a customized `__new__` method that can create the right client based on the parameters passed in, such as OpenAIClient(backend="azure") which returns a AzureOpenAIClient.
 This option would entail a single client that can be used with different backends, and the right client is created based on the parameters passed in.
 - Good, because the entry point for a user is very clear
 - Good, because it allows for customization of the client based on the parameters passed in
@@ -128,7 +130,7 @@ print(type(openai_client))  # OpenAIClient
 print(type(azure_client))  # AzureOpenAIClient
 ```
 
-### Map clients to underlying SDK clients, OpenAI's SDK client allows both OpenAI and Azure OpenAI, so would be a single client, while Anthropic's SDK has explicit clients for Bedrock and Vertex, so would be a separate client for AnthropicBedrock and AnthropicVertex.
+### 5. Map clients to underlying SDK clients, OpenAI's SDK client allows both OpenAI and Azure OpenAI, so would be a single client, while Anthropic's SDK has explicit clients for Bedrock and Vertex, so would be a separate client for AnthropicBedrock and AnthropicVertex.
 This option would entail a mix of the above options, depending on the underlying SDK clients.
 - Good, because it aligns with the underlying SDK clients and their capabilities
 - Good, because it reduces the number of clients where possible
