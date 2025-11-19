@@ -130,9 +130,9 @@ class AgentEntity:
         enable_tool_calls = run_request.enable_tool_calls
 
         state_request = DurableAgentStateRequest.from_run_request(run_request)
-        self.state.data.conversationHistory.append(state_request)
+        self.state.data.conversation_history.append(state_request)
 
-        logger.debug(f"[AgentEntity.run_agent] Saved state request: {state_request}")
+        logger.debug(f"[AgentEntity.run_agent] Received Message: {state_request}")
 
         try:
             logger.debug("[AgentEntity.run_agent] Starting agent invocation")
@@ -141,7 +141,7 @@ class AgentEntity:
             # Error responses are kept in history for tracking but not sent to the agent
             chat_messages: list[ChatMessage] = [
                 m.to_chat_message()
-                for entry in self.state.data.conversationHistory
+                for entry in self.state.data.conversation_history
                 if not self._is_error_response(entry)
                 for m in entry.messages
             ]
@@ -196,14 +196,14 @@ class AgentEntity:
                 response_text = "Error extracting response"
 
             state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
-            self.state.data.conversationHistory.append(state_response)
+            self.state.data.conversation_history.append(state_response)
 
             agent_response = AgentResponse(
                 response=response_text,
                 message=str(message),
                 thread_id=str(thread_id),
                 status="success",
-                message_count=len(self.state.data.conversationHistory),
+                message_count=len(self.state.data.conversation_history),
                 structured_response=structured_response,
             )
             result = agent_response.to_dict()
@@ -223,27 +223,25 @@ class AgentEntity:
 
             # Create error message
             error_message = DurableAgentStateMessage.from_chat_message(
-                ChatMessage(role="assistant", contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)])
+                ChatMessage(
+                    role=Role.ASSISTANT, contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)]
+                )
             )
 
             # Create and store error response in conversation history
             error_state_response = DurableAgentStateResponse(
-                json_type="response",
                 correlation_id=correlation_id,
                 created_at=datetime.now(tz=timezone.utc),
                 messages=[error_message],
-                extension_data=None,
-                usage=None,
-                is_error=True,
             )
-            self.state.data.conversationHistory.append(error_state_response)
+            self.state.data.conversation_history.append(error_state_response)
 
             error_response = AgentResponse(
                 response=f"Error: {exc!s}",
                 message=str(message),
                 thread_id=str(thread_id),
                 status="error",
-                message_count=len(self.state.data.conversationHistory),
+                message_count=len(self.state.data.conversation_history),
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
@@ -390,7 +388,7 @@ class AgentEntity:
     def reset(self, context: df.DurableEntityContext) -> None:
         """Reset the entity state (clear conversation history)."""
         logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.data = DurableAgentStateData(conversationHistory=[])
+        self.state.data = DurableAgentStateData(conversation_history=[])
         logger.debug("[AgentEntity.reset] State reset complete")
 
 

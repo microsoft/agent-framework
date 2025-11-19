@@ -16,6 +16,8 @@ Usage:
 
 import pytest
 
+from agent_framework_azurefunctions._constants import THREAD_ID_HEADER
+
 from .testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
@@ -67,7 +69,7 @@ class TestSampleSingleAgent:
 
         # Agent responded with plain text when the request body was text/plain.
         assert response.text.strip()
-        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.headers.get(THREAD_ID_HEADER) is not None
 
     def test_thread_id_in_query(self) -> None:
         """Test using thread_id in query parameter."""
@@ -77,7 +79,7 @@ class TestSampleSingleAgent:
         assert response.status_code in [200, 202]
 
         assert response.text.strip()
-        assert response.headers.get("x-ms-thread-id") == "test-query-thread"
+        assert response.headers.get(THREAD_ID_HEADER) == "test-query-thread"
 
     def test_conversation_continuity(self) -> None:
         """Test conversation context is maintained across requests."""
