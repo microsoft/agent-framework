@@ -81,7 +81,7 @@ load_dotenv()
 
 
 @executor(id="start_executor")
-async def start_executor(input: str, ctx: WorkflowContext[List[ChatMessage]]) -> None:
+async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) -> None:
     """Initiates the workflow by sending the user query to all specialized agents."""
     await ctx.send_message([ChatMessage(role="user", text=input)])
 
@@ -107,7 +107,7 @@ class ResearchLead(Executor):
         super().__init__(id=id)
 
     @handler
-    async def fan_in_handle(self, responses: List[AgentExecutorResponse], ctx: WorkflowContext[WorkflowOutputEvent]) -> None:
+    async def fan_in_handle(self, responses: list[AgentExecutorResponse], ctx: WorkflowContext[WorkflowOutputEvent]) -> None:
         user_query = responses[0].full_conversation[0].text
         
         # Extract findings from all agent responses
@@ -129,7 +129,7 @@ class ResearchLead(Executor):
         
         await ctx.yield_output(output_text)
     
-    def _extract_agent_findings(self, responses: List[AgentExecutorResponse]) -> List[str]:
+    def _extract_agent_findings(self, responses: list[AgentExecutorResponse]) -> list[str]:
         """Extract findings from agent responses."""
         agent_findings = []
         
@@ -147,7 +147,7 @@ class ResearchLead(Executor):
         return agent_findings
 
 
-async def run_workflow_with_response_tracking(query: str, chat_client: Optional[AzureAIClient] = None) -> Dict:
+async def run_workflow_with_response_tracking(query: str, chat_client: AzureAIClient | None = None) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
     
     Args:
@@ -181,7 +181,7 @@ async def run_workflow_with_response_tracking(query: str, chat_client: Optional[
         return await _run_workflow_with_client(query, chat_client)
 
 
-async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> Dict:
+async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> dict:
     """Execute workflow with given client and track all interactions."""
     
     # Initialize tracking variables - use lists to track multiple responses per agent
