@@ -250,7 +250,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
             context: The context dictionary.
         """
         logger.info(f"Attempting to update thread title for thread: {thread.id}")
-        
+
         if not thread_items:
             logger.debug("No thread items available for title generation")
             return

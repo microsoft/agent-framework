@@ -18,7 +18,7 @@ All example agents are factory functions that accept any `ChatClientProtocol`-co
 from fastapi import FastAPI
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import simple_agent, weather_agent
 
 app = FastAPI()
@@ -40,7 +40,7 @@ add_agent_framework_fastapi_endpoint(app, weather_agent(openai_client), "/weathe
 from fastapi import FastAPI
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
 agent = ChatAgent(
@@ -136,7 +136,7 @@ The server exposes endpoints at:
 ```python
 from fastapi import FastAPI
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui_examples.agents import (
     simple_agent,
     weather_agent,
@@ -188,8 +188,8 @@ You can create your own agent factories following the same pattern as the exampl
 
 ```python
 from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework import ChatClientProtocol
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 @ai_function
 def my_tool(param: str) -> str:
