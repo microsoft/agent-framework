@@ -171,7 +171,7 @@ class DurableAgentStateData:
         self.extension_data = extension_data
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "conversationHistory": [entry.to_dict() for entry in self.conversation_history],
         }
         if self.extension_data is not None:
@@ -1108,7 +1108,7 @@ class DurableAgentStateUsage:
         self.extensionData = extensionData
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "inputTokenCount": self.input_token_count,
             "outputTokenCount": self.output_token_count,
             "totalTokenCount": self.total_token_count,
