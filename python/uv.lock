@@ -3124,31 +3124,31 @@ wheels = [
 
 [[package]]
 name = "microsoft-agents-activity"
-version = "0.5.3"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/51/2698980f425cda122f5b755a957c3c2db604c0b9a787c6add5aa4649c237/microsoft_agents_activity-0.5.3.tar.gz", hash = "sha256:d80b055591df561df8cebda9e1712012352581a396b36459133a951982b3a760", size = 55892, upload-time = "2025-10-31T15:40:49.332Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/c5/ec0b5786257b88a21245d9485e864088cbdc60442e21b637cc1433f6061b/microsoft_agents_activity-0.6.0.tar.gz", hash = "sha256:9b23a44def700d1d18670e28e2e7e66e8679dfb902dadcd94902d5591cda65a4", size = 57481, upload-time = "2025-11-18T18:12:33.351Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/3d/9618243e7b6f1f6295642c4e2dfca65b3a37794efbe1bdec15f0a93827d9/microsoft_agents_activity-0.5.3-py3-none-any.whl", hash = "sha256:5ae2447ac47c32f03c614694f520817cd225c9c502ec08b90d448311fb5bf3b4", size = 127861, upload-time = "2025-10-31T15:40:57.628Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/6b/e07cbd310881eda75def2d13220f27648f8c2632b16244536d33069e6bd5/microsoft_agents_activity-0.6.0-py3-none-any.whl", hash = "sha256:bfcd0f55ac332320ca927f829f6fb200acff1bd61fb6aba9945906130fec7d06", size = 131093, upload-time = "2025-11-18T18:12:41.796Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-copilotstudio-client"
-version = "0.5.3"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "microsoft-agents-hosting-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/22/109164fb585c4baee40d2372c5d76254ec4a28219908f11cd27ac92aa6c1/microsoft_agents_copilotstudio_client-0.5.3.tar.gz", hash = "sha256:a57ea6b3cb47dbb5ad22e59c986208ace6479e35da3f644e6346f4dfd85db57c", size = 11161, upload-time = "2025-10-31T15:40:51.444Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/23/67833eac41963a7a0110b8fe3b9329c65388ccf50f6b1f694e92e0cb3918/microsoft_agents_copilotstudio_client-0.6.0.tar.gz", hash = "sha256:2964e164cc0175614aa356aaab01fda48153961304f11cdaef2a45710d922805", size = 11756, upload-time = "2025-11-18T18:12:35.842Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c4/65/984e139c85657ff0c8df0ed98a167c8b9434f4fd4f32862b4a6490b8c714/microsoft_agents_copilotstudio_client-0.5.3-py3-none-any.whl", hash = "sha256:6a36fce5c8c1a2df6f5142e35b12c69be80959ecff6d60cc309661018c40f00a", size = 11091, upload-time = "2025-10-31T15:40:59.718Z" },
+    { url = "https://files.pythonhosted.org/packages/56/1f/75e8618bed71da736104d5d4c41137fdb28672660e0257d59ea6d6fd4029/microsoft_agents_copilotstudio_client-0.6.0-py3-none-any.whl", hash = "sha256:733affebee8b4e7d204e66ff91e3162d4f498f2944b45a19eec0a8234eea67b5", size = 12340, upload-time = "2025-11-18T18:12:43.572Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-hosting-core"
-version = "0.5.3"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3157,9 +3157,9 @@ dependencies = [
     { name = "pyjwt", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "python-dotenv", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b1/98/7755c07b2ae5faf3e4dc14b17e44680a600c8b840b3003fb326d5720dea1/microsoft_agents_hosting_core-0.5.3.tar.gz", hash = "sha256:b113d4ea5c9e555bbf61037bb2a1a7a3ce7e5e4a7a0f681a3bd4719ba72ff821", size = 81672, upload-time = "2025-10-31T15:40:53.557Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/02/893e4a2f789b3c91550e6aefd53a9b88d3bea8f4f15ae1fee141691fb5fb/microsoft_agents_hosting_core-0.6.0.tar.gz", hash = "sha256:0331573dbc2ae8f4339658ed600676c3a4a76ade403b4adc49c4d38afd3fdc36", size = 82802, upload-time = "2025-11-18T18:12:37.518Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/57/c9e98475971c9da9cc9ff88195bbfcfae90dba511ebe14610be79f23ab3f/microsoft_agents_hosting_core-0.5.3-py3-none-any.whl", hash = "sha256:8c228a8814dcf1a86dd60e4c7574a2e86078962695fabd693a118097e703e982", size = 120668, upload-time = "2025-10-31T15:41:01.691Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/46/01d12043fc6e31c3cd894ef6d17d4586ea2a0a918c83842e2db5b8728f1c/microsoft_agents_hosting_core-0.6.0-py3-none-any.whl", hash = "sha256:9f07df7835a4c0f527b66e64e57dbfcbd9ec7c6140cc829f6e99f061b4084783", size = 122494, upload-time = "2025-11-18T18:12:45.639Z" },
 ]
 
 [[package]]
@@ -3642,7 +3642,7 @@ wheels = [
 
 [[package]]
 name = "openai-agents"
-version = "0.5.1"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "griffe", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3653,14 +3653,14 @@ dependencies = [
     { name = "types-requests", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/1f/322595f9a7ffd48afe2449bb92090eb893ba6ae4475e3ee549f64566a3a1/openai_agents-0.5.1.tar.gz", hash = "sha256:e193cd3a1b0d4f9a3f3fa9c4011c0b1f8876fa5f38bde4ae41d6a834a5791124", size = 1990900, upload-time = "2025-11-13T17:59:36.173Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/83/5004ab65dc5fdcf96c53b5a5f18de774897c70ee661320e366c64768f6ca/openai_agents-0.6.0.tar.gz", hash = "sha256:355d365a93c6d2457f2226ff7e9082db439d7776531d8a8d7635e45c59e3cc9a", size = 2009045, upload-time = "2025-11-18T19:06:55.988Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/ca/352a7167ac040f9e7d6765081f4021811914724303d1417525d50942e15e/openai_agents-0.5.1-py3-none-any.whl", hash = "sha256:7077c47d8e4230d788a18922df7cd69f13c3328a57744156195da4921c08c835", size = 231786, upload-time = "2025-11-13T17:59:32.691Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/f4/6418293ef0a1f9e57c261885a86ea2815d5ba385f1b4af5fa48608c1a0c2/openai_agents-0.6.0-py3-none-any.whl", hash = "sha256:a9928e5bea6938141de679ed7f6db9e9595aae05cd9de11b67ed3893a2c1ee07", size = 237412, upload-time = "2025-11-18T19:06:54.162Z" },
 ]
 
 [[package]]
 name = "openai-chatkit"
-version = "1.2.0"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -3668,9 +3668,9 @@ dependencies = [
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/e1/c247260aa9b319109e88b9aef69d6497d881b1d8e1b464c502a3173f0482/openai_chatkit-1.2.0.tar.gz", hash = "sha256:4aa8b3ab5f525fd6e4b9e88d6bb6fab7d5a12a5e51e22d0753fa8835f79ce3c5", size = 50160, upload-time = "2025-11-13T20:46:05.775Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/d9/4ceafc66c2cb6da308fdb6277d2d8cd52b5414cb9d45295e379ec7d7f1db/openai_chatkit-1.3.0.tar.gz", hash = "sha256:b09349f149dcc213edc1496a1b8c634689e1c38e17ad5bdba4a4f7962ac6f02e", size = 50130, upload-time = "2025-11-18T18:18:32.663Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/b8/7f8c54db201dc73867ab83cd5781035845cb474dfe8e9760be69c19c337d/openai_chatkit-1.2.0-py3-none-any.whl", hash = "sha256:4a8b40a160cf7c32b48dd813e3977567a124bb851ba27c01098a7cb249b453ec", size = 35577, upload-time = "2025-11-13T20:46:04.17Z" },
+    { url = "https://files.pythonhosted.org/packages/40/ea/c69e12cd2fe38841b39f5157db5851d1a3ac2a33d309d73e98bb8d7cd86b/openai_chatkit-1.3.0-py3-none-any.whl", hash = "sha256:a0c017dfa2ea4447cd2cc818215d16718fa9fa853a972bead2fa8102d4e85076", size = 35576, upload-time = "2025-11-18T18:18:31.285Z" },
 ]
 
 [[package]]

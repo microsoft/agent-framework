@@ -8,7 +8,9 @@ invoked during durable entity execution.
 
 from dataclasses import dataclass
 from typing import Protocol
+
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
+
 
 @dataclass(frozen=True)
 class AgentCallbackContext:

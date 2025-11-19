@@ -6,6 +6,8 @@ These are custom event types that extend beyond the standard OpenAI Responses AP
 to support Agent Framework specific features like workflows and traces.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Literal
 

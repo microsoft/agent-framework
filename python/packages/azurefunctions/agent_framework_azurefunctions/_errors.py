@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """Custom exception types for the durable agent framework."""
+
+
 class IncomingRequestError(ValueError):
     """Raised when an incoming HTTP request cannot be parsed or validated."""
 

@@ -2,6 +2,8 @@
 
 """Unified Purview model definitions and public export surface."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping, MutableMapping, Sequence
 from datetime import datetime
 from enum import Enum, Flag, auto

@@ -4,11 +4,9 @@
 
 from enum import Enum
 
-from agent_framework import ChatAgent, ai_function
-from agent_framework import ChatClientProtocol
-from pydantic import BaseModel, Field
-
+from agent_framework import ChatAgent, ChatClientProtocol, ai_function
 from agent_framework.ag_ui import AgentFrameworkAgent, RecipeConfirmationStrategy
+from pydantic import BaseModel, Field
 
 
 class SkillLevel(str, Enum):

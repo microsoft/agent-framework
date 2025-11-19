@@ -5,6 +5,8 @@
 This module defines the request and response models used by the framework.
 """
 
+from __future__ import annotations
+
 import inspect
 import uuid
 from collections.abc import MutableMapping

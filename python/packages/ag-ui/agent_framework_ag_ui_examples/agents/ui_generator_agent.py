@@ -4,9 +4,7 @@
 
 from typing import Any
 
-from agent_framework import AIFunction, ChatAgent
-from agent_framework import ChatClientProtocol
-
+from agent_framework import AIFunction, ChatAgent, ChatClientProtocol
 from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
