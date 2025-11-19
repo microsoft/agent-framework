@@ -280,14 +280,13 @@ class RunRequest:
 
     Attributes:
         message: The message to send to the agent
+        request_response_format: The desired response format (e.g., "text" or "json")
         role: The role of the message sender (user, system, or assistant)
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
         thread_id: Optional thread ID for tracking
         correlation_id: Optional correlation ID for tracking the response to this specific request
-        author_name: Optional name of the message author
         created_at: Optional timestamp when the request was created
-        extension_data: Optional additional metadata
     """
 
     message: str

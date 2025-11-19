@@ -125,7 +125,7 @@ class AgentEntity:
         if not thread_id:
             raise ValueError("RunRequest must include a thread_id")
         if not correlation_id:
-            raise ValueError("RunRequest must include a correlationId")
+            raise ValueError("RunRequest must include a correlation_id")
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
@@ -227,6 +227,7 @@ class AgentEntity:
                 correlation_id=correlation_id,
                 created_at=datetime.now(tz=timezone.utc),
                 messages=[error_message],
+                is_error=True,
             )
             self.state.data.conversation_history.append(error_state_response)
 
@@ -441,7 +442,7 @@ def create_agent_entity(
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
-            logger.info("State dict: %s", entity.state.to_dict())
+            logger.debug("State dict: %s", entity.state.to_dict())
             context.set_state(entity.state.to_dict())
             logger.info(f"[entity_function] Operation {operation} completed successfully")
 
