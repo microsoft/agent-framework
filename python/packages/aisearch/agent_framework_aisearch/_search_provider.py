@@ -10,12 +10,13 @@ Use semantic mode for most cases. Use agentic mode only when you need multi-hop
 reasoning across documents with Knowledge Bases.
 """
 
-import os
 import sys
 from collections.abc import Awaitable, Callable, MutableSequence
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework._logging import get_logger
+from agent_framework._pydantic import AFBaseSettings
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -107,8 +108,12 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
+# Module-level constants
+logger = get_logger("agent_framework.azure")
+_DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 
-class AzureAISearchSettings:
+
+class AzureAISearchSettings(AFBaseSettings):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
     Environment variables:
@@ -121,42 +126,34 @@ class AzureAISearchSettings:
         AZURE_OPENAI_API_KEY: Azure OpenAI API key (for agentic mode with API key auth)
     """
 
-    def __init__(
-        self,
-        *,
-        endpoint: str | None = None,
-        index_name: str | None = None,
-        api_key: str | None = None,
-        azure_ai_project_endpoint: str | None = None,
-        azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        azure_openai_api_key: str | None = None,
-    ) -> None:
-        """Initialize settings with auto-loading from environment variables.
+    env_prefix: ClassVar[str] = "AZURE_"
 
-        Args:
-            endpoint: Azure AI Search endpoint URL (or AZURE_SEARCH_ENDPOINT env var)
-            index_name: Search index name (or AZURE_SEARCH_INDEX_NAME env var)
-            api_key: API key (or AZURE_SEARCH_API_KEY env var)
-            azure_ai_project_endpoint: Azure AI Foundry project endpoint (or AZURE_AI_PROJECT_ENDPOINT env var)
-            azure_openai_resource_url: Azure OpenAI resource URL (or AZURE_OPENAI_RESOURCE_URL env var)
-            model_deployment_name: Model deployment name (or AZURE_OPENAI_DEPLOYMENT_NAME env var)
-            azure_openai_api_key: Azure OpenAI API key (or AZURE_OPENAI_API_KEY env var)
-        """
-        self.endpoint = endpoint or os.getenv("AZURE_SEARCH_ENDPOINT")
-        self.index_name = index_name or os.getenv("AZURE_SEARCH_INDEX_NAME")
-        self.api_key = api_key or os.getenv("AZURE_SEARCH_API_KEY")
-        self.azure_ai_project_endpoint = azure_ai_project_endpoint or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-        self.azure_openai_resource_url = azure_openai_resource_url or os.getenv("AZURE_OPENAI_RESOURCE_URL")
-        self.model_deployment_name = model_deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-        self.azure_openai_api_key = azure_openai_api_key or os.getenv("AZURE_OPENAI_API_KEY")
+    endpoint: str | None = None
+    search_endpoint: str | None = None  # Alias for endpoint
+    index_name: str | None = None
+    search_index_name: str | None = None  # Alias for index_name
+    api_key: str | None = None
+    search_api_key: str | None = None  # Alias for api_key
+    ai_project_endpoint: str | None = None
+    openai_resource_url: str | None = None
+    openai_deployment_name: str | None = None
+    openai_api_key: str | None = None
 
-    def validate(self) -> None:
+    def validate_settings(self) -> None:
         """Validate required settings are present."""
-        if not self.endpoint:
+        # Use aliases if main fields not set
+        endpoint = self.endpoint or self.search_endpoint
+        index_name = self.index_name or self.search_index_name
+
+        if not endpoint:
             raise ValueError("endpoint is required (or set AZURE_SEARCH_ENDPOINT)")
-        if not self.index_name:
+        if not index_name:
             raise ValueError("index_name is required (or set AZURE_SEARCH_INDEX_NAME)")
+
+        # Update main fields from aliases
+        self.endpoint = endpoint
+        self.index_name = index_name
+        self.api_key = self.api_key or self.search_api_key
 
 
 class AzureAISearchContextProvider(ContextProvider):
@@ -229,18 +226,15 @@ class AzureAISearchContextProvider(ContextProvider):
         context_prompt: str | None = None,
         # Agentic mode parameters (Knowledge Base)
         azure_ai_project_endpoint: str | None = None,
+        azure_openai_resource_url: str | None = None,
         model_deployment_name: str | None = None,
         model_name: str | None = None,
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
-        azure_openai_resource_url: str | None = None,
         knowledge_base_output_mode: Literal["extractive_data", "answer_synthesis"] = "extractive_data",
         retrieval_reasoning_effort: Literal["minimal", "medium", "low"] = "minimal",
-        # Deprecated parameters (for backwards compatibility)
-        azure_openai_endpoint: str | None = None,
-        azure_openai_deployment_name: str | None = None,
-        azure_openai_api_version: str | None = None,
+        agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
     ) -> None:
         """Initialize Azure AI Search Context Provider.
 
@@ -250,7 +244,7 @@ class AzureAISearchContextProvider(ContextProvider):
             credential: Azure credential (API key string, AzureKeyCredential, or AsyncTokenCredential).
                 If a string is provided, it will be converted to AzureKeyCredential.
             settings: Settings object with auto-loaded configuration from environment.
-                If provided, endpoint/index_name/api_key from settings will be used as defaults.
+                If provided, endpoint/index_name/credential from settings will be used as defaults.
             mode: Search mode - "semantic" for hybrid search with semantic ranking (fast)
                 or "agentic" for multi-hop reasoning (slower). Default: "semantic".
             top_k: Maximum number of documents to retrieve. Only applies to semantic mode.
@@ -274,11 +268,10 @@ class AzureAISearchContextProvider(ContextProvider):
             knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
-            azure_openai_api_key: Azure OpenAI API key for Knowledge Base to call the model.
-                Only needed when using API key authentication instead of managed identity.
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
                 Required for agentic mode. Example: "https://myresource.openai.azure.com"
-                This is different from azure_ai_project_endpoint (which is Foundry-specific).
+            azure_openai_api_key: Azure OpenAI API key for Knowledge Base to call the model.
+                Only needed when using API key authentication instead of managed identity.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval. Only used in agentic mode.
                 "extractive_data": Returns raw chunks without synthesis (default, recommended for agent integration).
                 "answer_synthesis": Returns synthesized answer from the LLM.
@@ -288,21 +281,20 @@ class AzureAISearchContextProvider(ContextProvider):
                 "medium": Moderate reasoning with some query decomposition.
                 "low": Lower reasoning effort than medium.
                 Default: "minimal".
-            azure_openai_endpoint: (Deprecated) Use azure_ai_project_endpoint instead.
-            azure_openai_deployment_name: (Deprecated) Use model_deployment_name instead.
-            azure_openai_api_version: (Deprecated) No longer used.
+            agentic_message_history_count: Number of recent messages to send to the Knowledge Base for context
+                in agentic mode. Default: 10.
         """
         # Load from settings if provided
         if settings:
-            settings.validate()
+            settings.validate_settings()
             endpoint = endpoint or settings.endpoint
             index_name = index_name or settings.index_name
             if not credential and settings.api_key:
                 credential = settings.api_key
-            azure_ai_project_endpoint = azure_ai_project_endpoint or settings.azure_ai_project_endpoint
-            azure_openai_resource_url = azure_openai_resource_url or settings.azure_openai_resource_url
-            model_deployment_name = model_deployment_name or settings.model_deployment_name
-            azure_openai_api_key = azure_openai_api_key or settings.azure_openai_api_key
+            azure_ai_project_endpoint = azure_ai_project_endpoint or settings.ai_project_endpoint
+            azure_openai_resource_url = azure_openai_resource_url or settings.openai_resource_url
+            model_deployment_name = model_deployment_name or settings.openai_deployment_name
+            azure_openai_api_key = azure_openai_api_key or settings.openai_api_key
 
         # Validate required parameters
         if not endpoint:
@@ -327,19 +319,17 @@ class AzureAISearchContextProvider(ContextProvider):
         self.context_prompt = context_prompt or self._DEFAULT_SEARCH_CONTEXT_PROMPT
 
         # Agentic mode parameters (Knowledge Base)
-        # azure_openai_resource_url: The actual Azure OpenAI endpoint for model calls
-        # azure_openai_endpoint (deprecated): Fall back to this if resource_url not provided
-        self.azure_openai_resource_url = azure_openai_resource_url or azure_openai_endpoint
-
-        self.azure_openai_deployment_name = model_deployment_name or azure_openai_deployment_name
-        # If model_name not provided, default to deployment name for backwards compatibility
-        self.model_name = model_name or self.azure_openai_deployment_name
+        self.azure_openai_resource_url = azure_openai_resource_url
+        self.azure_openai_deployment_name = model_deployment_name
+        # If model_name not provided, default to deployment name
+        self.model_name = model_name or model_deployment_name
         self.knowledge_base_name = knowledge_base_name
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
         self.azure_ai_project_endpoint = azure_ai_project_endpoint
         self.knowledge_base_output_mode = knowledge_base_output_mode
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
+        self.agentic_message_history_count = agentic_message_history_count
 
         # Auto-discover vector field if not specified
         self._auto_discovered_vector_field = False
@@ -361,13 +351,11 @@ class AzureAISearchContextProvider(ContextProvider):
                 )
             if not self.azure_openai_resource_url:
                 raise ValueError(
-                    "azure_openai_resource_url (or deprecated azure_openai_endpoint) is required for agentic mode. "
+                    "azure_openai_resource_url is required for agentic mode. "
                     "This should be your Azure OpenAI endpoint (e.g., 'https://myresource.openai.azure.com')"
                 )
             if not self.azure_openai_deployment_name:
-                raise ValueError(
-                    "model_deployment_name (or deprecated azure_openai_deployment_name) is required for agentic mode"
-                )
+                raise ValueError("model_deployment_name is required for agentic mode")
             if not knowledge_base_name:
                 raise ValueError("knowledge_base_name is required for agentic mode")
 
@@ -443,19 +431,21 @@ class AzureAISearchContextProvider(ContextProvider):
         if self.mode == "semantic":
             # Semantic mode: flatten messages to single query
             query = "\n".join(msg.text for msg in filtered_messages)
-            search_results = await self._semantic_search(query)
+            search_result_parts = await self._semantic_search(query)
         else:  # agentic
-            # Agentic mode: pass last 10 messages as conversation history
-            recent_messages = filtered_messages[-10:]
-            search_results = await self._agentic_search(recent_messages)
+            # Agentic mode: pass recent messages as conversation history
+            recent_messages = filtered_messages[-self.agentic_message_history_count :]
+            search_result_parts = await self._agentic_search(recent_messages)
 
-        # Format results as context
-        if not search_results:
+        # Format results as context - return multiple messages for each result part
+        if not search_result_parts:
             return Context()
 
-        context_text = f"{self.context_prompt}\n\n{search_results}"
+        # Create context messages: first message with prompt, then one message per result part
+        context_messages = [ChatMessage(role=Role.USER, text=self.context_prompt)]
+        context_messages.extend([ChatMessage(role=Role.USER, text=part) for part in search_result_parts])
 
-        return Context(messages=[ChatMessage(role="system", text=context_text)])
+        return Context(messages=context_messages)
 
     def _find_vector_fields(self, index: Any) -> list[str]:
         """Find all fields that can store vectors (have dimensions defined).
@@ -516,13 +506,10 @@ class AzureAISearchContextProvider(ContextProvider):
             return  # Already discovered or manually specified
 
         try:
-            # Need index client to get schema
+            # Use existing index client or create temporary one
             if not self._index_client:
-                from azure.search.documents.indexes.aio import SearchIndexClient
-
-                index_client = SearchIndexClient(endpoint=self.endpoint, credential=self.credential)
-            else:
-                index_client = self._index_client
+                self._index_client = SearchIndexClient(endpoint=self.endpoint, credential=self.credential)
+            index_client = self._index_client
 
             # Get index schema
             index = await index_client.get_index(self.index_name)
@@ -532,12 +519,8 @@ class AzureAISearchContextProvider(ContextProvider):
 
             if not vector_fields:
                 # No vector fields found - keyword search only
-                import logging
-
-                logging.info(f"No vector fields found in index '{self.index_name}'. Using keyword-only search.")
+                logger.info(f"No vector fields found in index '{self.index_name}'. Using keyword-only search.")
                 self._auto_discovered_vector_field = True
-                if not self._index_client:
-                    await index_client.close()
                 return
 
             # Step 2: Find which vector fields have server-side vectorization
@@ -550,17 +533,13 @@ class AzureAISearchContextProvider(ContextProvider):
                     self.vector_field_name = vectorizable_fields[0]
                     self._auto_discovered_vector_field = True
                     self._use_vectorizable_query = True  # Use VectorizableTextQuery
-                    import logging
-
-                    logging.info(
+                    logger.info(
                         f"Auto-discovered vectorizable field '{self.vector_field_name}' "
                         f"with server-side vectorization. No embedding_function needed."
                     )
                 else:
                     # Multiple vectorizable fields
-                    import logging
-
-                    logging.warning(
+                    logger.warning(
                         f"Multiple vectorizable fields found: {vectorizable_fields}. "
                         f"Please specify vector_field_name explicitly. Using keyword-only search."
                     )
@@ -571,35 +550,25 @@ class AzureAISearchContextProvider(ContextProvider):
                 self._use_vectorizable_query = False
 
                 if not self.embedding_function:
-                    import logging
-
-                    logging.warning(
+                    logger.warning(
                         f"Auto-discovered vector field '{self.vector_field_name}' without server-side vectorization. "
                         f"Provide embedding_function for vector search, or it will fall back to keyword-only search."
                     )
                     self.vector_field_name = None
             else:
                 # Multiple vector fields without vectorizers
-                import logging
-
-                logging.warning(
+                logger.warning(
                     f"Multiple vector fields found: {vector_fields}. "
                     f"Please specify vector_field_name explicitly. Using keyword-only search."
                 )
 
-            # Close index client if we created it
-            if not self._index_client:
-                await index_client.close()
-
         except Exception as e:
             # Log warning but continue with keyword search
-            import logging
-
-            logging.warning(f"Failed to auto-discover vector field: {e}. Using keyword-only search.")
+            logger.warning(f"Failed to auto-discover vector field: {e}. Using keyword-only search.")
 
         self._auto_discovered_vector_field = True  # Mark as attempted
 
-    async def _semantic_search(self, query: str) -> str:
+    async def _semantic_search(self, query: str) -> list[str]:
         """Perform semantic hybrid search with semantic ranking.
 
         This is the recommended mode for most use cases. It combines:
@@ -611,7 +580,7 @@ class AzureAISearchContextProvider(ContextProvider):
             query: Search query text.
 
         Returns:
-            Formatted search results as string.
+            List of formatted search result strings, one per document.
         """
         # Auto-discover vector field if not already done
         await self._auto_discover_vector_field()
@@ -673,7 +642,7 @@ class AzureAISearchContextProvider(ContextProvider):
             if doc_text:
                 formatted_results.append(doc_text)  # type: ignore[reportUnknownArgumentType]
 
-        return "\n\n".join(formatted_results)
+        return formatted_results
 
     async def _ensure_knowledge_base(self) -> None:
         """Ensure Knowledge Base and knowledge source are created.
@@ -761,7 +730,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 credential=self.credential,
             )
 
-    async def _agentic_search(self, messages: list[ChatMessage]) -> str:
+    async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:
         """Perform agentic retrieval with multi-hop reasoning using Knowledge Bases.
 
         NOTE: This mode is significantly slower than semantic search and should
@@ -774,10 +743,10 @@ class AzureAISearchContextProvider(ContextProvider):
         4. Synthesize a comprehensive answer with references
 
         Args:
-            messages: Conversation history (last 10 messages) to use for retrieval context.
+            messages: Conversation history to use for retrieval context.
 
         Returns:
-            Synthesized answer from the Knowledge Base.
+            List of answer parts from the Knowledge Base, one per content item.
         """
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
@@ -832,12 +801,12 @@ class AzureAISearchContextProvider(ContextProvider):
         # Perform retrieval via Knowledge Base
         retrieval_result = await self._retrieval_client.retrieve(retrieval_request=retrieval_request)
 
-        # Extract synthesized answer from response
+        # Extract answer parts from response
         if retrieval_result.response and len(retrieval_result.response) > 0:
             # Get the assistant's response (last message)
             assistant_message = retrieval_result.response[-1]
             if assistant_message.content:
-                # Combine all text content
+                # Extract all text content items as separate parts
                 answer_parts: list[str] = []
                 for content_item in assistant_message.content:
                     # Check if this is a text content item
@@ -845,10 +814,10 @@ class AzureAISearchContextProvider(ContextProvider):
                         answer_parts.append(content_item.text)
 
                 if answer_parts:
-                    return "\n".join(answer_parts)
+                    return answer_parts
 
         # Fallback if no answer generated
-        return "No results found from Knowledge Base."
+        return ["No results found from Knowledge Base."]
 
     def _extract_document_text(self, doc: dict[str, Any], doc_id: str | None = None) -> str:
         """Extract readable text from a search document with optional citation.

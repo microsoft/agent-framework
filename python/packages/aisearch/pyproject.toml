@@ -24,7 +24,6 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "azure-identity>=1,<2",
     "azure-search-documents==11.7.0b2",
 ]
 

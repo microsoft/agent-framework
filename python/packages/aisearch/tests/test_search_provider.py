@@ -186,8 +186,11 @@ class TestSemanticSearch:
         context = await provider.invoking(sample_messages)
 
         assert isinstance(context, Context)
-        assert len(context.messages) > 0
-        assert "Test document content" in context.messages[0].text
+        assert len(context.messages) > 1  # First message is prompt, rest are results
+        # First message should be the context prompt
+        assert "Use the following context" in context.messages[0].text
+        # Second message should contain the search result
+        assert "Test document content" in context.messages[1].text
 
     @pytest.mark.asyncio
     @patch("agent_framework_aisearch._search_provider.SearchClient")
@@ -425,9 +428,10 @@ class TestCitations:
 
         # Check that citation is included
         assert isinstance(context, Context)
-        assert len(context.messages) > 0
-        assert "[Source: doc123]" in context.messages[0].text
-        assert "Test document content" in context.messages[0].text
+        assert len(context.messages) > 1  # First message is prompt, rest are results
+        # Citation should be in the result message (second message)
+        assert "[Source: doc123]" in context.messages[1].text
+        assert "Test document content" in context.messages[1].text
 
 
 class TestVectorFieldAutoDiscovery:
