@@ -48,7 +48,7 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 
-from agent_framework_azure_ai._client import AzureAIClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import DefaultAzureCredential
 from azure.ai.projects.aio import AIProjectClient
 
