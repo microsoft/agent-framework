@@ -20,14 +20,6 @@ Usage as CLI with extra options:
                               --output resources/results.jsonl \\
                               --max-reflections 3 \\
                               -n 10  # Optional: process only first 10 prompts
-
-Usage as library:
-    from self_reflection import run_self_reflection_batch
-    
-    results_df = run_self_reflection_batch(
-        input_file='resources/suboptimal_groundedness_prompts.jsonl',
-        max_self_reflections=3
-    )
 """
 
 import asyncio
@@ -187,7 +179,7 @@ async def run_self_reflection_batch(
     max_self_reflections: int = 3,
     env_file: str | None = None,
     limit: int | None = None
-) -> pd.DataFrame:
+):
     """
     Run self-reflection on a batch of prompts.
 
@@ -199,9 +191,6 @@ async def run_self_reflection_batch(
         max_self_reflections: Maximum number of self-reflection iterations
         env_file: Optional path to .env file
         limit: Optional limit to process only the first N prompts
-
-    Returns:
-        DataFrame with results
     """
     # Load environment variables
     if env_file and os.path.exists(env_file):
@@ -355,8 +344,6 @@ async def run_self_reflection_batch(
                 print(f"  Best on first try: {first_try}/{len(iterations)} ({100*first_try/len(iterations):.1f}%)")
 
     print("="*60)
-
-    return results_df
 
 
 async def main():
