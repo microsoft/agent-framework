@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework.ag_ui import (
+from agent_framework_ag_ui import (
     AgentFrameworkAgent,
     AGUIChatClient,
     AGUIEventConverter,
