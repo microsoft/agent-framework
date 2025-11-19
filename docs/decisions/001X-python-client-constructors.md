@@ -134,6 +134,7 @@ This option would entail a mix of the above options, depending on the underlying
 - Good, because it reduces the number of clients where possible
 - Bad, because it can lead to inconsistency between clients, some being separate per backend, while others are combined
 - Bad, because it can lead to confusion for users if they expect a consistent approach across all clients
+- Bad, because changes to the underlying SDK clients can lead to changes in our clients, which can lead to instability.
 
 Example code:
 ```python
