@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 from uuid import uuid4

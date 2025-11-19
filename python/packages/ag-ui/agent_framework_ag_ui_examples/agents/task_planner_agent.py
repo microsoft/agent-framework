@@ -3,9 +3,9 @@
 """Example agent demonstrating human-in-the-loop with function approvals."""
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
+from agent_framework import ChatClientProtocol
 
-from agent_framework_ag_ui import AgentFrameworkAgent, TaskPlannerConfirmationStrategy
+from agent_framework.ag_ui import AgentFrameworkAgent, TaskPlannerConfirmationStrategy
 
 
 @ai_function(approval_mode="always_require")

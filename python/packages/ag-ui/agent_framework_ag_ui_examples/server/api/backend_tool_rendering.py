@@ -5,7 +5,7 @@
 from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import FastAPI
 
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 from ...agents.weather_agent import weather_agent
 

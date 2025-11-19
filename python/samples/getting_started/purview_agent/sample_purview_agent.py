@@ -20,7 +20,6 @@ Environment variables:
 - PURVIEW_CERT_PASSWORD (optional)
 - PURVIEW_DEFAULT_USER_ID (optional, user ID for Purview evaluation)
 """
-from __future__ import annotations
 
 import asyncio
 import os

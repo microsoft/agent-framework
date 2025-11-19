@@ -19,10 +19,10 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
+from agent_framework import ChatClientProtocol
 from pydantic import BaseModel, Field
 
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 
 class StepStatus(str, Enum):

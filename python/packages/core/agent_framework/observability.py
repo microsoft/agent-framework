@@ -1021,7 +1021,7 @@ def use_observability(
         .. code-block:: python
 
             from agent_framework import use_observability, setup_observability
-            from agent_framework._clients import ChatClientProtocol
+            from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class

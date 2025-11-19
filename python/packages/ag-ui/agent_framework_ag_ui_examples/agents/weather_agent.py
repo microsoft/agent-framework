@@ -5,7 +5,7 @@
 from typing import Any
 
 from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
+from agent_framework import ChatClientProtocol
 
 
 @ai_function

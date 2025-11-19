@@ -6,13 +6,8 @@ This module enables callers of AgentFunctionApp to supply streaming and final-re
 invoked during durable entity execution.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Protocol
-
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate
-
 
 @dataclass(frozen=True)
 class AgentCallbackContext:
