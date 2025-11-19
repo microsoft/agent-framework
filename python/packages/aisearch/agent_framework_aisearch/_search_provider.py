@@ -213,7 +213,9 @@ class AzureAISearchContextProvider(ContextProvider):
                 If provided, endpoint/index_name/api_key from settings will be used as defaults.
             mode: Search mode - "semantic" for hybrid search with semantic ranking (fast)
                 or "agentic" for multi-hop reasoning (slower). Default: "semantic".
-            top_k: Maximum number of documents to retrieve. Default: 5.
+            top_k: Maximum number of documents to retrieve. Only applies to semantic mode.
+                In agentic mode, the server-side Knowledge Base determines retrieval based on
+                query complexity and reasoning effort. Default: 5.
             semantic_configuration_name: Name of semantic configuration in the index.
                 Required for semantic ranking. If None, uses index default.
             vector_field_name: Name of the vector field in the index for hybrid search.
