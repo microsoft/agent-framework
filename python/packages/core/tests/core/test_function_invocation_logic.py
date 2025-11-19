@@ -1305,26 +1305,20 @@ async def test_approved_function_call_successful_execution(chat_client_base: Cha
     assert success_result.result == "Success value1"
 
 
-async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientProtocol):
-    """Test that declaration_only tools are not executed."""
-    exec_counter = 0
-
-    @ai_function(name="declaration_func")
-    def declaration_func_inner(arg1: str) -> str:
-        nonlocal exec_counter
-        exec_counter += 1
-        return f"Result {arg1}"
-
-    # Create a new AIFunction with declaration_only set
+async def test_declaration_only_tool(chat_client_base: ChatClientProtocol):
+    """Test that declaration_only tools without implementation (func=None) are not executed."""
     from agent_framework import AIFunction
 
+    # Create a truly declaration-only function with no implementation
     declaration_func = AIFunction(
         name="declaration_func",
-        func=declaration_func_inner,
-        additional_properties={"declaration_only": True},
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
     )
-    # Set declaration_only on the instance
-    object.__setattr__(declaration_func, "_declaration_only", True)
+
+    # Verify it's marked as declaration_only
+    assert declaration_func.declaration_only is True
 
     chat_client_base.run_responses = [
         ChatResponse(
@@ -1338,8 +1332,6 @@ async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientPr
 
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[declaration_func])
 
-    # Function should NOT be executed
-    assert exec_counter == 0
     # Should have the function call in messages but not a result
     function_calls = [
         content
@@ -1348,6 +1340,15 @@ async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientPr
         if isinstance(content, FunctionCallContent) and content.name == "declaration_func"
     ]
     assert len(function_calls) >= 1
+
+    # Should not have a function result
+    function_results = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionResultContent) and content.call_id == "1"
+    ]
+    assert len(function_results) == 0
 
 
 async def test_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):
