@@ -10,7 +10,6 @@ This module implements a self-reflection loop for LLM responses using groundedne
 It loads prompts from a JSONL file, runs them through an LLM with self-reflection,
 and saves the results.
 
-Can be used as a library or as a standalone CLI tool.
 
 Usage as CLI:
     python self_reflection.py
