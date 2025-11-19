@@ -1,4 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "microsoft-agents-hosting-aiohttp",
+#   "microsoft-agents-hosting-core",
+#   "microsoft-agents-authentication-msal",
+#   "microsoft-agents-activity",
+#   "agent-framework-core",
+#   "aiohttp"
+# ]
+# ///
 
 """
 Demo application using Microsoft Agent 365 SDK.
