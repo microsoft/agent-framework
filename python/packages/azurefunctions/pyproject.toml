@@ -27,6 +27,11 @@ dependencies = [
     "azure-functions-durable",
 ]
 
+[dependency-groups]
+dev = [
+    "types-python-dateutil>=2.9.0",
+]
+
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
 environments = [
