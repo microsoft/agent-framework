@@ -26,6 +26,7 @@ members = [
     "agent-framework",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
+    "agent-framework-aisearch",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
@@ -190,7 +191,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0b251114"
+version = "1.0.0b251117"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -217,6 +218,23 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "agent-framework-aisearch"
+version = "1.0.0b251118"
+source = { editable = "packages/aisearch" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-identity", specifier = ">=1,<2" },
+    { name = "azure-search-documents", specifier = "==11.7.0b2" },
+]
 
 [[package]]
 name = "agent-framework-anthropic"
@@ -305,7 +323,6 @@ version = "1.0.0b251114"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -343,7 +360,6 @@ requires-dist = [
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "azure-identity", specifier = ">=1,<2" },
-    { name = "azure-search-documents", specifier = "==11.7.0b2" },
     { name = "mcp", extras = ["ws"], specifier = ">=1.13" },
     { name = "openai", specifier = ">=1.99.0" },
     { name = "opentelemetry-api", specifier = ">=1.24" },

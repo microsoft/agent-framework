@@ -10,10 +10,12 @@ Use semantic mode for most cases. Use agentic mode only when you need multi-hop
 reasoning across documents with Knowledge Bases.
 """
 
+import os
 import sys
-from collections.abc import MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, Literal
 
+from agent_framework import ChatMessage, Context, ContextProvider, Role
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -34,8 +36,6 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
-
-from agent_framework import ChatMessage, Context, ContextProvider
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
@@ -70,6 +70,57 @@ else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
+class AzureAISearchSettings:
+    """Settings for Azure AI Search Context Provider with auto-loading from environment.
+
+    Environment variables:
+        AZURE_SEARCH_ENDPOINT: Azure AI Search endpoint URL
+        AZURE_SEARCH_INDEX_NAME: Name of the search index
+        AZURE_SEARCH_API_KEY: API key for authentication
+        AZURE_AI_PROJECT_ENDPOINT: Azure AI Foundry project endpoint (for agentic mode)
+        AZURE_OPENAI_RESOURCE_URL: Azure OpenAI resource URL (for agentic mode)
+        AZURE_OPENAI_DEPLOYMENT_NAME: Model deployment name (for agentic mode)
+        AZURE_OPENAI_API_KEY: Azure OpenAI API key (for agentic mode with API key auth)
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str | None = None,
+        index_name: str | None = None,
+        api_key: str | None = None,
+        azure_ai_project_endpoint: str | None = None,
+        azure_openai_resource_url: str | None = None,
+        model_deployment_name: str | None = None,
+        azure_openai_api_key: str | None = None,
+    ) -> None:
+        """Initialize settings with auto-loading from environment variables.
+
+        Args:
+            endpoint: Azure AI Search endpoint URL (or AZURE_SEARCH_ENDPOINT env var)
+            index_name: Search index name (or AZURE_SEARCH_INDEX_NAME env var)
+            api_key: API key (or AZURE_SEARCH_API_KEY env var)
+            azure_ai_project_endpoint: Azure AI Foundry project endpoint (or AZURE_AI_PROJECT_ENDPOINT env var)
+            azure_openai_resource_url: Azure OpenAI resource URL (or AZURE_OPENAI_RESOURCE_URL env var)
+            model_deployment_name: Model deployment name (or AZURE_OPENAI_DEPLOYMENT_NAME env var)
+            azure_openai_api_key: Azure OpenAI API key (or AZURE_OPENAI_API_KEY env var)
+        """
+        self.endpoint = endpoint or os.getenv("AZURE_SEARCH_ENDPOINT")
+        self.index_name = index_name or os.getenv("AZURE_SEARCH_INDEX_NAME")
+        self.api_key = api_key or os.getenv("AZURE_SEARCH_API_KEY")
+        self.azure_ai_project_endpoint = azure_ai_project_endpoint or os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+        self.azure_openai_resource_url = azure_openai_resource_url or os.getenv("AZURE_OPENAI_RESOURCE_URL")
+        self.model_deployment_name = model_deployment_name or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        self.azure_openai_api_key = azure_openai_api_key or os.getenv("AZURE_OPENAI_API_KEY")
+
+    def validate(self) -> None:
+        """Validate required settings are present."""
+        if not self.endpoint:
+            raise ValueError("endpoint is required (or set AZURE_SEARCH_ENDPOINT)")
+        if not self.index_name:
+            raise ValueError("index_name is required (or set AZURE_SEARCH_INDEX_NAME)")
+
+
 class AzureAISearchContextProvider(ContextProvider):
     """Azure AI Search Context Provider with hybrid search and semantic ranking.
 
@@ -82,31 +133,30 @@ class AzureAISearchContextProvider(ContextProvider):
       Use only for complex queries requiring cross-document reasoning.
 
     Examples:
-        Semantic hybrid search (recommended for most cases):
+        Using Settings class with environment variables:
 
         .. code-block:: python
 
             from agent_framework import ChatAgent
-            from agent_framework_azure_ai import AzureAIAgentClient, AzureAISearchContextProvider
+            from agent_framework_azure_ai import AzureAIAgentClient
+            from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
             from azure.identity.aio import DefaultAzureCredential
 
-            # Create context provider with semantic hybrid search
+            # Load from environment variables
+            settings = AzureAISearchSettings()
+            search_provider = AzureAISearchContextProvider(settings=settings, credential=DefaultAzureCredential())
+
+        Semantic hybrid search with API key:
+
+        .. code-block:: python
+
+            # Direct API key string (converted to AzureKeyCredential automatically)
             search_provider = AzureAISearchContextProvider(
                 endpoint="https://mysearch.search.windows.net",
                 index_name="my-index",
-                credential=DefaultAzureCredential(),
-                mode="semantic",  # Fast hybrid + semantic ranker (default)
+                credential="my-api-key",  # String converted to AzureKeyCredential
+                mode="semantic",
             )
-
-            # Use with agent
-            async with (
-                AzureAIAgentClient() as client,
-                ChatAgent(
-                    chat_client=client,
-                    context_providers=[search_provider],
-                ) as agent,
-            ):
-                response = await agent.run("What is in the documents?")
 
         Agentic retrieval for complex queries:
 
@@ -128,15 +178,16 @@ class AzureAISearchContextProvider(ContextProvider):
 
     def __init__(
         self,
-        endpoint: str,
-        index_name: str,
-        credential: AzureKeyCredential | AsyncTokenCredential,
+        endpoint: str | None = None,
+        index_name: str | None = None,
+        credential: str | AzureKeyCredential | AsyncTokenCredential | None = None,
         *,
+        settings: AzureAISearchSettings | None = None,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
         semantic_configuration_name: str | None = None,
         vector_field_name: str | None = None,
-        embedding_function: Any | None = None,
+        embedding_function: Callable[[str], Awaitable[list[float]]] | None = None,
         context_prompt: str | None = None,
         # Agentic mode parameters (Knowledge Base)
         azure_ai_project_endpoint: str | None = None,
@@ -156,7 +207,10 @@ class AzureAISearchContextProvider(ContextProvider):
         Args:
             endpoint: Azure AI Search endpoint URL.
             index_name: Name of the search index to query.
-            credential: Azure credential (API key or DefaultAzureCredential).
+            credential: Azure credential (API key string, AzureKeyCredential, or AsyncTokenCredential).
+                If a string is provided, it will be converted to AzureKeyCredential.
+            settings: Settings object with auto-loaded configuration from environment.
+                If provided, endpoint/index_name/api_key from settings will be used as defaults.
             mode: Search mode - "semantic" for hybrid search with semantic ranking (fast)
                 or "agentic" for multi-hop reasoning (slower). Default: "semantic".
             top_k: Maximum number of documents to retrieve. Default: 5.
@@ -166,7 +220,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 Required if using vector search. Default: None (keyword search only).
             embedding_function: Async function to generate embeddings for vector search.
                 Signature: async def embed(text: str) -> list[float]
-                Required if vector_field_name is specified.
+                Required if vector_field_name is specified and no server-side vectorization.
             context_prompt: Custom prompt to prepend to retrieved context.
                 Default: "Use the following context to answer the question:"
             azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
@@ -187,6 +241,30 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_deployment_name: (Deprecated) Use model_deployment_name instead.
             azure_openai_api_version: (Deprecated) No longer used.
         """
+        # Load from settings if provided
+        if settings:
+            settings.validate()
+            endpoint = endpoint or settings.endpoint
+            index_name = index_name or settings.index_name
+            if not credential and settings.api_key:
+                credential = settings.api_key
+            azure_ai_project_endpoint = azure_ai_project_endpoint or settings.azure_ai_project_endpoint
+            azure_openai_resource_url = azure_openai_resource_url or settings.azure_openai_resource_url
+            model_deployment_name = model_deployment_name or settings.model_deployment_name
+            azure_openai_api_key = azure_openai_api_key or settings.azure_openai_api_key
+
+        # Validate required parameters
+        if not endpoint:
+            raise ValueError("endpoint is required")
+        if not index_name:
+            raise ValueError("index_name is required")
+        if not credential:
+            raise ValueError("credential is required")
+
+        # Convert string credential to AzureKeyCredential
+        if isinstance(credential, str):
+            credential = AzureKeyCredential(credential)
+
         self.endpoint = endpoint
         self.index_name = index_name
         self.credential = credential
@@ -298,7 +376,6 @@ class AzureAISearchContextProvider(ContextProvider):
         """
         # Convert to list and filter to USER/ASSISTANT messages with text only
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
-        from agent_framework import Role
 
         filtered_messages = [
             msg
