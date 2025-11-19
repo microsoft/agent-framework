@@ -25,7 +25,11 @@ from azure.search.documents.indexes.models import (
     AzureOpenAIVectorizerParameters,
     KnowledgeBase,
     KnowledgeBaseAzureOpenAIModel,
+    KnowledgeRetrievalLowReasoningEffort,
+    KnowledgeRetrievalMediumReasoningEffort,
+    KnowledgeRetrievalMinimalReasoningEffort,
     KnowledgeRetrievalOutputMode,
+    KnowledgeRetrievalReasoningEffort,
     KnowledgeSourceReference,
     SearchIndexKnowledgeSource,
     SearchIndexKnowledgeSourceParameters,
@@ -197,6 +201,8 @@ class AzureAISearchContextProvider(ContextProvider):
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
         azure_openai_resource_url: str | None = None,
+        knowledge_base_output_mode: Literal["extractive_data", "answer_synthesis"] = "extractive_data",
+        retrieval_reasoning_effort: Literal["minimal", "medium", "low"] = "minimal",
         # Deprecated parameters (for backwards compatibility)
         azure_openai_endpoint: str | None = None,
         azure_openai_deployment_name: str | None = None,
@@ -239,6 +245,15 @@ class AzureAISearchContextProvider(ContextProvider):
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
                 Required for agentic mode. Example: "https://myresource.openai.azure.com"
                 This is different from azure_ai_project_endpoint (which is Foundry-specific).
+            knowledge_base_output_mode: Output mode for Knowledge Base retrieval. Only used in agentic mode.
+                "extractive_data": Returns raw chunks without synthesis (default, recommended for agent integration).
+                "answer_synthesis": Returns synthesized answer from the LLM.
+                Some knowledge sources require answer_synthesis mode. Default: "extractive_data".
+            retrieval_reasoning_effort: Reasoning effort for Knowledge Base query planning. Only used in agentic mode.
+                "minimal": Fastest, basic query planning.
+                "medium": Moderate reasoning with some query decomposition.
+                "low": Lower reasoning effort than medium.
+                Default: "minimal".
             azure_openai_endpoint: (Deprecated) Use azure_ai_project_endpoint instead.
             azure_openai_deployment_name: (Deprecated) Use model_deployment_name instead.
             azure_openai_api_version: (Deprecated) No longer used.
@@ -289,6 +304,8 @@ class AzureAISearchContextProvider(ContextProvider):
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
         self.azure_ai_project_endpoint = azure_ai_project_endpoint
+        self.knowledge_base_output_mode = knowledge_base_output_mode
+        self.retrieval_reasoning_effort = retrieval_reasoning_effort
 
         # Auto-discover vector field if not specified
         self._auto_discovered_vector_field = False
@@ -664,14 +681,27 @@ class AzureAISearchContextProvider(ContextProvider):
 
         # Step 2: Create or update Knowledge Base
         # Always create/update to ensure configuration is current
-        # Note: EXTRACTIVE_DATA mode returns raw chunks without synthesis
-        # Model is still needed for query planning and multi-hop reasoning
         aoai_params = AzureOpenAIVectorizerParameters(
             resource_url=self.azure_openai_resource_url,
             deployment_name=self.azure_openai_deployment_name,
             model_name=self.model_name,
             api_key=self.azure_openai_api_key,
         )
+
+        # Map output mode string to SDK enum
+        output_mode = (
+            KnowledgeRetrievalOutputMode.EXTRACTIVE_DATA
+            if self.knowledge_base_output_mode == "extractive_data"
+            else KnowledgeRetrievalOutputMode.ANSWER_SYNTHESIS
+        )
+
+        # Map reasoning effort string to SDK class
+        reasoning_effort_map: dict[str, KnowledgeRetrievalReasoningEffort] = {
+            "minimal": KnowledgeRetrievalMinimalReasoningEffort(),
+            "medium": KnowledgeRetrievalMediumReasoningEffort(),
+            "low": KnowledgeRetrievalLowReasoningEffort(),
+        }
+        reasoning_effort = reasoning_effort_map[self.retrieval_reasoning_effort]
 
         knowledge_base = KnowledgeBase(
             name=knowledge_base_name,
@@ -682,7 +712,8 @@ class AzureAISearchContextProvider(ContextProvider):
                 )
             ],
             models=[KnowledgeBaseAzureOpenAIModel(azure_open_ai_parameters=aoai_params)],
-            output_mode=KnowledgeRetrievalOutputMode.EXTRACTIVE_DATA,
+            output_mode=output_mode,
+            retrieval_reasoning_effort=reasoning_effort,
         )
         await self._index_client.create_or_update_knowledge_base(knowledge_base)
 
