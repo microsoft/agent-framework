@@ -77,7 +77,7 @@ class AgentEntity:
 
         logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
 
-    def _is_error_response(self, entry: DurableAgentStateEntry | dict[str, Any]) -> bool:
+    def _is_error_response(self, entry: DurableAgentStateEntry) -> bool:
         """Check if a conversation history entry is an error response.
 
         Error responses should be kept in history for tracking but not sent to the agent
@@ -145,12 +145,6 @@ class AgentEntity:
                 if not self._is_error_response(entry)
                 for m in entry.messages
             ]
-
-            # Strip additional_properties from all messages to avoid metadata being sent to Azure OpenAI
-            # Azure OpenAI doesn't support the 'metadata' field in messages
-            for msg in chat_messages:
-                if hasattr(msg, "additional_properties"):
-                    msg.additional_properties = {}
 
             run_kwargs: dict[str, Any] = {"messages": chat_messages}
             if not enable_tool_calls:
@@ -417,7 +411,7 @@ def create_agent_entity(
             entity = AgentEntity(agent, callback)
 
             if current_state is not None:
-                entity.state.restore_state(current_state)
+                entity.state = DurableAgentState.from_dict(current_state)
                 logger.debug(
                     "[entity_function] Restored entity from state (message_count: %s)", entity.state.message_count
                 )

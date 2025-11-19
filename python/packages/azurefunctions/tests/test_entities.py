@@ -128,9 +128,9 @@ class TestAgentEntityRunAgent:
         assert isinstance(sent_messages, list)
         assert len(sent_messages) == 1
         sent_message = sent_messages[0]
-        assert isinstance(sent_message, DurableAgentStateMessage)
-        assert sent_message.text == "Test message"
-        assert _role_value(sent_message) == "user"
+        assert isinstance(sent_message, ChatMessage)
+        assert getattr(sent_message, "text", None) == "Test message"
+        assert getattr(sent_message.role, "value", sent_message.role) == "user"
 
         # Verify result
         assert result["status"] == "success"
@@ -560,12 +560,38 @@ class TestCreateAgentEntity:
             "schemaVersion": "1.0.0",
             "data": {
                 "conversationHistory": [
-                    ChatMessage(
-                        role="user", text="msg1", additional_properties={"timestamp": "2024-01-01T00:00:00Z"}
-                    ).to_dict(),
-                    ChatMessage(
-                        role="assistant", text="resp1", additional_properties={"timestamp": "2024-01-01T00:05:00Z"}
-                    ).to_dict(),
+                    {
+                        "$type": "request",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "msg1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "$type": "response",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:05:00Z",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "resp1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
                 ],
             },
         }
@@ -574,10 +600,10 @@ class TestCreateAgentEntity:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "from_dict", wraps=DurableAgentState.from_dict) as from_dict_mock:
             entity_function(mock_context)
 
-        restore_state_mock.assert_called_once_with(existing_state)
+        from_dict_mock.assert_called_once_with(existing_state)
 
 
 class TestErrorHandling:

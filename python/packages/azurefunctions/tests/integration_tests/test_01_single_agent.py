@@ -94,7 +94,7 @@ class TestSampleSingleAgent:
 
         if response1.status_code == 200:
             data1 = response1.json()
-            assert data1["message_count"] == 1
+            assert data1["message_count"] == 2  # Initial + reply
 
             # Second message in same session
             response2 = SampleTestHelper.post_json(
@@ -102,7 +102,7 @@ class TestSampleSingleAgent:
             )
             assert response2.status_code == 200
             data2 = response2.json()
-            assert data2["message_count"] == 2
+            assert data2["message_count"] == 4
         else:
             # In async mode, we can't easily test message count
             # Just verify we can make multiple calls

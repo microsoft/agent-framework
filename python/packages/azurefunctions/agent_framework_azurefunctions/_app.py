@@ -505,9 +505,7 @@ class AgentFunctionApp(DFAppBase):
 
         typed_state_payload = cast(dict[str, Any], state_payload)
 
-        agent_state = DurableAgentState()
-        agent_state.restore_state(typed_state_payload)
-        return agent_state
+        return DurableAgentState.from_dict(typed_state_payload)
 
     async def _get_response_from_entity(
         self,
