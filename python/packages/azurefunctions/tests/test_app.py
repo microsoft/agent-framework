@@ -13,6 +13,11 @@ from agent_framework import AgentRunResponse, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
+from agent_framework_azurefunctions._constants import (
+    MIMETYPE_APPLICATION_JSON,
+    MIMETYPE_TEXT_PLAIN,
+    THREAD_ID_HEADER,
+)
 from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 
@@ -359,7 +364,7 @@ class TestAgentEntityOperations:
         )
 
         # Each conversation turn creates 2 entries: request and response
-        history = entity.state.data.conversationHistory[0].messages  # Request entry
+        history = entity.state.data.conversation_history[0].messages  # Request entry
         assert len(history) == 1  # Just the user message
 
         # Send second message
@@ -369,7 +374,7 @@ class TestAgentEntityOperations:
 
         # Now we have 4 entries total (2 requests + 2 responses)
         # Access the first request entry
-        history2 = entity.state.data.conversationHistory[2].messages  # Second request entry
+        history2 = entity.state.data.conversation_history[2].messages  # Second request entry
         assert len(history2) == 1  # Just the user message
 
         user_msg = history[0]
@@ -377,7 +382,7 @@ class TestAgentEntityOperations:
         assert user_role == "user"
         assert user_msg.text == "Message 1"
 
-        assistant_msg = entity.state.data.conversationHistory[1].messages[0]
+        assistant_msg = entity.state.data.conversation_history[1].messages[0]
         assistant_role = getattr(assistant_msg.role, "value", assistant_msg.role)
         assert assistant_role == "assistant"
         assert assistant_msg.text == "Response 1"
@@ -392,17 +397,17 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert len(entity.state.data.conversationHistory) == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-3a"}
         )
-        assert len(entity.state.data.conversationHistory) == 2
+        assert len(entity.state.data.conversation_history) == 2
 
         await entity.run_agent(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"}
         )
-        assert len(entity.state.data.conversationHistory) == 4
+        assert len(entity.state.data.conversation_history) == 4
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -410,13 +415,13 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
 
         # Set some state
-        entity.state.data = DurableAgentState()
+        entity.state = DurableAgentState()
 
         # Reset
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert len(entity.state.data.conversationHistory) == 0
+        assert len(entity.state.data.conversation_history) == 0
 
 
 class TestAgentEntityFactory:
@@ -466,7 +471,24 @@ class TestAgentEntityFactory:
         mock_context.get_state.return_value = {
             "schemaVersion": "1.0.0",
             "data": {
-                "conversationHistory": [{"role": "user", "content": "test"}],
+                "conversationHistory": [
+                    {
+                        "$type": "request",
+                        "correlationId": "corr-reset-test",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "test",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
             },
         }
 
@@ -506,7 +528,40 @@ class TestAgentEntityFactory:
         existing_state = {
             "schemaVersion": "1.0.0",
             "data": {
-                "conversationHistory": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
+                "conversationHistory": [
+                    {
+                        "$type": "request",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "msg1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "$type": "response",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:05:00Z",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "resp1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
             },
         }
 
@@ -514,10 +569,10 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(DurableAgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "from_dict", wraps=DurableAgentState.from_dict) as from_dict_mock:
             entity_function(mock_context)
 
-        restore_state_mock.assert_called_once_with(existing_state)
+        from_dict_mock.assert_called_once_with(existing_state)
 
 
 class TestErrorHandling:
@@ -608,7 +663,7 @@ class TestIncomingRequestParsing:
         app = self._create_app()
 
         request = Mock()
-        request.headers = {"accept": "application/json"}
+        request.headers = {"accept": MIMETYPE_APPLICATION_JSON}
         request.params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
         request.get_body.return_value = b"Plain text message"
@@ -682,8 +737,8 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 202
-        assert response.mimetype == "text/plain"
-        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.mimetype == MIMETYPE_TEXT_PLAIN
+        assert response.headers.get(THREAD_ID_HEADER) is not None
         assert response.get_body().decode("utf-8") == "Agent request accepted"
 
         signal_args = client.signal_entity.call_args[0]
@@ -701,7 +756,7 @@ class TestHttpRunRoute:
         handler = self._get_run_handler(mock_agent)
 
         request = Mock()
-        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": "application/json"}
+        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": MIMETYPE_APPLICATION_JSON}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -712,8 +767,8 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 202
-        assert response.mimetype == "application/json"
-        assert response.headers.get("x-ms-thread-id") is None
+        assert response.mimetype == MIMETYPE_APPLICATION_JSON
+        assert response.headers.get(THREAD_ID_HEADER) is None
         body = response.get_body().decode("utf-8")
         assert '"status": "accepted"' in body
 
@@ -736,8 +791,8 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 400
-        assert response.mimetype == "text/plain"
-        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.mimetype == MIMETYPE_TEXT_PLAIN
+        assert response.headers.get(THREAD_ID_HEADER) is not None
         assert response.get_body().decode("utf-8") == "Message is required"
         client.signal_entity.assert_not_called()
 

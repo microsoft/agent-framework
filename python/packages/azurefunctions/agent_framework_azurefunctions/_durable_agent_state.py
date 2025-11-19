@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from agent_framework import (
@@ -48,11 +49,13 @@ from agent_framework import (
     UriContent,
     UsageContent,
     UsageDetails,
+    get_logger,
 )
 from dateutil import parser as date_parser  # type: ignore
 
-from ._constants import RESPONSE_FORMAT_JSON, RESPONSE_FORMAT_TEXT
 from ._models import RunRequest, _serialize_response_format
+
+logger = get_logger("agent_framework.azurefunctions.durable_agent_state")
 
 
 class DurableAgentStateContent:
@@ -146,26 +149,56 @@ class DurableAgentStateData:
     conforming to the durable-agent-entity-state.json schema structure.
 
     Attributes:
-        conversationHistory: Ordered list of conversation entries (requests and responses)
-        extensionData: Optional dictionary for custom metadata (not part of core schema)
+        conversation_history: Ordered list of conversation entries (requests and responses)
+        extension_data: Optional dictionary for custom metadata (not part of core schema)
     """
 
-    conversationHistory: list[DurableAgentStateEntry]
-    extensionData: dict[str, Any] | None
+    conversation_history: list[DurableAgentStateEntry]
+    extension_data: dict[str, Any] | None
 
     def __init__(
         self,
-        conversationHistory: list[DurableAgentStateEntry] | None = None,
-        extensionData: dict[str, Any] | None = None,
+        conversation_history: list[DurableAgentStateEntry] | None = None,
+        extension_data: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the data container.
 
         Args:
-            conversationHistory: Initial conversation history (defaults to empty list)
-            extensionData: Optional custom metadata
+            conversation_history: Initial conversation history (defaults to empty list)
+            extension_data: Optional custom metadata
         """
-        self.conversationHistory = conversationHistory or []
-        self.extensionData = extensionData
+        self.conversation_history = conversation_history or []
+        self.extension_data = extension_data
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "conversationHistory": [entry.to_dict() for entry in self.conversation_history],
+            "extensionData": self.extension_data,
+        }
+
+    @classmethod
+    def from_dict(cls, data_dict: dict[str, Any]) -> DurableAgentStateData:
+        # Restore the conversation history - deserialize entries from dicts to objects
+        history_data = data_dict.get("conversationHistory", [])
+        deserialized_history: list[DurableAgentStateEntry] = []
+        for entry_dict in history_data:
+            if isinstance(entry_dict, dict):
+                # Deserialize based on $type discriminator
+                entry_type = entry_dict.get("$type") or entry_dict.get("json_type")
+                if entry_type == DurableAgentStateEntryJsonType.RESPONSE:
+                    deserialized_history.append(DurableAgentStateResponse.from_dict(entry_dict))
+                elif entry_type == DurableAgentStateEntryJsonType.REQUEST:
+                    deserialized_history.append(DurableAgentStateRequest.from_dict(entry_dict))
+                else:
+                    deserialized_history.append(DurableAgentStateEntry.from_dict(entry_dict))
+            else:
+                # Already an object
+                deserialized_history.append(entry_dict)
+
+        return cls(
+            conversation_history=deserialized_history,
+            extension_data=data_dict.get("extensionData"),
+        )
 
 
 class DurableAgentState:
@@ -210,43 +243,30 @@ class DurableAgentState:
         self.schema_version = schema_version
 
     def to_dict(self) -> dict[str, Any]:
-        # Serialize conversationHistory
-        serialized_history: list[dict[str, Any]] = []
-        for entry in self.data.conversationHistory:
-            # Properly serialize each entry to a dictionary
-            if hasattr(entry, "to_dict"):
-                serialized_history.append(entry.to_dict())
-            else:
-                # Fallback for already-serialized entries
-                serialized_history.append(entry)  # type: ignore
 
         return {
             "schemaVersion": self.schema_version,
-            "data": {"conversationHistory": serialized_history},
+            "data": self.data.to_dict(),
         }
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, obj: dict[str, Any]) -> DurableAgentState:
-        # Default to "1.0.0" for backward compatibility with legacy state that doesn't have schemaVersion
-        schema_version = obj.get("schemaVersion", "1.0.0")
+    def from_dict(cls, state: dict[str, Any]) -> DurableAgentState:
+        """Restore state from a dictionary.
 
-        if not schema_version.startswith("1."):
-            raise ValueError(f"The durable agent state schema version '{schema_version}' is not supported.")
+        Args:
+            state: Dictionary containing schemaVersion and data (full state structure)
+        """
+        schema_version = state.get("schemaVersion")
+        if schema_version is None:
+            logger.warning("Resetting state as it is incompatible with the current schema, all history will be lost")
+            return cls()
 
-        data_dict = obj.get("data")
-        if data_dict is None:
-            raise ValueError("The durable agent state is missing the 'data' property.")
+        instance = cls(schema_version=state.get("schemaVersion", "1.0.0"))
+        instance.data = DurableAgentStateData.from_dict(state.get("data", {}))
 
-        instance = cls(schema_version=schema_version)
-        # Deserialize the data dict into DurableAgentStateData
-        if isinstance(data_dict, dict):
-            instance.data = DurableAgentStateData(
-                conversationHistory=data_dict.get("conversationHistory", []),
-                extensionData=data_dict.get("extensionData"),
-            )
         return instance
 
     @classmethod
@@ -258,39 +278,10 @@ class DurableAgentState:
 
         return cls.from_dict(obj)
 
-    def restore_state(self, state: dict[str, Any]) -> None:
-        """Restore state from a dictionary.
-
-        Args:
-            state: Dictionary containing schemaVersion and data (full state structure)
-        """
-        # Extract the data portion from the state
-        data_dict = state.get("data", {})
-
-        # Restore the conversation history - deserialize entries from dicts to objects
-        history_data = data_dict.get("conversationHistory", [])
-        deserialized_history: list[DurableAgentStateEntry] = []
-        for entry_dict in history_data:
-            if isinstance(entry_dict, dict):
-                # Deserialize based on $type discriminator
-                entry_type = entry_dict.get("$type") or entry_dict.get("json_type")
-                if entry_type == "response":
-                    deserialized_history.append(DurableAgentStateResponse.from_dict(entry_dict))
-                elif entry_type == "request":
-                    deserialized_history.append(DurableAgentStateRequest.from_dict(entry_dict))
-                else:
-                    deserialized_history.append(DurableAgentStateEntry.from_dict(entry_dict))
-            else:
-                # Already an object
-                deserialized_history.append(entry_dict)  # type: ignore
-
-        self.data.conversationHistory = deserialized_history
-        self.data.extensionData = data_dict.get("extensionData")
-
     @property
     def message_count(self) -> int:
         """Get the count of conversation entries (requests + responses)."""
-        return len(self.data.conversationHistory)
+        return len(self.data.conversation_history)
 
     def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
         """Try to get an agent response by correlation ID.
@@ -311,27 +302,24 @@ class DurableAgentState:
             None otherwise
         """
         # Search through conversation history for a response with this correlationId
-        for entry in self.data.conversationHistory:
-            if (
-                hasattr(entry, "correlation_id")
-                and entry.correlation_id == correlation_id
-                and isinstance(entry, DurableAgentStateResponse)
-            ):
+        for entry in self.data.conversation_history:
+            if entry.correlation_id == correlation_id and isinstance(entry, DurableAgentStateResponse):
                 # Found the entry, extract response data
                 # Get the text content from assistant messages only
-                content = ""
-                for message in entry.messages:
-                    if hasattr(message, "role") and message.role == "assistant" and hasattr(message, "contents"):
-                        # Extract text from message contents
-                        for content_item in message.contents:
-                            # Handle both object and dict forms
-                            if hasattr(content_item, "text") and content_item.text:
-                                content += content_item.text
-                            elif isinstance(content_item, dict) and content_item.get("text"):
-                                content += content_item.get("text", "")
+                content = "\n".join(message.text for message in entry.messages if message.text is not None)
 
                 return {"content": content, "message_count": self.message_count, "correlationId": correlation_id}
         return None
+
+
+class DurableAgentStateEntryJsonType(str, Enum):
+    """Enum for conversation history entry types.
+
+    Discriminator values for the $type field in DurableAgentStateEntry objects.
+    """
+
+    REQUEST = "request"
+    RESPONSE = "response"
 
 
 class DurableAgentStateEntry:
@@ -360,7 +348,7 @@ class DurableAgentStateEntry:
         usage: Token usage statistics - only for response entries
     """
 
-    json_type: str
+    json_type: DurableAgentStateEntryJsonType
     correlation_id: str | None
     created_at: datetime
     messages: list[DurableAgentStateMessage]
@@ -375,7 +363,7 @@ class DurableAgentStateEntry:
 
     def __init__(
         self,
-        json_type: str,
+        json_type: DurableAgentStateEntryJsonType,
         correlation_id: str | None,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
@@ -403,15 +391,15 @@ class DurableAgentStateEntry:
             "$type": self.json_type,
             "correlationId": self.correlation_id,
             "createdAt": created_at_value.isoformat() if isinstance(created_at_value, datetime) else created_at_value,
-            "messages": [m.to_dict() if hasattr(m, "to_dict") else m for m in self.messages],
+            "messages": [m.to_dict() for m in self.messages],
         }
-        if self.json_type == "request":
+        if self.json_type == DurableAgentStateEntryJsonType.REQUEST:
             # Only include responseType and responseSchema if they're not None
             if self.response_type is not None:
                 data["responseType"] = self.response_type
             if self.response_schema is not None:
                 data["responseSchema"] = self.response_schema
-        elif self.json_type == "response":
+        elif self.json_type == DurableAgentStateEntryJsonType.RESPONSE:
             # Only include usage if it's not None
             if self.usage is not None:
                 data["usage"] = self.usage.to_dict()
@@ -433,7 +421,7 @@ class DurableAgentStateEntry:
                 messages.append(msg_dict)
 
         return cls(
-            json_type=data.get("$type", "entry"),
+            json_type=DurableAgentStateEntryJsonType(data.get("$type", "entry")),
             correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
@@ -457,21 +445,17 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
         json_type: Always "request" for this class
     """
 
-    response_type: str | None = None
-    response_schema: dict[str, Any] | None = None
-
     def __init__(
         self,
         correlation_id: str | None,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
-        json_type: str,
         extension_data: dict[str, Any] | None = None,
         response_type: str | None = None,
         response_schema: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
-            json_type=json_type,
+            json_type=DurableAgentStateEntryJsonType.REQUEST,
             correlation_id=correlation_id,
             created_at=created_at,
             messages=messages,
@@ -479,8 +463,9 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             response_type=response_type,
             response_schema=response_schema,
         )
-        self.response_type = response_type
-        self.response_schema = response_schema
+
+    def to_dict(self) -> dict[str, Any]:
+        return super().to_dict()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateRequest:
@@ -498,7 +483,6 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
                 messages.append(msg_dict)
 
         return cls(
-            json_type=data.get("$type", "request"),
             correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
@@ -508,22 +492,14 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
         )
 
     @staticmethod
-    def from_run_request(content: RunRequest) -> DurableAgentStateRequest:
+    def from_run_request(request: RunRequest) -> DurableAgentStateRequest:
         # Determine response_type based on response_format
-        response_type = None
-        if content.response_format is not None:
-            response_type = (
-                RESPONSE_FORMAT_TEXT if isinstance(content.response_format, TextContent) else RESPONSE_FORMAT_JSON
-            )
-
         return DurableAgentStateRequest(
-            correlation_id=content.correlation_id,
-            messages=[DurableAgentStateMessage.from_chat_message(content)],
+            correlation_id=request.correlation_id,
+            messages=[DurableAgentStateMessage.from_run_request(request)],
             created_at=datetime.now(tz=timezone.utc),
-            json_type="request",
-            extension_data=content.extension_data if hasattr(content, "extensionData") else None,
-            response_type=response_type,
-            response_schema=_serialize_response_format(content.response_format),
+            response_type=request.request_response_format,
+            response_schema=_serialize_response_format(request.response_format),
         )
 
 
@@ -548,7 +524,6 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
 
     def __init__(
         self,
-        json_type: str,
         correlation_id: str,
         created_at: datetime,
         messages: list[DurableAgentStateMessage],
@@ -557,7 +532,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         is_error: bool = False,
     ) -> None:
         super().__init__(
-            json_type=json_type,
+            json_type=DurableAgentStateEntryJsonType.RESPONSE,
             correlation_id=correlation_id,
             created_at=created_at,
             messages=messages,
@@ -590,7 +565,6 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
             usage = usage_dict
 
         return cls(
-            json_type=data.get("$type", "response"),
             correlation_id=data.get("correlationId", ""),
             created_at=created_at,
             messages=messages,
@@ -603,7 +577,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         """Creates a DurableAgentStateResponse from an AgentRunResponse."""
         # Use response.created_at if available, otherwise use current time
         created_at = datetime.now(tz=timezone.utc)
-        if hasattr(response, "created_at") and response.created_at is not None:
+        if response.created_at is not None:
             # AgentRunResponse.created_at is a string, parse it to datetime
             if isinstance(response.created_at, str):
                 created_at = date_parser.parse(response.created_at)
@@ -611,13 +585,10 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
                 created_at = response.created_at
 
         return DurableAgentStateResponse(
-            json_type="response",
             correlation_id=correlation_id,
             created_at=created_at,
             messages=[DurableAgentStateMessage.from_chat_message(m) for m in response.messages],
-            usage=DurableAgentStateUsage.from_usage(response.usage)
-            if hasattr(response, "usage") and response.usage
-            else None,
+            usage=DurableAgentStateUsage.from_usage(response.usage_details),
         )
 
     def to_run_response(self) -> Any:
@@ -764,36 +735,44 @@ class DurableAgentStateMessage:
         return "".join(text_parts)
 
     @staticmethod
-    def from_chat_message(content: Any) -> DurableAgentStateMessage:
-        """Converts a ChatMessage or RunRequest from the agent framework to a DurableAgentStateMessage.
+    def from_run_request(request: RunRequest) -> DurableAgentStateMessage:
+        """Converts a RunRequest from the agent framework to a DurableAgentStateMessage.
 
         Args:
-            content: ChatMessage or RunRequest object with role, message/contents, and metadata
+            request: RunRequest object with role, message/contents, and metadata
+        Returns:
+            DurableAgentStateMessage with converted content items and metadata
+        """
+        # Parse created_at if it's a string
+        created_at = request.created_at
+        if isinstance(created_at, str):
+            created_at = date_parser.parse(created_at)
+
+        return DurableAgentStateMessage(
+            role=request.role.value,
+            contents=[DurableAgentStateTextContent(text=request.message)],
+            created_at=created_at,
+        )
+
+    @staticmethod
+    def from_chat_message(chat_message: ChatMessage) -> DurableAgentStateMessage:
+        """Converts an Agent Framework chat message to a durable state message.
+
+        Args:
+            chat_message: ChatMessage object with role, contents, and metadata to convert
 
         Returns:
             DurableAgentStateMessage with converted content items and metadata
         """
-        # Convert to a list of DurableAgentStateContent objects
-        contents_list: list[DurableAgentStateContent] = []
-
-        if hasattr(content, "message") and isinstance(content.message, str):
-            # RunRequest with 'message' attribute
-            contents_list = [DurableAgentStateTextContent(text=content.message)]
-        elif hasattr(content, "contents") and content.contents:
-            # ChatMessage with 'contents' attribute - convert each content object
-            for c in content.contents:
-                converted = DurableAgentStateContent.from_ai_content(c)
-                contents_list.append(converted)
-
-        # Convert role enum to string if needed
-        role_value = content.role.value if hasattr(content.role, "value") else str(content.role)
+        contents_list: list[DurableAgentStateContent] = [
+            DurableAgentStateContent.from_ai_content(c) for c in chat_message.contents
+        ]
 
         return DurableAgentStateMessage(
-            role=role_value,
+            role=chat_message.role.value,
             contents=contents_list,
-            author_name=content.author_name if hasattr(content, "author_name") else None,
-            created_at=content.created_at if hasattr(content, "created_at") else None,
-            extension_data=content.extension_data if hasattr(content, "extensionData") else None,
+            author_name=chat_message.author_name,
+            extension_data=dict(chat_message.additional_properties) if chat_message.additional_properties else None,
         )
 
     def to_chat_message(self) -> Any:
@@ -817,10 +796,7 @@ class DurableAgentStateMessage:
         if self.extension_data is not None:
             kwargs["additional_properties"] = self.extension_data
 
-        return ChatMessage(**kwargs)  # type: ignore[call-overload]
-
-
-# Content subclasses
+        return ChatMessage(**kwargs)
 
 
 class DurableAgentStateDataContent(DurableAgentStateContent):
@@ -849,7 +825,7 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
     def from_data_content(content: DataContent) -> DurableAgentStateDataContent:
         return DurableAgentStateDataContent(uri=content.uri, media_type=content.media_type)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> DataContent:
         return DataContent(uri=self.uri, media_type=self.media_type)
 
 
@@ -883,7 +859,7 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
             message=content.message, error_code=content.error_code, details=content.details
         )
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> ErrorContent:
         return ErrorContent(message=self.message, error_code=self.error_code, details=self.details)
 
 
@@ -928,7 +904,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
 
         return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> FunctionCallContent:
         return FunctionCallContent(call_id=self.call_id, name=self.name, arguments=self.arguments)
 
 
@@ -958,7 +934,7 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
     def from_function_result_content(content: FunctionResultContent) -> DurableAgentStateFunctionResultContent:
         return DurableAgentStateFunctionResultContent(call_id=content.call_id, result=content.result)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> FunctionResultContent:
         return FunctionResultContent(call_id=self.call_id, result=self.result)
 
 
@@ -984,7 +960,7 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
     def from_hosted_file_content(content: HostedFileContent) -> DurableAgentStateHostedFileContent:
         return DurableAgentStateHostedFileContent(file_id=content.file_id)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> HostedFileContent:
         return HostedFileContent(file_id=self.file_id)
 
 
@@ -1013,7 +989,7 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
     ) -> DurableAgentStateHostedVectorStoreContent:
         return DurableAgentStateHostedVectorStoreContent(vector_store_id=content.vector_store_id)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> HostedVectorStoreContent:
         return HostedVectorStoreContent(vector_store_id=self.vector_store_id)
 
 
@@ -1039,7 +1015,7 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
     def from_text_content(content: TextContent) -> DurableAgentStateTextContent:
         return DurableAgentStateTextContent(text=content.text)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> TextContent:
         return TextContent(text=self.text or "")
 
 
@@ -1065,7 +1041,7 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
     def from_text_reasoning_content(content: TextReasoningContent) -> DurableAgentStateTextReasoningContent:
         return DurableAgentStateTextReasoningContent(text=content.text)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> TextReasoningContent:
         return TextReasoningContent(text=self.text or "")
 
 
@@ -1094,7 +1070,7 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
     def from_uri_content(content: UriContent) -> DurableAgentStateUriContent:
         return DurableAgentStateUriContent(uri=content.uri, media_type=content.media_type)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> UriContent:
         return UriContent(uri=self.uri, media_type=self.media_type)
 
 
@@ -1147,7 +1123,7 @@ class DurableAgentStateUsage:
         )
 
     @staticmethod
-    def from_usage(usage: Any) -> DurableAgentStateUsage | None:
+    def from_usage(usage: UsageDetails | None) -> DurableAgentStateUsage | None:
         if usage is None:
             return None
         return DurableAgentStateUsage(
@@ -1156,7 +1132,7 @@ class DurableAgentStateUsage:
             total_token_count=usage.total_token_count,
         )
 
-    def to_usage_details(self) -> Any:
+    def to_usage_details(self) -> UsageDetails:
         # Convert back to AI SDK UsageDetails
         return UsageDetails(
             input_token_count=self.input_token_count,
@@ -1188,7 +1164,7 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
     def from_usage_content(content: UsageContent) -> DurableAgentStateUsageContent:
         return DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_usage(content.details))  # type: ignore
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> UsageContent:
         return UsageContent(details=self.usage.to_usage_details())
 
 
@@ -1215,7 +1191,7 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
         return DurableAgentStateUnknownContent(content=content)
 
-    def to_ai_content(self) -> Any:
+    def to_ai_content(self) -> BaseContent:
         if not self.content:
             raise Exception("The content is missing and cannot be converted to valid AI content.")
         return BaseContent(content=self.content)
