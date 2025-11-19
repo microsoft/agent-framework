@@ -188,10 +188,12 @@ class DurableAgentStateData:
         self.extension_data = extension_data
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "conversationHistory": [entry.to_dict() for entry in self.conversation_history],
-            "extensionData": self.extension_data,
         }
+        if self.extension_data is not None:
+            result["extensionData"] = self.extension_data
+        return result
 
     @classmethod
     def from_dict(cls, data_dict: dict[str, Any]) -> DurableAgentStateData:
@@ -480,8 +482,8 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             created_at=created_at,
             messages=messages,
             extension_data=data.get("extensionData"),
-            response_type=data.get("response_type"),
-            response_schema=data.get("response_schema"),
+            response_type=data.get("responseType"),
+            response_schema=data.get("responseSchema"),
         )
 
     @staticmethod
@@ -641,63 +643,58 @@ class DurableAgentStateMessage:
         for content_dict in data.get("contents", []):
             if isinstance(content_dict, dict):
                 content_type = content_dict.get("$type")
-                match content_type:
-                    case DurableAgentStateTextContent.type:
-                        contents.append(DurableAgentStateTextContent(text=content_dict.get("text")))
-                    case DurableAgentStateDataContent.type:
-                        contents.append(
-                            DurableAgentStateDataContent(
-                                uri=content_dict.get("uri", ""), media_type=content_dict.get("media_type")
-                            )
+                if content_type == DurableAgentStateTextContent.type:
+                    contents.append(DurableAgentStateTextContent(text=content_dict.get("text")))
+                elif content_type == DurableAgentStateDataContent.type:
+                    contents.append(
+                        DurableAgentStateDataContent(
+                            uri=content_dict.get("uri", ""), media_type=content_dict.get("mediaType")
                         )
-                    case DurableAgentStateErrorContent.type:
-                        contents.append(
-                            DurableAgentStateErrorContent(
-                                message=content_dict.get("message"),
-                                error_code=content_dict.get("error_code"),
-                                details=content_dict.get("details"),
-                            )
+                    )
+                elif content_type == DurableAgentStateErrorContent.type:
+                    contents.append(
+                        DurableAgentStateErrorContent(
+                            message=content_dict.get("message"),
+                            error_code=content_dict.get("errorCode"),
+                            details=content_dict.get("details"),
                         )
-                    case DurableAgentStateFunctionCallContent.type:
-                        contents.append(
-                            DurableAgentStateFunctionCallContent(
-                                call_id=content_dict.get("call_id", ""),
-                                name=content_dict.get("name", ""),
-                                arguments=content_dict.get("arguments", {}),
-                            )
+                    )
+                elif content_type == DurableAgentStateFunctionCallContent.type:
+                    contents.append(
+                        DurableAgentStateFunctionCallContent(
+                            call_id=content_dict.get("callId", ""),
+                            name=content_dict.get("name", ""),
+                            arguments=content_dict.get("arguments", {}),
                         )
-                    case DurableAgentStateFunctionResultContent.type:
-                        contents.append(
-                            DurableAgentStateFunctionResultContent(
-                                call_id=content_dict.get("call_id", ""), result=content_dict.get("result")
-                            )
+                    )
+                elif content_type == DurableAgentStateFunctionResultContent.type:
+                    contents.append(
+                        DurableAgentStateFunctionResultContent(
+                            call_id=content_dict.get("callId", ""), result=content_dict.get("result")
                         )
-                    case DurableAgentStateHostedFileContent.type:
-                        contents.append(DurableAgentStateHostedFileContent(file_id=content_dict.get("file_id", "")))
-                    case DurableAgentStateHostedVectorStoreContent.type:
-                        contents.append(
-                            DurableAgentStateHostedVectorStoreContent(
-                                vector_store_id=content_dict.get("vector_store_id", "")
-                            )
+                    )
+                elif content_type == DurableAgentStateHostedFileContent.type:
+                    contents.append(DurableAgentStateHostedFileContent(file_id=content_dict.get("fileId", "")))
+                elif content_type == DurableAgentStateHostedVectorStoreContent.type:
+                    contents.append(
+                        DurableAgentStateHostedVectorStoreContent(vector_store_id=content_dict.get("vectorStoreId", ""))
+                    )
+                elif content_type == DurableAgentStateTextReasoningContent.type:
+                    contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get("text")))
+                elif content_type == DurableAgentStateUriContent.type:
+                    contents.append(
+                        DurableAgentStateUriContent(
+                            uri=content_dict.get("uri", ""), media_type=content_dict.get("mediaType", "")
                         )
-                    case DurableAgentStateTextReasoningContent.type:
-                        contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get("text")))
-                    case DurableAgentStateUriContent.type:
+                    )
+                elif content_type == DurableAgentStateUsageContent.type:
+                    usage_data = content_dict.get("usage")
+                    if usage_data and isinstance(usage_data, dict):
                         contents.append(
-                            DurableAgentStateUriContent(
-                                uri=content_dict.get("uri", ""), media_type=content_dict.get("media_type", "")
-                            )
+                            DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_dict(usage_data))
                         )
-                    case DurableAgentStateUsageContent.type:
-                        usage_data = content_dict.get("usage")
-                        if usage_data and isinstance(usage_data, dict):
-                            contents.append(
-                                DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_dict(usage_data))
-                            )
-                    case DurableAgentStateUnknownContent.type:
-                        contents.append(DurableAgentStateUnknownContent(content=content_dict.get("content", {})))
-                    case _:
-                        contents.append(DurableAgentStateUnknownContent(content=content_dict.get("content", {})))
+                elif content_type == DurableAgentStateUnknownContent.type:
+                    contents.append(DurableAgentStateUnknownContent(content=content_dict.get("content", {})))
             else:
                 contents.append(content_dict)  # type: ignore
 
@@ -799,7 +796,7 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
         self.media_type = media_type
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "uri": self.uri, "mediaType": self.media_type}
+        return {"$type": self.type, "uri": self.uri, "mediaType": self.media_type}
 
     @staticmethod
     def from_data_content(content: DataContent) -> DurableAgentStateDataContent:
@@ -833,7 +830,7 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
         self.details = details
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "message": self.message, "errorCode": self.error_code, "details": self.details}
+        return {"$type": self.type, "message": self.message, "errorCode": self.error_code, "details": self.details}
 
     @staticmethod
     def from_error_content(content: ErrorContent) -> DurableAgentStateErrorContent:
@@ -870,7 +867,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         self.arguments = arguments
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "callId": self.call_id, "name": self.name, "arguments": self.arguments}
+        return {"$type": self.type, "callId": self.call_id, "name": self.name, "arguments": self.arguments}
 
     @staticmethod
     def from_function_call_content(content: FunctionCallContent) -> DurableAgentStateFunctionCallContent:
@@ -914,7 +911,7 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
         self.result = result
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "callId": self.call_id, "result": self.result}
+        return {"$type": self.type, "callId": self.call_id, "result": self.result}
 
     @staticmethod
     def from_function_result_content(content: FunctionResultContent) -> DurableAgentStateFunctionResultContent:
@@ -942,7 +939,7 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
         self.file_id = file_id
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "fileId": self.file_id}
+        return {"$type": self.type, "fileId": self.file_id}
 
     @staticmethod
     def from_hosted_file_content(content: HostedFileContent) -> DurableAgentStateHostedFileContent:
@@ -971,7 +968,7 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
         self.vector_store_id = vector_store_id
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "vectorStoreId": self.vector_store_id}
+        return {"$type": self.type, "vectorStoreId": self.vector_store_id}
 
     @staticmethod
     def from_hosted_vector_store_content(
@@ -999,7 +996,7 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
         self.text = text
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "text": self.text}
+        return {"$type": self.type, "text": self.text}
 
     @staticmethod
     def from_text_content(content: TextContent) -> DurableAgentStateTextContent:
@@ -1025,7 +1022,7 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
         self.text = text
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "text": self.text}
+        return {"$type": self.type, "text": self.text}
 
     @staticmethod
     def from_text_reasoning_content(content: TextReasoningContent) -> DurableAgentStateTextReasoningContent:
@@ -1056,7 +1053,7 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
         self.media_type = media_type
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "uri": self.uri, "mediaType": self.media_type}
+        return {"$type": self.type, "uri": self.uri, "mediaType": self.media_type}
 
     @staticmethod
     def from_uri_content(content: UriContent) -> DurableAgentStateUriContent:
@@ -1098,12 +1095,14 @@ class DurableAgentStateUsage:
         self.extensionData = extensionData
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "inputTokenCount": self.input_token_count,
             "outputTokenCount": self.output_token_count,
             "totalTokenCount": self.total_token_count,
-            "extensionData": self.extensionData,
         }
+        if self.extensionData is not None:
+            result["extensionData"] = self.extensionData
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateUsage:
@@ -1152,7 +1151,7 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
         self.usage = usage
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "usage": self.usage.to_dict() if hasattr(self.usage, "to_dict") else self.usage}
+        return {"$type": self.type, "usage": self.usage.to_dict() if hasattr(self.usage, "to_dict") else self.usage}
 
     @staticmethod
     def from_usage_content(content: UsageContent) -> DurableAgentStateUsageContent:
@@ -1181,7 +1180,7 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
         self.content = content
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": self.type, "content": self.content}
+        return {"$type": self.type, "content": self.content}
 
     @staticmethod
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
