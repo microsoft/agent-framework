@@ -859,7 +859,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
     name: str
     arguments: dict[str, Any]
 
-    type: str = "function_call"
+    type: str = "functionCall"
 
     def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
         self.call_id = call_id
@@ -904,7 +904,7 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
     call_id: str
     result: object | None = None
 
-    type: str = "function_result"
+    type: str = "functionResult"
 
     def __init__(self, call_id: str, result: Any | None = None) -> None:
         self.call_id = call_id
@@ -933,7 +933,7 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 
     file_id: str
 
-    type: str = "hosted_file"
+    type: str = "hostedFile"
 
     def __init__(self, file_id: str) -> None:
         self.file_id = file_id
@@ -962,7 +962,7 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
 
     vector_store_id: str
 
-    type: str = "hosted_vector_store"
+    type: str = "hostedVectorStore"
 
     def __init__(self, vector_store_id: str) -> None:
         self.vector_store_id = vector_store_id
@@ -1016,7 +1016,7 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
         text: The reasoning or thought process text
     """
 
-    type: str = "text_reasoning"
+    type: str = "reasoning"
 
     def __init__(self, text: str | None) -> None:
         self.text = text
