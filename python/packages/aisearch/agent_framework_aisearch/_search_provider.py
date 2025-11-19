@@ -48,6 +48,23 @@ if TYPE_CHECKING:
         KnowledgeBaseMessage,
         KnowledgeBaseMessageTextContent,
         KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalIntent,
+        KnowledgeRetrievalSemanticIntent,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalMediumReasoningEffort as KBRetrievalMediumReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalOutputMode as KBRetrievalOutputMode,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalReasoningEffort as KBRetrievalReasoningEffort,
     )
 
 # Runtime imports for agentic mode (optional dependency)
@@ -57,6 +74,23 @@ try:
         KnowledgeBaseMessage,
         KnowledgeBaseMessageTextContent,
         KnowledgeBaseRetrievalRequest,
+        KnowledgeRetrievalIntent,
+        KnowledgeRetrievalSemanticIntent,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalMediumReasoningEffort as KBRetrievalMediumReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalOutputMode as KBRetrievalOutputMode,
+    )
+    from azure.search.documents.knowledgebases.models import (
+        KnowledgeRetrievalReasoningEffort as KBRetrievalReasoningEffort,
     )
 
     _agentic_retrieval_available = True
@@ -748,17 +782,48 @@ class AzureAISearchContextProvider(ContextProvider):
         # Ensure Knowledge Base is initialized
         await self._ensure_knowledge_base()
 
-        # Convert ChatMessage list to KnowledgeBase message format
-        kb_messages = [
-            KnowledgeBaseMessage(
-                role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
-                content=[KnowledgeBaseMessageTextContent(text=msg.text)],
-            )
-            for msg in messages
-            if msg.text
-        ]
+        # Map reasoning effort string to SDK class (for retrieval requests)
+        reasoning_effort_map: dict[str, KBRetrievalReasoningEffort] = {
+            "minimal": KBRetrievalMinimalReasoningEffort(),
+            "medium": KBRetrievalMediumReasoningEffort(),
+            "low": KBRetrievalLowReasoningEffort(),
+        }
+        reasoning_effort = reasoning_effort_map[self.retrieval_reasoning_effort]
 
-        retrieval_request = KnowledgeBaseRetrievalRequest(messages=kb_messages)
+        # Map output mode string to SDK enum (for retrieval requests)
+        output_mode = (
+            KBRetrievalOutputMode.EXTRACTIVE_DATA
+            if self.knowledge_base_output_mode == "extractive_data"
+            else KBRetrievalOutputMode.ANSWER_SYNTHESIS
+        )
+
+        # For minimal reasoning, use intents API; for medium/low, use messages API
+        if self.retrieval_reasoning_effort == "minimal":
+            # Minimal reasoning uses intents with a single search query
+            query = "\n".join(msg.text for msg in messages if msg.text)
+            intents: list[KnowledgeRetrievalIntent] = [KnowledgeRetrievalSemanticIntent(search=query)]
+            retrieval_request = KnowledgeBaseRetrievalRequest(
+                intents=intents,
+                retrieval_reasoning_effort=reasoning_effort,
+                output_mode=output_mode,
+                include_activity=True,
+            )
+        else:
+            # Medium/low reasoning uses messages with conversation history
+            kb_messages = [
+                KnowledgeBaseMessage(
+                    role=msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                    content=[KnowledgeBaseMessageTextContent(text=msg.text)],
+                )
+                for msg in messages
+                if msg.text
+            ]
+            retrieval_request = KnowledgeBaseRetrievalRequest(
+                messages=kb_messages,
+                retrieval_reasoning_effort=reasoning_effort,
+                output_mode=output_mode,
+                include_activity=True,
+            )
 
         # Use reusable retrieval client
         if not self._retrieval_client:
