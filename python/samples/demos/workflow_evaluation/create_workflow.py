@@ -29,25 +29,15 @@ Agents:
 """
 
 import asyncio
-import json
 import os
-import sys
 from collections import defaultdict
-from pathlib import Path
-from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
-
-# Add the local packages to the path
-packages_path = Path(__file__).parent.parent.parent.parent.parent.parent / "packages"
-sys.path.insert(0, str(packages_path / "core"))
-sys.path.insert(0, str(packages_path / "azure-ai"))
 
 from agent_framework import (
     AgentExecutorResponse,
     AgentRunUpdateEvent,
     AgentRunResponseUpdate,
-    ChatAgent,
     ChatMessage,
     Executor,
     executor,
@@ -58,9 +48,8 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 
-# Import V2 client directly from source file to avoid installed package conflicts
 from agent_framework_azure_ai._client import AzureAIClient
-from azure.identity.aio import AzureDeveloperCliCredential
+from azure.identity.aio import DefaultAzureCredential
 from azure.ai.projects.aio import AIProjectClient
 
 from _tools import (
@@ -158,8 +147,7 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
     """
     if chat_client is None:
-        # Use AzureDeveloperCliCredential to avoid Azure CLI timeout issues
-        credential = AzureDeveloperCliCredential()
+        credential = DefaultAzureCredential()
         
         # Create AIProjectClient with the correct API version for V2 prompt agents
         project_client = AIProjectClient(
