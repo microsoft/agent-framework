@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import asyncio
 import os
 
@@ -20,7 +19,6 @@ Prerequisites:
 
 
 async def main() -> None:
-
     async with (
         AzureCliCredential() as credential,
         AzureAIClient(async_credential=credential).create_agent(
