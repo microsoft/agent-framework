@@ -6,11 +6,10 @@ import logging
 import os
 
 import uvicorn
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 
 from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent

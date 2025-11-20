@@ -2,10 +2,8 @@
 
 """Example agent demonstrating predictive state updates with document writing."""
 
-from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
-
-from agent_framework_ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
+from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework.ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
 
 
 @ai_function

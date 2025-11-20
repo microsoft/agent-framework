@@ -5,7 +5,7 @@ import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from copy import copy
+from copy import deepcopy
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
@@ -454,13 +454,16 @@ class BaseAgent(SerializationMixin):
             # Extract the input from kwargs using the specified arg_name
             input_text = kwargs.get(arg_name, "")
 
+            # Forward all kwargs except the arg_name to support runtime context propagation
+            forwarded_kwargs = {k: v for k, v in kwargs.items() if k != arg_name}
+
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text)).text
+                return (await self.run(input_text, **forwarded_kwargs)).text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentRunResponseUpdate] = []
-            async for update in self.run_stream(input_text):
+            async for update in self.run_stream(input_text, **forwarded_kwargs):
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
@@ -470,12 +473,14 @@ class BaseAgent(SerializationMixin):
             # Create final text from accumulated updates
             return AgentRunResponse.from_agent_run_response_updates(response_updates).text
 
-        return AIFunction(
+        agent_tool: AIFunction[BaseModel, str] = AIFunction(
             name=tool_name,
             description=tool_description,
             func=agent_wrapper,
             input_model=input_model,  # type: ignore
         )
+        agent_tool._forward_runtime_kwargs = True  # type: ignore
+        return agent_tool
 
     def _normalize_messages(
         self,
@@ -589,7 +594,7 @@ class ChatAgent(BaseAgent):
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
-        # chat option params
+        # chat options
         allow_multiple_tool_calls: bool | None = None,
         conversation_id: str | None = None,
         frequency_penalty: float | None = None,
@@ -868,7 +873,9 @@ class ChatAgent(BaseAgent):
             user=user,
             **(additional_chat_options or {}),
         )
-        response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **kwargs)
+        # Filter chat_options from kwargs to prevent duplicate keyword argument
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+        response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **filtered_kwargs)
 
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -1000,9 +1007,11 @@ class ChatAgent(BaseAgent):
             **(additional_chat_options or {}),
         )
 
+        # Filter chat_options from kwargs to prevent duplicate keyword argument
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
-            messages=thread_messages, chat_options=co, **kwargs
+            messages=thread_messages, chat_options=co, **filtered_kwargs
         ):
             response_updates.append(update)
 
@@ -1236,7 +1245,7 @@ class ChatAgent(BaseAgent):
         Raises:
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
-        chat_options = copy(self.chat_options) if self.chat_options else ChatOptions()
+        chat_options = deepcopy(self.chat_options) if self.chat_options else ChatOptions()
         thread = thread or self.get_new_thread()
         if thread.service_thread_id and thread.context_provider:
             await thread.context_provider.thread_created(thread.service_thread_id)
