@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from agent_framework import ChatAgent
 from agent_framework_aisearch import AzureAISearchContextProvider
 from agent_framework_azure_ai import AzureAIAgentClient
-from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import DefaultAzureCredential
 
 # Load environment variables from .env file
@@ -62,16 +61,14 @@ async def main() -> None:
     knowledge_base_name = os.environ["AZURE_SEARCH_KNOWLEDGE_BASE_NAME"]
     azure_openai_resource_url = os.environ["AZURE_OPENAI_RESOURCE_URL"]
 
-    # Create credential
-    search_credential = AzureKeyCredential(search_key) if search_key else DefaultAzureCredential()
-
     # Create Azure AI Search context provider with agentic mode (recommended for accuracy)
     print("Using AGENTIC mode (Knowledge Bases with query planning, recommended)\n")
     print("ℹ️  This mode is slightly slower but provides more accurate results.\n")
     search_provider = AzureAISearchContextProvider(
         endpoint=search_endpoint,
         index_name=index_name,
-        credential=search_credential,
+        api_key=search_key,  # Use api_key for API key auth, or credential for managed identity
+        credential=DefaultAzureCredential() if not search_key else None,
         mode="agentic",  # Advanced mode for multi-hop reasoning
         # Agentic mode configuration
         azure_ai_project_endpoint=project_endpoint,

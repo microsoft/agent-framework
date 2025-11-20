@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 from agent_framework import ChatAgent
 from agent_framework_aisearch import AzureAISearchContextProvider
 from agent_framework_azure_ai import AzureAIAgentClient
-from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import DefaultAzureCredential
 
 # Load environment variables from .env file
@@ -53,15 +52,13 @@ async def main() -> None:
     project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
-    # Create credential
-    search_credential = AzureKeyCredential(search_key) if search_key else DefaultAzureCredential()
-
     # Create Azure AI Search context provider with semantic mode (recommended, fast)
     print("Using SEMANTIC mode (hybrid search + semantic ranking, fast)\n")
     search_provider = AzureAISearchContextProvider(
         endpoint=search_endpoint,
         index_name=index_name,
-        credential=search_credential,
+        api_key=search_key,  # Use api_key for API key auth, or credential for managed identity
+        credential=DefaultAzureCredential() if not search_key else None,
         mode="semantic",  # Default mode
         top_k=3,  # Retrieve top 3 most relevant documents
     )

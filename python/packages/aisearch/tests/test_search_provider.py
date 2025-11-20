@@ -75,7 +75,7 @@ class TestAzureAISearchSettings:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
         )
         assert provider.endpoint == "https://test.search.windows.net"
         assert provider.index_name == "test-index"
@@ -90,7 +90,7 @@ class TestAzureAISearchSettings:
         ):
             AzureAISearchContextProvider(
                 index_name="test-index",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 env_file_path="",  # Disable .env file loading
             )
 
@@ -104,7 +104,7 @@ class TestAzureAISearchSettings:
         ):
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 env_file_path="",  # Disable .env file loading
             )
 
@@ -131,7 +131,7 @@ class TestSearchProviderInitialization:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
         assert provider.endpoint == "https://test.search.windows.net"
@@ -145,7 +145,7 @@ class TestSearchProviderInitialization:
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 mode="semantic",
                 vector_field_name="embedding",
             )
@@ -156,7 +156,7 @@ class TestSearchProviderInitialization:
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 mode="agentic",
             )
 
@@ -166,7 +166,7 @@ class TestSearchProviderInitialization:
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 mode="agentic",
                 azure_ai_project_endpoint="https://test.services.ai.azure.com",
                 azure_openai_resource_url="https://test.openai.azure.com",
@@ -178,7 +178,7 @@ class TestSearchProviderInitialization:
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
-                credential=AzureKeyCredential("test-key"),
+                api_key="test-key",
                 mode="agentic",
                 azure_ai_project_endpoint="https://test.services.ai.azure.com",
                 model_deployment_name="gpt-4o",
@@ -190,7 +190,7 @@ class TestSearchProviderInitialization:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="my-gpt-4o-deployment",
@@ -210,7 +210,7 @@ class TestSearchProviderInitialization:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -225,7 +225,7 @@ class TestSearchProviderInitialization:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
             context_prompt=custom_prompt,
         )
@@ -236,7 +236,7 @@ class TestSearchProviderInitialization:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
         assert provider.context_prompt == provider._DEFAULT_SEARCH_CONTEXT_PROMPT
@@ -261,7 +261,7 @@ class TestSemanticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -284,7 +284,7 @@ class TestSemanticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -314,7 +314,7 @@ class TestSemanticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
             vector_field_name="embedding",
             embedding_function=mock_embed,
@@ -352,7 +352,7 @@ class TestKnowledgeBaseSetup:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -387,7 +387,7 @@ class TestKnowledgeBaseSetup:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -415,7 +415,7 @@ class TestContextProviderLifecycle:
         async with AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         ) as provider:
             assert provider is not None
@@ -442,7 +442,7 @@ class TestContextProviderLifecycle:
         async with AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -455,12 +455,12 @@ class TestContextProviderLifecycle:
         # Verify cleanup was called
         mock_retrieval_client.close.assert_called_once()
 
-    def test_string_credential_conversion(self) -> None:
-        """Test that string credential is converted to AzureKeyCredential."""
+    def test_string_api_key_conversion(self) -> None:
+        """Test that string api_key is converted to AzureKeyCredential."""
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential="my-api-key",  # String instead of AzureKeyCredential
+            api_key="my-api-key",  # String api_key
             mode="semantic",
         )
         assert isinstance(provider.credential, AzureKeyCredential)
@@ -483,7 +483,7 @@ class TestMessageFiltering:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -511,7 +511,7 @@ class TestMessageFiltering:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -546,7 +546,7 @@ class TestCitations:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -608,7 +608,7 @@ class TestAgenticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -655,7 +655,7 @@ class TestAgenticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -711,7 +711,7 @@ class TestAgenticSearch:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="agentic",
             azure_ai_project_endpoint="https://test.services.ai.azure.com",
             model_deployment_name="gpt-4o",
@@ -758,7 +758,7 @@ class TestVectorFieldAutoDiscovery:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -827,7 +827,7 @@ class TestVectorFieldAutoDiscovery:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -872,7 +872,7 @@ class TestVectorFieldAutoDiscovery:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -929,7 +929,7 @@ class TestVectorFieldAutoDiscovery:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 
@@ -979,7 +979,7 @@ class TestVectorFieldAutoDiscovery:
         provider = AzureAISearchContextProvider(
             endpoint="https://test.search.windows.net",
             index_name="test-index",
-            credential=AzureKeyCredential("test-key"),
+            api_key="test-key",
             mode="semantic",
         )
 

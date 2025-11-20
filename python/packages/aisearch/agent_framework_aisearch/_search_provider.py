@@ -186,11 +186,11 @@ class AzureAISearchContextProvider(ContextProvider):
 
         .. code-block:: python
 
-            # Direct API key string (converted to AzureKeyCredential automatically)
+            # Direct API key string
             search_provider = AzureAISearchContextProvider(
                 endpoint="https://mysearch.search.windows.net",
                 index_name="my-index",
-                credential="my-api-key",  # String converted to AzureKeyCredential
+                api_key="my-api-key",
                 mode="semantic",
             )
 
@@ -227,7 +227,8 @@ class AzureAISearchContextProvider(ContextProvider):
         self,
         endpoint: str | None = None,
         index_name: str | None = None,
-        credential: str | AzureKeyCredential | AsyncTokenCredential | None = None,
+        api_key: str | AzureKeyCredential | None = None,
+        credential: AsyncTokenCredential | None = None,
         *,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
@@ -256,9 +257,10 @@ class AzureAISearchContextProvider(ContextProvider):
                 Can also be set via environment variable AZURE_SEARCH_ENDPOINT.
             index_name: Name of the search index to query.
                 Can also be set via environment variable AZURE_SEARCH_INDEX_NAME.
-            credential: Azure credential (API key string, AzureKeyCredential, or AsyncTokenCredential).
-                If a string is provided, it will be converted to AzureKeyCredential.
+            api_key: API key for authentication (string or AzureKeyCredential).
                 Can also be set via environment variable AZURE_SEARCH_API_KEY.
+            credential: AsyncTokenCredential for managed identity authentication.
+                Use this for Entra ID authentication instead of api_key.
             mode: Search mode - "semantic" for hybrid search with semantic ranking (fast)
                 or "agentic" for multi-hop reasoning (slower). Default: "semantic".
             top_k: Maximum number of documents to retrieve. Only applies to semantic mode.
@@ -336,42 +338,43 @@ class AzureAISearchContextProvider(ContextProvider):
             settings = AzureAISearchSettings(
                 endpoint=endpoint,
                 index_name=index_name,
+                api_key=api_key if isinstance(api_key, str) else None,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Azure AI Search settings.", ex) from ex
 
-        # Use settings values, with explicit parameters taking precedence
-        endpoint = endpoint or settings.endpoint
-        index_name = index_name or settings.index_name
-        if not credential and settings.api_key:
-            credential = settings.api_key.get_secret_value()
-
         # Validate required parameters
-        if not endpoint:
+        if not settings.endpoint:
             raise ServiceInitializationError(
                 "Azure AI Search endpoint is required. Set via 'endpoint' parameter "
                 "or 'AZURE_SEARCH_ENDPOINT' environment variable."
             )
-        if not index_name:
+        if not settings.index_name:
             raise ServiceInitializationError(
                 "Azure AI Search index name is required. Set via 'index_name' parameter "
                 "or 'AZURE_SEARCH_INDEX_NAME' environment variable."
             )
-        if not credential:
+
+        # Determine the credential to use
+        resolved_credential: AzureKeyCredential | AsyncTokenCredential
+        if credential:
+            # AsyncTokenCredential takes precedence
+            resolved_credential = credential
+        elif isinstance(api_key, AzureKeyCredential):
+            resolved_credential = api_key
+        elif settings.api_key:
+            resolved_credential = AzureKeyCredential(settings.api_key.get_secret_value())
+        else:
             raise ServiceInitializationError(
-                "Azure credential is required. Provide 'credential' parameter "
+                "Azure credential is required. Provide 'api_key' or 'credential' parameter "
                 "or set 'AZURE_SEARCH_API_KEY' environment variable."
             )
 
-        # Convert string credential to AzureKeyCredential
-        if isinstance(credential, str):
-            credential = AzureKeyCredential(credential)
-
-        self.endpoint = endpoint
-        self.index_name = index_name
-        self.credential = credential
+        self.endpoint = settings.endpoint
+        self.index_name = settings.index_name
+        self.credential = resolved_credential
         self.mode = mode
         self.top_k = top_k
         self.semantic_configuration_name = semantic_configuration_name
@@ -422,9 +425,9 @@ class AzureAISearchContextProvider(ContextProvider):
 
         # Create search client for semantic mode
         self._search_client = SearchClient(
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=credential,
+            endpoint=self.endpoint,
+            index_name=self.index_name,
+            credential=self.credential,
         )
 
         # Create index client and retrieval client for agentic mode (Knowledge Base)
@@ -432,8 +435,8 @@ class AzureAISearchContextProvider(ContextProvider):
         self._retrieval_client: KnowledgeBaseRetrievalClient | None = None
         if mode == "agentic":
             self._index_client = SearchIndexClient(
-                endpoint=endpoint,
-                credential=credential,
+                endpoint=self.endpoint,
+                credential=self.credential,
             )
             # Retrieval client will be created after Knowledge Base initialization
 
