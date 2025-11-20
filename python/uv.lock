@@ -26,6 +26,7 @@ members = [
     "agent-framework",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
+    "agent-framework-aisearch",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
@@ -194,6 +195,21 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
+name = "agent-framework-aisearch"
+version = "1.0.0b251118"
+source = { editable = "packages/aisearch" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-search-documents", specifier = "==11.7.0b2" },
+]
+
+[[package]]
 name = "agent-framework-anthropic"
 version = "1.0.0b251120"
 source = { editable = "packages/anthropic" }
@@ -304,6 +320,7 @@ dependencies = [
 all = [
     { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-aisearch", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -321,6 +338,7 @@ all = [
 requires-dist = [
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
     { name = "agent-framework-ag-ui", marker = "extra == 'all'", editable = "packages/ag-ui" },
+    { name = "agent-framework-aisearch", marker = "extra == 'all'", editable = "packages/aisearch" },
     { name = "agent-framework-anthropic", marker = "extra == 'all'", editable = "packages/anthropic" },
     { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
     { name = "agent-framework-azurefunctions", marker = "extra == 'all'", editable = "packages/azurefunctions" },
@@ -929,6 +947,15 @@ wheels = [
 ]
 
 [[package]]
+name = "azure-common"
+version = "1.1.28"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/71/f6f71a276e2e69264a97ad39ef850dca0a04fce67b12570730cb38d0ccac/azure-common-1.1.28.zip", hash = "sha256:4ac0cd3214e36b6a1b6a442686722a5d8cc449603aa833f3f0f40bda836704a3", size = 20914, upload-time = "2022-02-03T19:39:44.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/55/7f118b9c1b23ec15ca05d15a578d8207aa1706bc6f7c87218efffbbf875d/azure_common-1.1.28-py2.py3-none-any.whl", hash = "sha256:5c12d3dcf4ec20599ca6b0d3e09e86e146353d443e7fcc050c9a19c1f9df20ad", size = 14462, upload-time = "2022-02-03T19:39:42.417Z" },
+]
+
+[[package]]
 name = "azure-core"
 version = "1.36.0"
 source = { registry = "https://pypi.org/simple" }
@@ -985,6 +1012,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/06/8d/1a6c41c28a37eab26dc85ab6c86992c700cd3f4a597d9ed174b0e9c69489/azure_identity-1.25.1.tar.gz", hash = "sha256:87ca8328883de6036443e1c37b40e8dc8fb74898240f61071e09d2e369361456", size = 279826 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/83/7b/5652771e24fff12da9dde4c20ecf4682e606b104f26419d139758cc935a6/azure_identity-1.25.1-py3-none-any.whl", hash = "sha256:e9edd720af03dff020223cd269fa3a61e8f345ea75443858273bcb44844ab651", size = 191317 },
+]
+
+[[package]]
+name = "azure-search-documents"
+version = "11.7.0b2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-common", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/ba/bde0f03e0a742ba3bbcc929f91ed2f3b1420c2bb84c9a7f878f3b87ebfce/azure_search_documents-11.7.0b2.tar.gz", hash = "sha256:b6e039f8038ff2210d2057e704e867c6e29bb46bfcd400da4383e45e4b8bb189", size = 423956, upload-time = "2025-11-14T20:09:32.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/26/ed4498374f9088818278ac225f2bea688b4ec979d81bf83a5355c8c366af/azure_search_documents-11.7.0b2-py3-none-any.whl", hash = "sha256:f82117b321344a84474269ed26df194c24cca619adc024d981b1b86aee3c6f05", size = 432037, upload-time = "2025-11-14T20:09:34.347Z" },
 ]
 
 [[package]]
