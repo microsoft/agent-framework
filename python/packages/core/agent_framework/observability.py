@@ -1474,10 +1474,10 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
                         elif isinstance(item, BaseModel):
                             res.append(item.model_dump(exclude_none=True))
                         else:
-                            res.append(json.dumps(item))
-                    response = json.dumps(res)
+                            res.append(json.dumps(item, default=str))
+                    response = json.dumps(res, default=str)
                 else:
-                    response = json.dumps(content.result)
+                    response = json.dumps(content.result, default=str)
             return {"type": "tool_call_response", "id": content.call_id, "response": response}
         case _:
             # GenericPart in otel output messages json spec.
