@@ -82,6 +82,10 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             // Determine the agent to use
             var aiAgent = await aiAgentSelector(context).ConfigureAwait(false);
+            if (aiAgent is null)
+            {
+                return Results.BadRequest("Agent could not be determined.");
+            }
 
             // Run the agent and convert to AG-UI events
             var events = aiAgent.RunStreamingAsync(
