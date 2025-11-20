@@ -2,6 +2,10 @@
 
 import json
 from datetime import datetime
+from typing import Annotated
+
+from agent_framework import ai_function
+from pydantic import Field
 
 # --- Travel Planning Tools ---
 # Note: These are mock tools for demonstration purposes. They return simulated data
@@ -9,7 +13,13 @@ from datetime import datetime
 
 
 # Mock hotel search tool
-def search_hotels(location: str, check_in: str, check_out: str, guests: int = 2) -> str:
+@ai_function(name="search_hotels", description="Search for available hotels based on location and dates.")
+def search_hotels(
+    location: Annotated[str, Field(description="City or region to search for hotels.")],
+    check_in: Annotated[str, Field(description="Check-in date (e.g., 'December 15, 2025').")],
+    check_out: Annotated[str, Field(description="Check-out date (e.g., 'December 18, 2025').")],
+    guests: Annotated[int, Field(description="Number of guests.")] = 2,
+) -> str:
     """Search for available hotels based on location and dates.
     
     Returns:
@@ -73,7 +83,10 @@ def search_hotels(location: str, check_in: str, check_out: str, guests: int = 2)
 
 
 # Mock hotel details tool
-def get_hotel_details(hotel_name: str) -> str:
+@ai_function(name="get_hotel_details", description="Get detailed information about a specific hotel.")
+def get_hotel_details(
+    hotel_name: Annotated[str, Field(description="Name of the hotel to get details for.")],
+) -> str:
     """Get detailed information about a specific hotel.
     
     Returns:
@@ -145,7 +158,14 @@ def get_hotel_details(hotel_name: str) -> str:
 
 
 # Mock flight search tool
-def search_flights(origin: str, destination: str, departure_date: str, return_date: str = None, passengers: int = 1) -> str:
+@ai_function(name="search_flights", description="Search for available flights between two locations.")
+def search_flights(
+    origin: Annotated[str, Field(description="Departure airport or city (e.g., 'JFK' or 'New York').")],
+    destination: Annotated[str, Field(description="Arrival airport or city (e.g., 'CDG' or 'Paris').")],
+    departure_date: Annotated[str, Field(description="Departure date (e.g., 'December 15, 2025').")],
+    return_date: Annotated[str | None, Field(description="Return date (e.g., 'December 18, 2025').")] = None,
+    passengers: Annotated[int, Field(description="Number of passengers.")] = 1,
+) -> str:
     """Search for available flights between two locations.
     
     Returns:
@@ -264,7 +284,10 @@ def search_flights(origin: str, destination: str, departure_date: str, return_da
 
 
 # Mock flight details tool
-def get_flight_details(flight_number: str) -> str:
+@ai_function(name="get_flight_details", description="Get detailed information about a specific flight.")
+def get_flight_details(
+    flight_number: Annotated[str, Field(description="Flight number (e.g., 'AF007' or 'DL264').")],
+) -> str:
     """Get detailed information about a specific flight.
     
     Returns:
@@ -301,7 +324,12 @@ def get_flight_details(flight_number: str) -> str:
 
 
 # Mock activity search tool
-def search_activities(location: str, date: str = None, category: str = None) -> str:
+@ai_function(name="search_activities", description="Search for available activities and attractions at a destination.")
+def search_activities(
+    location: Annotated[str, Field(description="City or region to search for activities.")],
+    date: Annotated[str | None, Field(description="Date for the activity (e.g., 'December 16, 2025').")] = None,
+    category: Annotated[str | None, Field(description="Activity category (e.g., 'Sightseeing', 'Culture', 'Culinary').")] = None,
+) -> str:
     """Search for available activities and attractions at a destination.
     
     Returns:
@@ -440,7 +468,10 @@ def search_activities(location: str, date: str = None, category: str = None) -> 
 
 
 # Mock activity details tool
-def get_activity_details(activity_name: str) -> str:
+@ai_function(name="get_activity_details", description="Get detailed information about a specific activity.")
+def get_activity_details(
+    activity_name: Annotated[str, Field(description="Name of the activity to get details for.")],
+) -> str:
     """Get detailed information about a specific activity.
     
     Returns:
@@ -514,7 +545,12 @@ def get_activity_details(activity_name: str) -> str:
 
 
 # Mock booking confirmation tool
-def confirm_booking(booking_type: str, booking_id: str, customer_info: dict) -> str:
+@ai_function(name="confirm_booking", description="Confirm a booking reservation.")
+def confirm_booking(
+    booking_type: Annotated[str, Field(description="Type of booking (e.g., 'hotel', 'flight', 'activity').")],
+    booking_id: Annotated[str, Field(description="Unique booking identifier.")],
+    customer_info: Annotated[dict, Field(description="Customer information including name and email.")],
+) -> str:
     """Confirm a booking reservation.
     
     Returns:
@@ -543,7 +579,13 @@ def confirm_booking(booking_type: str, booking_id: str, customer_info: dict) -> 
 
 
 # Mock hotel availability check tool
-def check_hotel_availability(hotel_name: str, check_in: str, check_out: str, rooms: int = 1) -> str:
+@ai_function(name="check_hotel_availability", description="Check availability for hotel rooms.")
+def check_hotel_availability(
+    hotel_name: Annotated[str, Field(description="Name of the hotel to check availability for.")],
+    check_in: Annotated[str, Field(description="Check-in date (e.g., 'December 15, 2025').")],
+    check_out: Annotated[str, Field(description="Check-out date (e.g., 'December 18, 2025').")],
+    rooms: Annotated[int, Field(description="Number of rooms needed.")] = 1,
+) -> str:
     """Check availability for hotel rooms.
     
     Sample Date format: "December 15, 2025"
@@ -572,7 +614,12 @@ def check_hotel_availability(hotel_name: str, check_in: str, check_out: str, roo
 
 
 # Mock flight availability check tool
-def check_flight_availability(flight_number: str, date: str, passengers: int = 1) -> str:
+@ai_function(name="check_flight_availability", description="Check availability for flight seats.")
+def check_flight_availability(
+    flight_number: Annotated[str, Field(description="Flight number to check availability for.")],
+    date: Annotated[str, Field(description="Flight date (e.g., 'December 15, 2025').")],
+    passengers: Annotated[int, Field(description="Number of passengers.")] = 1,
+) -> str:
     """Check availability for flight seats.
     
     Sample Date format: "December 15, 2025"
@@ -600,7 +647,12 @@ def check_flight_availability(flight_number: str, date: str, passengers: int = 1
 
 
 # Mock activity availability check tool
-def check_activity_availability(activity_name: str, date: str, participants: int = 1) -> str:
+@ai_function(name="check_activity_availability", description="Check availability for activity bookings.")
+def check_activity_availability(
+    activity_name: Annotated[str, Field(description="Name of the activity to check availability for.")],
+    date: Annotated[str, Field(description="Activity date (e.g., 'December 16, 2025').")],
+    participants: Annotated[int, Field(description="Number of participants.")] = 1,
+) -> str:
     """Check availability for activity bookings.
     
     Sample Date format: "December 16, 2025"
@@ -628,7 +680,13 @@ def check_activity_availability(activity_name: str, date: str, participants: int
 
 
 # Mock payment processing tool
-def process_payment(amount: float, currency: str, payment_method: dict, booking_reference: str) -> str:
+@ai_function(name="process_payment", description="Process payment for a booking.")
+def process_payment(
+    amount: Annotated[float, Field(description="Payment amount.")],
+    currency: Annotated[str, Field(description="Currency code (e.g., 'USD', 'EUR').")],
+    payment_method: Annotated[dict, Field(description="Payment method details (type, card info).")],
+    booking_reference: Annotated[str, Field(description="Booking reference number for the payment.")],
+) -> str:
     """Process payment for a booking.
     
     Returns:
@@ -654,8 +712,12 @@ def process_payment(amount: float, currency: str, payment_method: dict, booking_
     })
 
 
+
 # Mock payment validation tool
-def validate_payment_method(payment_method: dict) -> str:
+@ai_function(name="validate_payment_method", description="Validate a payment method before processing.")
+def validate_payment_method(
+    payment_method: Annotated[dict, Field(description="Payment method to validate (type, number, expiry, cvv).")],
+) -> str:
     """Validate payment method details.
     
     Returns:

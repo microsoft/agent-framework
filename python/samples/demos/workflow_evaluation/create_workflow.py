@@ -149,8 +149,6 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
     """
     if chat_client is None:
         try:
-            credential = DefaultAzureCredential()
-            
             # Create AIProjectClient with the correct API version for V2 prompt agents
             project_client = AIProjectClient(
                 endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
@@ -159,7 +157,7 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
             )
             
             async with (
-                credential,
+                DefaultAzureCredential() as credential,
                 project_client,
                 AzureAIClient(project_client=project_client, async_credential=credential) as client
             ):
