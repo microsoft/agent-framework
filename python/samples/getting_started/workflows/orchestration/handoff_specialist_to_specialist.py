@@ -192,7 +192,7 @@ async def main() -> None:
     print("=" * 80 + "\n")
 
     # Start workflow with initial message
-    print("[User]: I need help with order 12345. I want a replacement and need to know when it will arrive.\n")
+    print(f"[User]: {scripted_responses[0]}\n")
     events = await _drain(workflow.run_stream(scripted_responses[0]))
     pending_requests = _handle_events(events)
 
