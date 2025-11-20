@@ -32,7 +32,7 @@ class GenericOutput(BaseModel):
 
 async def test_structured_output_with_recipe():
     """Test structured output processing with recipe state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -70,7 +70,7 @@ async def test_structured_output_with_recipe():
 
 async def test_structured_output_with_steps():
     """Test structured output processing with steps state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -109,7 +109,7 @@ async def test_structured_output_with_steps():
 
 async def test_structured_output_with_no_schema_match():
     """Test structured output when response fields don't match state_schema keys."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -138,7 +138,7 @@ async def test_structured_output_with_no_schema_match():
 
 async def test_structured_output_without_schema():
     """Test structured output without state_schema treats all fields as state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class DataOutput(BaseModel):
         """Output with data and info fields."""
@@ -175,7 +175,7 @@ async def test_structured_output_without_schema():
 
 async def test_no_structured_output_when_no_response_format():
     """Test that structured output path is skipped when no response_format."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -200,7 +200,7 @@ async def test_no_structured_output_when_no_response_format():
 
 async def test_structured_output_with_message_field():
     """Test structured output that includes a message field."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -234,7 +234,7 @@ async def test_structured_output_with_message_field():
 
 async def test_empty_updates_no_structured_processing():
     """Test that empty updates don't trigger structured output processing."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
