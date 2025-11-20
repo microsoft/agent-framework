@@ -295,32 +295,32 @@ class TestRunRequest:
         restored = RunRequest.from_dict(data)
         assert restored.response_format is ModuleStructuredResponse
 
-    def test_init_with_correlation_id(self) -> None:
-        """Test RunRequest initialization with correlation_id."""
+    def test_init_with_correlationId(self) -> None:
+        """Test RunRequest initialization with correlationId."""
         request = RunRequest(message="Test message", thread_id="thread-corr-init", correlation_id="corr-123")
 
         assert request.message == "Test message"
         assert request.correlation_id == "corr-123"
 
-    def test_to_dict_with_correlation_id(self) -> None:
-        """Test to_dict includes correlation_id."""
+    def test_to_dict_with_correlationId(self) -> None:
+        """Test to_dict includes correlationId."""
         request = RunRequest(message="Test", thread_id="thread-corr-to-dict", correlation_id="corr-456")
         data = request.to_dict()
 
         assert data["message"] == "Test"
-        assert data["correlation_id"] == "corr-456"
+        assert data["correlationId"] == "corr-456"
 
-    def test_from_dict_with_correlation_id(self) -> None:
-        """Test from_dict with correlation_id."""
-        data = {"message": "Test", "correlation_id": "corr-789", "thread_id": "thread-corr-from-dict"}
+    def test_from_dict_with_correlationId(self) -> None:
+        """Test from_dict with correlationId."""
+        data = {"message": "Test", "correlationId": "corr-789", "thread_id": "thread-corr-from-dict"}
         request = RunRequest.from_dict(data)
 
         assert request.message == "Test"
         assert request.correlation_id == "corr-789"
         assert request.thread_id == "thread-corr-from-dict"
 
-    def test_round_trip_with_correlation_id(self) -> None:
-        """Test round-trip to_dict and from_dict with correlation_id."""
+    def test_round_trip_with_correlationId(self) -> None:
+        """Test round-trip to_dict and from_dict with correlationId."""
         original = RunRequest(
             message="Test message",
             thread_id="thread-123",

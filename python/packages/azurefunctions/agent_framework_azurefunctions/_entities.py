@@ -13,11 +13,25 @@ from collections.abc import AsyncIterable, Callable
 from typing import Any, cast
 
 import azure.durable_functions as df
-from agent_framework import AgentProtocol, AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role, get_logger
+from agent_framework import (
+    AgentProtocol,
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatMessage,
+    ErrorContent,
+    Role,
+    get_logger,
+)
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
+from ._durable_agent_state import (
+    DurableAgentState,
+    DurableAgentStateData,
+    DurableAgentStateEntry,
+    DurableAgentStateRequest,
+    DurableAgentStateResponse,
+)
 from ._models import RunRequest
-from ._state import AgentState
 
 logger = get_logger("agent_framework.azurefunctions.entities")
 
@@ -37,11 +51,11 @@ class AgentEntity:
 
     Attributes:
         agent: The AgentProtocol instance
-        state: The AgentState managing conversation history
+        state: The DurableAgentState managing conversation history
     """
 
     agent: AgentProtocol
-    state: AgentState
+    state: DurableAgentState
 
     def __init__(
         self,
@@ -55,10 +69,26 @@ class AgentEntity:
             callback: Optional callback invoked during streaming updates and final responses
         """
         self.agent = agent
-        self.state = AgentState()
+        self.state = DurableAgentState()
         self.callback = callback
 
         logger.debug(f"[AgentEntity] Initialized with agent type: {type(agent).__name__}")
+
+    def _is_error_response(self, entry: DurableAgentStateEntry) -> bool:
+        """Check if a conversation history entry is an error response.
+
+        Error responses should be kept in history for tracking but not sent to the agent
+        since Azure OpenAI doesn't support 'error' content type.
+
+        Args:
+            entry: A conversation history entry (DurableAgentStateEntry or dict)
+
+        Returns:
+            True if the entry is a response containing error content, False otherwise
+        """
+        if isinstance(entry, DurableAgentStateResponse):
+            return entry.is_error
+        return False
 
     async def run_agent(
         self,
@@ -88,26 +118,25 @@ class AgentEntity:
             raise ValueError("RunRequest must include a thread_id")
         if not correlation_id:
             raise ValueError("RunRequest must include a correlation_id")
-        role = run_request.role or Role.USER
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
-        logger.debug(f"[AgentEntity.run_agent] Received message: {message}")
-        logger.debug(f"[AgentEntity.run_agent] Thread ID: {thread_id}")
-        logger.debug(f"[AgentEntity.run_agent] Correlation ID: {correlation_id}")
-        logger.debug(f"[AgentEntity.run_agent] Role: {role.value}")
-        logger.debug(f"[AgentEntity.run_agent] Enable tool calls: {enable_tool_calls}")
-        logger.debug(
-            "[AgentEntity.run_agent] Response format: %s",
-            "provided" if response_format else "none",
-        )
+        state_request = DurableAgentStateRequest.from_run_request(run_request)
+        self.state.data.conversation_history.append(state_request)
 
-        self.state.add_user_message(message, role=role, correlation_id=correlation_id)
-
-        logger.debug("[AgentEntity.run_agent] Executing agent...")
+        logger.debug(f"[AgentEntity.run_agent] Received Message: {state_request}")
 
         try:
-            run_kwargs: dict[str, Any] = {"messages": self.state.get_chat_messages()}
+            # Build messages from conversation history, excluding error responses
+            # Error responses are kept in history for tracking but not sent to the agent
+            chat_messages: list[ChatMessage] = [
+                m.to_chat_message()
+                for entry in self.state.data.conversation_history
+                if not self._is_error_response(entry)
+                for m in entry.messages
+            ]
+
+            run_kwargs: dict[str, Any] = {"messages": chat_messages}
             if not enable_tool_calls:
                 run_kwargs["tools"] = None
             if response_format:
@@ -125,7 +154,7 @@ class AgentEntity:
                 type(agent_run_response).__name__,
             )
 
-            response_text: str | None = None
+            response_text = None
 
             try:
                 raw_text = agent_run_response.text
@@ -139,21 +168,9 @@ class AgentEntity:
                 )
                 response_text = "Error extracting response"
 
-            message_count = self.state.message_count
-            metadata: dict[str, Any] = {
-                "status": "success",
-                "message": str(message),
-                "thread_id": str(thread_id),
-                "correlation_id": correlation_id,
-                "message_count": message_count,
-            }
+            state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
+            self.state.data.conversation_history.append(state_response)
 
-            metadata["response"] = response_text
-            content = response_text or ""
-
-            agent_run_response.additional_properties.update(metadata)
-
-            self.state.add_assistant_message(content, agent_run_response, correlation_id)
             logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
 
             return agent_run_response
@@ -162,31 +179,19 @@ class AgentEntity:
             import traceback
 
             error_traceback = traceback.format_exc()
-            logger.error("[AgentEntity.run_agent] Agent execution failed")
-            logger.error(f"Error: {exc!s}")
-            logger.error(f"Error type: {type(exc).__name__}")
-            logger.error(f"Full traceback:\n{error_traceback}")
+            logger.error(f"[AgentEntity.run_agent] Agent execution failed. Full traceback:\n{error_traceback}")
 
-            error_text = f"Error: {exc!s}"
-            error_metadata = {
-                "status": "error",
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-                "message": str(message),
-                "thread_id": str(thread_id),
-                "correlation_id": correlation_id,
-                "message_count": self.state.message_count,
-            }
-
-            error_response = AgentRunResponse(
-                messages=[ChatMessage(role="assistant", text=error_text)],
-                additional_properties=error_metadata,
+            # Create error message
+            error_message = ChatMessage(
+                role=Role.ASSISTANT, contents=[ErrorContent(message=str(exc), error_code=type(exc).__name__)]
             )
 
-            try:
-                self.state.add_assistant_message(error_text, error_response, correlation_id)
-            except Exception:  # pragma: no cover - defensive logging only
-                logger.warning("[AgentEntity.run_agent] Failed to record error response in state", exc_info=True)
+            error_response = AgentRunResponse(messages=[error_message])
+
+            # Create and store error response in conversation history
+            error_state_response = DurableAgentStateResponse.from_run_response(correlation_id, error_response)
+            error_state_response.is_error = True
+            self.state.data.conversation_history.append(error_state_response)
 
             return error_response
 
@@ -331,7 +336,7 @@ class AgentEntity:
     def reset(self, context: df.DurableEntityContext) -> None:
         """Reset the entity state (clear conversation history)."""
         logger.debug("[AgentEntity.reset] Resetting entity state")
-        self.state.reset()
+        self.state.data = DurableAgentStateData(conversation_history=[])
         logger.debug("[AgentEntity.reset] State reset complete")
 
 
@@ -360,7 +365,7 @@ def create_agent_entity(
             entity = AgentEntity(agent, callback)
 
             if current_state is not None:
-                entity.state.restore_state(current_state)
+                entity.state = DurableAgentState.from_dict(current_state)
                 logger.debug(
                     "[entity_function] Restored entity from state (message_count: %s)", entity.state.message_count
                 )
@@ -390,8 +395,9 @@ def create_agent_entity(
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
+            logger.debug("State dict: %s", entity.state.to_dict())
             context.set_state(entity.state.to_dict())
-            logger.debug(f"[entity_function] Operation {operation} completed successfully")
+            logger.info(f"[entity_function] Operation {operation} completed successfully")
 
         except Exception as exc:
             import traceback
