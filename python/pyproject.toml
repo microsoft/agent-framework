@@ -24,6 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core[all]",
+    "azure-ai-projects>=2.0.0b2",
 ]
 
 [dependency-groups]
