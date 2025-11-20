@@ -9,7 +9,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
@@ -343,11 +343,7 @@ class TestAgentEntityOperations:
         )
 
         assert isinstance(result, AgentRunResponse)
-        metadata = result.additional_properties
-        assert metadata["status"] == "success"
-        assert metadata["response"] == "Test response"
-        assert metadata["message"] == "Test message"
-        assert metadata["thread_id"] == "test-conv-123"
+        assert result.text == "Test response"
         assert entity.state.message_count == 2
 
     async def test_entity_stores_conversation_history(self) -> None:
@@ -593,10 +589,11 @@ class TestErrorHandling:
         )
 
         assert isinstance(result, AgentRunResponse)
-        metadata = result.additional_properties
-        assert metadata["status"] == "error"
-        assert "Agent error" in metadata["error"]
-        assert metadata["error_type"] == "Exception"
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert "Agent error" in (content.message or "")
+        assert content.error_code == "Exception"
 
     def test_entity_function_handles_exception(self) -> None:
         """Test that the entity function handles exceptions gracefully."""
