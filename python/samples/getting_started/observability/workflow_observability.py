@@ -33,7 +33,7 @@ Telemetry data that the workflow system emits includes:
 - Message publishing between executors
   - message.send (for each outbound message)
 
-Pre-requisites:
+Prerequisites:
 - Basic understanding of workflow executors, edges, and messages.
 - Basic understanding of OpenTelemetry concepts like spans and traces.
 """
