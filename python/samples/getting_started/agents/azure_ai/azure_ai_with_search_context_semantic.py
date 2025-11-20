@@ -3,11 +3,16 @@
 import asyncio
 import os
 
+from dotenv import load_dotenv
+
 from agent_framework import ChatAgent
 from agent_framework_aisearch import AzureAISearchContextProvider
 from agent_framework_azure_ai import AzureAIAgentClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import DefaultAzureCredential
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 This sample demonstrates how to use Azure AI Search with semantic mode for RAG

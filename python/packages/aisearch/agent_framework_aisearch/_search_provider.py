@@ -3,11 +3,12 @@
 """Azure AI Search Context Provider for Agent Framework.
 
 This module provides context providers for Azure AI Search integration with two modes:
-- Semantic: Fast hybrid search (vector + keyword) with semantic ranker
-- Agentic: Slower multi-hop reasoning using Knowledge Bases for complex queries
+- Agentic: Recommended for most scenarios. Uses Knowledge Bases for query planning and
+  multi-hop reasoning. Slightly slower with more token consumption, but more accurate.
+- Semantic: Fast hybrid search (vector + keyword) with semantic ranker. Best for simple
+  queries where speed is critical.
 
-Use semantic mode for most cases. Use agentic mode only when you need multi-hop
-reasoning across documents with Knowledge Bases.
+See: https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720
 """
 
 import sys
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from agent_framework import ChatMessage, Context, ContextProvider, Role
 from agent_framework._logging import get_logger
 from agent_framework._pydantic import AFBaseSettings
+from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -41,6 +43,7 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
+from pydantic import SecretStr, ValidationError
 
 # Type checking imports for optional agentic mode dependencies
 if TYPE_CHECKING:
@@ -116,44 +119,44 @@ _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 class AzureAISearchSettings(AFBaseSettings):
     """Settings for Azure AI Search Context Provider with auto-loading from environment.
 
-    Environment variables:
-        AZURE_SEARCH_ENDPOINT: Azure AI Search endpoint URL
-        AZURE_SEARCH_INDEX_NAME: Name of the search index
-        AZURE_SEARCH_API_KEY: API key for authentication
-        AZURE_AI_PROJECT_ENDPOINT: Azure AI Foundry project endpoint (for agentic mode)
-        AZURE_OPENAI_RESOURCE_URL: Azure OpenAI resource URL (for agentic mode)
-        AZURE_OPENAI_DEPLOYMENT_NAME: Model deployment name (for agentic mode)
-        AZURE_OPENAI_API_KEY: Azure OpenAI API key (for agentic mode with API key auth)
+    The settings are first loaded from environment variables with the prefix 'AZURE_SEARCH_'.
+    If the environment variables are not found, the settings can be loaded from a .env file.
+
+    Keyword Args:
+        endpoint: Azure AI Search endpoint URL.
+            Can be set via environment variable AZURE_SEARCH_ENDPOINT.
+        index_name: Name of the search index.
+            Can be set via environment variable AZURE_SEARCH_INDEX_NAME.
+        api_key: API key for authentication (optional, use managed identity if not provided).
+            Can be set via environment variable AZURE_SEARCH_API_KEY.
+        env_file_path: If provided, the .env settings are read from this file path location.
+        env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_aisearch import AzureAISearchSettings
+
+            # Using environment variables
+            # Set AZURE_SEARCH_ENDPOINT=https://mysearch.search.windows.net
+            # Set AZURE_SEARCH_INDEX_NAME=my-index
+            settings = AzureAISearchSettings()
+
+            # Or passing parameters directly
+            settings = AzureAISearchSettings(
+                endpoint="https://mysearch.search.windows.net",
+                index_name="my-index",
+            )
+
+            # Or loading from a .env file
+            settings = AzureAISearchSettings(env_file_path="path/to/.env")
     """
 
-    env_prefix: ClassVar[str] = "AZURE_"
+    env_prefix: ClassVar[str] = "AZURE_SEARCH_"
 
     endpoint: str | None = None
-    search_endpoint: str | None = None  # Alias for endpoint
     index_name: str | None = None
-    search_index_name: str | None = None  # Alias for index_name
-    api_key: str | None = None
-    search_api_key: str | None = None  # Alias for api_key
-    ai_project_endpoint: str | None = None
-    openai_resource_url: str | None = None
-    openai_deployment_name: str | None = None
-    openai_api_key: str | None = None
-
-    def validate_settings(self) -> None:
-        """Validate required settings are present."""
-        # Use aliases if main fields not set
-        endpoint = self.endpoint or self.search_endpoint
-        index_name = self.index_name or self.search_index_name
-
-        if not endpoint:
-            raise ValueError("endpoint is required (or set AZURE_SEARCH_ENDPOINT)")
-        if not index_name:
-            raise ValueError("index_name is required (or set AZURE_SEARCH_INDEX_NAME)")
-
-        # Update main fields from aliases
-        self.endpoint = endpoint
-        self.index_name = index_name
-        self.api_key = self.api_key or self.search_api_key
+    api_key: SecretStr | None = None
 
 
 class AzureAISearchContextProvider(ContextProvider):
@@ -162,24 +165,22 @@ class AzureAISearchContextProvider(ContextProvider):
     This provider retrieves relevant documents from Azure AI Search to provide context
     to the AI agent. It supports two modes:
 
+    - **agentic**: Recommended for most scenarios. Uses Knowledge Bases for query planning
+      and multi-hop reasoning. Slightly slower with more token consumption, but provides
+      more accurate results (up to 36% improvement in response relevance).
     - **semantic** (default): Fast hybrid search combining vector and keyword search
-      with semantic reranking. Suitable for most RAG use cases.
-    - **agentic**: Slower multi-hop reasoning across documents using Knowledge Bases.
-      Use only for complex queries requiring cross-document reasoning.
+      with semantic reranking. Best for simple queries where speed is critical.
 
     Examples:
-        Using Settings class with environment variables:
+        Using environment variables (recommended):
 
         .. code-block:: python
 
-            from agent_framework import ChatAgent
-            from agent_framework_azure_ai import AzureAIAgentClient
-            from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
+            from agent_framework_aisearch import AzureAISearchContextProvider
             from azure.identity.aio import DefaultAzureCredential
 
-            # Load from environment variables
-            settings = AzureAISearchSettings()
-            search_provider = AzureAISearchContextProvider(settings=settings, credential=DefaultAzureCredential())
+            # Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_INDEX_NAME in environment
+            search_provider = AzureAISearchContextProvider(credential=DefaultAzureCredential())
 
         Semantic hybrid search with API key:
 
@@ -193,19 +194,30 @@ class AzureAISearchContextProvider(ContextProvider):
                 mode="semantic",
             )
 
+        Loading from .env file:
+
+        .. code-block:: python
+
+            # Load settings from a .env file
+            search_provider = AzureAISearchContextProvider(
+                credential=DefaultAzureCredential(), env_file_path="path/to/.env"
+            )
+
         Agentic retrieval for complex queries:
 
         .. code-block:: python
 
-            # Use agentic mode for multi-hop reasoning (slower)
+            # Use agentic mode for multi-hop reasoning
+            # Note: azure_openai_resource_url is the OpenAI endpoint for Knowledge Base model calls,
+            # which is different from azure_ai_project_endpoint (the AI Foundry project endpoint)
             search_provider = AzureAISearchContextProvider(
                 endpoint="https://mysearch.search.windows.net",
                 index_name="my-index",
                 credential=DefaultAzureCredential(),
-                mode="agentic",  # Multi-hop reasoning
-                azure_ai_project_endpoint="https://myproject.services.ai.azure.com",
+                mode="agentic",
+                azure_openai_resource_url="https://myresource.openai.azure.com",
                 model_deployment_name="gpt-4o",
-                knowledge_base_name="my-knowledge-base",  # Required for agentic mode
+                knowledge_base_name="my-knowledge-base",
             )
     """
 
@@ -217,7 +229,6 @@ class AzureAISearchContextProvider(ContextProvider):
         index_name: str | None = None,
         credential: str | AzureKeyCredential | AsyncTokenCredential | None = None,
         *,
-        settings: AzureAISearchSettings | None = None,
         mode: Literal["semantic", "agentic"] = "semantic",
         top_k: int = 5,
         semantic_configuration_name: str | None = None,
@@ -235,16 +246,19 @@ class AzureAISearchContextProvider(ContextProvider):
         knowledge_base_output_mode: Literal["extractive_data", "answer_synthesis"] = "extractive_data",
         retrieval_reasoning_effort: Literal["minimal", "medium", "low"] = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize Azure AI Search Context Provider.
 
         Args:
             endpoint: Azure AI Search endpoint URL.
+                Can also be set via environment variable AZURE_SEARCH_ENDPOINT.
             index_name: Name of the search index to query.
+                Can also be set via environment variable AZURE_SEARCH_INDEX_NAME.
             credential: Azure credential (API key string, AzureKeyCredential, or AsyncTokenCredential).
                 If a string is provided, it will be converted to AzureKeyCredential.
-            settings: Settings object with auto-loaded configuration from environment.
-                If provided, endpoint/index_name/credential from settings will be used as defaults.
+                Can also be set via environment variable AZURE_SEARCH_API_KEY.
             mode: Search mode - "semantic" for hybrid search with semantic ranking (fast)
                 or "agentic" for multi-hop reasoning (slower). Default: "semantic".
             top_k: Maximum number of documents to retrieve. Only applies to semantic mode.
@@ -260,16 +274,23 @@ class AzureAISearchContextProvider(ContextProvider):
             context_prompt: Custom prompt to prepend to retrieved context.
                 Default: "Use the following context to answer the question:"
             azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
-                Required for agentic mode. Example: "https://myproject.services.ai.azure.com"
-            model_deployment_name: Model deployment name in the Azure AI project.
+                This is NOT the same as azure_openai_resource_url - the project endpoint is used
+                for Azure AI Foundry services, while the OpenAI endpoint is used by the Knowledge
+                Base to call the model for query planning. Required for agentic mode.
+                Example: "https://myproject.services.ai.azure.com/api/projects/myproject"
+            azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
+                This is the OpenAI endpoint used by the Knowledge Base to call the LLM for
+                query planning and reasoning. This is separate from the project endpoint because
+                the Knowledge Base directly calls Azure OpenAI for its internal operations.
+                Required for agentic mode. Example: "https://myresource.openai.azure.com"
+            model_deployment_name: Model deployment name in Azure OpenAI for Knowledge Base.
+                This is the deployment name the Knowledge Base uses to call the LLM.
                 Required for agentic mode.
             model_name: The underlying model name (e.g., "gpt-4o", "gpt-4o-mini").
                 If not provided, defaults to model_deployment_name. Used for Knowledge Base configuration.
             knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
-            azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
-                Required for agentic mode. Example: "https://myresource.openai.azure.com"
             azure_openai_api_key: Azure OpenAI API key for Knowledge Base to call the model.
                 Only needed when using API key authentication instead of managed identity.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval. Only used in agentic mode.
@@ -281,28 +302,68 @@ class AzureAISearchContextProvider(ContextProvider):
                 "medium": Moderate reasoning with some query decomposition.
                 "low": Lower reasoning effort than medium.
                 Default: "minimal".
-            agentic_message_history_count: Number of recent messages to send to the Knowledge Base for context
-                in agentic mode. Default: 10.
+            agentic_message_history_count: Number of recent messages from conversation history to send to
+                the Knowledge Base. This context helps with query planning in agentic mode, allowing the
+                Knowledge Base to understand the conversation flow and generate better retrieval queries.
+                There is no technical limit - adjust based on your use case. Default: 10.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_aisearch import AzureAISearchContextProvider
+                from azure.identity.aio import DefaultAzureCredential
+
+                # Using environment variables
+                # Set AZURE_SEARCH_ENDPOINT=https://mysearch.search.windows.net
+                # Set AZURE_SEARCH_INDEX_NAME=my-index
+                credential = DefaultAzureCredential()
+                provider = AzureAISearchContextProvider(credential=credential)
+
+                # Or passing parameters directly
+                provider = AzureAISearchContextProvider(
+                    endpoint="https://mysearch.search.windows.net",
+                    index_name="my-index",
+                    credential=credential,
+                )
+
+                # Or loading from a .env file
+                provider = AzureAISearchContextProvider(credential=credential, env_file_path="path/to/.env")
         """
-        # Load from settings if provided
-        if settings:
-            settings.validate_settings()
-            endpoint = endpoint or settings.endpoint
-            index_name = index_name or settings.index_name
-            if not credential and settings.api_key:
-                credential = settings.api_key
-            azure_ai_project_endpoint = azure_ai_project_endpoint or settings.ai_project_endpoint
-            azure_openai_resource_url = azure_openai_resource_url or settings.openai_resource_url
-            model_deployment_name = model_deployment_name or settings.openai_deployment_name
-            azure_openai_api_key = azure_openai_api_key or settings.openai_api_key
+        # Load settings from environment/file
+        try:
+            settings = AzureAISearchSettings(
+                endpoint=endpoint,
+                index_name=index_name,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Azure AI Search settings.", ex) from ex
+
+        # Use settings values, with explicit parameters taking precedence
+        endpoint = endpoint or settings.endpoint
+        index_name = index_name or settings.index_name
+        if not credential and settings.api_key:
+            credential = settings.api_key.get_secret_value()
 
         # Validate required parameters
         if not endpoint:
-            raise ValueError("endpoint is required")
+            raise ServiceInitializationError(
+                "Azure AI Search endpoint is required. Set via 'endpoint' parameter "
+                "or 'AZURE_SEARCH_ENDPOINT' environment variable."
+            )
         if not index_name:
-            raise ValueError("index_name is required")
+            raise ServiceInitializationError(
+                "Azure AI Search index name is required. Set via 'index_name' parameter "
+                "or 'AZURE_SEARCH_INDEX_NAME' environment variable."
+            )
         if not credential:
-            raise ValueError("credential is required")
+            raise ServiceInitializationError(
+                "Azure credential is required. Provide 'credential' parameter "
+                "or set 'AZURE_SEARCH_API_KEY' environment variable."
+            )
 
         # Convert string credential to AzureKeyCredential
         if isinstance(credential, str):
@@ -733,8 +794,8 @@ class AzureAISearchContextProvider(ContextProvider):
     async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:
         """Perform agentic retrieval with multi-hop reasoning using Knowledge Bases.
 
-        NOTE: This mode is significantly slower than semantic search and should
-        only be used for complex queries requiring cross-document reasoning.
+        This mode uses query planning and is slightly slower than semantic search,
+        but provides more accurate results through intelligent retrieval.
 
         This method uses Azure AI Search Knowledge Bases which:
         1. Analyze the query and plan sub-queries

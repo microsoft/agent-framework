@@ -1,13 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import ChatMessage, Context, Role
 from agent_framework.azure import AzureAISearchContextProvider
+from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
+
+from agent_framework_aisearch import AzureAISearchSettings
 
 
 @pytest.fixture
@@ -41,6 +45,84 @@ def sample_messages() -> list[ChatMessage]:
     ]
 
 
+class TestAzureAISearchSettings:
+    """Test AzureAISearchSettings configuration."""
+
+    def test_settings_with_direct_values(self) -> None:
+        """Test settings with direct values."""
+        settings = AzureAISearchSettings(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            api_key="test-key",
+        )
+        assert settings.endpoint == "https://test.search.windows.net"
+        assert settings.index_name == "test-index"
+        # api_key is now SecretStr
+        assert settings.api_key.get_secret_value() == "test-key"
+
+    def test_settings_with_env_file_path(self) -> None:
+        """Test settings with env_file_path parameter."""
+        settings = AzureAISearchSettings(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            env_file_path="test.env",
+        )
+        assert settings.endpoint == "https://test.search.windows.net"
+        assert settings.index_name == "test-index"
+
+    def test_provider_uses_settings_from_env(self) -> None:
+        """Test that provider creates settings internally from env."""
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+        )
+        assert provider.endpoint == "https://test.search.windows.net"
+        assert provider.index_name == "test-index"
+
+    def test_provider_missing_endpoint_raises_error(self) -> None:
+        """Test that provider raises ServiceInitializationError without endpoint."""
+        # Use patch.dict to clear environment and pass env_file_path="" to prevent .env file loading
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="endpoint is required"),
+        ):
+            AzureAISearchContextProvider(
+                index_name="test-index",
+                credential=AzureKeyCredential("test-key"),
+                env_file_path="",  # Disable .env file loading
+            )
+
+    def test_provider_missing_index_name_raises_error(self) -> None:
+        """Test that provider raises ServiceInitializationError without index_name."""
+        # Use patch.dict to clear environment and pass env_file_path="" to prevent .env file loading
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="index name is required"),
+        ):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                credential=AzureKeyCredential("test-key"),
+                env_file_path="",  # Disable .env file loading
+            )
+
+    def test_provider_missing_credential_raises_error(self) -> None:
+        """Test that provider raises ServiceInitializationError without credential."""
+        # Use patch.dict to clear environment and pass env_file_path="" to prevent .env file loading
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="credential is required"),
+        ):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                env_file_path="",  # Disable .env file loading
+            )
+
+
 class TestSearchProviderInitialization:
     """Test initialization and configuration of AzureAISearchContextProvider."""
 
@@ -68,8 +150,8 @@ class TestSearchProviderInitialization:
                 vector_field_name="embedding",
             )
 
-    def test_init_agentic_mode_requires_parameters(self) -> None:
-        """Test that agentic mode requires additional parameters."""
+    def test_init_agentic_mode_requires_azure_openai_resource_url(self) -> None:
+        """Test that agentic mode requires azure_openai_resource_url."""
         with pytest.raises(ValueError, match="azure_openai_resource_url"):
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
@@ -339,6 +421,50 @@ class TestContextProviderLifecycle:
             assert provider is not None
             assert isinstance(provider, AzureAISearchContextProvider)
 
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_context_manager_agentic_cleanup(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock, mock_retrieval_class: MagicMock
+    ) -> None:
+        """Test that agentic mode provider cleans up retrieval client."""
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        mock_index_client = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        mock_retrieval_client = AsyncMock()
+        mock_retrieval_client.close = AsyncMock()
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        async with AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        ) as provider:
+            # Simulate retrieval client being created
+            provider._retrieval_client = mock_retrieval_client
+
+        # Verify cleanup was called
+        mock_retrieval_client.close.assert_called_once()
+
+    def test_string_credential_conversion(self) -> None:
+        """Test that string credential is converted to AzureKeyCredential."""
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential="my-api-key",  # String instead of AzureKeyCredential
+            mode="semantic",
+        )
+        assert isinstance(provider.credential, AzureKeyCredential)
+
 
 class TestMessageFiltering:
     """Test message filtering functionality."""
@@ -432,6 +558,172 @@ class TestCitations:
         # Citation should be in the result message (second message)
         assert "[Source: doc123]" in context.messages[1].text
         assert "Test document content" in context.messages[1].text
+
+
+class TestAgenticSearch:
+    """Test agentic search functionality."""
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_agentic_search_basic(
+        self,
+        mock_search_class: MagicMock,
+        mock_index_class: MagicMock,
+        mock_retrieval_class: MagicMock,
+        sample_messages: list[ChatMessage],
+    ) -> None:
+        """Test basic agentic search with Knowledge Base retrieval."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index client mock
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
+        mock_index_client.create_knowledge_source = AsyncMock()
+        mock_index_client.create_or_update_knowledge_base = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Setup retrieval client mock with response
+        mock_retrieval_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_message = MagicMock()
+        mock_content = MagicMock()
+        mock_content.text = "Agentic search result"
+        # Make it pass isinstance check
+        from agent_framework_aisearch._search_provider import _agentic_retrieval_available
+
+        if _agentic_retrieval_available:
+            from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
+
+            mock_content.__class__ = KnowledgeBaseMessageTextContent
+        mock_message.content = [mock_content]
+        mock_response.response = [mock_message]
+        mock_retrieval_client.retrieve.return_value = mock_response
+        mock_retrieval_client.close = AsyncMock()
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        context = await provider.invoking(sample_messages)
+
+        assert isinstance(context, Context)
+        # Should have at least the prompt message
+        assert len(context.messages) >= 1
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_agentic_search_no_results(
+        self,
+        mock_search_class: MagicMock,
+        mock_index_class: MagicMock,
+        mock_retrieval_class: MagicMock,
+        sample_messages: list[ChatMessage],
+    ) -> None:
+        """Test agentic search when no results are returned."""
+        # Setup mocks
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
+        mock_index_client.create_knowledge_source = AsyncMock()
+        mock_index_client.create_or_update_knowledge_base = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Empty response
+        mock_retrieval_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.response = []
+        mock_retrieval_client.retrieve.return_value = mock_response
+        mock_retrieval_client.close = AsyncMock()
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+        )
+
+        context = await provider.invoking(sample_messages)
+
+        assert isinstance(context, Context)
+        # Should have fallback message
+        assert len(context.messages) >= 1
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_agentic_search_with_medium_reasoning(
+        self,
+        mock_search_class: MagicMock,
+        mock_index_class: MagicMock,
+        mock_retrieval_class: MagicMock,
+        sample_messages: list[ChatMessage],
+    ) -> None:
+        """Test agentic search with medium reasoning effort."""
+        # Setup mocks
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        mock_index_client = AsyncMock()
+        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
+        mock_index_client.create_knowledge_source = AsyncMock()
+        mock_index_client.create_or_update_knowledge_base = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        mock_retrieval_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_message = MagicMock()
+        mock_content = MagicMock()
+        mock_content.text = "Medium reasoning result"
+        from agent_framework_aisearch._search_provider import _agentic_retrieval_available
+
+        if _agentic_retrieval_available:
+            from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
+
+            mock_content.__class__ = KnowledgeBaseMessageTextContent
+        mock_message.content = [mock_content]
+        mock_response.response = [mock_message]
+        mock_retrieval_client.retrieve.return_value = mock_response
+        mock_retrieval_client.close = AsyncMock()
+        mock_retrieval_class.return_value = mock_retrieval_client
+
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="agentic",
+            azure_ai_project_endpoint="https://test.services.ai.azure.com",
+            model_deployment_name="gpt-4o",
+            knowledge_base_name="test-kb",
+            azure_openai_resource_url="https://test.openai.azure.com",
+            retrieval_reasoning_effort="medium",  # Test medium reasoning
+        )
+
+        context = await provider.invoking(sample_messages)
+
+        assert isinstance(context, Context)
+        assert len(context.messages) >= 1
 
 
 class TestVectorFieldAutoDiscovery:
@@ -545,3 +837,156 @@ class TestVectorFieldAutoDiscovery:
         # Should NOT detect any vector fields
         assert provider.vector_field_name is None
         assert provider._auto_discovered_vector_field is True
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_multiple_vector_fields_without_vectorizer(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that multiple vector fields without vectorizer logs warning and uses keyword search."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index with multiple vector fields (no vectorizers)
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Multiple vector fields
+        mock_fields = []
+        for name in ["embedding1", "embedding2"]:
+            field = MagicMock()
+            field.name = name
+            field.vector_search_dimensions = 1536
+            field.vector_search_profile_name = None  # No vectorizer
+            mock_fields.append(field)
+
+        mock_index.fields = mock_fields
+        mock_index.vector_search = None  # No vector search config
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Should NOT use any vector field (multiple fields, can't choose)
+        assert provider.vector_field_name is None
+        assert provider._auto_discovered_vector_field is True
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_multiple_vectorizable_fields(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that multiple vectorizable fields logs warning and uses keyword search."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index with multiple vectorizable fields
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Multiple vector fields with vectorizers
+        mock_fields = []
+        for name in ["embedding1", "embedding2"]:
+            field = MagicMock()
+            field.name = name
+            field.vector_search_dimensions = 1536
+            field.vector_search_profile_name = f"{name}-profile"
+            mock_fields.append(field)
+
+        mock_index.fields = mock_fields
+
+        # Setup vector search config with profiles that have vectorizers
+        mock_profile1 = MagicMock()
+        mock_profile1.name = "embedding1-profile"
+        mock_profile1.vectorizer_name = "vectorizer1"
+
+        mock_profile2 = MagicMock()
+        mock_profile2.name = "embedding2-profile"
+        mock_profile2.vectorizer_name = "vectorizer2"
+
+        mock_index.vector_search = MagicMock()
+        mock_index.vector_search.profiles = [mock_profile1, mock_profile2]
+
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Should NOT use any vector field (multiple vectorizable fields, can't choose)
+        assert provider.vector_field_name is None
+        assert provider._auto_discovered_vector_field is True
+
+    @pytest.mark.asyncio
+    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
+    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    async def test_single_vectorizable_field_detected(
+        self, mock_search_class: MagicMock, mock_index_class: MagicMock
+    ) -> None:
+        """Test that single vectorizable field is auto-detected for server-side vectorization."""
+        # Setup search client mock
+        mock_search_client = AsyncMock()
+        mock_search_class.return_value = mock_search_client
+
+        # Setup index with single vectorizable field
+        mock_index_client = AsyncMock()
+        mock_index = MagicMock()
+
+        # Single vector field with vectorizer
+        mock_field = MagicMock()
+        mock_field.name = "embedding"
+        mock_field.vector_search_dimensions = 1536
+        mock_field.vector_search_profile_name = "embedding-profile"
+
+        mock_index.fields = [mock_field]
+
+        # Setup vector search config with profile that has vectorizer
+        mock_profile = MagicMock()
+        mock_profile.name = "embedding-profile"
+        mock_profile.vectorizer_name = "openai-vectorizer"
+
+        mock_index.vector_search = MagicMock()
+        mock_index.vector_search.profiles = [mock_profile]
+
+        mock_index_client.get_index.return_value = mock_index
+        mock_index_client.close = AsyncMock()
+        mock_index_class.return_value = mock_index_client
+
+        # Create provider
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="test-index",
+            credential=AzureKeyCredential("test-key"),
+            mode="semantic",
+        )
+
+        # Trigger auto-discovery
+        await provider._auto_discover_vector_field()
+
+        # Should detect the vectorizable field
+        assert provider.vector_field_name == "embedding"
+        assert provider._auto_discovered_vector_field is True
+        assert provider._use_vectorizable_query is True  # Server-side vectorization

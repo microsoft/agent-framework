@@ -3,25 +3,29 @@
 import asyncio
 import os
 
+from dotenv import load_dotenv
+
 from agent_framework import ChatAgent
 from agent_framework_aisearch import AzureAISearchContextProvider
 from agent_framework_azure_ai import AzureAIAgentClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity.aio import DefaultAzureCredential
 
+# Load environment variables from .env file
+load_dotenv()
+
 """
-This sample demonstrates how to use Azure AI Search with agentic mode for advanced RAG
+This sample demonstrates how to use Azure AI Search with agentic mode for RAG
 (Retrieval Augmented Generation) with Azure AI agents.
 
-**Agentic mode** is an advanced mode for complex scenarios:
-- Uses Knowledge Bases in Azure AI Search
+**Agentic mode** is recommended for most scenarios:
+- Uses Knowledge Bases in Azure AI Search for query planning
 - Performs multi-hop reasoning across documents
-- Uses an LLM to synthesize answers
-- Best for complex queries requiring cross-document reasoning
-- **Significantly slower** (order of magnitude) than semantic mode
+- Provides more accurate results through intelligent retrieval
+- Slightly slower with more token consumption for query planning
+- See: https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720
 
-⚠️ Only use agentic mode when you need multi-hop reasoning across documents.
-   For most RAG use cases, use semantic mode instead (see azure_ai_with_search_context_semantic.py).
+For simple queries where speed is critical, use semantic mode instead (see azure_ai_with_search_context_semantic.py).
 
 Prerequisites:
 1. An Azure AI Search service with a search index
@@ -61,9 +65,9 @@ async def main() -> None:
     # Create credential
     search_credential = AzureKeyCredential(search_key) if search_key else DefaultAzureCredential()
 
-    # Create Azure AI Search context provider with agentic mode (slower, multi-hop reasoning)
-    print("Using AGENTIC mode (Knowledge Bases with multi-hop reasoning, slower)\n")
-    print("⚠️  This mode is significantly slower than semantic mode.\n")
+    # Create Azure AI Search context provider with agentic mode (recommended for accuracy)
+    print("Using AGENTIC mode (Knowledge Bases with query planning, recommended)\n")
+    print("ℹ️  This mode is slightly slower but provides more accurate results.\n")
     search_provider = AzureAISearchContextProvider(
         endpoint=search_endpoint,
         index_name=index_name,
