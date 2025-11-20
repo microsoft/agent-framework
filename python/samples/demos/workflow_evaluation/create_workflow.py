@@ -3,7 +3,7 @@
 """
 Multi-Agent Travel Planning Workflow Evaluation with Multiple Response Tracking
 
-This sample demonstrates a multi-agent travel planning workflow using the V2 client that:
+This sample demonstrates a multi-agent travel planning workflow using the Azure AI Client that:
 1. Processes travel queries through 7 specialized agents
 2. Tracks MULTIPLE response and conversation IDs per agent for evaluation
 3. Uses the new Prompt Agents API (V2)
@@ -47,6 +47,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowOutputEvent,
 )
+from typing_extensions import Never
 
 from agent_framework.azure import AzureAIClient
 from azure.identity.aio import DefaultAzureCredential
@@ -83,12 +84,12 @@ class ResearchLead(Executor):
         self.agent = chat_client.create_agent(
             id="travel-planning-coordinator",
             instructions=(
-                "You are the Travel Planning Coordinator. Your role is to synthesize information from multiple "
-                "specialized travel agents into a cohesive, actionable travel plan. You receive inputs from: "
-                "hotel search specialists, flight search specialists, activity planners, booking confirmation agents, "
-                "payment processors, and booking information aggregators. Provide a clear, comprehensive travel plan "
-                "that addresses the user's original query with all necessary details including accommodations, "
-                "transportation, activities, and booking status."
+                "You are the final coordinator. You will receive responses from multiple agents: "
+                "booking-info-aggregation-agent (hotel/flight options), booking-payment-agent (payment confirmation), "
+                "and activity-search-agent (activities). "
+                "Review each agent's response, then create a comprehensive travel itinerary organized by: "
+                "1. Flights 2. Hotels 3. Activities 4. Booking confirmations 5. Payment details. "
+                "Clearly indicate which information came from which agent. Do not use tools."
             ),
             name="travel-planning-coordinator",
             store=True
@@ -96,7 +97,7 @@ class ResearchLead(Executor):
         super().__init__(id=id)
 
     @handler
-    async def fan_in_handle(self, responses: list[AgentExecutorResponse], ctx: WorkflowContext[WorkflowOutputEvent]) -> None:
+    async def fan_in_handle(self, responses: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
         user_query = responses[0].full_conversation[0].text
         
         # Extract findings from all agent responses
@@ -147,24 +148,25 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
     """
     if chat_client is None:
-        credential = DefaultAzureCredential()
-        
-        # Create AIProjectClient with the correct API version for V2 prompt agents
-        project_client = AIProjectClient(
-            endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            credential=credential,
-            api_version="2025-11-15-preview",
-        )
-        
         try:
-            async with AzureAIClient(
-                project_client=project_client,
-                async_credential=credential
-            ) as client:
+            credential = DefaultAzureCredential()
+            
+            # Create AIProjectClient with the correct API version for V2 prompt agents
+            project_client = AIProjectClient(
+                endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+                credential=credential,
+                api_version="2025-11-15-preview",
+            )
+            
+            async with (
+                credential,
+                project_client,
+                AzureAIClient(project_client=project_client, async_credential=credential) as client
+            ):
                 return await _run_workflow_with_client(query, client)
-        finally:
-            await credential.close()
-            await project_client.close()
+        except Exception as e:
+            print(f"Error during workflow execution: {e}")
+            raise
     else:
         return await _run_workflow_with_client(query, chat_client)
 
@@ -187,17 +189,6 @@ async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> d
     # Process workflow events
     events = workflow.run_stream(query)
     workflow_output = await _process_workflow_events(events, conversation_ids, response_ids)
-    
-    # # Delete all agents after workflow completion
-    # print("\n=== Cleaning up agents ===")
-    # for agent_name, agent in agent_map.items():
-    #     try:
-    #         # Get the actual agent object
-    #         agent_to_delete = agent.agent if hasattr(agent, 'agent') else agent
-    #         chat_client.project_client.agents.delete(agent_name=agent_to_delete.name)
-    #         print(f"Deleted agent: {agent_name}")
-    #     except Exception as e:
-    #         print(f"Failed to delete agent {agent_name}: {e}")
     
     return {
         "conversation_ids": dict(conversation_ids),
@@ -222,16 +213,6 @@ async def _create_workflow(project_client, credential):
         agent_name="final-coordinator"
     )
     final_coordinator = ResearchLead(chat_client=final_coordinator_client, id="final-coordinator")
-    
-    # Update final_coordinator agent instructions
-    final_coordinator.agent.instructions = (
-        "You are the final coordinator. You will receive responses from multiple agents: "
-        "booking-info-aggregation-agent (hotel/flight options), booking-payment-agent (payment confirmation), "
-        "and activity-search-agent (activities). "
-        "Review each agent's response, then create a comprehensive travel itinerary organized by: "
-        "1. Flights 2. Hotels 3. Activities 4. Booking confirmations 5. Payment details. "
-        "Clearly indicate which information came from which agent. Do not use tools."
-    )
     
     # Agent 1: Travel Request Handler (initial coordinator)
     # Create separate client with unique agent_name
@@ -352,9 +333,6 @@ async def _create_workflow(project_client, credential):
     # 5. booking_info_aggregation → booking_confirmation
     # 6. booking_confirmation → booking_payment
     # 7. booking_info_aggregation, booking_payment, activity_search → final_coordinator (final aggregation, fan-in)
-    # 
-    # Max iterations set to 10 (though shouldn't be needed without cycles)
-    # store=True preserves conversation history on each agent's thread for evaluation
     
     workflow = (WorkflowBuilder(name='Travel Planning Workflow')
             .set_start_executor(start_executor)
@@ -411,7 +389,7 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
         if hasattr(event.data, 'raw_representation') and event.data.raw_representation:
             raw = event.data.raw_representation
             
-            # Try conversation_id directly on raw (this is the V2 pattern)
+            # Try conversation_id directly on raw representation
             if hasattr(raw, 'conversation_id') and raw.conversation_id:
                 # Only add if not already in the list
                 if raw.conversation_id not in conversation_ids[agent]:
@@ -472,11 +450,5 @@ async def create_and_run_workflow():
     return output_data
 
 
-
-def main():
-    """Main function to run the workflow evaluation example."""
-    asyncio.run(create_and_run_workflow())
-
-
 if __name__ == "__main__":
-    main()
+    asyncio.run(create_and_run_workflow())

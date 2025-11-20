@@ -4,10 +4,17 @@ import json
 from datetime import datetime
 
 # --- Travel Planning Tools ---
+# Note: These are mock tools for demonstration purposes. They return simulated data
+# and do not make real API calls or bookings.
 
+
+# Mock hotel search tool
 def search_hotels(location: str, check_in: str, check_out: str, guests: int = 2) -> str:
-    """
-    Search for available hotels based on location and dates.
+    """Search for available hotels based on location and dates.
+    
+    Returns:
+        JSON string containing search results with hotel details including name, rating,
+        price, distance to landmarks, amenities, and availability.
     """
     # Specific mock data for Paris December 15-18, 2025
     if "paris" in location.lower():
@@ -64,9 +71,14 @@ def search_hotels(location: str, check_in: str, check_out: str, guests: int = 2)
         "note": "Hotel search results matching your query"
     })
 
+
+# Mock hotel details tool
 def get_hotel_details(hotel_name: str) -> str:
-    """
-    Get detailed information about a specific hotel.
+    """Get detailed information about a specific hotel.
+    
+    Returns:
+        JSON string containing detailed hotel information including description,
+        check-in/out times, cancellation policy, reviews, and nearby attractions.
     """
     hotel_details = {
         "Hotel Eiffel Trocadéro": {
@@ -131,9 +143,14 @@ def get_hotel_details(hotel_name: str) -> str:
         "details": details
     })
 
+
+# Mock flight search tool
 def search_flights(origin: str, destination: str, departure_date: str, return_date: str = None, passengers: int = 1) -> str:
-    """
-    Search for available flights between two locations.
+    """Search for available flights between two locations.
+    
+    Returns:
+        JSON string containing flight search results with details including flight numbers,
+        airlines, departure/arrival times, prices, durations, and baggage allowances.
     """
     # Specific mock data for JFK to Paris December 15-18, 2025
     if "jfk" in origin.lower() or "new york" in origin.lower():
@@ -245,9 +262,14 @@ def search_flights(origin: str, destination: str, departure_date: str, return_da
         "note": "Flight search results for JFK to Paris CDG"
     })
 
+
+# Mock flight details tool
 def get_flight_details(flight_number: str) -> str:
-    """
-    Get detailed information about a specific flight.
+    """Get detailed information about a specific flight.
+    
+    Returns:
+        JSON string containing detailed flight information including airline, aircraft type,
+        departure/arrival airports and times, gates, terminals, duration, and amenities.
     """
     mock_details = {
         "flight_number": flight_number,
@@ -277,9 +299,14 @@ def get_flight_details(flight_number: str) -> str:
         "flight_details": mock_details
     })
 
+
+# Mock activity search tool
 def search_activities(location: str, date: str = None, category: str = None) -> str:
-    """
-    Search for available activities and attractions at a destination.
+    """Search for available activities and attractions at a destination.
+    
+    Returns:
+        JSON string containing activity search results with details including name, category,
+        duration, price, rating, description, availability, and booking requirements.
     """
     # Specific mock data for Paris activities
     if "paris" in location.lower():
@@ -411,9 +438,14 @@ def search_activities(location: str, date: str = None, category: str = None) -> 
         "note": "Activity search results for Paris with sightseeing, culture, and culinary options"
     })
 
+
+# Mock activity details tool
 def get_activity_details(activity_name: str) -> str:
-    """
-    Get detailed information about a specific activity.
+    """Get detailed information about a specific activity.
+    
+    Returns:
+        JSON string containing detailed activity information including description, duration,
+        price, included items, meeting point, what to bring, cancellation policy, and reviews.
     """
     # Paris-specific activity details
     activity_details_map = {
@@ -480,9 +512,14 @@ def get_activity_details(activity_name: str) -> str:
         "activity_details": details
     })
 
+
+# Mock booking confirmation tool
 def confirm_booking(booking_type: str, booking_id: str, customer_info: dict) -> str:
-    """
-    Confirm a booking reservation.
+    """Confirm a booking reservation.
+    
+    Returns:
+        JSON string containing confirmation details including confirmation number,
+        booking status, customer information, and next steps.
     """
     confirmation_number = f"CONF-{booking_type.upper()}-{booking_id}"
     
@@ -504,9 +541,16 @@ def confirm_booking(booking_type: str, booking_id: str, customer_info: dict) -> 
         "confirmation": confirmation_data
     })
 
+
+# Mock hotel availability check tool
 def check_hotel_availability(hotel_name: str, check_in: str, check_out: str, rooms: int = 1) -> str:
-    """
-    Check availability for hotel rooms.
+    """Check availability for hotel rooms.
+    
+    Sample Date format: "December 15, 2025"
+    
+    Returns:
+        JSON string containing availability status, available rooms count, price per night,
+        and last checked timestamp.
     """
     availability_status = "Available"
     
@@ -526,9 +570,16 @@ def check_hotel_availability(hotel_name: str, check_in: str, check_out: str, roo
         "availability": availability_data
     })
 
+
+# Mock flight availability check tool
 def check_flight_availability(flight_number: str, date: str, passengers: int = 1) -> str:
-    """
-    Check availability for flight seats.
+    """Check availability for flight seats.
+    
+    Sample Date format: "December 15, 2025"
+    
+    Returns:
+        JSON string containing availability status, available seats count, price per passenger,
+        and last checked timestamp.
     """
     availability_status = "Available"
     
@@ -547,9 +598,16 @@ def check_flight_availability(flight_number: str, date: str, passengers: int = 1
         "availability": availability_data
     })
 
+
+# Mock activity availability check tool
 def check_activity_availability(activity_name: str, date: str, participants: int = 1) -> str:
-    """
-    Check availability for activity bookings.
+    """Check availability for activity bookings.
+    
+    Sample Date format: "December 16, 2025"
+    
+    Returns:
+        JSON string containing availability status, available spots count, price per person,
+        and last checked timestamp.
     """
     availability_status = "Available"
     
@@ -568,9 +626,14 @@ def check_activity_availability(activity_name: str, date: str, participants: int
         "availability": availability_data
     })
 
+
+# Mock payment processing tool
 def process_payment(amount: float, currency: str, payment_method: dict, booking_reference: str) -> str:
-    """
-    Process payment for a booking.
+    """Process payment for a booking.
+    
+    Returns:
+        JSON string containing payment result with transaction ID, status, amount, currency,
+        payment method details, and receipt URL.
     """
     transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     
@@ -590,9 +653,14 @@ def process_payment(amount: float, currency: str, payment_method: dict, booking_
         "payment_result": payment_result
     })
 
+
+# Mock payment validation tool
 def validate_payment_method(payment_method: dict) -> str:
-    """
-    Validate payment method details.
+    """Validate payment method details.
+    
+    Returns:
+        JSON string containing validation result with is_valid flag, payment method type,
+        validation messages, supported currencies, and processing fee information.
     """
     method_type = payment_method.get("type", "credit_card")
     

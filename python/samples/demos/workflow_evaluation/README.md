@@ -13,12 +13,7 @@ The evaluation uses four Azure AI built-in evaluators:
 
 ## Setup
 
-Create a `.env` file with required configuration:
-
-```env
-AZURE_AI_PROJECT_ENDPOINT=<your-project-endpoint>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=<your-model-deployment>
-```
+Create a `.env` file with configuration as in the `.env.example` file in this folder.
 
 ## Running the Evaluation
 
