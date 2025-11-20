@@ -168,7 +168,7 @@ async def main() -> None:
         .add_handoff(delivery, billing)  # Delivery can escalate to billing
         # Termination condition: Stop when more than 3 user messages exist.
         # This allows agents to respond to the 3rd user message before the 4th triggers termination.
-        # In this sample: initial message + 2 scripted responses = 3 messages, then 4th message ends workflow.
+        # In this sample: initial message + 3 scripted responses = 4 messages, then workflow ends.
         .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") > 3)
         .build()
     )
