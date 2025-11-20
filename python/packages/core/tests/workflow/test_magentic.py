@@ -10,13 +10,13 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
     BaseAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Executor,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
@@ -561,8 +561,12 @@ async def _collect_agent_responses_setup(participant_obj: object):
         events.append(ev)
         if isinstance(ev, WorkflowOutputEvent):
             break
-        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
-            captured.append(ev.message)
+        if isinstance(ev, AgentRunUpdateEvent) and ev.data is not None:
+            captured.append(
+                ChatMessage(
+                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                )
+            )
         if len(events) > 50:
             break
 

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -19,15 +19,13 @@ from agent_framework import (
     AgentRunResponseUpdate,
     ChatClientProtocol,
     ChatMessage,
-    FunctionCallContent,
-    FunctionResultContent,
     Role,
 )
 
 from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
-from ._events import WorkflowEvent
+from ._events import AgentRunUpdateEvent, WorkflowEvent
 from ._executor import Executor, handler
 from ._group_chat import (
     GroupChatBuilder,
@@ -104,64 +102,13 @@ def _message_from_payload(payload: Any) -> ChatMessage:
     raise TypeError("Unable to reconstruct ChatMessage from payload")
 
 
-# region Unified callback API (developer-facing)
+# region Magentic event metadata constants
 
+# Event type identifiers for magentic_event_type in additional_properties
+MAGENTIC_EVENT_TYPE_ORCHESTRATOR = "orchestrator_message"
+MAGENTIC_EVENT_TYPE_AGENT_DELTA = "agent_delta"
 
-@dataclass
-class MagenticOrchestratorMessageEvent(WorkflowEvent):
-    orchestrator_id: str = ""
-    message: ChatMessage | None = None
-    kind: str = ""
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-@dataclass
-class MagenticAgentDeltaEvent(WorkflowEvent):
-    agent_id: str | None = None
-    text: str | None = None
-    function_call_id: str | None = None
-    function_call_name: str | None = None
-    function_call_arguments: Any | None = None
-    function_result_id: str | None = None
-    function_result: Any | None = None
-    role: Role | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.text)
-
-
-@dataclass
-class MagenticAgentMessageEvent(WorkflowEvent):
-    agent_id: str = ""
-    message: ChatMessage | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-@dataclass
-class MagenticFinalResultEvent(WorkflowEvent):
-    message: ChatMessage | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-MagenticCallbackEvent = Union[
-    MagenticOrchestratorMessageEvent,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
-    MagenticFinalResultEvent,
-]
-
-
-class CallbackSink(Protocol):
-    async def __call__(self, event: MagenticCallbackEvent) -> None: ...
-
-
-# endregion Unified callback API
+# endregion Magentic event metadata constants
 
 # region Magentic One Prompts
 
@@ -1020,9 +967,8 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
     ) -> None:
         """Emit orchestrator message to the workflow event stream.
 
-        Orchestrator messages flow through the unified workflow event stream as
-        MagenticOrchestratorMessageEvent instances. Consumers should subscribe to
-        these events via workflow.run_stream().
+        Emits an AgentRunUpdateEvent (for agent wrapper consumers) with metadata indicating
+        the orchestrator event type.
 
         Args:
             ctx: Workflow context for adding events to the stream
@@ -1031,15 +977,24 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         Example:
             async for event in workflow.run_stream("task"):
-                if isinstance(event, MagenticOrchestratorMessageEvent):
-                    print(f"Orchestrator {event.kind}: {event.message.text}")
+                if isinstance(event, AgentRunUpdateEvent):
+                    props = event.data.additional_properties if event.data else None
+                    if props and props.get("magentic_event_type") == "orchestrator_message":
+                        kind = props.get("orchestrator_message_kind", "")
+                        print(f"Orchestrator {kind}: {event.data.text}")
         """
-        event = MagenticOrchestratorMessageEvent(
-            orchestrator_id=self.id,
-            message=message,
-            kind=kind,
+        # Emit AgentRunUpdateEvent with metadata
+        update = AgentRunResponseUpdate(
+            text=message.text,
+            role=message.role,
+            author_name=self._get_author_name(),
+            additional_properties={
+                "magentic_event_type": MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
+                "orchestrator_message_kind": kind,
+                "orchestrator_id": self.id,
+            },
         )
-        await ctx.add_event(event)
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -1524,7 +1479,6 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         # Emit a completed event for the workflow
         await context.yield_output(final_answer)
-        await context.add_event(MagenticFinalResultEvent(message=final_answer))
 
     async def _check_within_limits_or_complete(
         self,
@@ -1556,7 +1510,6 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
                 # Yield the partial result and signal completion
                 await context.yield_output(partial_result)
-                await context.add_event(MagenticFinalResultEvent(message=partial_result))
             return False
 
         return True
@@ -1733,45 +1686,23 @@ class MagenticAgentExecutor(Executor):
         ctx: WorkflowContext[Any, Any],
         update: AgentRunResponseUpdate,
     ) -> None:
-        contents = list(getattr(update, "contents", []) or [])
-        chunk = getattr(update, "text", None)
-        if not chunk:
-            chunk = "".join(getattr(item, "text", "") for item in contents if hasattr(item, "text"))
-        if chunk:
-            await ctx.add_event(
-                MagenticAgentDeltaEvent(
-                    agent_id=self._agent_id,
-                    text=chunk or None,
-                    role=getattr(update, "role", None),
-                )
-            )
-        for item in contents:
-            if isinstance(item, FunctionCallContent):
-                await ctx.add_event(
-                    MagenticAgentDeltaEvent(
-                        agent_id=self._agent_id,
-                        function_call_id=getattr(item, "call_id", None),
-                        function_call_name=getattr(item, "name", None),
-                        function_call_arguments=getattr(item, "arguments", None),
-                        role=getattr(update, "role", None),
-                    )
-                )
-            elif isinstance(item, FunctionResultContent):
-                await ctx.add_event(
-                    MagenticAgentDeltaEvent(
-                        agent_id=self._agent_id,
-                        function_result_id=getattr(item, "call_id", None),
-                        function_result=getattr(item, "result", None),
-                        role=getattr(update, "role", None),
-                    )
-                )
+        # Add metadata to identify this as an agent streaming update
+        if update.additional_properties is None:
+            update.additional_properties = {}
+        update.additional_properties["magentic_event_type"] = MAGENTIC_EVENT_TYPE_AGENT_DELTA
+        update.additional_properties["agent_id"] = self._agent_id
+
+        # Emit AgentRunUpdateEvent with the agent response update
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self._agent_id, data=update))
 
     async def _emit_agent_message_event(
         self,
         ctx: WorkflowContext[Any, Any],
         message: ChatMessage,
     ) -> None:
-        await ctx.add_event(MagenticAgentMessageEvent(agent_id=self._agent_id, message=message))
+        # Agent message completion is already communicated via streaming updates
+        # No additional event needed
+        pass
 
     async def _invoke_agent(
         self,

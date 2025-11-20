@@ -236,8 +236,9 @@ class WorkflowAgent(BaseAgent):
     ) -> AgentRunResponseUpdate | None:
         """Convert a workflow event to an AgentRunResponseUpdate.
 
-        Only AgentRunUpdateEvent and RequestInfoEvent are processed and the rest
-        are not relevant. Returns None if the event is not relevant.
+        Only AgentRunUpdateEvent and RequestInfoEvent are processed.
+        Other workflow events are ignored as they are workflow-internal and should
+        have corresponding AgentRunUpdateEvent emissions if relevant to agent consumers.
         """
         match event:
             case AgentRunUpdateEvent(data=update):
@@ -271,9 +272,8 @@ class WorkflowAgent(BaseAgent):
                     created_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 )
             case _:
-                # Ignore non-agent workflow events
+                # Ignore workflow-internal events
                 pass
-        # We only care about the above two events and discard the rest.
         return None
 
     def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
