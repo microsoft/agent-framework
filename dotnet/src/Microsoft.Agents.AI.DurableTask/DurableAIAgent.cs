@@ -99,6 +99,8 @@ public sealed class DurableAIAgent : AIAgent
         }
 
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
+        request.OrchestrationId = this._context.InstanceId;
+
         try
         {
             return await this._context.Entities.CallEntityAsync<AgentRunResponse>(
