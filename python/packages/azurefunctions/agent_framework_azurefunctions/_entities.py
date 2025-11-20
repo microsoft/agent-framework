@@ -391,8 +391,9 @@ def create_agent_entity(
                 logger.error("[entity_function] Unknown operation: %s", operation)
                 context.set_result({"error": f"Unknown operation: {operation}"})
 
-            logger.debug("State dict: %s", entity.state.to_dict())
-            context.set_state(entity.state.to_dict())
+            serialized_state = entity.state.to_dict()
+            logger.debug("State dict: %s", serialized_state)
+            context.set_state(serialized_state)
             logger.info(f"[entity_function] Operation {operation} completed successfully")
 
         except Exception as exc:

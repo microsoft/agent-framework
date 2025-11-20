@@ -110,10 +110,10 @@ class DurableAIAgent(AgentProtocol):
             messages: The message(s) to send to the agent
             thread: Optional agent thread for conversation context
             response_format: Optional Pydantic model for response parsing
-            **kwargs: Additional arguments (enable_tool_calls, response_format, etc.)
+            **kwargs: Additional arguments (enable_tool_calls)
 
         Returns:
-            Task that will resolve to the agent response
+            Yield a task that will resolve to the agent response
 
         Example:
             @app.orchestration_trigger(context_name="context")
@@ -167,9 +167,8 @@ class DurableAIAgent(AgentProtocol):
         result = yield self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
 
         logger.debug(
-            "[DurableAIAgent] Entity call completed for correlation_id %s; raw result type: %s",
+            "[DurableAIAgent] Entity call completed for correlation_id %s",
             correlation_id,
-            type(result),
         )
 
         response = self._load_agent_response(result)
