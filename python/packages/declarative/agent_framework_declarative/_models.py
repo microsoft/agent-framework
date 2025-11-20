@@ -23,15 +23,20 @@ logger = get_logger("agent_framework.declarative")
 
 
 @overload
-def _try_powerfx_eval(value: None) -> None: ...
+def _try_powerfx_eval(value: None, log_value: bool = True) -> None: ...
 
 
 @overload
-def _try_powerfx_eval(value: str) -> str: ...
+def _try_powerfx_eval(value: str, log_value: bool = True) -> str: ...
 
 
 def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
-    """Check if a value refers to a environment variable and parse it if so."""
+    """Check if a value refers to a environment variable and parse it if so.
+
+    Args:
+        value: The value to check.
+        log_value: Whether to log the full value on error or just a snippet.
+    """
     if value is None:
         return value
     if not value.startswith("="):
@@ -39,7 +44,7 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
     if engine is None:
         logger.warning(
             "PowerFx engine not available for evaluating values starting with '='. "
-            "Ensure you are on python 3.13 or less and have the powerfx package installed."
+            "Ensure you are on python 3.13 or less and have the powerfx package installed. "
             "Otherwise replace all powerfx statements in your yaml with strings."
         )
         return value
@@ -47,7 +52,7 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.info("PowerFx evaluation failed for value '%s': %s", value, exc)
+            logger.debug("PowerFx evaluation failed for value '%s': %s", value, exc)
         else:
             logger.debug("PowerFx evaluation failed for value (first five characters shown) '%s': %s", value[:5], exc)
         return value
