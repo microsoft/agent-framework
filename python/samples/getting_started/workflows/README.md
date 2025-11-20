@@ -82,9 +82,7 @@ Once comfortable with these, explore the rest of the samples below.
 
 ### observability
 
-| Sample | File | Concepts |
-|---|---|---|
-| Tracing (Basics) | [observability/tracing_basics.py](./observability/tracing_basics.py) | Use basic tracing for workflow telemetry. Refer to this [directory](../observability/) to learn more about observability concepts. |
+For observability samples in Agent Framework, see the [observability getting started samples](../observability/README.md). The [sample](../observability/workflow_observability.py) demonstrates integrating observability into workflows.
 
 ### orchestration
 
