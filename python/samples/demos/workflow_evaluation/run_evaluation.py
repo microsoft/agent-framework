@@ -120,8 +120,9 @@ def create_evaluation(openai_client, model_deployment: str):
         testing_criteria=testing_criteria,
     )
     
+    evaluator_names = [criterion["name"] for criterion in testing_criteria]
     print(f"Evaluation created: {eval_object.id}")
-    print(f"Evaluators: {len(testing_criteria)}")
+    print(f"Evaluators ({len(evaluator_names)}): {', '.join(evaluator_names)}")
     
     return eval_object
 
