@@ -1104,6 +1104,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1112,7 +1113,7 @@ def _trace_agent_run(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1173,6 +1174,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1181,7 +1183,7 @@ def _trace_agent_run_stream(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:

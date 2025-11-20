@@ -321,6 +321,26 @@ async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: In
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
+async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
+    """Ensure ai_function tools drop unknown kwargs when invoked with validated arguments."""
+
+    @ai_function
+    async def simple_tool(message: str) -> str:
+        """Echo tool."""
+        return message.upper()
+
+    args = simple_tool.input_model(message="hello world")
+
+    # These kwargs simulate runtime context passed through function invocation.
+    result = await simple_tool.invoke(
+        arguments=args,
+        api_token="secret-token",
+        chat_options={"model_id": "dummy"},
+    )
+
+    assert result == "HELLO WORLD"
+
+
 async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
     """Test the ai_function invoke method with Pydantic model arguments."""
 
