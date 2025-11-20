@@ -83,8 +83,7 @@ internal sealed partial class DevUIMiddleware
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
             context.Response.Headers.Location = redirectUrl;
 
-            var sanitizedRedirectUrl = NewlineRegex().Replace(redirectUrl, "");
-            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", path, sanitizedRedirectUrl);
+            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", NewlineRegex().Replace(path, ""), NewlineRegex().Replace(redirectUrl, ""));
             return;
         }
 
