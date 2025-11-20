@@ -23,30 +23,38 @@ logger = get_logger("agent_framework.declarative")
 
 
 @overload
-def _try_powerfx_eval(value: None) -> None: ...
+def _try_powerfx_eval(value: None, log_value: bool = True) -> None: ...
 
 
 @overload
-def _try_powerfx_eval(value: str) -> str: ...
+def _try_powerfx_eval(value: str, log_value: bool = True) -> str: ...
 
 
-def _try_powerfx_eval(value: str | None) -> str | None:
-    """Check if a value refers to a environment variable and parse it if so."""
+def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
+    """Check if a value refers to a environment variable and parse it if so.
+
+    Args:
+        value: The value to check.
+        log_value: Whether to log the full value on error or just a snippet.
+    """
     if value is None:
         return value
     if not value.startswith("="):
         return value
     if engine is None:
         logger.warning(
-            f"PowerFx engine not available for evaluating value: {value}"
-            "Ensure you are on python 3.13 or less and have the powerfx package installed."
+            "PowerFx engine not available for evaluating values starting with '='. "
+            "Ensure you are on python 3.13 or less and have the powerfx package installed. "
             "Otherwise replace all powerfx statements in your yaml with strings."
         )
         return value
     try:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
-        logger.info("PowerFx evaluation failed for value '%s': %s", value, exc)
+        if log_value:
+            logger.debug("PowerFx evaluation failed for value '%s': %s", value, exc)
+        else:
+            logger.debug("PowerFx evaluation failed for value (first five characters shown) '%s': %s", value[:5], exc)
         return value
 
 
@@ -324,7 +332,7 @@ class ApiKeyConnection(Connection):
         )
         self.endpoint = _try_powerfx_eval(endpoint)
         # Support both 'apiKey' and 'key' fields, with 'key' taking precedence if both are provided
-        self.apiKey = _try_powerfx_eval(key if key else apiKey)
+        self.apiKey = _try_powerfx_eval(key if key else apiKey, False)
 
 
 class AnonymousConnection(Connection):

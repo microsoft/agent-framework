@@ -5,7 +5,7 @@ import re
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from copy import copy
+from copy import deepcopy
 from itertools import chain
 from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast, runtime_checkable
 from uuid import uuid4
@@ -1245,7 +1245,7 @@ class ChatAgent(BaseAgent):
         Raises:
             AgentExecutionException: If the conversation IDs on the thread and agent don't match.
         """
-        chat_options = copy(self.chat_options) if self.chat_options else ChatOptions()
+        chat_options = deepcopy(self.chat_options) if self.chat_options else ChatOptions()
         thread = thread or self.get_new_thread()
         if thread.service_thread_id and thread.context_provider:
             await thread.context_provider.thread_created(thread.service_thread_id)

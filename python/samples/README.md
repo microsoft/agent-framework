@@ -184,8 +184,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py`](./getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
-| [`getting_started/evaluation/azure_ai_foundry/evaluation/self_reflection.py`](./getting_started/evaluation/azure_ai_foundry/evaluation/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
+| [`getting_started/evaluation/azure_ai_foundry/red_teaming/red_team_agent_sample.py`](./getting_started/evaluation/azure_ai_foundry/red_teaming/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
+| [`getting_started/evaluation/azure_ai_foundry/self_reflection/self_reflection.py`](./getting_started/evaluation/azure_ai_foundry/self_reflection/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
 
 ## MCP (Model Context Protocol)
 
