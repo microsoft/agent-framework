@@ -74,7 +74,7 @@ internal sealed partial class DevUIMiddleware
         // This ensures relative URLs in the HTML work correctly
         if (string.Equals(path, this._basePath, StringComparison.OrdinalIgnoreCase) && !path.EndsWith('/'))
         {
-            var redirectUrl = $"{path}/";
+            var redirectUrl = this._basePath + "/";
             if (context.Request.QueryString.HasValue)
             {
                 redirectUrl += context.Request.QueryString.Value;
