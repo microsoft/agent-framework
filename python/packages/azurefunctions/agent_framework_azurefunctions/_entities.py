@@ -154,11 +154,8 @@ class AgentEntity:
                 type(agent_run_response).__name__,
             )
 
-            response_text = None
-
             try:
-                raw_text = agent_run_response.text
-                response_text = raw_text if raw_text else "No response"
+                response_text = agent_run_response.text if agent_run_response.text else "No response"
                 logger.debug(f"Response: {response_text[:100]}...")
             except Exception as extraction_error:
                 logger.error(
@@ -166,7 +163,6 @@ class AgentEntity:
                     extraction_error,
                     exc_info=True,
                 )
-                response_text = "Error extracting response"
 
             state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
             self.state.data.conversation_history.append(state_response)
