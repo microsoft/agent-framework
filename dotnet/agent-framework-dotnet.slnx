@@ -101,6 +101,7 @@
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/FoundryAgents/">
     <File Path="samples/GettingStarted/FoundryAgents/README.md" />
