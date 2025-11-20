@@ -40,6 +40,21 @@ app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI());
 var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
 app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
 
+app.MapAGUI("/agents/{agentId}", async (context) =>
+{
+    var agentId = context.Request.RouteValues["agentId"]?.ToString() ?? string.Empty;
+    return agentId switch
+    {
+        "agentic_chat" => ChatClientAgentFactory.CreateAgenticChat(),
+        "backend_tool_rendering" => ChatClientAgentFactory.CreateBackendToolRendering(),
+        "human_in_the_loop" => ChatClientAgentFactory.CreateHumanInTheLoop(),
+        "tool_based_generative_ui" => ChatClientAgentFactory.CreateToolBasedGenerativeUI(),
+        "agentic_generative_ui" => ChatClientAgentFactory.CreateAgenticUI(),
+        "shared_state" => ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions),
+        _ => throw new ArgumentException($"Unknown agent ID: {agentId}"),
+    };
+});
+
 await app.RunAsync();
 
 public partial class Program { }

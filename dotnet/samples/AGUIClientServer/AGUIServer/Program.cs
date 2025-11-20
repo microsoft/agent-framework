@@ -48,4 +48,14 @@ var agent = new AzureOpenAIClient(
 // Map the AG-UI agent endpoint
 app.MapAGUI("/", agent);
 
+app.MapAGUI("/agents/{agentId}", async (context) =>
+{
+    var agentId = context.Request.RouteValues["agentId"]?.ToString() ?? string.Empty;
+    return agentId switch
+    {
+        "0" => agent,
+        _ => throw new ArgumentException($"Unknown agent ID: {agentId}"),
+    };
+});
+
 await app.RunAsync();
