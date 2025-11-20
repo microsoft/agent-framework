@@ -1,3 +1,18 @@
+# Copyright (c) Microsoft. All rights reserved.
+# type: ignore
+import asyncio
+import os
+import time
+import argparse
+import pandas as pd
+from typing import Any
+from dotenv import load_dotenv
+
+from agent_framework import ChatAgent, ChatMessage
+from agent_framework.azure import AzureOpenAIChatClient
+from azure.identity import AzureCliCredential
+from azure.ai.evaluation import GroundednessEvaluator, AzureOpenAIModelConfiguration
+
 """
 Self-Reflection LLM Runner
 
@@ -20,19 +35,6 @@ Usage as CLI with extra options:
                               --max-reflections 3 \\
                               -n 10  # Optional: process only first 10 prompts
 """
-
-import asyncio
-import os
-import time
-import argparse
-import pandas as pd
-from typing import Dict, Any, Optional
-from dotenv import load_dotenv
-
-from agent_framework import ChatAgent, ChatMessage
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
-from azure.ai.evaluation import GroundednessEvaluator, AzureOpenAIModelConfiguration
 
 
 DEFAULT_AGENT_MODEL = "gpt-4.1"

@@ -154,7 +154,7 @@ async def test_endpoint_error_handling():
     assert response.status_code == 200
     content = json.loads(response.content)
     assert "error" in content
-    assert "Expecting value" in content["error"]
+    assert content["error"] == "An internal error has occurred."
 
 
 async def test_endpoint_multiple_paths():

@@ -589,7 +589,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):
 
     except Exception as e:
         logger.error(f"Error uploading file for attachment {attachment_id}: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"error": f"Failed to upload file: {str(e)}"})
+        return JSONResponse(status_code=500, content={"error": "Failed to upload file."})
 
 
 @app.get("/preview/{attachment_id}")
@@ -620,7 +620,7 @@ async def preview_image(attachment_id: str):
 
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        return JSONResponse(status_code=500, content={"error": "Error serving preview for attachment."})
 
 
 if __name__ == "__main__":
