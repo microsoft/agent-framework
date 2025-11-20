@@ -3173,6 +3173,40 @@ class ChatOptions(SerializationMixin):
         self.top_p = top_p
         self.user = user
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
+        """Create a runtime-safe copy without deep-copying tool instances."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for key, value in self.__dict__.items():
+            if key == "_tools":
+                setattr(clone, key, list(value) if value is not None else None)
+                continue
+            if key in {"logit_bias", "metadata", "additional_properties"}:
+                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
+                continue
+            setattr(clone, key, self._safe_deepcopy_value(value, memo))
+        return clone
+
+    @staticmethod
+    def _safe_deepcopy_mapping(
+        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
+    ) -> MutableMapping[str, Any] | None:
+        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
+        if value is None:
+            return None
+        try:
+            return deepcopy(value, memo)  # type: ignore[arg-type]
+        except Exception:
+            return dict(value)
+
+    @staticmethod
+    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
+        """Deep copy helper that avoids failing on non-copyable instances."""
+        try:
+            return deepcopy(value, memo)
+        except Exception:
+            return value
+
     @property
     def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
         """Return the tools that are specified."""
