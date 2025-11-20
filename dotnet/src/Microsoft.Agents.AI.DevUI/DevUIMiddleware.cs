@@ -4,6 +4,7 @@ using System.Collections.Frozen;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
@@ -13,8 +14,11 @@ namespace Microsoft.Agents.AI.DevUI;
 /// <summary>
 /// Handler that serves embedded DevUI resource files from the 'resources' directory.
 /// </summary>
-internal sealed class DevUIMiddleware
+internal sealed partial class DevUIMiddleware
 {
+    [GeneratedRegex(@"[\r\n]+")]
+    private static partial Regex NewlineRegex();
+
     private const string GZipEncodingValue = "gzip";
     private static readonly StringValues s_gzipEncodingHeader = new(GZipEncodingValue);
     private static readonly Assembly s_assembly = typeof(DevUIMiddleware).Assembly;
@@ -78,7 +82,9 @@ internal sealed class DevUIMiddleware
 
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
             context.Response.Headers.Location = redirectUrl;
-            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", path, redirectUrl);
+
+            var sanitizedRedirectUrl = NewlineRegex().Replace(redirectUrl, "");
+            this._logger.LogDebug("Redirecting {OriginalPath} to {RedirectUrl}", path, sanitizedRedirectUrl);
             return;
         }
 
