@@ -3,7 +3,7 @@
 import logging
 from collections.abc import MutableSequence
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -22,6 +22,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Role,
     UsageDetails,
+    ai_function,
     prepend_agent_framework_to_user_agent,
 )
 from agent_framework.exceptions import AgentInitializationError, ChatClientInitializationError
@@ -478,32 +479,46 @@ async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
         assert span.attributes.get(OtelAttr.OUTPUT_MESSAGES) is not None  # Streaming, so no usage yet
 
 
-async def test_agent_run_with_exception_handling(mock_chat_agent: AgentProtocol):
-    """Test agent run with exception handling."""
+async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
+    """Test that function call errors are properly captured in telemetry."""
 
-    async def run_with_error(self, messages=None, *, thread=None, **kwargs):
-        raise RuntimeError("Agent run error")
+    # Create a function that raises an error using the decorator
+    @ai_function(name="failing_function", description="A function that fails")
+    async def failing_function(param: str) -> str:
+        raise ValueError("Function execution failed")
 
-    mock_chat_agent.run = run_with_error
+    span_exporter.clear()
 
-    agent = use_agent_observability(mock_chat_agent)()
+    # Execute function and expect it to raise an error
+    with pytest.raises(ValueError, match="Function execution failed"):
+        await failing_function.invoke(param="test_value", tool_call_id="test_call_456")
 
-    from opentelemetry.trace import Span
+    # Verify span was created and error was captured
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
 
-    with (
-        patch("agent_framework.observability._get_span") as mock_get_span,
-    ):
-        mock_span = MagicMock(spec=Span)
-        # Ensure the patched context manager returns mock_span when entered
-        mock_get_span.return_value.__enter__.return_value = mock_span
-        # Should raise the exception and call error handler
-        with pytest.raises(RuntimeError, match="Agent run error"):
-            await agent.run("Test message")
+    # Verify span name and basic attributes
+    assert span.name == "execute_tool failing_function"
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.OPERATION.value] == OtelAttr.TOOL_EXECUTION_OPERATION
+    assert span.attributes[OtelAttr.TOOL_NAME] == "failing_function"
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_456"
 
-        # Verify error was recorded
-        # Check that both error attributes were set on the span
-        mock_span.set_attribute.assert_called_with(OtelAttr.ERROR_TYPE, "RuntimeError")
-        mock_span.record_exception.assert_called_once()
-        mock_span.set_status.assert_called_once_with(
-            status=StatusCode.ERROR, description=repr(RuntimeError("Agent run error"))
-        )
+    # Verify error status was set
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description is not None
+    assert "Function execution failed" in span.status.description
+
+    # Verify error type attribute was set
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+
+    # Verify exception event was recorded
+    assert len(span.events) > 0
+    exception_event = next((e for e in span.events if e.name == "exception"), None)
+    assert exception_event is not None
+    assert exception_event.attributes is not None
+    assert exception_event.attributes["exception.type"] == "ValueError"
+    exception_message = exception_event.attributes["exception.message"]
+    assert isinstance(exception_message, str)
+    assert "Function execution failed" in exception_message

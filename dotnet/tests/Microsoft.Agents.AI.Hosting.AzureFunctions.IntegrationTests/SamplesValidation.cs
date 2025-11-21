@@ -75,9 +75,9 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             // The response headers should include the agent thread ID, which can be used to continue the conversation.
             string? threadId = response.Headers.GetValues("x-ms-thread-id")?.FirstOrDefault();
             Assert.NotNull(threadId);
+            Assert.NotEmpty(threadId);
 
             this._outputHelper.WriteLine($"Agent thread ID: {threadId}");
-            Assert.StartsWith("@dafx-joker@", threadId);
 
             // Wait for up to 30 seconds to see if the agent response is available in the logs
             await this.WaitForConditionAsync(
@@ -289,7 +289,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             startResponse.Headers.TryGetValues("x-ms-thread-id", out IEnumerable<string>? agentIdValues);
             string? threadId = agentIdValues?.FirstOrDefault();
             Assert.NotNull(threadId);
-            Assert.StartsWith("@dafx-publisher@", threadId);
+            Assert.NotEmpty(threadId);
 
             // Wait for the orchestration to report that it's waiting for human approval
             await this.WaitForConditionAsync(

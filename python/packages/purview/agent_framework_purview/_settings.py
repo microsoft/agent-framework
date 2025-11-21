@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 from enum import Enum
 
 from agent_framework._pydantic import AFBaseSettings
