@@ -28,6 +28,7 @@ def __getattr__(name: str) -> Any:
             return getattr(importlib.import_module(import_path), name)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
+                f"The package {package_name} is required to use `{name}`. "
                 f"Please use `pip install {package_name}`, or update your requirements.txt or pyproject.toml file."
             ) from exc
     raise AttributeError(f"Module `microsoft` has no attribute {name}.")
