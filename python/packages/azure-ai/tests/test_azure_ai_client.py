@@ -31,38 +31,15 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
 
 
-def _integration_test_skip_reason() -> str | None:
-    """Return a skip reason for Azure AI integration tests or None if all prerequisites are met.
-
-    Rules:
-    - RUN_INTEGRATION_TESTS must be set to true.
-    - Endpoint and model env vars must be provided and not equal to placeholder endpoint.
-    """
-    run_tests = os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    if not run_tests:
-        return "Integration tests are disabled."
-
-    endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT", "")
-    model = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "")
-    placeholder_endpoint = "https://test-project.cognitiveservices.azure.com/"
-    missing_endpoint = endpoint in ("", placeholder_endpoint)
-    missing_model = model == ""
-
-    if missing_endpoint and missing_model:
-        return "Azure AI project endpoint and model deployment name missing; skipping integration tests."
-    if missing_endpoint:
-        return "Azure AI project endpoint missing; skipping integration tests."
-    if missing_model:
-        return "Azure AI model deployment name missing; skipping integration tests."
-    return None
-
-
-_skip_reason = _integration_test_skip_reason()
-
-
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    _skip_reason is not None,
-    reason=_skip_reason or "",
+    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
+    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
+    or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
+    reason=(
+        "No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests."
+        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+        else "Integration tests are disabled."
+    ),
 )
 
 
