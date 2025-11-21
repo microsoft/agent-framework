@@ -3,12 +3,10 @@
 import asyncio
 import os
 
-from dotenv import load_dotenv
-
 from agent_framework import ChatAgent
-from agent_framework_aisearch import AzureAISearchContextProvider
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import DefaultAzureCredential
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()

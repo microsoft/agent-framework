@@ -27,6 +27,7 @@
         "aiplatform",
         "azuredocindex",
         "azuredocs",
+        "azurefunctions",
         "boto",
         "contentvector",
         "contoso",
