@@ -275,7 +275,7 @@ async def get_orchestration_status(
         show_history_output=False,
         show_input=True,
     )
-    
+
     # Check if status is None or if the instance doesn't exist (runtime_status is None)
     if status is None or getattr(status, "runtime_status", None) is None:
         return func.HttpResponse(

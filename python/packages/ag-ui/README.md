@@ -16,7 +16,7 @@ pip install agent-framework-ag-ui
 from fastapi import FastAPI
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
 agent = ChatAgent(
@@ -41,7 +41,7 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 ```python
 import asyncio
 from agent_framework import TextContent
-from agent_framework_ag_ui import AGUIChatClient
+from agent_framework.ag_ui import AGUIChatClient
 
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
