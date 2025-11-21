@@ -23,8 +23,7 @@ import logging
 import os
 
 from agent_framework import ChatAgent, FunctionCallContent, FunctionResultContent, TextContent, ai_function
-
-from agent_framework_ag_ui import AGUIChatClient
+from agent_framework.ag_ui import AGUIChatClient
 
 # Enable debug logging
 logging.basicConfig(
