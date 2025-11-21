@@ -20,7 +20,6 @@ from agent_framework import (
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    PromptAgentDefinition,
     ResponseTextFormatConfigurationJsonSchema,
 )
 from azure.identity.aio import AzureCliCredential
@@ -50,27 +49,18 @@ async def temporary_chat_client(agent_name: str) -> AsyncIterator[AzureAIClient]
     Tests can construct their own `ChatAgent` instances from the yielded client.
     """
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
     ):
-        azure_ai_agent = await project_client.agents.create_version(
-            agent_name=agent_name,
-            definition=PromptAgentDefinition(model=model),
-        )
-
         chat_client = AzureAIClient(
             project_client=project_client,
-            agent_name=azure_ai_agent.name,
-            agent_version=azure_ai_agent.version,
+            agent_name=agent_name,
         )
         try:
             yield chat_client
         finally:
-            await project_client.agents.delete_version(
-                agent_name=azure_ai_agent.name, agent_version=azure_ai_agent.version
-            )
+            await project_client.agents.delete(agent_name=agent_name)
 
 
 def create_test_azure_ai_client(
