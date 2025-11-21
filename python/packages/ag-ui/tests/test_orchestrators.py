@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Tests for AG-UI orchestrators."""
 
 from collections.abc import AsyncGenerator

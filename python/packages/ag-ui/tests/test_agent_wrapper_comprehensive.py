@@ -7,6 +7,7 @@ import json
 import pytest
 from agent_framework import ChatAgent, TextContent
 from agent_framework._types import ChatResponseUpdate
+from pydantic import BaseModel
 
 
 async def test_agent_initialization_basic():
@@ -54,6 +55,28 @@ async def test_agent_initialization_with_predict_state_config():
     wrapper = AgentFrameworkAgent(agent=agent, predict_state_config=predict_config)
 
     assert wrapper.config.predict_state_config == predict_config
+
+
+async def test_agent_initialization_with_pydantic_state_schema():
+    """Test agent initialization when state_schema is provided as Pydantic model/class."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    class MockChatClient:
+        async def get_streaming_response(self, messages, chat_options, **kwargs):
+            yield ChatResponseUpdate(contents=[TextContent(text="Hello")])
+
+    class MyState(BaseModel):
+        document: str
+        tags: list[str] = []
+
+    agent = ChatAgent(name="test_agent", instructions="Test", chat_client=MockChatClient())
+
+    wrapper_class_schema = AgentFrameworkAgent(agent=agent, state_schema=MyState)
+    wrapper_instance_schema = AgentFrameworkAgent(agent=agent, state_schema=MyState(document="hi"))
+
+    expected_properties = MyState.model_json_schema().get("properties", {})
+    assert wrapper_class_schema.config.state_schema == expected_properties
+    assert wrapper_instance_schema.config.state_schema == expected_properties
 
 
 async def test_run_started_event_emission():

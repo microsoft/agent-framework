@@ -3,7 +3,7 @@
 """AgentFrameworkAgent wrapper for AG-UI protocol - Clean Architecture."""
 
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 from ag_ui.core import BaseEvent
 from agent_framework import AgentProtocol
@@ -22,20 +22,47 @@ class AgentConfig:
 
     def __init__(
         self,
-        state_schema: dict[str, Any] | None = None,
+        state_schema: Any | None = None,
         predict_state_config: dict[str, dict[str, str]] | None = None,
         require_confirmation: bool = True,
     ):
         """Initialize agent configuration.
 
         Args:
-            state_schema: Optional state schema for state management
+            state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
             require_confirmation: Whether predictive updates require confirmation
         """
-        self.state_schema = state_schema or {}
+        self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
         self.require_confirmation = require_confirmation
+
+    @staticmethod
+    def _normalize_state_schema(state_schema: Any | None) -> dict[str, Any]:
+        """Accept dict or Pydantic model/class and return a properties dict."""
+        if state_schema is None:
+            return {}
+
+        if isinstance(state_schema, dict):
+            return cast(dict[str, Any], state_schema)
+
+        base_model_type: type[Any] | None
+        try:
+            from pydantic import BaseModel as ImportedBaseModel
+
+            base_model_type = ImportedBaseModel
+        except Exception:  # pragma: no cover
+            base_model_type = None
+
+        if base_model_type is not None and isinstance(state_schema, base_model_type):
+            schema_dict = state_schema.__class__.model_json_schema()
+            return schema_dict.get("properties", {}) or {}
+
+        if base_model_type is not None and isinstance(state_schema, type) and issubclass(state_schema, base_model_type):
+            schema_dict = state_schema.model_json_schema()
+            return schema_dict.get("properties", {}) or {}
+
+        return {}
 
 
 class AgentFrameworkAgent:
@@ -55,7 +82,7 @@ class AgentFrameworkAgent:
         agent: AgentProtocol,
         name: str | None = None,
         description: str | None = None,
-        state_schema: dict[str, Any] | None = None,
+        state_schema: Any | None = None,
         predict_state_config: dict[str, dict[str, str]] | None = None,
         require_confirmation: bool = True,
         orchestrators: list[Orchestrator] | None = None,
@@ -67,7 +94,7 @@ class AgentFrameworkAgent:
             agent: The Agent Framework agent to wrap
             name: Optional name for the agent
             description: Optional description
-            state_schema: Optional state schema for state management
+            state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates.
                 Format: {"state_key": {"tool": "tool_name", "tool_argument": "arg_name"}}
             require_confirmation: Whether predictive updates require confirmation.

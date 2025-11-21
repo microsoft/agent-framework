@@ -70,6 +70,33 @@ async def test_endpoint_with_state_schema():
     assert response.status_code == 200
 
 
+async def test_endpoint_with_default_state_seed():
+    """Test endpoint seeds default state when client omits it."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
+    state_schema = {"proverbs": {"type": "array"}}
+    default_state = {"proverbs": ["Keep the original."]}
+
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/default-state",
+        state_schema=state_schema,
+        default_state=default_state,
+    )
+
+    client = TestClient(app)
+    response = client.post("/default-state", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    snapshots = [json.loads(line[6:]) for line in lines if json.loads(line[6:]).get("type") == "STATE_SNAPSHOT"]
+    assert snapshots, "Expected a STATE_SNAPSHOT event"
+    assert snapshots[0]["snapshot"]["proverbs"] == default_state["proverbs"]
+
+
 async def test_endpoint_with_predict_state_config():
     """Test endpoint with predict_state_config parameter."""
     app = FastAPI()

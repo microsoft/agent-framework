@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Tests for AGUIChatClient."""
 
 import json
