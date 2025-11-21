@@ -40,6 +40,7 @@ class EmailPayload(BaseModel):
     email_id: str
     email_content: str
 
+
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
     chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())

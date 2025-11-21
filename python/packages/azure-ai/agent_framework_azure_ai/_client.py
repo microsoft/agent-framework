@@ -310,8 +310,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return run_options
 
     async def initialize_client(self) -> None:
-        """Initialize OpenAI client asynchronously."""
-        self.client = await self.project_client.get_openai_client()  # type: ignore
+        """Initialize OpenAI client."""
+        self.client = self.project_client.get_openai_client()  # type: ignore
 
     def _update_agent_name(self, agent_name: str | None) -> None:
         """Update the agent name in the chat client.

@@ -15,7 +15,7 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.435" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.440" />
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.3" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.3" />
@@ -81,6 +81,10 @@
     <PackageVersion Include="Microsoft.SemanticKernel.Plugins.OpenApi" Version="1.67.0" />
     <!-- Agent SDKs -->
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.2.41" />
+    <!-- M365 Agents SDK -->
+    <PackageVersion Include="AdaptiveCards" Version="3.1.0" />
+    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.2.41" />
+    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.2.41" />
     <!-- A2A -->
     <PackageVersion Include="A2A" Version="0.3.3-preview" />
     <PackageVersion Include="A2A.AspNetCore" Version="0.3.3-preview" />

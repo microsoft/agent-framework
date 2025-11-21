@@ -25,7 +25,7 @@ const string AssistantName = "WeatherAssistant";
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
-ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather));
+ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)));
 
 // Create AIAgent directly
 AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, model: deploymentName, instructions: AssistantInstructions, tools: [approvalTool]);

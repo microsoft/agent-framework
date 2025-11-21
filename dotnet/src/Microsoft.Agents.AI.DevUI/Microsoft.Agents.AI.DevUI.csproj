@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFrameworks>net9.0</TargetFrameworks>
+    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Microsoft.Agents.AI.DevUI</RootNamespace>
@@ -10,6 +11,10 @@
     <VersionSuffix>preview</VersionSuffix>
     <!-- Suppress warnings for internal DevUI implementation -->
     <NoWarn>$(NoWarn);CS1591;CA1852;CA1050;RCS1037;RCS1036;RCS1124;RCS1021;RCS1146;RCS1211;CA2007;CA1308;IL2026;IL3050;CA1812</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 
   <!-- Import nuget packaging properties -->
@@ -33,4 +38,7 @@
     <Description>Provides Microsoft Agent Framework support for developer UI.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.DevUI.UnitTests"/>
+  </ItemGroup>
 </Project>

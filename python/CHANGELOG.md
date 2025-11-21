@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251120] - 2025-11-20
+
+### Added
+
+- **agent-framework-core**: Introducing support for declarative YAML spec ([#2002](https://github.com/microsoft/agent-framework/pull/2002))
+- **agent-framework-core**: Use AI Foundry evaluators for self-reflection ([#2250](https://github.com/microsoft/agent-framework/pull/2250))
+- **agent-framework-core**: Propagate `as_tool()` kwargs and add runtime context + middleware sample ([#2311](https://github.com/microsoft/agent-framework/pull/2311))
+- **agent-framework-anthropic**: Anthropic Foundry integration ([#2302](https://github.com/microsoft/agent-framework/pull/2302))
+- **samples**: M365 Agent SDK Hosting sample ([#2292](https://github.com/microsoft/agent-framework/pull/2292))
+- **samples**: Foundry Sample for A2A + SharePoint Samples ([#2313](https://github.com/microsoft/agent-framework/pull/2313))
+
+### Changed
+
+- **agent-framework-azurefunctions**: [BREAKING] Schema changes for Azure Functions package ([#2151](https://github.com/microsoft/agent-framework/pull/2151))
+- **agent-framework-core**: Move evaluation folders under `evaluations` ([#2355](https://github.com/microsoft/agent-framework/pull/2355))
+- **agent-framework-core**: Move red teaming files to their own folder ([#2333](https://github.com/microsoft/agent-framework/pull/2333))
+- **agent-framework-core**: "fix all" task now single source of truth ([#2303](https://github.com/microsoft/agent-framework/pull/2303))
+- **agent-framework-core**: Improve and clean up exception handling ([#2337](https://github.com/microsoft/agent-framework/pull/2337), [#2319](https://github.com/microsoft/agent-framework/pull/2319))
+- **agent-framework-core**: Clean up imports ([#2318](https://github.com/microsoft/agent-framework/pull/2318))
+
+### Fixed
+
+- **agent-framework-azure-ai**: Fix for Azure AI client ([#2358](https://github.com/microsoft/agent-framework/pull/2358))
+- **agent-framework-core**: Fix tool execution bleed-over in aiohttp/Bot Framework scenarios ([#2314](https://github.com/microsoft/agent-framework/pull/2314))
+- **agent-framework-core**: `@ai_function` now correctly handles `self` parameter ([#2266](https://github.com/microsoft/agent-framework/pull/2266))
+- **agent-framework-core**: Resolve string annotations in `FunctionExecutor` ([#2308](https://github.com/microsoft/agent-framework/pull/2308))
+- **agent-framework-core**: Langfuse observability captures ChatAgent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
+- **agent-framework-core**: Incomplete URL substring sanitization fix ([#2274](https://github.com/microsoft/agent-framework/pull/2274))
+- **observability**: Handle datetime serialization in tool results ([#2248](https://github.com/microsoft/agent-framework/pull/2248))
+
+## [1.0.0b251117] - 2025-11-17
+
+### Fixed
+
+- **agent-framework-ag-ui**: Fix ag-ui state handling issues ([#2289](https://github.com/microsoft/agent-framework/pull/2289))
+
 ## [1.0.0b251114] - 2025-11-14
 
 ### Added
@@ -254,7 +290,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...HEAD
+[1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
+[1.0.0b251117]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...python-1.0.0b251117
 [1.0.0b251114]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112.post1...python-1.0.0b251114
 [1.0.0b251112.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112...python-1.0.0b251112.post1
 [1.0.0b251112]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...python-1.0.0b251112

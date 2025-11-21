@@ -1021,7 +1021,7 @@ def use_observability(
         .. code-block:: python
 
             from agent_framework import use_observability, setup_observability
-            from agent_framework._clients import ChatClientProtocol
+            from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
@@ -1104,6 +1104,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1112,7 +1113,7 @@ def _trace_agent_run(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1120,7 +1121,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1173,6 +1174,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1181,7 +1183,7 @@ def _trace_agent_run_stream(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1189,7 +1191,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1472,10 +1474,10 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
                         elif isinstance(item, BaseModel):
                             res.append(item.model_dump(exclude_none=True))
                         else:
-                            res.append(json.dumps(item))
-                    response = json.dumps(res)
+                            res.append(json.dumps(item, default=str))
+                    response = json.dumps(res, default=str)
                 else:
-                    response = json.dumps(content.result)
+                    response = json.dumps(content.result, default=str)
             return {"type": "tool_call_response", "id": content.call_id, "response": response}
         case _:
             # GenericPart in otel output messages json spec.
