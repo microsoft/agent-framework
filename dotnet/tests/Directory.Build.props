@@ -4,7 +4,7 @@
 
   <PropertyGroup>
     <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
     <IsAotCompatible>false</IsAotCompatible>
     <ProjectsTargetFrameworks>net472;net9.0</ProjectsTargetFrameworks>
     <UserSecretsId>b7762d10-e29b-4bb1-8b74-b6d69a667dd4</UserSecretsId>
@@ -12,16 +12,17 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
-    <PackageReference Include="xRetry" />
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="xRetry.v3" />
+    <PackageReference Include="xunit.v3.mtp-v2" Condition="'$(IsTestUtilityProject)'!='true'" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Condition="'$(IsTestUtilityProject)'!='true'" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Condition="'$(IsTestUtilityProject)'!='true'" />
+    <PackageReference Include="xunit.v3.extensibility.core" Condition="'$(IsTestUtilityProject)'=='true'" />
+    <PackageReference Include="xunit.v3.assert" Condition="'$(IsTestUtilityProject)'=='true'" />
   </ItemGroup>
 
   <ItemGroup>
-    <Using Include="xRetry" />
+    <Using Include="xRetry.v3" />
     <Using Include="Xunit" />
   </ItemGroup>
 

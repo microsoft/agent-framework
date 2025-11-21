@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
@@ -86,17 +87,18 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (this._persistentAgentsClient is not null && this._agent is not null)
         {
-            return this._persistentAgentsClient.Administration.DeleteAgentAsync(this._agent.Id);
+            await this._persistentAgentsClient.Administration.DeleteAgentAsync(this._agent.Id);
         }
 
-        return Task.CompletedTask;
+        // https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1816
+        GC.SuppressFinalize(this);
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         this._persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();

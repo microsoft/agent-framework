@@ -7,7 +7,6 @@ using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Configuration;
 using OpenAI;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 

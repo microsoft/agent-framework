@@ -5,6 +5,7 @@
     <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
