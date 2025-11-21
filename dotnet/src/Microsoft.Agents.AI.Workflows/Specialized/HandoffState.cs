@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-internal sealed record class HandoffState(
+internal sealed record class HandOffState(
     TurnToken TurnToken,
-    string? InvokedHandoff,
+    string? InvokedHandOff,
     List<ChatMessage> Messages);

@@ -55,9 +55,9 @@ public static class Program
                     "You determine which agent to use based on the user's homework question. ALWAYS handoff to another agent.",
                     "triage_agent",
                     "Routes messages to the appropriate specialist agent");
-                var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAgent)
-                    .WithHandoffs(triageAgent, [mathTutor, historyTutor])
-                    .WithHandoffs([mathTutor, historyTutor], triageAgent)
+                var workflow = AgentWorkflowBuilder.CreateHandOffBuilderWith(triageAgent)
+                    .WithHandOffs(triageAgent, [mathTutor, historyTutor])
+                    .WithHandOffs([mathTutor, historyTutor], triageAgent)
                     .Build();
 
                 List<ChatMessage> messages = [];
