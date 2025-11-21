@@ -1,9 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
+    AgentRunResponse,
+    AgentRunResponseUpdate,
+    ChatAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatOptions,
@@ -11,14 +18,83 @@ from agent_framework import (
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
+from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    PromptAgentDefinition,
     ResponseTextFormatConfigurationJsonSchema,
 )
+from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
 from openai.types.responses.response import Response as OpenAIResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
+
+
+def _integration_test_skip_reason() -> str | None:
+    """Return a skip reason for Azure AI integration tests or None if all prerequisites are met.
+
+    Rules:
+    - RUN_INTEGRATION_TESTS must be set to true.
+    - Endpoint and model env vars must be provided and not equal to placeholder endpoint.
+    """
+    run_tests = os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+    if not run_tests:
+        return "Integration tests are disabled."
+
+    endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT", "")
+    model = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "")
+    placeholder_endpoint = "https://test-project.cognitiveservices.azure.com/"
+    missing_endpoint = endpoint in ("", placeholder_endpoint)
+    missing_model = model == ""
+
+    if missing_endpoint and missing_model:
+        return "Azure AI project endpoint and model deployment name missing; skipping integration tests."
+    if missing_endpoint:
+        return "Azure AI project endpoint missing; skipping integration tests."
+    if missing_model:
+        return "Azure AI model deployment name missing; skipping integration tests."
+    return None
+
+
+_skip_reason = _integration_test_skip_reason()
+
+
+skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
+    _skip_reason is not None,
+    reason=_skip_reason or "",
+)
+
+
+@asynccontextmanager
+async def temporary_chat_client(agent_name: str) -> AsyncIterator[AzureAIClient]:
+    """Async context manager that creates an Azure AI agent and yields an `AzureAIClient`.
+
+    The underlying agent version is cleaned up automatically after use.
+    Tests can construct their own `ChatAgent` instances from the yielded client.
+    """
+    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    async with (
+        AzureCliCredential() as credential,
+        AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
+    ):
+        azure_ai_agent = await project_client.agents.create_version(
+            agent_name=agent_name,
+            definition=PromptAgentDefinition(model=model),
+        )
+
+        chat_client = AzureAIClient(
+            project_client=project_client,
+            agent_name=azure_ai_agent.name,
+            agent_version=azure_ai_agent.version,
+        )
+        try:
+            yield chat_client
+        finally:
+            await project_client.agents.delete_version(
+                agent_name=azure_ai_agent.name, agent_version=azure_ai_agent.version
+            )
 
 
 def create_test_azure_ai_client(
@@ -751,3 +827,64 @@ def mock_project_client() -> MagicMock:
     mock_client.close = AsyncMock()
 
     return mock_client
+
+
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    return f"The weather in {location} is sunny with a high of 25°C."
+
+
+@pytest.mark.flaky
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_basic_run() -> None:
+    """Test ChatAgent basic run functionality with AzureAIClient."""
+    async with (
+        temporary_chat_client(agent_name="BasicRunAgent") as chat_client,
+        ChatAgent(chat_client=chat_client) as agent,
+    ):
+        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert "Hello World" in response.text
+
+
+@pytest.mark.flaky
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
+    """Test ChatAgent basic streaming functionality with AzureAIClient."""
+    async with (
+        temporary_chat_client(agent_name="BasicRunStreamingAgent") as chat_client,
+        ChatAgent(chat_client=chat_client) as agent,
+    ):
+        full_message: str = ""
+        async for chunk in agent.run_stream("Please respond with exactly: 'This is a streaming response test.'"):
+            assert chunk is not None
+            assert isinstance(chunk, AgentRunResponseUpdate)
+            if chunk.text:
+                full_message += chunk.text
+
+        # Validate streaming response
+        assert len(full_message) > 0
+        assert "streaming response test" in full_message.lower()
+
+
+@pytest.mark.flaky
+@skip_if_azure_ai_integration_tests_disabled
+async def test_azure_ai_chat_client_agent_with_tools() -> None:
+    """Test ChatAgent tools with AzureAIClient."""
+    async with (
+        temporary_chat_client(agent_name="RunToolsAgent") as chat_client,
+        ChatAgent(chat_client=chat_client, tools=[get_weather]) as agent,
+    ):
+        response = await agent.run("What's the weather like in Seattle?")
+
+        # Validate response
+        assert isinstance(response, AgentRunResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        assert any(word in response.text.lower() for word in ["sunny", "25"])
