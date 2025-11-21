@@ -22,7 +22,7 @@
   
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="System.Net.ServerSentEvents" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="System.Linq.AsyncEnumerable" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />

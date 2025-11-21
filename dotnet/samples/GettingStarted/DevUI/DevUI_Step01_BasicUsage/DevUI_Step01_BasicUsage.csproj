@@ -19,7 +19,7 @@
     <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="System.Net.ServerSentEvents" />
   </ItemGroup>
 
 </Project>
