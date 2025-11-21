@@ -601,6 +601,7 @@ export const useDevUIStore = create<DevUIStore>()(
           showDebugPanel: state.showDebugPanel,
           debugPanelMinimized: state.debugPanelMinimized,
           debugPanelWidth: state.debugPanelWidth,
+          showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
         }),
