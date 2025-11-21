@@ -240,21 +240,21 @@ internal sealed class A2AAgent : AIAgent
 
         // Link the message as a follow-up to an existing task, if any.
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#task-refinements
-        a2aMessage.ReferenceTaskIds = [typedThread.TaskId];
+        a2aMessage.ReferenceTaskIds = typedThread.TaskId is null ? null : [typedThread.TaskId];
 
         return a2aMessage;
     }
 
     private static A2AContinuationToken? GetContinuationToken(IEnumerable<ChatMessage> messages, AgentRunOptions? options = null)
     {
-        if (options?.ContinuationToken is { } token)
+        if (options?.ContinuationToken is ResponseContinuationToken token)
         {
             if (messages.Any())
             {
                 throw new InvalidOperationException("Messages are not allowed when continuing a background response using a continuation token.");
             }
 
-            return A2AContinuationToken.FromToken((A2AContinuationToken)token);
+            return A2AContinuationToken.FromToken(token);
         }
 
         return null;
@@ -308,11 +308,7 @@ internal sealed class A2AAgent : AIAgent
             AdditionalProperties = taskUpdateEvent.Metadata.ToAdditionalProperties() ?? [],
         };
 
-        if (taskUpdateEvent is TaskStatusUpdateEvent statusUpdateEvent)
-        {
-            responseUpdate.RawRepresentation = statusUpdateEvent;
-        }
-        else if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)
+        if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)
         {
             responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
             responseUpdate.RawRepresentation = artifactUpdateEvent;

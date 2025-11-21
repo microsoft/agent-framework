@@ -367,6 +367,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act & Assert
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages))
         {
+            // Just iterate through to trigger the logic
         }
     }
 
@@ -424,7 +425,7 @@ public sealed class A2AAgentTests : IDisposable
         var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
 
         // Act
-        await this._agent.RunAsync(null, options);
+        await this._agent.RunAsync([], options: options);
 
         // Assert
         Assert.Equal("tasks/get", this._handler.CapturedJsonRpcRequest?.Method);
@@ -572,6 +573,7 @@ public sealed class A2AAgentTests : IDisposable
         {
             await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
             {
+                // Just iterate through to trigger the exception
             }
         });
     }
@@ -593,6 +595,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Please make the background transparent", thread))
         {
+            // Just iterate through to trigger the logic
         }
 
         // Assert
@@ -618,6 +621,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", thread))
         {
+            // Just iterate through to trigger the logic
         }
 
         // Assert
