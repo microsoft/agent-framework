@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Agents.AI;
 
@@ -24,23 +25,30 @@ public interface IAgentFeatureCollection : IEnumerable<KeyValuePair<Type, object
     int Revision { get; }
 
     /// <summary>
-    /// Gets or sets a given feature. Setting a null value removes the feature.
+    /// Attempts to retrieve a feature of the specified type.
     /// </summary>
-    /// <param name="key"></param>
-    /// <returns>The requested feature, or null if it is not present.</returns>
-    object? this[Type key] { get; set; }
+    /// <typeparam name="TFeature">The type of the feature to retrieve.</typeparam>
+    /// <param name="feature">When this method returns, contains the feature of type <typeparamref name="TFeature"/> if found; otherwise, the
+    /// default value for the type.</param>
+    /// <returns>
+    /// <see langword="true"/> if the feature of type <typeparamref name="TFeature"/> was successfully retrieved;
+    /// otherwise, <see langword="false"/>.
+    /// </returns>
+    bool TryGet<TFeature>([MaybeNullWhen(false)] out TFeature feature)
+        where TFeature : notnull;
 
     /// <summary>
-    /// Retrieves the requested feature from the collection.
+    /// Remove a feature from the collection.
     /// </summary>
     /// <typeparam name="TFeature">The feature key.</typeparam>
-    /// <returns>The requested feature, or null if it is not present.</returns>
-    TFeature? Get<TFeature>();
+    void Remove<TFeature>()
+        where TFeature : notnull;
 
     /// <summary>
     /// Sets the given feature in the collection.
     /// </summary>
     /// <typeparam name="TFeature">The feature key.</typeparam>
     /// <param name="instance">The feature value.</param>
-    void Set<TFeature>(TFeature? instance);
+    void Set<TFeature>(TFeature instance)
+        where TFeature : notnull;
 }

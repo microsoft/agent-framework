@@ -118,9 +118,8 @@ async Task CustomChatMessageStore_UsingFactoryAndExistingExternalId_Async()
 
     // It's possible to create a new thread that uses the same chat message store id by providing
     // the VectorChatMessageStoreThreadDbKeyFeature in the feature collection when creating the new thread.
-    AgentFeatureCollection features = new();
-    features.Set(new VectorChatMessageStoreThreadDbKeyFeature(messageStoreFromFactory.ThreadDbKey!));
-    AgentThread resumedThread = agent.GetNewThread(features);
+    AgentThread resumedThread = agent.GetNewThread(
+        new AgentFeatureCollection().WithFeature(new VectorChatMessageStoreThreadDbKeyFeature(messageStoreFromFactory.ThreadDbKey!)));
 
     // Run the agent with the thread that stores conversation history in the vector store.
     Console.WriteLine(await agent.RunAsync("Now tell the same joke in the voice of a pirate, and add some emojis to the joke.", resumedThread));
@@ -149,9 +148,7 @@ async Task CustomChatMessageStore_PerThread_Async()
     // We can then pass the feature collection when creating a new thread.
     // We also have the opportunity here to pass any id that we want for storing the chat history in the vector store.
     VectorChatMessageStore perThreadMessageStore = new(vectorStore, "chat-history-1");
-    AgentFeatureCollection features = new();
-    features.Set<ChatMessageStore>(perThreadMessageStore);
-    AgentThread thread = agent.GetNewThread(features);
+    AgentThread thread = agent.GetNewThread(new AgentFeatureCollection().WithFeature<ChatMessageStore>(perThreadMessageStore));
 
     Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread));
 
@@ -191,10 +188,13 @@ async Task CustomChatMessageStore_PerRun_Async()
     // If the agent doesn't support a message store, it would be ignored.
     // We also have the opportunity here to pass any id that we want for storing the chat history in the vector store.
     VectorChatMessageStore perRunMessageStore = new(vectorStore, "chat-history-1");
-    AgentFeatureCollection features = new();
-    features.Set<ChatMessageStore>(perRunMessageStore);
-
-    Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", thread, options: new AgentRunOptions() { Features = features }));
+    Console.WriteLine(await agent.RunAsync(
+        "Tell me a joke about a pirate.",
+        thread,
+        options: new AgentRunOptions()
+        {
+            Features = new AgentFeatureCollection().WithFeature<ChatMessageStore>(perRunMessageStore)
+        }));
 
     // When serializing this thread, we'll see that it has no messagestore state, since the messagestore was not attached to the thread,
     // but just provided for the single run. Note that, depending on the circumstances, the thread may still contain other state, e.g. Memories,
@@ -237,8 +237,9 @@ namespace SampleApp
             // or finally we can generate one ourselves.
             this.ThreadDbKey = serializedStoreState.ValueKind is JsonValueKind.String
                 ? serializedStoreState.Deserialize<string>()
-                : features?.Get<VectorChatMessageStoreThreadDbKeyFeature>()?.ThreadDbKey
-                ?? Guid.NewGuid().ToString("N");
+                : features?.TryGet<VectorChatMessageStoreThreadDbKeyFeature>(out var threadDbKeyFeature) is true
+                    ? threadDbKeyFeature.ThreadDbKey
+                    : Guid.NewGuid().ToString("N");
         }
 
         public string? ThreadDbKey { get; }

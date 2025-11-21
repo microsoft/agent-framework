@@ -55,7 +55,12 @@ internal sealed class A2AAgent : AIAgent
 
     /// <inheritdoc/>
     public sealed override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
-        => new A2AAgentThread() { ContextId = featureCollection?.Get<ConversationIdAgentFeature>()?.ConversationId };
+        => new A2AAgentThread()
+        {
+            ContextId = featureCollection?.TryGet<ConversationIdAgentFeature>(out var conversationIdFeature) is true
+                ? conversationIdFeature.ConversationId
+                : null
+        };
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.

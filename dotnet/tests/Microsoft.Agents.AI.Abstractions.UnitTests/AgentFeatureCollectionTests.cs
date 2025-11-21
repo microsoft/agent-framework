@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -10,98 +11,95 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 public class AgentFeatureCollectionTests
 {
     [Fact]
-    public void AddedInterfaceIsReturned()
+    public void Feature_RoundTrips()
     {
         var interfaces = new AgentFeatureCollection();
         var thing = new Thing();
 
-        interfaces[typeof(IThing)] = thing;
+        interfaces.Set<IThing>(thing);
 
-        var thing2 = interfaces[typeof(IThing)];
-        Assert.Equal(thing2, thing);
+        Assert.True(interfaces.TryGet<IThing>(out var actualThing));
+        Assert.Same(actualThing, thing);
     }
 
     [Fact]
-    public void IndexerAlsoAddsItems()
+    public void Remove_Removes()
     {
         var interfaces = new AgentFeatureCollection();
         var thing = new Thing();
 
-        interfaces[typeof(IThing)] = thing;
+        interfaces.Set<IThing>(thing);
+        Assert.True(interfaces.TryGet<IThing>(out _));
 
-        Assert.Equal(interfaces[typeof(IThing)], thing);
+        interfaces.Remove<IThing>();
+
+        Assert.False(interfaces.TryGet<IThing>(out _));
     }
 
     [Fact]
-    public void SetNullValueRemoves()
+    public void TryGetMissingFeature_ReturnsFalse()
     {
         var interfaces = new AgentFeatureCollection();
+
+        Assert.False(interfaces.TryGet<Thing>(out var actualThing));
+        Assert.Null(actualThing);
+    }
+
+    [Fact]
+    public void Set_Null_Throws()
+    {
+        var interfaces = new AgentFeatureCollection();
+        Assert.Throws<ArgumentNullException>(() => interfaces.Set<IThing>(null!));
+    }
+
+    [Fact]
+    public void IsReadOnly_DefaultsToFalse()
+    {
+        var interfaces = new AgentFeatureCollection();
+        Assert.False(interfaces.IsReadOnly);
+    }
+
+    [Fact]
+    public void TryGet_FallsBackToInnerCollection()
+    {
+        var inner = new AgentFeatureCollection();
         var thing = new Thing();
+        inner.Set<IThing>(thing);
 
-        interfaces[typeof(IThing)] = thing;
-        Assert.Equal(interfaces[typeof(IThing)], thing);
-
-        interfaces[typeof(IThing)] = null;
-
-        var thing2 = interfaces[typeof(IThing)];
-        Assert.Null(thing2);
+        var outer = new AgentFeatureCollection(inner);
+        Assert.True(outer.TryGet<IThing>(out var actualThing));
+        Assert.Same(actualThing, thing);
     }
 
     [Fact]
-    public void GetMissingStructFeatureThrows()
+    public void TryGet_OverridesInnerWithOuterCollection()
     {
-        var interfaces = new AgentFeatureCollection();
+        var inner = new AgentFeatureCollection();
+        var innerThing = new Thing();
+        inner.Set<IThing>(innerThing);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => interfaces.Get<int>());
-        Assert.Equal("System.Int32 does not exist in the feature collection and because it is a struct the method can't return null. Use 'AgentFeatureCollection[typeof(System.Int32)] is not null' to check if the feature exists.", ex.Message);
+        var outer = new AgentFeatureCollection(inner);
+        var outerThing = new Thing();
+        outer.Set<IThing>(outerThing);
+
+        Assert.True(outer.TryGet<IThing>(out var actualThing));
+        Assert.Same(outerThing, actualThing);
     }
 
     [Fact]
-    public void GetMissingFeatureReturnsNull()
+    public void Enumerate_OverridesInnerWithOuterCollection()
     {
-        var interfaces = new AgentFeatureCollection();
+        var inner = new AgentFeatureCollection();
+        var innerThing = new Thing();
+        inner.Set<IThing>(innerThing);
 
-        Assert.Null(interfaces.Get<Thing>());
-    }
+        var outer = new AgentFeatureCollection(inner);
+        var outerThing = new Thing();
+        outer.Set<IThing>(outerThing);
 
-    [Fact]
-    public void GetStructFeature()
-    {
-        var interfaces = new AgentFeatureCollection();
-        const int Value = 20;
-        interfaces.Set(Value);
-
-        Assert.Equal(Value, interfaces.Get<int>());
-    }
-
-    [Fact]
-    public void GetNullableStructFeatureWhenSetWithNonNullableStruct()
-    {
-        var interfaces = new AgentFeatureCollection();
-        const int Value = 20;
-        interfaces.Set(Value);
-
-        Assert.Null(interfaces.Get<int?>());
-    }
-
-    [Fact]
-    public void GetNullableStructFeatureWhenSetWithNullableStruct()
-    {
-        var interfaces = new AgentFeatureCollection();
-        const int Value = 20;
-        interfaces.Set<int?>(Value);
-
-        Assert.Equal(Value, interfaces.Get<int?>());
-    }
-
-    [Fact]
-    public void GetFeature()
-    {
-        var interfaces = new AgentFeatureCollection();
-        var thing = new Thing();
-        interfaces.Set(thing);
-
-        Assert.Equal(thing, interfaces.Get<Thing>());
+        var items = outer.ToList();
+        Assert.Single(items);
+        Assert.Same(outerThing, items.First().Value as IThing);
     }
 
     private interface IThing

@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI;
 /// An agent feature that allows providing a conversation identifier.
 /// </summary>
 /// <remarks>
-/// This feature allows a user to provide a specific identifier for chat history whether stored in the underlying AI service or stored in a 3rd party store.
+/// This feature allows a user to provide a specific identifier for chat history when stored in the underlying AI service.
 /// </remarks>
 public class ConversationIdAgentFeature
 {
@@ -16,7 +16,7 @@ public class ConversationIdAgentFeature
     /// Initializes a new instance of the <see cref="ConversationIdAgentFeature"/> class with the specified thread
     /// identifier.
     /// </summary>
-    /// <param name="conversationId">The unique identifier of the thread required by the underlying AI service or 3rd party store. Cannot be <see langword="null"/> or empty.</param>
+    /// <param name="conversationId">The unique identifier of the thread required by the underlying AI service. Cannot be <see langword="null"/> or empty.</param>
     public ConversationIdAgentFeature(string conversationId)
     {
         this.ConversationId = Throw.IfNullOrWhitespace(conversationId);

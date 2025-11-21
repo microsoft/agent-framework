@@ -43,7 +43,12 @@ public class CopilotStudioAgent : AIAgent
 
     /// <inheritdoc/>
     public sealed override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
-        => new CopilotStudioAgentThread() { ConversationId = featureCollection?.Get<ConversationIdAgentFeature>()?.ConversationId };
+        => new CopilotStudioAgentThread()
+        {
+            ConversationId = featureCollection?.TryGet<ConversationIdAgentFeature>(out var conversationIdFeature) is true
+                ? conversationIdFeature.ConversationId
+                : null
+        };
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.

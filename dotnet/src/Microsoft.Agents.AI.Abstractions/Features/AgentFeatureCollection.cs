@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,9 +19,7 @@ namespace Microsoft.Agents.AI;
 [DebuggerTypeProxy(typeof(FeatureCollectionDebugView))]
 public class AgentFeatureCollection : IAgentFeatureCollection
 {
-    private static readonly KeyComparer s_featureKeyComparer = new();
-    private readonly IAgentFeatureCollection? _defaults;
-    private readonly int _initialCapacity;
+    private readonly IAgentFeatureCollection? _innerCollection;
     private Dictionary<Type, object>? _features;
     private volatile int _containerRevision;
 
@@ -39,58 +38,37 @@ public class AgentFeatureCollection : IAgentFeatureCollection
     public AgentFeatureCollection(int initialCapacity)
     {
         Throw.IfLessThan(initialCapacity, 0);
-
-        this._initialCapacity = initialCapacity;
+        this._features = new(initialCapacity);
     }
 
     /// <summary>
-    /// Initializes a new instance of <see cref="AgentFeatureCollection"/> with the specified defaults.
+    /// Initializes a new instance of <see cref="AgentFeatureCollection"/> with the specified inner collection.
     /// </summary>
-    /// <param name="defaults">The feature defaults.</param>
-    public AgentFeatureCollection(IAgentFeatureCollection defaults)
+    /// <param name="innerCollection">The inner collection.</param>
+    /// <remarks>
+    /// <para>
+    /// When providing an inner collection, and if a feature is not found in this collection,
+    /// an attempt will be made to retrieve it from the inner collection as a fallback.
+    /// </para>
+    /// <para>
+    /// The <see cref="Remove{TFeature}"/> method will only remove features from this collection
+    /// and not from the inner collection. When removing a feature from this collection, and
+    /// it exists in the inner collection, it will still be retrievable from the inner collection.
+    /// </para>
+    /// </remarks>
+    public AgentFeatureCollection(IAgentFeatureCollection innerCollection)
     {
-        this._defaults = defaults;
+        this._innerCollection = Throw.IfNull(innerCollection);
     }
 
     /// <inheritdoc />
-    public virtual int Revision
+    public int Revision
     {
-        get { return this._containerRevision + (this._defaults?.Revision ?? 0); }
+        get { return this._containerRevision + (this._innerCollection?.Revision ?? 0); }
     }
 
     /// <inheritdoc />
     public bool IsReadOnly { get { return false; } }
-
-    /// <inheritdoc />
-    public object? this[Type key]
-    {
-        get
-        {
-            Throw.IfNull(key);
-
-            return this._features != null && this._features.TryGetValue(key, out var result) ? result : this._defaults?[key];
-        }
-        set
-        {
-            Throw.IfNull(key);
-
-            if (value == null)
-            {
-                if (this._features?.Remove(key) is true)
-                {
-                    this._containerRevision++;
-                }
-                return;
-            }
-
-            if (this._features == null)
-            {
-                this._features = new Dictionary<Type, object>(this._initialCapacity);
-            }
-            this._features[key] = value;
-            this._containerRevision++;
-        }
-    }
 
     IEnumerator IEnumerable.GetEnumerator()
     {
@@ -100,62 +78,83 @@ public class AgentFeatureCollection : IAgentFeatureCollection
     /// <inheritdoc />
     public IEnumerator<KeyValuePair<Type, object>> GetEnumerator()
     {
-        if (this._features != null)
+        if (this._features is not { Count: > 0 })
         {
-            foreach (var pair in this._features)
-            {
-                yield return pair;
-            }
+            IEnumerable<KeyValuePair<Type, object>> e = ((IEnumerable<KeyValuePair<Type, object>>?)this._innerCollection) ?? [];
+            return e.GetEnumerator();
         }
 
-        if (this._defaults != null)
+        if (this._innerCollection is null)
         {
-            // Don't return features masked by the wrapper.
-            foreach (var pair in this._features == null ? this._defaults : this._defaults.Except(this._features, s_featureKeyComparer))
+            return this._features.GetEnumerator();
+        }
+
+        if (this._innerCollection is AgentFeatureCollection innerCollection && innerCollection._features is not { Count: > 0 })
+        {
+            return this._features.GetEnumerator();
+        }
+
+        return YieldAll();
+
+        IEnumerator<KeyValuePair<Type, object>> YieldAll()
+        {
+            HashSet<Type> set = [];
+
+            foreach (var entry in this._features)
             {
-                yield return pair;
+                set.Add(entry.Key);
+                yield return entry;
+            }
+
+            foreach (var entry in this._innerCollection.Where(x => !set.Contains(x.Key)))
+            {
+                yield return entry;
             }
         }
     }
 
     /// <inheritdoc />
-    public TFeature? Get<TFeature>()
+    public bool TryGet<TFeature>([MaybeNullWhen(false)] out TFeature feature)
+        where TFeature : notnull
     {
-        if (typeof(TFeature).IsValueType)
+        if (this._features?.TryGetValue(typeof(TFeature), out var obj) is true)
         {
-            var feature = this[typeof(TFeature)];
-            if (feature is null && Nullable.GetUnderlyingType(typeof(TFeature)) is null)
-            {
-                throw new InvalidOperationException(
-                    $"{typeof(TFeature).FullName} does not exist in the feature collection " +
-                    $"and because it is a struct the method can't return null. Use 'AgentFeatureCollection[typeof({typeof(TFeature).FullName})] is not null' to check if the feature exists.");
-            }
-            return (TFeature?)feature;
+            feature = (TFeature)obj;
+            return true;
         }
-        return (TFeature?)this[typeof(TFeature)];
+
+        if (this._innerCollection?.TryGet<TFeature>(out var defaultFeature) is true)
+        {
+            feature = defaultFeature;
+            return true;
+        }
+
+        feature = default;
+        return false;
     }
 
     /// <inheritdoc />
-    public void Set<TFeature>(TFeature? instance)
+    public void Set<TFeature>(TFeature instance)
+        where TFeature : notnull
     {
-        this[typeof(TFeature)] = instance;
+        Throw.IfNull(instance);
+
+        this._features ??= new();
+        this._features[typeof(TFeature)] = instance;
+    }
+
+    /// <inheritdoc />
+    public void Remove<TFeature>()
+        where TFeature : notnull
+    {
+        if (this._features?.Remove(typeof(TFeature)) is true)
+        {
+            this._containerRevision++;
+        }
     }
 
     // Used by the debugger. Count over enumerable is required to get the correct value.
     private int GetCount() => this.Count();
-
-    private sealed class KeyComparer : IEqualityComparer<KeyValuePair<Type, object>>
-    {
-        public bool Equals(KeyValuePair<Type, object> x, KeyValuePair<Type, object> y)
-        {
-            return x.Key.Equals(y.Key);
-        }
-
-        public int GetHashCode(KeyValuePair<Type, object> obj)
-        {
-            return obj.Key.GetHashCode();
-        }
-    }
 
     private sealed class FeatureCollectionDebugView(AgentFeatureCollection features)
     {

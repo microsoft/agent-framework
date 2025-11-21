@@ -289,13 +289,17 @@ public sealed partial class ChatClientAgent : AIAgent
     public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
         => new ChatClientAgentThread
         {
-            ConversationId = featureCollection?.Get<ConversationIdAgentFeature>()?.ConversationId,
+            ConversationId = featureCollection?.TryGet<ConversationIdAgentFeature>(out var conversationIdAgentFeature) is true
+                ? conversationIdAgentFeature.ConversationId
+                : null,
             MessageStore =
-                featureCollection?.Get<ChatMessageStore>()
-                ?? this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null }),
+                featureCollection?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true
+                ? chatMessageStoreFeature
+                : this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null }),
             AIContextProvider =
-                featureCollection?.Get<AIContextProvider>()
-                ?? this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null })
+                featureCollection?.TryGet<AIContextProvider>(out var aIContextProviderFeature) is true
+                ? aIContextProviderFeature
+                : this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null })
         };
 
     /// <summary>
@@ -353,17 +357,15 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
     {
-        var chatMessageStoreFeature = featureCollection?.Get<ChatMessageStore>();
         Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory =
-            chatMessageStoreFeature is not null
+            featureCollection?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true
                 ? (jse, jso) => chatMessageStoreFeature
                 : this._agentOptions?.ChatMessageStoreFactory is not null
                     ? (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, Features = featureCollection, JsonSerializerOptions = jso })
                     : null;
 
-        var aiContextProviderFeature = featureCollection?.Get<AIContextProvider>();
         Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory =
-            aiContextProviderFeature is not null
+            featureCollection?.TryGet<AIContextProvider>(out var aiContextProviderFeature) is true
                 ? (jse, jso) => aiContextProviderFeature
                 : this._agentOptions?.AIContextProviderFactory is not null
                     ? (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, Features = featureCollection, JsonSerializerOptions = jso })
@@ -644,7 +646,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
             // If the caller provided an override message store via run options, we should use that instead of the message store
             // on the thread.
-            if (runOptions?.Features?.Get<ChatMessageStore>() is ChatMessageStore chatMessageStoreFeature)
+            if (runOptions?.Features?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true)
             {
                 messageStore = chatMessageStoreFeature;
             }
@@ -745,7 +747,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         // If the caller provided an override message store via run options, we should use that instead of the message store
         // on the thread.
-        if (runOptions?.Features?.Get<ChatMessageStore>() is ChatMessageStore chatMessageStoreFeature)
+        if (runOptions?.Features?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true)
         {
             messageStore = chatMessageStoreFeature;
         }
