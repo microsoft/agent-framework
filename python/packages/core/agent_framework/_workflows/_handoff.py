@@ -1440,6 +1440,7 @@ class HandoffBuilder:
 
         wiring = _GroupChatConfig(
             manager=None,
+            manager_participant=None,
             manager_name=self._starting_agent_id,
             participants=participant_specs,
             max_rounds=None,

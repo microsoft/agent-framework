@@ -210,7 +210,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert req_event is not None
 
     completed = False
-    output: ChatMessage | None = None
+    output: list[ChatMessage] | None = None
     async for ev in wf.send_responses_streaming(
         responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
     ):
@@ -222,7 +222,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
             break
     assert completed
     assert output is not None
-    assert isinstance(output, ChatMessage)
+    assert isinstance(output, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output)
 
 
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
@@ -300,8 +301,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, ChatMessage)
-    assert data.role == Role.ASSISTANT
+    assert isinstance(data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in data)
+    assert len(data) > 0
+    assert data[-1].role == Role.ASSISTANT
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -742,9 +745,11 @@ async def test_magentic_stall_and_reset_successfully():
     assert idle_status is not None
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
-    assert isinstance(output_event.data, ChatMessage)
-    assert output_event.data.text is not None
-    assert output_event.data.text == "re-ledger"
+    assert isinstance(output_event.data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output_event.data)
+    assert len(output_event.data) > 0
+    assert output_event.data[-1].text is not None
+    assert output_event.data[-1].text == "re-ledger"
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:

@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+from typing import cast
 
-from agent_framework import ChatAgent, GroupChatBuilder, GroupChatStateSnapshot, WorkflowOutputEvent
+from agent_framework import ChatAgent, ChatMessage, GroupChatBuilder, GroupChatStateSnapshot, WorkflowOutputEvent
 from agent_framework.openai import OpenAIChatClient
 
 logging.basicConfig(level=logging.INFO)
@@ -97,11 +98,14 @@ async def main() -> None:
 
     async for event in workflow.run_stream(task):
         if isinstance(event, WorkflowOutputEvent):
-            final_message = event.data
-            author = getattr(final_message, "author_name", "Unknown")
-            text = getattr(final_message, "text", str(final_message))
-            print(f"\n[{author}]\n{text}\n")
-            print("-" * 80)
+            conversation = cast(list[ChatMessage], event.data)
+            if isinstance(conversation, list):
+                print("\n===== Final Conversation =====\n")
+                for msg in conversation:
+                    author = getattr(msg, "author_name", "Unknown")
+                    text = getattr(msg, "text", str(msg))
+                    print(f"[{author}]\n{text}\n")
+                    print("-" * 80)
 
     print("\nWorkflow completed.")
 

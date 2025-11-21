@@ -61,6 +61,8 @@ from ._group_chat import (
     GroupChatDirective,
     GroupChatStateSnapshot,
     ManagerDirectiveModel,
+    ManagerSelectionRequest,
+    ManagerSelectionResponse,
 )
 from ._handoff import HandoffBuilder, HandoffUserInputRequest
 from ._magentic import (
@@ -143,6 +145,8 @@ __all__ = [
     "MagenticPlanReviewReply",
     "MagenticPlanReviewRequest",
     "ManagerDirectiveModel",
+    "ManagerSelectionRequest",
+    "ManagerSelectionResponse",
     "Message",
     "OrchestrationState",
     "RequestInfoEvent",

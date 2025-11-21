@@ -233,8 +233,8 @@ async def run_agent_framework_example(task: str) -> str:
 
     workflow = (
         GroupChatBuilder()
-        .set_prompt_based_manager(
-            chat_client=AzureOpenAIChatClient(credential=credential),
+        .set_manager(
+            manager=AzureOpenAIChatClient(credential=credential).create_agent(),
             display_name="Coordinator",
         )
         .participants(researcher=researcher, planner=planner)
@@ -245,7 +245,12 @@ async def run_agent_framework_example(task: str) -> str:
     async for event in workflow.run_stream(task):
         if isinstance(event, WorkflowOutputEvent):
             data = event.data
-            final_response = data.text or "" if isinstance(data, ChatMessage) else str(data)
+            if isinstance(data, list) and len(data) > 0:
+                # Get the final message from the conversation
+                final_message = data[-1]
+                final_response = final_message.text or "" if isinstance(final_message, ChatMessage) else str(data)
+            else:
+                final_response = str(data)
     return final_response
 
 
