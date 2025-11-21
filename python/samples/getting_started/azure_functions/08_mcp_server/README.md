@@ -184,5 +184,5 @@ This automatically creates the following endpoints based on agent configuration:
 ## Learn More
 
 - [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
-- [Microsoft Agent Framework Documentation](https://github.com/Azure/agent-framework)
+- [Microsoft Agent Framework Documentation](https://github.com/microsoft/agent-framework)
 - [Azure Functions Documentation](https://learn.microsoft.com/azure/azure-functions/)
