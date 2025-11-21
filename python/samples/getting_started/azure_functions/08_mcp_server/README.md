@@ -170,15 +170,15 @@ app = AgentFunctionApp(enable_health_check=True)
 app.add_agent(joker_agent)
 
 # MCP tool trigger only (HTTP disabled)
-app.add_agent(stock_agent, enable_http_endpoint=False, enable_mcp_tool_trigger=True)
+app.add_agent(stock_agent, enable_http_endpoint=False, enable_mcp_tool_endpoint=True)
 
 # Both HTTP and MCP tool triggers enabled
-app.add_agent(plant_agent, enable_http_endpoint=True, enable_mcp_tool_trigger=True)
+app.add_agent(plant_agent, enable_http_endpoint=True, enable_mcp_tool_endpoint=True)
 ```
 
 This automatically creates the following endpoints based on agent configuration:
 - `POST /api/agents/{AgentName}/run` - HTTP endpoint (when `enable_http_endpoint=True`)
-- MCP tool triggers for agents with `enable_mcp_tool_trigger=True`
+- MCP tool triggers for agents with `enable_mcp_tool_endpoint=True`
 - `GET /api/health` - Health check endpoint showing agent configurations
 
 ## Learn More

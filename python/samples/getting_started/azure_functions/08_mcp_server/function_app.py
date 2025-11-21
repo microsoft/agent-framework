@@ -22,14 +22,13 @@ Required environment variables:
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
-from agent_framework.azurefunctions import AgentFunctionApp
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
 # Create Azure OpenAI Chat Client
 # This uses AzureCliCredential for authentication (requires 'az login')
 chat_client = AzureOpenAIChatClient()
 
-# Define three AI agents with different roles
+# Define three AI agents with different roles3
 # Agent 1: Joker - HTTP trigger only (default)
 agent1 = chat_client.create_agent(
     name="Joker",
@@ -58,7 +57,7 @@ app = AgentFunctionApp(
 app.add_agent(agent1)
 
 # Agent 2: Disable HTTP trigger, enable MCP tool trigger only
-app.add_agent(agent2, enable_http_endpoint=False, enable_mcp_tool_trigger=True)
+app.add_agent(agent2, enable_http_endpoint=False, enable_mcp_tool_endpoint=True)
 
 # Agent 3: Enable both HTTP and MCP tool triggers
-app.add_agent(agent3, enable_http_endpoint=True, enable_mcp_tool_trigger=True)
+app.add_agent(agent3, enable_http_endpoint=True, enable_mcp_tool_endpoint=True)
