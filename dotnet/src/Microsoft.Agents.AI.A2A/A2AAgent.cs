@@ -187,7 +187,7 @@ internal sealed class A2AAgent : AIAgent
                 contextId = taskUpdateEvent.ContextId;
                 taskId = taskUpdateEvent.TaskId;
 
-                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent, options);
+                yield return this.ConvertToAgentResponseUpdate(taskUpdateEvent);
             }
             else
             {
@@ -297,7 +297,7 @@ internal sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent, AgentRunOptions? options)
+    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
     {
         AgentRunResponseUpdate responseUpdate = new()
         {
