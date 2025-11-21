@@ -981,8 +981,9 @@ export function WorkflowView({
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            // Determine which ITEM (specific run) owns this text
-            const itemId = currentStreamingItemId.current;
+            // Use the item_id from the event itself (for concurrent workflows)
+            // Fall back to currentStreamingItemId for backwards compatibility
+            const itemId = openAIEvent.item_id || currentStreamingItemId.current;
 
             if (itemId) {
               // Initialize item output if needed
