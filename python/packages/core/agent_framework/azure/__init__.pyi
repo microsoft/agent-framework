@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAIClient, AzureAISettings
+from agent_framework_azure_ai_search import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework_azurefunctions import (
     AgentCallbackContext,
     AgentFunctionApp,
@@ -20,6 +21,8 @@ __all__ = [
     "AgentResponseCallbackProtocol",
     "AzureAIAgentClient",
     "AzureAIClient",
+    "AzureAISearchContextProvider",
+    "AzureAISearchSettings",
     "AzureAISettings",
     "AzureOpenAIAssistantsClient",
     "AzureOpenAIChatClient",

@@ -81,7 +81,7 @@ agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
-agent-framework-aisearch = { workspace = true }
+agent-framework-azure-ai-search = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
