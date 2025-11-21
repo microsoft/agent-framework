@@ -166,7 +166,6 @@ class AgentEntity:
 
             response_text = None
             structured_response = None
-
             response_str: str | None = None
 
             try:
@@ -425,11 +424,8 @@ def create_agent_entity(
             if operation == "run_agent":
                 input_data: Any = context.get_input()
 
-                # Support both old format (message + conversation_id) and new format (RunRequest dict)
-                # This provides backward compatibility
                 request: str | dict[str, Any]
                 if isinstance(input_data, dict) and "message" in input_data:
-                    # Input can be either old format or new RunRequest format
                     request = cast(dict[str, Any], input_data)
                 else:
                     # Fall back to treating input as message string

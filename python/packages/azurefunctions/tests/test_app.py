@@ -87,7 +87,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent, callback=specific_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
         assert passed_callback is specific_callback
         assert enable_http_endpoint is True
 
@@ -103,7 +103,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -118,7 +118,7 @@ class TestAgentFunctionAppInit:
             AgentFunctionApp(agents=[mock_agent], default_callback=default_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -795,6 +795,273 @@ class TestHttpRunRoute:
         assert response.headers.get(THREAD_ID_HEADER) is not None
         assert response.get_body().decode("utf-8") == "Message is required"
         client.signal_entity.assert_not_called()
+
+
+class TestMCPToolEndpoint:
+    """Test suite for MCP tool endpoint functionality."""
+
+    def test_init_with_mcp_tool_endpoint_enabled(self) -> None:
+        """Test initialization with MCP tool endpoint enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_endpoint=True)
+
+        assert app.enable_mcp_tool_endpoint is True
+
+    def test_init_with_mcp_tool_endpoint_disabled(self) -> None:
+        """Test initialization with MCP tool endpoint disabled (default)."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+
+        assert app.enable_mcp_tool_endpoint is False
+
+    def test_add_agent_with_mcp_tool_trigger_enabled(self) -> None:
+        """Test adding an agent with MCP tool trigger explicitly enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "MCPAgent"
+        mock_agent.description = "Test MCP Agent"
+
+        with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
+            app = AgentFunctionApp()
+            app.add_agent(mock_agent, enable_mcp_tool_endpoint=True)
+
+        setup_mock.assert_called_once()
+        _, _, _, _, enable_mcp = setup_mock.call_args[0]
+        assert enable_mcp is True
+
+    def test_add_agent_with_mcp_tool_trigger_disabled(self) -> None:
+        """Test adding an agent with MCP tool trigger explicitly disabled."""
+        mock_agent = Mock()
+        mock_agent.name = "NoMCPAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_endpoint=True)
+            app.add_agent(mock_agent, enable_mcp_tool_endpoint=False)
+
+        setup_mock.assert_called_once()
+        _, _, _, _, enable_mcp = setup_mock.call_args[0]
+        assert enable_mcp is False
+
+    def test_agent_override_enables_mcp_when_app_disabled(self) -> None:
+        """Test that per-agent override can enable MCP when app-level is disabled."""
+        mock_agent = Mock()
+        mock_agent.name = "OverrideAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_endpoint=False)
+            app.add_agent(mock_agent, enable_mcp_tool_endpoint=True)
+
+        mcp_setup_mock.assert_called_once()
+
+    def test_agent_override_disables_mcp_when_app_enabled(self) -> None:
+        """Test that per-agent override can disable MCP when app-level is enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "NoOverrideAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_endpoint=True)
+            app.add_agent(mock_agent, enable_mcp_tool_endpoint=False)
+
+        mcp_setup_mock.assert_not_called()
+
+    def test_setup_mcp_tool_trigger_registers_decorators(self) -> None:
+        """Test that _setup_mcp_tool_trigger registers the correct decorators."""
+        mock_agent = Mock()
+        mock_agent.name = "MCPToolAgent"
+        mock_agent.description = "Test MCP Tool"
+
+        app = AgentFunctionApp()
+
+        # Mock the decorators
+        with (
+            patch.object(app, "function_name") as func_name_mock,
+            patch.object(app, "mcp_tool_trigger") as mcp_trigger_mock,
+            patch.object(app, "durable_client_input") as client_mock,
+        ):
+            # Setup mock decorator chain
+            func_name_mock.return_value = lambda f: f
+            mcp_trigger_mock.return_value = lambda f: f
+            client_mock.return_value = lambda f: f
+
+            app._setup_mcp_tool_trigger(mock_agent.name, mock_agent.description)
+
+            # Verify decorators were called with correct parameters
+            func_name_mock.assert_called_once()
+            mcp_trigger_mock.assert_called_once_with(
+                arg_name="context",
+                tool_name=mock_agent.name,
+                description=mock_agent.description,
+                tool_properties=ANY,
+                data_type=func.DataType.UNDEFINED,
+            )
+            client_mock.assert_called_once_with(client_name="client")
+
+    def test_setup_mcp_tool_trigger_uses_default_description(self) -> None:
+        """Test that _setup_mcp_tool_trigger uses default description when none provided."""
+        mock_agent = Mock()
+        mock_agent.name = "NoDescAgent"
+
+        app = AgentFunctionApp()
+
+        with (
+            patch.object(app, "function_name", return_value=lambda f: f),
+            patch.object(app, "mcp_tool_trigger") as mcp_trigger_mock,
+            patch.object(app, "durable_client_input", return_value=lambda f: f),
+        ):
+            mcp_trigger_mock.return_value = lambda f: f
+
+            app._setup_mcp_tool_trigger(mock_agent.name, None)
+
+            # Verify default description was used
+            call_args = mcp_trigger_mock.call_args
+            assert call_args[1]["description"] == f"Interact with {mock_agent.name} agent"
+
+    async def test_handle_mcp_tool_invocation_with_json_string(self) -> None:
+        """Test _handle_mcp_tool_invocation with JSON string context."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Create JSON string context
+        context = '{"arguments": {"query": "test query", "threadId": "test-thread"}}'
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            result = await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            assert result == "Test response"
+            get_response_mock.assert_called_once()
+
+    async def test_handle_mcp_tool_invocation_with_dict_context(self) -> None:
+        """Test _handle_mcp_tool_invocation with pre-parsed dict context."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Create dict context
+        context = {"arguments": {"query": "test query", "threadId": "test-thread"}}
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            result = await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            assert result == "Test response"
+            get_response_mock.assert_called_once()
+
+    async def test_handle_mcp_tool_invocation_missing_query(self) -> None:
+        """Test _handle_mcp_tool_invocation raises ValueError when query is missing."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Context missing query
+        context = {"arguments": {}}
+
+        with pytest.raises(ValueError, match="missing required 'query' argument"):
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    async def test_handle_mcp_tool_invocation_invalid_json(self) -> None:
+        """Test _handle_mcp_tool_invocation raises ValueError for invalid JSON."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Invalid JSON string
+        context = "not valid json"
+
+        with pytest.raises(ValueError, match="Invalid MCP context format"):
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    async def test_handle_mcp_tool_invocation_runtime_error(self) -> None:
+        """Test _handle_mcp_tool_invocation raises RuntimeError when agent fails."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        context = '{"arguments": {"query": "test query"}}'
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "failed", "error": "Agent error"}
+
+            with pytest.raises(RuntimeError, match="Agent execution failed"):
+                await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    def test_health_check_includes_mcp_tool_enabled(self) -> None:
+        """Test that health check endpoint includes mcp_tool_enabled field."""
+        mock_agent = Mock()
+        mock_agent.name = "HealthAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_endpoint=True)
+        app.agent_mcp_tool_flags["HealthAgent"] = True
+
+        # Capture the health check handler function
+        captured_handler = None
+
+        def capture_decorator(*args, **kwargs):
+            def decorator(func):
+                nonlocal captured_handler
+                captured_handler = func
+                return func
+
+            return decorator
+
+        with patch.object(app, "route", side_effect=capture_decorator):
+            app._setup_health_route()
+
+        # Verify we captured the handler
+        assert captured_handler is not None
+
+        # Call the health handler
+        request = Mock()
+        response = captured_handler(request)
+
+        # Verify response includes mcp_tool_enabled
+        import json
+
+        body = json.loads(response.get_body().decode("utf-8"))
+        assert "agents" in body
+        assert len(body["agents"]) == 1
+        assert "mcp_tool_enabled" in body["agents"][0]
+        assert body["agents"][0]["mcp_tool_enabled"] is True
 
 
 if __name__ == "__main__":

@@ -114,20 +114,20 @@ Expected response:
     {
       "name": "Joker",
       "type": "Agent",
-      "httpEndpointEnabled": true,
-      "mcpToolTriggerEnabled": false
+      "http_endpoint_enabled": true,
+      "mcp_tool_enabled": false
     },
     {
       "name": "StockAdvisor",
       "type": "Agent",
-      "httpEndpointEnabled": false,
-      "mcpToolTriggerEnabled": true
+      "http_endpoint_enabled": false,
+      "mcp_tool_enabled": true
     },
     {
       "name": "PlantAdvisor",
       "type": "Agent",
-      "httpEndpointEnabled": true,
-      "mcpToolTriggerEnabled": true
+      "http_endpoint_enabled": true,
+      "mcp_tool_enabled": true
     }
   ],
   "agent_count": 3

@@ -11,7 +11,6 @@ import inspect
 import uuid
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from enum import Enum
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
@@ -31,14 +30,6 @@ except ImportError:  # pragma: no cover - optional dependency
     _PydanticBaseModel = None
 else:
     _PydanticBaseModel = _RuntimeBaseModel
-
-
-class ChatRole(str, Enum):
-    """Chat message role enum."""
-
-    USER = "user"
-    SYSTEM = "system"
-    ASSISTANT = "assistant"
 
 
 @dataclass
