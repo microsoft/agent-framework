@@ -67,7 +67,7 @@ from agent_framework.observability import setup_observability
 setup_observability()
 ```
 
-We also have a opiniated logging format, which you can setup using:
+We also have an opinionated logging format, which you can setup using:
 ```python
 from agent_framework import setup_logging
 
@@ -119,7 +119,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 | Sample | Description |
 |--------|-------------|
-| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. This samples also uses the `setup_logging()` function to configure logging. |
+| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. This sample also uses the `setup_logging()` function to configure logging. |
 | [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
 | [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
