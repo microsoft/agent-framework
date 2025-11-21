@@ -40,6 +40,7 @@
   <Folder Name="/Samples/GettingStarted/A2A/">
     <File Path="samples/GettingStarted/A2A/README.md" />
     <Project Path="samples/GettingStarted/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
