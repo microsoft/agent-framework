@@ -484,7 +484,7 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
 
 
 def test_get_input_model_from_mcp_tool_with_simple_array():
-    """Test array without complex items schema (should not add json_schema_extra)."""
+    """Test array with simple items schema (items schema should be preserved in json_schema_extra)."""
     tool = types.Tool(
         name="simple_array_tool",
         description="Tool with simple array",

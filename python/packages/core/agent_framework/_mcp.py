@@ -278,7 +278,7 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         python_type = resolve_type(prop_details)
         description = prop_details.get("description", "")
 
-        # Handle array types
+        # Build field kwargs (description, array items schema, etc.)
         field_kwargs: dict[str, Any] = {}
         if description:
             field_kwargs["description"] = description
