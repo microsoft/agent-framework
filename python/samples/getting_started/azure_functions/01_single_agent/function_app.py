@@ -10,6 +10,8 @@ from typing import Any
 
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
+
+
 # 1. Instantiate the agent with the chosen deployment and instructions.
 def _create_agent() -> Any:
     """Create the Joker agent."""
