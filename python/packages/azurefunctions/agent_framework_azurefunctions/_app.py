@@ -584,8 +584,12 @@ class AgentFunctionApp(DFAppBase):
         if thread_id and isinstance(thread_id, str) and thread_id.strip():
             try:
                 session_id = AgentSessionId.parse(thread_id)
-            except Exception:
-                # If parsing fails, create new session ID with thread_id as key
+            except ValueError as e:
+                logger.warning(
+                    "Failed to parse AgentSessionId from thread_id '%s': %s. Falling back to new session ID.",
+                    thread_id,
+                    e,
+                )
                 session_id = AgentSessionId(name=agent_name, key=thread_id)
         else:
             # Generate new session ID

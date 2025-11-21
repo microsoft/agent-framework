@@ -28,7 +28,7 @@ from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 # This uses AzureCliCredential for authentication (requires 'az login')
 chat_client = AzureOpenAIChatClient()
 
-# Define three AI agents with different roles3
+# Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
 agent1 = chat_client.create_agent(
     name="Joker",
