@@ -268,7 +268,7 @@ async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock)
     client = create_test_azure_ai_client(mock_project_client)
 
     mock_openai_client = MagicMock()
-    mock_project_client.get_openai_client = AsyncMock(return_value=mock_openai_client)
+    mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
 
     await client.initialize_client()
 
