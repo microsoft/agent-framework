@@ -4,12 +4,15 @@ import logging
 
 from .exceptions import AgentFrameworkException
 
-logging.basicConfig(
-    format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+__all__ = ["get_logger", "setup_logging"]
 
-__all__ = ["get_logger"]
+
+def setup_logging() -> None:
+    """Setup the logging configuration for the agent framework."""
+    logging.basicConfig(
+        format="[%(asctime)s - %(pathname)s:%(lineno)d - %(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
 
 def get_logger(name: str = "agent_framework") -> logging.Logger:
