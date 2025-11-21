@@ -12,11 +12,10 @@ import json
 import logging
 from typing import Any
 
-import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient().create_agent(
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -48,7 +47,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 def single_agent_orchestration(context: DurableOrchestrationContext):
     """Run the writer agent twice on the same thread to mirror chaining behaviour."""
 
-    writer = get_agent(context, WRITER_AGENT_NAME)
+    writer = app.get_agent(context, WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
     initial = yield writer.run(
@@ -74,7 +73,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_single_agent_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Start the orchestration and return status metadata."""
 
@@ -104,7 +103,7 @@ async def start_single_agent_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Return orchestration runtime status."""
 

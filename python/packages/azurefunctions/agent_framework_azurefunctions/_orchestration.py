@@ -37,7 +37,7 @@ class DurableAIAgent(AgentProtocol):
     yielded in orchestrations to wait for the entity call to complete.
 
     Example usage in orchestration:
-        writer = get_agent(context, "WriterAgent")
+        writer = app.get_agent(context, "WriterAgent")
         thread = writer.get_new_thread()  # NOT yielded - returns immediately
 
         response = yield writer.run(  # Yielded - waits for entity call
@@ -104,7 +104,7 @@ class DurableAIAgent(AgentProtocol):
         Example:
             @app.orchestration_trigger(context_name="context")
             def my_orchestration(context):
-                agent = get_agent(context, "MyAgent")
+                agent = app.get_agent(context, "MyAgent")
                 thread = agent.get_new_thread()
                 result = yield agent.run("Hello", thread=thread)
         """
@@ -136,7 +136,7 @@ class DurableAIAgent(AgentProtocol):
             message=message_str,
             enable_tool_calls=enable_tool_calls,
             correlation_id=correlation_id,
-            conversation_id=session_id.key,
+            thread_id=session_id.key,
             response_format=response_format,
         )
 
@@ -209,27 +209,3 @@ class DurableAIAgent(AgentProtocol):
                 return "\n".join(cast(list[str], messages))
             return self._messages_to_string(cast(list[ChatMessage], messages))
         return str(messages)
-
-
-def get_agent(context: AgentOrchestrationContextType, agent_name: str) -> DurableAIAgent:
-    """Return a :class:`DurableAIAgent` proxy scoped to ``agent_name``.
-
-    Usage::
-
-    from agent_framework.azurefunctions import get_agent
-
-
-        @app.orchestration_trigger(context_name="context")
-        def my_orchestration(context: DurableOrchestrationContext):
-            writer = get_agent(context, "WriterAgent")
-            thread = writer.get_new_thread()
-            response = yield writer.run("Write a haiku", thread=thread)
-
-    Args:
-        context: The orchestration context provided by Durable Functions.
-        agent_name: Name of the durable agent entity to call.
-
-    Returns:
-        DurableAIAgent wrapper for the specified agent.
-    """
-    return DurableAIAgent(context, agent_name)

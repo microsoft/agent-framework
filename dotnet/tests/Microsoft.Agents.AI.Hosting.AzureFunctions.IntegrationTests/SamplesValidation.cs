@@ -73,11 +73,11 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             this._outputHelper.WriteLine($"Agent run response: {responseText}");
 
             // The response headers should include the agent thread ID, which can be used to continue the conversation.
-            string? threadId = response.Headers.GetValues("X-Agent-Thread")?.FirstOrDefault();
+            string? threadId = response.Headers.GetValues("x-ms-thread-id")?.FirstOrDefault();
             Assert.NotNull(threadId);
+            Assert.NotEmpty(threadId);
 
             this._outputHelper.WriteLine($"Agent thread ID: {threadId}");
-            Assert.StartsWith("@dafx-joker@", threadId);
 
             // Wait for up to 30 seconds to see if the agent response is available in the logs
             await this.WaitForConditionAsync(
@@ -286,10 +286,10 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             this._outputHelper.WriteLine($"Agent response: {startResponseText}");
 
             // The response should be deserializable as an AgentRunResponse object and have a valid thread ID
-            startResponse.Headers.TryGetValues("X-Agent-Thread", out IEnumerable<string>? agentIdValues);
+            startResponse.Headers.TryGetValues("x-ms-thread-id", out IEnumerable<string>? agentIdValues);
             string? threadId = agentIdValues?.FirstOrDefault();
             Assert.NotNull(threadId);
-            Assert.StartsWith("@dafx-publisher@", threadId);
+            Assert.NotEmpty(threadId);
 
             // Wait for the orchestration to report that it's waiting for human approval
             await this.WaitForConditionAsync(
@@ -307,7 +307,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 timeout: TimeSpan.FromSeconds(60));
 
             // Approve the content
-            Uri approvalUri = new($"{runAgentUri}?threadId={threadId}");
+            Uri approvalUri = new($"{runAgentUri}?thread_id={threadId}");
             using HttpContent approvalContent = new StringContent("Approve the content", Encoding.UTF8, "text/plain");
             using HttpResponseMessage approvalResponse = await s_sharedHttpClient.PostAsync(approvalUri, approvalContent);
             Assert.True(approvalResponse.IsSuccessStatusCode, $"Approve content request failed with status: {approvalResponse.StatusCode}");
@@ -327,7 +327,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 timeout: TimeSpan.FromSeconds(60));
 
             // Verify the final orchestration status by asking the agent for the status
-            Uri statusUri = new($"{runAgentUri}?threadId={threadId}");
+            Uri statusUri = new($"{runAgentUri}?thread_id={threadId}");
             await this.WaitForConditionAsync(
                 condition: async () =>
                 {
@@ -635,14 +635,10 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             RedirectStandardError = true,
         };
 
-        string openAiEndpoint =
-            s_configuration["AZUREAI:ENDPOINT"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__ENDPOINT)
-            s_configuration["AZURE_OPENAI_ENDPOINT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__ENDPOINT or AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment =
-            s_configuration["AZUREAI:DEPLOYMENTNAME"] ?? // Defined in dotnet-build-and-test.yml (as AZUREAI__DEPLOYMENTNAME)
-            s_configuration["AZURE_OPENAI_DEPLOYMENT"] ?? // Legacy
-            throw new InvalidOperationException("The required AZUREAI__DEPLOYMENTNAME or AZURE_OPENAI_DEPLOYMENT env variable is not set.");
+        string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;

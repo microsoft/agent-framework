@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         # TODO(ekzhu): re-enable macos-latest when this is fixed: https://github.com/actions/runner-images/issues/11881
         os: [ubuntu-latest, windows-latest]
     env:

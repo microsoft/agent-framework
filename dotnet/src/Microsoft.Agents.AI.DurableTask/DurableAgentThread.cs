@@ -39,7 +39,7 @@ public sealed class DurableAgentThread : AgentThread
     /// <param name="serializedThread">The serialized thread data.</param>
     /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
     /// <returns>The deserialized DurableAgentThread.</returns>
-    public static DurableAgentThread Deserialize(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    internal static DurableAgentThread Deserialize(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         if (!serializedThread.TryGetProperty("sessionId", out JsonElement sessionIdElement) ||
             sessionIdElement.ValueKind != JsonValueKind.String)

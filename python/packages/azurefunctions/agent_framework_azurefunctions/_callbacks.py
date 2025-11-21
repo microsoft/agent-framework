@@ -6,8 +6,6 @@ This module enables callers of AgentFunctionApp to supply streaming and final-re
 invoked during durable entity execution.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -20,7 +18,7 @@ class AgentCallbackContext:
 
     agent_name: str
     correlation_id: str
-    conversation_id: str | None = None
+    thread_id: str | None = None
     request_message: str | None = None
 
 

@@ -7,8 +7,6 @@
     <!-- CA2007: This rule should generally be suppressed in Durable Task libraries -->
     <!-- MEAI001: UserInputRequestContent is experimental but used in source-generated code for AgentRunResponse -->
     <NoWarn>$(NoWarn);CA2007;MEAI001</NoWarn>
-    <!-- Disable packing until we are ready to release this as a nuget -->
-    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

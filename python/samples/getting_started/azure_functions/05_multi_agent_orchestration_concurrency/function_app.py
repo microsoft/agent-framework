@@ -12,11 +12,10 @@ import json
 import logging
 from typing import Any
 
-import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient()
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     physicist = chat_client.create_agent(
         name=PHYSICIST_AGENT_NAME,
@@ -58,8 +57,8 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     if not prompt or not str(prompt).strip():
         raise ValueError("Prompt is required")
 
-    physicist = get_agent(context, PHYSICIST_AGENT_NAME)
-    chemist = get_agent(context, CHEMIST_AGENT_NAME)
+    physicist = app.get_agent(context, PHYSICIST_AGENT_NAME)
+    chemist = app.get_agent(context, CHEMIST_AGENT_NAME)
 
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()
@@ -80,7 +79,7 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_multi_agent_concurrent_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Kick off the orchestration with a plain text prompt."""
 
@@ -121,7 +120,7 @@ async def start_multi_agent_concurrent_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     instance_id = req.route_params.get("instanceId")
     if not instance_id:

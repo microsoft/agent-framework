@@ -8,8 +8,17 @@ from unittest.mock import Mock
 import pytest
 from agent_framework import AgentThread
 
-from agent_framework_azurefunctions import DurableAIAgent, get_agent
+from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
 from agent_framework_azurefunctions._models import AgentSessionId, DurableAgentThread
+
+
+def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
+    app = AgentFunctionApp(enable_health_check=False, enable_http_endpoints=False)
+    for name in agent_names:
+        agent = Mock()
+        agent.name = name
+        app.add_agent(agent)
+    return app
 
 
 class TestDurableAIAgent:
@@ -127,16 +136,16 @@ class TestDurableAIAgent:
         assert operation == "run_agent"
         assert request["message"] == "Test message"
         assert request["enable_tool_calls"] is True
-        assert "correlation_id" in request
-        assert request["correlation_id"] == "correlation-guid"
-        assert "conversation_id" in request
-        assert request["conversation_id"] == "thread-guid"
+        assert "correlationId" in request
+        assert request["correlationId"] == "correlation-guid"
+        assert "thread_id" in request
+        assert request["thread_id"] == "thread-guid"
 
     def test_run_without_thread(self) -> None:
         """Test that run() works without explicit thread (creates unique session key)."""
         mock_context = Mock()
         mock_context.instance_id = "test-instance-002"
-        # Two calls to new_uuid: one for session_key, one for correlation_id
+        # Two calls to new_uuid: one for session_key, one for correlationId
         mock_context.new_uuid = Mock(side_effect=["auto-generated-guid", "correlation-guid"])
 
         mock_task = Mock()
@@ -155,7 +164,7 @@ class TestDurableAIAgent:
         entity_id = call_args[0][0]
         assert entity_id.name == "dafx-TestAgent"
         assert entity_id.key == "auto-generated-guid"
-        # Should be called twice: once for session_key, once for correlation_id
+        # Should be called twice: once for session_key, once for correlationId
         assert mock_context.new_uuid.call_count == 2
 
     def test_run_with_response_format(self) -> None:
@@ -266,19 +275,27 @@ class TestDurableAIAgent:
         assert str(entity_id) == "@dafx-writeragent@test-guid-789"
 
 
-class TestGetAgentHelper:
-    """Test suite for the get_agent helper function."""
+class TestAgentFunctionAppGetAgent:
+    """Test suite for AgentFunctionApp.get_agent."""
 
-    def test_get_agent_function(self) -> None:
-        """Test get_agent function creates DurableAIAgent."""
+    def test_get_agent_method(self) -> None:
+        """Test get_agent method creates DurableAIAgent for registered agent."""
+        app = _app_with_registered_agents("MyAgent")
         mock_context = Mock()
         mock_context.instance_id = "test-instance-100"
 
-        agent = get_agent(mock_context, "MyAgent")
+        agent = app.get_agent(mock_context, "MyAgent")
 
         assert isinstance(agent, DurableAIAgent)
         assert agent.agent_name == "MyAgent"
         assert agent.context == mock_context
+
+    def test_get_agent_raises_for_unregistered_agent(self) -> None:
+        """Test get_agent raises ValueError when agent is not registered."""
+        app = _app_with_registered_agents("KnownAgent")
+
+        with pytest.raises(ValueError, match=r"Agent 'MissingAgent' is not registered with this app\."):
+            app.get_agent(Mock(), "MissingAgent")
 
 
 class TestOrchestrationIntegration:
@@ -290,8 +307,8 @@ class TestOrchestrationIntegration:
         mock_context.instance_id = "test-orchestration-001"
         # new_uuid will be called 3 times:
         # 1. thread creation
-        # 2. correlation_id for first call
-        # 3. correlation_id for second call
+        # 2. correlationId for first call
+        # 3. correlationId for second call
         mock_context.new_uuid = Mock(side_effect=["deterministic-guid-001", "corr-1", "corr-2"])
 
         # Track entity calls
@@ -307,8 +324,8 @@ class TestOrchestrationIntegration:
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
-        # Create agent
-        agent = get_agent(mock_context, "WriterAgent")
+        app = _app_with_registered_agents("WriterAgent")
+        agent = app.get_agent(mock_context, "WriterAgent")
 
         # Create thread
         thread = agent.get_new_thread()
@@ -347,9 +364,9 @@ class TestOrchestrationIntegration:
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
-        # Create multiple agents
-        writer = get_agent(mock_context, "WriterAgent")
-        editor = get_agent(mock_context, "EditorAgent")
+        app = _app_with_registered_agents("WriterAgent", "EditorAgent")
+        writer = app.get_agent(mock_context, "WriterAgent")
+        editor = app.get_agent(mock_context, "EditorAgent")
 
         writer_thread = writer.get_new_thread()
         editor_thread = editor.get_new_thread()

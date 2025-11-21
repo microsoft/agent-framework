@@ -7,56 +7,58 @@ This sample demonstrates how to use the Durable Extension for Agent Framework to
 - Defining a simple agent with the Microsoft Agent Framework and wiring it into
   an Azure Functions app via the Durable Extension for Agent Framework.
 - Calling the agent through generated HTTP endpoints (`/api/agents/Joker/run`).
-- Managing conversation state with session identifiers, so multiple clients can
+- Managing conversation state with thread identifiers, so multiple clients can
   interact with the agent concurrently without sharing context.
 
-## Environment Setup
+## Prerequisites
 
-### 1. Create and activate a virtual environment
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**Linux/macOS:**
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Install dependencies
-
-- [Azure Functions Core Tools 4.x](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) – install so you can run `func start` locally.
-- [Azurite storage emulator](https://learn.microsoft.com/azure/storage/common/storage-use-azurite?tabs=visual-studio) – install and start Azurite before launching the app (the sample uses `AzureWebJobsStorage=UseDevelopmentStorage=true`).
-- Python dependencies – from this folder, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
-- Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY` so the Azure OpenAI SDK can authenticate; keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
+Follow the common setup steps in `../README.md` to install tooling, configure Azure OpenAI credentials, and install the Python dependencies for this sample.
 
 ## Running the Sample
 
-With the environment configured and the Functions host running, you can interact
-with the Joker agent using the provided `demo.http` file or any HTTP client. For
-example:
+Send a prompt to the Joker agent:
+
+Bash (Linux/macOS/WSL):
 
 ```bash
-curl -X POST http://localhost:7071/api/agents/Joker/run \
-     -H "Content-Type: text/plain" \
+curl -i -X POST http://localhost:7071/api/agents/Joker/run \
      -d "Tell me a short joke about cloud computing."
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:7071/api/agents/Joker/run `
+    -Body "Tell me a short joke about cloud computing."
 ```
 
 The agent responds with a JSON payload that includes the generated joke.
 
+> [!TIP]
+> To return immediately with an HTTP 202 response instead of waiting for the agent output, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body. The default behavior waits for the response.
+
 ## Expected Output
 
-When you send a POST request with plain-text input, the Functions host responds with an HTTP 202 and queues the request for the durable agent entity. A typical response body looks like the following:
+The default plain-text response looks like the following:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+x-ms-thread-id: 4f205157170244bfbd80209df383757e
+
+Why did the cloud break up with the server?
+
+Because it found someone more "uplifting"!
+```
+
+When you specify the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body, the Functions host responds with an HTTP 202 and queues the request to run in the background. A typical response body looks like the following:
 
 ```json
 {
   "status": "accepted",
   "response": "Agent request accepted",
   "message": "Tell me a short joke about cloud computing.",
-  "conversation_id": "<guid>",
+  "thread_id": "<guid>",
   "correlation_id": "<guid>"
 }
 ```

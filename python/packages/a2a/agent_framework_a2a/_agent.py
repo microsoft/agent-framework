@@ -388,6 +388,17 @@ class A2AAgent(BaseAgent):
         if task.artifacts is not None:
             for artifact in task.artifacts:
                 messages.append(self._artifact_to_chat_message(artifact))
+        elif task.history is not None and len(task.history) > 0:
+            # Include the last history item as the agent response
+            history_item = task.history[-1]
+            contents = self._a2a_parts_to_contents(history_item.parts)
+            messages.append(
+                ChatMessage(
+                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
+                    contents=contents,
+                    raw_representation=history_item,
+                )
+            )
 
         return messages
 

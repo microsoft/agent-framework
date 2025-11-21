@@ -41,9 +41,9 @@ public static class InProcessExecution
     /// </summary>
     internal static InProcessExecutionEnvironment Subworkflow { get; } = new(ExecutionMode.Subworkflow);
 
-    /// <inheritdoc cref="IWorkflowExecutionEnvironment.StreamAsync(Workflow, string?, CancellationToken)"/>
-    public static ValueTask<StreamingRun> StreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default)
-        => Default.StreamAsync(workflow, runId, cancellationToken);
+    /// <inheritdoc cref="IWorkflowExecutionEnvironment.OpenStreamAsync(Workflow, string?, CancellationToken)"/>
+    public static ValueTask<StreamingRun> OpenStreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default)
+        => Default.OpenStreamAsync(workflow, runId, cancellationToken);
 
     /// <inheritdoc cref="IWorkflowExecutionEnvironment.StreamAsync{TInput}(Workflow, TInput, string?, CancellationToken)"/>
     public static ValueTask<StreamingRun> StreamAsync<TInput>(Workflow workflow, TInput input, string? runId = null, CancellationToken cancellationToken = default) where TInput : notnull

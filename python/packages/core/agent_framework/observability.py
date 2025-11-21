@@ -846,6 +846,7 @@ def _trace_get_response(
                 kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -933,6 +934,7 @@ def _trace_get_streaming_response(
                 kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -1019,7 +1021,7 @@ def use_observability(
         .. code-block:: python
 
             from agent_framework import use_observability, setup_observability
-            from agent_framework._clients import ChatClientProtocol
+            from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
@@ -1102,6 +1104,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1110,7 +1113,7 @@ def _trace_agent_run(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1118,7 +1121,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1171,6 +1174,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1179,7 +1183,7 @@ def _trace_agent_run_stream(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1187,7 +1191,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1324,7 +1328,10 @@ def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
 ) -> Generator["trace.Span", Any, Any]:
-    """Start a span for a agent run."""
+    """Start a span for a agent run.
+
+    Note: `attributes` must contain the `span_name_attribute` key.
+    """
     span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
     with trace.use_span(
@@ -1353,7 +1360,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model", "unknown")
+    if model_id := kwargs.get("model", chat_options.model_id):
+        attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
     if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):

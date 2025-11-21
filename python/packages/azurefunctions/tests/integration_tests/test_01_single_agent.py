@@ -16,6 +16,8 @@ Usage:
 
 import pytest
 
+from agent_framework_azurefunctions._constants import THREAD_ID_HEADER
+
 from .testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 
 # Module-level markers - applied to all tests in this file
@@ -45,9 +47,9 @@ class TestSampleSingleAgent:
         """Test sending a simple message with JSON payload."""
         response = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about cloud computing.", "sessionId": "test-simple-json"},
+            {"message": "Tell me a short joke about cloud computing.", "thread_id": "test-simple-json"},
         )
-        # Agent can return 200 (immediate) or 202 (async with wait_for_completion=false)
+        # Agent can return 200 (immediate) or 202 (async with wait_for_response=false)
         assert response.status_code in [200, 202]
         data = response.json()
 
@@ -58,56 +60,54 @@ class TestSampleSingleAgent:
             assert data["message_count"] >= 1
         else:
             # Async response - check we got correlation info
-            assert "correlationId" in data or "sessionId" in data
+            assert "correlation_id" in data or "thread_id" in data
 
     def test_simple_message_plain_text(self) -> None:
         """Test sending a message with plain text payload."""
         response = SampleTestHelper.post_text(f"{self.base_url}/run", "Tell me a short joke about networking.")
         assert response.status_code in [200, 202]
-        data = response.json()
 
-        if response.status_code == 200:
-            assert data["status"] == "success"
-            assert "response" in data
+        # Agent responded with plain text when the request body was text/plain.
+        assert response.text.strip()
+        assert response.headers.get(THREAD_ID_HEADER) is not None
 
-    def test_session_key_in_query(self) -> None:
-        """Test using sessionKey in query parameter."""
+    def test_thread_id_in_query(self) -> None:
+        """Test using thread_id in query parameter."""
         response = SampleTestHelper.post_text(
-            f"{self.base_url}/run?sessionKey=test-query-session", "Tell me a short joke about weather in Texas."
+            f"{self.base_url}/run?thread_id=test-query-thread", "Tell me a short joke about weather in Texas."
         )
         assert response.status_code in [200, 202]
-        data = response.json()
 
-        if response.status_code == 200:
-            assert data["status"] == "success"
+        assert response.text.strip()
+        assert response.headers.get(THREAD_ID_HEADER) == "test-query-thread"
 
     def test_conversation_continuity(self) -> None:
         """Test conversation context is maintained across requests."""
-        session_id = "test-continuity"
+        thread_id = "test-continuity"
 
         # First message
         response1 = SampleTestHelper.post_json(
             f"{self.base_url}/run",
-            {"message": "Tell me a short joke about weather in Seattle.", "sessionId": session_id},
+            {"message": "Tell me a short joke about weather in Seattle.", "thread_id": thread_id},
         )
         assert response1.status_code in [200, 202]
 
         if response1.status_code == 200:
             data1 = response1.json()
-            assert data1["message_count"] == 1
+            assert data1["message_count"] == 2  # Initial + reply
 
             # Second message in same session
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about San Francisco?", "sessionId": session_id}
+                f"{self.base_url}/run", {"message": "What about San Francisco?", "thread_id": thread_id}
             )
             assert response2.status_code == 200
             data2 = response2.json()
-            assert data2["message_count"] == 2
+            assert data2["message_count"] == 4
         else:
             # In async mode, we can't easily test message count
             # Just verify we can make multiple calls
             response2 = SampleTestHelper.post_json(
-                f"{self.base_url}/run", {"message": "What about Texas?", "sessionId": session_id}
+                f"{self.base_url}/run", {"message": "What about Texas?", "thread_id": thread_id}
             )
             assert response2.status_code == 202
 

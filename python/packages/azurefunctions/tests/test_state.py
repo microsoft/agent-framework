@@ -6,7 +6,6 @@ from unittest.mock import Mock
 
 import pytest
 from agent_framework import AgentRunResponse
-
 from agent_framework_azurefunctions._state import AgentState
 
 

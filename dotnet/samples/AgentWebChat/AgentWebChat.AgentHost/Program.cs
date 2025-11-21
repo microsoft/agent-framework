@@ -2,8 +2,10 @@
 
 using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
+using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -20,14 +22,23 @@ builder.Services.AddProblemDetails();
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
 
-builder.AddAIAgent(
+// Add DevUI services
+builder.AddDevUI();
+
+// Add OpenAI services
+builder.AddOpenAIChatCompletions();
+builder.AddOpenAIResponses();
+
+var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
+    .WithAITool(new CustomAITool())
+    .WithAITool(new CustomFunctionTool())
     .WithInMemoryThreadStore();
 
-builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
@@ -78,9 +89,62 @@ var literatureAgent = builder.AddAIAgent("literator",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-builder.AddSequentialWorkflow("science-sequential-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
-builder.AddConcurrentWorkflow("science-concurrent-workflow", [chemistryAgent, mathsAgent, literatureAgent]).AddAsAIAgent();
-builder.AddOpenAIResponses();
+var scienceSequentialWorkflow = builder.AddWorkflow("science-sequential-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
+var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
+}).AddAsAIAgent();
+
+builder.AddWorkflow("nonAgentWorkflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [pirateAgentBuilder, chemistryAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+});
+
+builder.Services.AddKeyedSingleton("NonAgentAndNonmatchingDINameWorkflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [pirateAgentBuilder, chemistryAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: "random-name", agents: agents);
+});
+
+builder.Services.AddSingleton<AIAgent>(sp =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(chatClient, name: "default-agent", instructions: "you are a default agent.");
+});
+
+builder.Services.AddKeyedSingleton<AIAgent>("my-di-nonmatching-agent", (sp, name) =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(
+        chatClient,
+        name: "some-random-name", // demonstrating registration can be different for DI and actual agent
+        instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
+});
+
+builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, name) =>
+{
+    if (name is not string nameStr)
+    {
+        throw new NotSupportedException("Name should be passed as a key");
+    }
+
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(
+        chatClient,
+        name: nameStr, // demonstrating registration with the same name
+        instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
+});
 
 var app = builder.Build();
 
@@ -91,8 +155,8 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 app.UseExceptionHandler();
 
 // attach a2a with simple message communication
-app.MapA2A(agentName: "pirate", path: "/a2a/pirate");
-app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", agentCard: new()
+app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
+app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard: new()
 {
     Name = "Knights and Knaves",
     Description = "An agent that helps you solve the knights and knaves puzzle.",
@@ -102,10 +166,13 @@ app.MapA2A(agentName: "knights-and-knaves", path: "/a2a/knights-and-knaves", age
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
-app.MapOpenAIResponses();
+app.MapDevUI();
 
-app.MapOpenAIChatCompletions("pirate");
-app.MapOpenAIChatCompletions("knights-and-knaves");
+app.MapOpenAIResponses();
+app.MapOpenAIConversations();
+
+app.MapOpenAIChatCompletions(pirateAgentBuilder);
+app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

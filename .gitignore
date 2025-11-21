@@ -204,6 +204,8 @@ agents.md
 # AI
 .claude/
 WARP.md
+**/memory-bank/
+**/projectBrief.md
 
 # Azurite storage emulator files
 */__azurite_db_blob__.json
@@ -216,3 +218,11 @@ WARP.md
 
 # Azure Functions local settings
 local.settings.json
+
+# Frontend
+**/frontend/node_modules/
+**/frontend/.vite/
+**/frontend/dist/
+
+# Database files
+*.db

@@ -11,14 +11,13 @@ Functions host."""
 
 import json
 import logging
-from typing import Any, cast
 from collections.abc import Mapping
+from typing import Any, cast
 
-import azure.durable_functions as df
 import azure.functions as func
-from agent_framework.azure import AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
-from agent_framework.azurefunctions import AgentFunctionApp, get_agent
+from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
+from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -41,9 +40,10 @@ class EmailPayload(BaseModel):
     email_id: str
     email_content: str
 
+
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    chat_client = AzureOpenAIChatClient()
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
     spam_agent = chat_client.create_agent(
         name=SPAM_AGENT_NAME,
@@ -84,8 +84,8 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
     except ValidationError as exc:
         raise ValueError(f"Invalid email payload: {exc}") from exc
 
-    spam_agent = get_agent(context, SPAM_AGENT_NAME)
-    email_agent = get_agent(context, EMAIL_AGENT_NAME)
+    spam_agent = app.get_agent(context, SPAM_AGENT_NAME)
+    email_agent = app.get_agent(context, EMAIL_AGENT_NAME)
 
     spam_thread = spam_agent.get_new_thread()
 
@@ -134,7 +134,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_spam_detection_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     try:
         body = req.get_json()
@@ -185,7 +185,7 @@ async def start_spam_detection_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     instance_id = req.route_params.get("instanceId")
     if not instance_id:

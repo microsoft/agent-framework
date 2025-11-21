@@ -4,16 +4,15 @@ import asyncio
 from random import randint
 from typing import Annotated
 
-from agent_framework import AgentThread, ChatAgent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import Field
 
 """
 Azure AI Agent with Thread Management Example
 
-This sample demonstrates thread management with Azure AI Agents, comparing
-automatic thread creation with explicit thread management for persistent context.
+This sample demonstrates thread management with Azure AI Agent, showing
+persistent conversation capabilities using service-managed threads as well as storing messages in-memory.
 """
 
 
@@ -26,44 +25,42 @@ def get_weather(
 
 
 async def example_with_automatic_thread_creation() -> None:
-    """Example showing automatic thread creation (service-managed thread)."""
+    """Example showing automatic thread creation."""
     print("=== Automatic Thread Creation Example ===")
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+        AzureAIClient(async_credential=credential).create_agent(
+            name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
     ):
         # First conversation - no thread provided, will be created automatically
-        first_query = "What's the weather like in Seattle?"
-        print(f"User: {first_query}")
-        first_result = await agent.run(first_query)
-        print(f"Agent: {first_result.text}")
+        query1 = "What's the weather like in Seattle?"
+        print(f"User: {query1}")
+        result1 = await agent.run(query1)
+        print(f"Agent: {result1.text}")
 
         # Second conversation - still no thread provided, will create another new thread
-        second_query = "What was the last city I asked about?"
-        print(f"\nUser: {second_query}")
-        second_result = await agent.run(second_query)
-        print(f"Agent: {second_result.text}")
+        query2 = "What was the last city I asked about?"
+        print(f"\nUser: {query2}")
+        result2 = await agent.run(query2)
+        print(f"Agent: {result2.text}")
         print("Note: Each call creates a separate thread, so the agent doesn't remember previous context.\n")
 
 
-async def example_with_thread_persistence() -> None:
-    """Example showing thread persistence across multiple conversations."""
-    print("=== Thread Persistence Example ===")
-    print("Using the same thread across multiple conversations to maintain context.\n")
+async def example_with_thread_persistence_in_memory() -> None:
+    """
+    Example showing thread persistence across multiple conversations.
+    In this example, messages are stored in-memory.
+    """
+    print("=== Thread Persistence Example (In-Memory) ===")
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+        AzureAIClient(async_credential=credential).create_agent(
+            name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -72,81 +69,80 @@ async def example_with_thread_persistence() -> None:
         thread = agent.get_new_thread()
 
         # First conversation
-        first_query = "What's the weather like in Tokyo?"
-        print(f"User: {first_query}")
-        first_result = await agent.run(first_query, thread=thread)
-        print(f"Agent: {first_result.text}")
+        query1 = "What's the weather like in Tokyo?"
+        print(f"User: {query1}")
+        result1 = await agent.run(query1, thread=thread, store=False)
+        print(f"Agent: {result1.text}")
 
         # Second conversation using the same thread - maintains context
-        second_query = "How about London?"
-        print(f"\nUser: {second_query}")
-        second_result = await agent.run(second_query, thread=thread)
-        print(f"Agent: {second_result.text}")
+        query2 = "How about London?"
+        print(f"\nUser: {query2}")
+        result2 = await agent.run(query2, thread=thread, store=False)
+        print(f"Agent: {result2.text}")
 
         # Third conversation - agent should remember both previous cities
-        third_query = "Which of the cities I asked about has better weather?"
-        print(f"\nUser: {third_query}")
-        third_result = await agent.run(third_query, thread=thread)
-        print(f"Agent: {third_result.text}")
+        query3 = "Which of the cities I asked about has better weather?"
+        print(f"\nUser: {query3}")
+        result3 = await agent.run(query3, thread=thread, store=False)
+        print(f"Agent: {result3.text}")
         print("Note: The agent remembers context from previous messages in the same thread.\n")
 
 
 async def example_with_existing_thread_id() -> None:
-    """Example showing how to work with an existing thread ID from the service."""
+    """
+    Example showing how to work with an existing thread ID from the service.
+    In this example, messages are stored on the server.
+    """
     print("=== Existing Thread ID Example ===")
-    print("Using a specific thread ID to continue an existing conversation.\n")
 
     # First, create a conversation and capture the thread ID
     existing_thread_id = None
 
-    # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option.
     async with (
         AzureCliCredential() as credential,
-        ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+        AzureAIClient(async_credential=credential).create_agent(
+            name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
     ):
         # Start a conversation and get the thread ID
         thread = agent.get_new_thread()
-        first_query = "What's the weather in Paris?"
-        print(f"User: {first_query}")
-        first_result = await agent.run(first_query, thread=thread)
-        print(f"Agent: {first_result.text}")
+
+        query1 = "What's the weather in Paris?"
+        print(f"User: {query1}")
+        result1 = await agent.run(query1, thread=thread)
+        print(f"Agent: {result1.text}")
 
         # The thread ID is set after the first response
         existing_thread_id = thread.service_thread_id
         print(f"Thread ID: {existing_thread_id}")
 
-    if existing_thread_id:
-        print("\n--- Continuing with the same thread ID in a new agent instance ---")
+        if existing_thread_id:
+            print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
-        # Create a new agent instance but use the existing thread ID
-        async with (
-            AzureCliCredential() as credential,
-            ChatAgent(
-                chat_client=AzureAIAgentClient(thread_id=existing_thread_id, async_credential=credential),
-                instructions="You are a helpful weather agent.",
-                tools=get_weather,
-            ) as agent,
-        ):
-            # Create a thread with the existing ID
-            thread = AgentThread(service_thread_id=existing_thread_id)
+            async with (
+                AzureAIClient(async_credential=credential).create_agent(
+                    name="BasicWeatherAgent",
+                    instructions="You are a helpful weather agent.",
+                    tools=get_weather,
+                ) as agent,
+            ):
+                # Create a thread with the existing ID
+                thread = agent.get_new_thread(service_thread_id=existing_thread_id)
 
-            second_query = "What was the last city I asked about?"
-            print(f"User: {second_query}")
-            second_result = await agent.run(second_query, thread=thread)
-            print(f"Agent: {second_result.text}")
-            print("Note: The agent continues the conversation from the previous thread.\n")
+                query2 = "What was the last city I asked about?"
+                print(f"User: {query2}")
+                result2 = await agent.run(query2, thread=thread)
+                print(f"Agent: {result2.text}")
+                print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
 
 
 async def main() -> None:
-    print("=== Azure AI Chat Client Agent Thread Management Examples ===\n")
+    print("=== Azure AI Agent Thread Management Examples ===\n")
 
     await example_with_automatic_thread_creation()
-    await example_with_thread_persistence()
+    await example_with_thread_persistence_in_memory()
     await example_with_existing_thread_id()
 
 

@@ -75,8 +75,8 @@ public class ChatClientAgentThread : AgentThread
     /// <remarks>
     /// <para>
     /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
-    /// If <see cref="MessageStore "/> is not null, and <see cref="ConversationId"/> is set, <see cref="MessageStore "/>
-    /// will be reverted to null, and vice versa.
+    /// If <see cref="MessageStore "/> is not null, setting <see cref="ConversationId"/> will throw an
+    /// <see cref="InvalidOperationException "/> exception.
     /// </para>
     /// <para>
     /// This property may be null in the following cases:
@@ -91,6 +91,7 @@ public class ChatClientAgentThread : AgentThread
     /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Attempted to set a conversation ID but a <see cref="MessageStore"/> is already set.</exception>
     public string? ConversationId
     {
         get => this._conversationId;
@@ -166,8 +167,8 @@ public class ChatClientAgentThread : AgentThread
         var state = new ThreadState
         {
             ConversationId = this.ConversationId,
-            StoreState = storeState,
-            AIContextProviderState = aiContextProviderState
+            StoreState = storeState is { ValueKind: not JsonValueKind.Undefined } ? storeState : null,
+            AIContextProviderState = aiContextProviderState is { ValueKind: not JsonValueKind.Undefined } ? aiContextProviderState : null,
         };
 
         return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ThreadState)));
