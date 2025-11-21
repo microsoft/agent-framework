@@ -1,5 +1,5 @@
 [project]
-name = "agent-framework-aisearch"
+name = "agent-framework-azure-ai-search"
 description = "Azure AI Search integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
@@ -76,15 +76,15 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_aisearch"]
+targets = ["agent_framework_azure_ai_search"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_aisearch"
-test = "pytest --cov=agent_framework_aisearch --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_ai_search"
+test = "pytest --cov=agent_framework_azure_ai_search --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

@@ -6,12 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import ChatMessage, Context, Role
-from agent_framework.azure import AzureAISearchContextProvider
+from agent_framework.azure import AzureAISearchContextProvider, AzureAISearchSettings
 from agent_framework.exceptions import ServiceInitializationError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
-
-from agent_framework_aisearch import AzureAISearchSettings
 
 
 @pytest.fixture
@@ -246,7 +244,7 @@ class TestSemanticSearch:
     """Test semantic search functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_semantic_search_basic(
         self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
     ) -> None:
@@ -275,7 +273,7 @@ class TestSemanticSearch:
         assert "Test document content" in context.messages[1].text
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_semantic_search_empty_query(self, mock_search_class: MagicMock) -> None:
         """Test that empty queries return empty context."""
         mock_search_client = AsyncMock()
@@ -295,7 +293,7 @@ class TestSemanticSearch:
         assert len(context.messages) == 0
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_semantic_search_with_vector_query(
         self, mock_search_class: MagicMock, sample_messages: list[ChatMessage]
     ) -> None:
@@ -332,8 +330,8 @@ class TestKnowledgeBaseSetup:
     """Test Knowledge Base setup for agentic mode."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_ensure_knowledge_base_creates_when_not_exists(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -369,8 +367,8 @@ class TestKnowledgeBaseSetup:
         mock_index_client.create_or_update_knowledge_base.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_ensure_knowledge_base_skips_when_exists(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -406,7 +404,7 @@ class TestContextProviderLifecycle:
     """Test context provider lifecycle methods."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_context_manager(self, mock_search_class: MagicMock) -> None:
         """Test that provider can be used as async context manager."""
         mock_search_client = AsyncMock()
@@ -422,9 +420,9 @@ class TestContextProviderLifecycle:
             assert isinstance(provider, AzureAISearchContextProvider)
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_context_manager_agentic_cleanup(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock, mock_retrieval_class: MagicMock
     ) -> None:
@@ -470,7 +468,7 @@ class TestMessageFiltering:
     """Test message filtering functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_filters_non_user_assistant_messages(self, mock_search_class: MagicMock) -> None:
         """Test that only USER and ASSISTANT messages are processed."""
         # Setup mock
@@ -502,7 +500,7 @@ class TestMessageFiltering:
         mock_search_client.search.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_filters_empty_messages(self, mock_search_class: MagicMock) -> None:
         """Test that empty/whitespace messages are filtered out."""
         mock_search_client = AsyncMock()
@@ -532,7 +530,7 @@ class TestCitations:
     """Test citation functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_citations_included_in_semantic_search(self, mock_search_class: MagicMock) -> None:
         """Test that citations are included in semantic search results."""
         # Setup mock with document ID
@@ -564,9 +562,9 @@ class TestAgenticSearch:
     """Test agentic search functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_agentic_search_basic(
         self,
         mock_search_class: MagicMock,
@@ -593,7 +591,7 @@ class TestAgenticSearch:
         mock_content = MagicMock()
         mock_content.text = "Agentic search result"
         # Make it pass isinstance check
-        from agent_framework_aisearch._search_provider import _agentic_retrieval_available
+        from agent_framework_azure_ai_search._search_provider import _agentic_retrieval_available
 
         if _agentic_retrieval_available:
             from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
@@ -623,9 +621,9 @@ class TestAgenticSearch:
         assert len(context.messages) >= 1
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_agentic_search_no_results(
         self,
         mock_search_class: MagicMock,
@@ -670,9 +668,9 @@ class TestAgenticSearch:
         assert len(context.messages) >= 1
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.KnowledgeBaseRetrievalClient")
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_agentic_search_with_medium_reasoning(
         self,
         mock_search_class: MagicMock,
@@ -696,7 +694,7 @@ class TestAgenticSearch:
         mock_message = MagicMock()
         mock_content = MagicMock()
         mock_content.text = "Medium reasoning result"
-        from agent_framework_aisearch._search_provider import _agentic_retrieval_available
+        from agent_framework_azure_ai_search._search_provider import _agentic_retrieval_available
 
         if _agentic_retrieval_available:
             from azure.search.documents.knowledgebases.models import KnowledgeBaseMessageTextContent
@@ -730,8 +728,8 @@ class TestVectorFieldAutoDiscovery:
     """Test vector field auto-discovery functionality."""
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_auto_discovers_single_vector_field(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -795,8 +793,8 @@ class TestVectorFieldAutoDiscovery:
         assert is_vector_3 is False
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_no_false_positives_on_string_fields(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -839,8 +837,8 @@ class TestVectorFieldAutoDiscovery:
         assert provider._auto_discovered_vector_field is True
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_multiple_vector_fields_without_vectorizer(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -884,8 +882,8 @@ class TestVectorFieldAutoDiscovery:
         assert provider._auto_discovered_vector_field is True
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_multiple_vectorizable_fields(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
@@ -941,8 +939,8 @@ class TestVectorFieldAutoDiscovery:
         assert provider._auto_discovered_vector_field is True
 
     @pytest.mark.asyncio
-    @patch("agent_framework_aisearch._search_provider.SearchIndexClient")
-    @patch("agent_framework_aisearch._search_provider.SearchClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
+    @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
     async def test_single_vectorizable_field_detected(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
