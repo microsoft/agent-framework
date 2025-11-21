@@ -7,7 +7,6 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Chat;
-using OpenAI.Responses;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace AgentWebChat.Web;
