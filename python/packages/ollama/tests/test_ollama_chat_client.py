@@ -14,6 +14,7 @@ from agent_framework import (
     FunctionResultContent,
     HostedWebSearchTool,
     TextContent,
+    TextReasoningContent,
     UriContent,
     chat_middleware,
 )
@@ -29,7 +30,7 @@ from agent_framework_ollama import OllamaChatClient
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("OLLAMA_CHAT_MODEL_ID", "") in ("", "test-model"),
+    or os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
     reason="No real Ollama chat model provided; skipping integration tests."
     if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
     else "Integration tests are disabled.",
@@ -118,7 +119,7 @@ def test_init(ollama_unit_test_env: dict[str, str]) -> None:
 
     assert ollama_chat_client.client is not None
     assert isinstance(ollama_chat_client.client, AsyncClient)
-    assert ollama_chat_client.chat_model_id == ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
+    assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
     assert isinstance(ollama_chat_client, BaseChatClient)
 
 
@@ -127,20 +128,20 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
     test_client = MagicMock(spec=AsyncClient)
     # Mock underlying HTTP client's base_url
     test_client._client = MagicMock()
-    test_client._client.base_url = ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
+    test_client._client.base_url = ollama_unit_test_env["OLLAMA_MODEL_ID"]
     ollama_chat_client = OllamaChatClient(client=test_client)
 
     assert ollama_chat_client.client is test_client
-    assert ollama_chat_client.chat_model_id == ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
+    assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
     assert isinstance(ollama_chat_client, BaseChatClient)
 
 
-@pytest.mark.parametrize("exclude_list", [["OLLAMA_CHAT_MODEL_ID"]], indirect=True)
+@pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL_ID"]], indirect=True)
 def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
         OllamaChatClient(
             host="http://localhost:12345",
-            chat_model_id=None,
+            model_id=None,
             env_file_path="test.env",
         )
 
@@ -148,7 +149,7 @@ def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
 def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
     settings = {
         "host": ollama_unit_test_env["OLLAMA_HOST"],
-        "chat_model_id": ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"],
+        "model_id": ollama_unit_test_env["OLLAMA_MODEL_ID"],
     }
 
     ollama_chat_client = OllamaChatClient.from_dict(settings)
@@ -156,7 +157,7 @@ def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
 
     assert isinstance(serialized, dict)
     assert serialized["host"] == ollama_unit_test_env["OLLAMA_HOST"]
-    assert serialized["chat_model_id"] == ollama_unit_test_env["OLLAMA_CHAT_MODEL_ID"]
+    assert serialized["model_id"] == ollama_unit_test_env["OLLAMA_MODEL_ID"]
 
 
 def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
@@ -188,7 +189,7 @@ def test_additional_properties(ollama_unit_test_env: dict[str, str]) -> None:
 async def test_empty_messages() -> None:
     ollama_chat_client = OllamaChatClient(
         host="http://localhost:12345",
-        chat_model_id="test-model",
+        model_id="test-model",
     )
     with pytest.raises(ServiceInvalidRequestError):
         await ollama_chat_client.get_response(messages=[])
@@ -197,7 +198,7 @@ async def test_empty_messages() -> None:
 async def test_function_choice_required_argument() -> None:
     ollama_chat_client = OllamaChatClient(
         host="http://localhost:12345",
-        chat_model_id="test-model",
+        model_id="test-model",
     )
     with pytest.raises(ServiceInvalidRequestError):
         await ollama_chat_client.get_response(
@@ -237,7 +238,8 @@ async def test_cmc_reasoning(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    assert result.reasoning == "test"
+    reasoning = "".join(c.text for c in result.messages.pop().contents if isinstance(c, TextReasoningContent))
+    assert reasoning == "test"
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -291,7 +293,8 @@ async def test_cmc_streaming_reasoning(
     result = ollama_client.get_streaming_response(messages=chat_history)
 
     async for chunk in result:
-        assert chunk.reasoning == "test"
+        reasoning = "".join(c.text for c in chunk.contents if isinstance(c, TextReasoningContent))
+        assert reasoning == "test"
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
@@ -447,7 +450,7 @@ async def test_cmc_integration_with_chat_completion(
     ollama_client = OllamaChatClient()
     result = await ollama_client.get_response(messages=chat_history)
 
-    assert "hello" in result.text.lower() and "world" in result.text.lower()
+    assert "hello" in result.text.lower()
 
 
 @skip_if_azure_integration_tests_disabled

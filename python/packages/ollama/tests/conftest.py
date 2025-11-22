@@ -29,7 +29,7 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
     if override_env_param_dict is None:
         override_env_param_dict = {}
 
-    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_CHAT_MODEL_ID": "test"}
+    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_MODEL_ID": "test"}
 
     env_vars.update(override_env_param_dict)  # type: ignore
 

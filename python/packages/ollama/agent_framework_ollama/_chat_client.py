@@ -42,7 +42,7 @@ class OllamaSettings(AFBaseSettings):
     env_prefix: ClassVar[str] = "OLLAMA_"
 
     host: str | None = None
-    chat_model_id: str | None = None
+    model_id: str | None = None
 
 
 logger = get_logger("agent_framework.ollama")
@@ -61,7 +61,7 @@ class OllamaChatClient(BaseChatClient):
         *,
         host: str | None = None,
         client: AsyncClient | None = None,
-        chat_model_id: str | None = None,
+        model_id: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -72,41 +72,29 @@ class OllamaChatClient(BaseChatClient):
             host: Ollama server URL, if none `http://localhost:11434` is used.
                 Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
-            chat_model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_CHAT_MODEL_ID env variable.
+            model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_MODEL_ID env variable.
             env_file_path: An optional path to a dotenv (.env) file to load environment variables from.
             env_file_encoding: The encoding to use when reading the dotenv (.env) file. Defaults to 'utf-8'.
             **kwargs: Additional keyword arguments passed to BaseChatClient.
         """
         try:
             ollama_settings = OllamaSettings(
-                host=host, chat_model_id=chat_model_id, env_file_encoding=env_file_encoding, env_file_path=env_file_path
+                host=host, model_id=model_id, env_file_encoding=env_file_encoding, env_file_path=env_file_path
             )
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Ollama settings.", ex) from ex
 
-        if ollama_settings.chat_model_id is None:
+        if ollama_settings.model_id is None:
             raise ServiceInitializationError(
-                "Ollama chat model ID must be provided via chat_model_id or OLLAMA_CHAT_MODEL_ID environment variable."
+                "Ollama chat model ID must be provided via model_id or OLLAMA_MODEL_ID environment variable."
             )
 
-        self.chat_model_id = ollama_settings.chat_model_id
+        self.model_id = ollama_settings.model_id
         self.client = client or AsyncClient(host=ollama_settings.host)
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)
 
-        # Call super().__init__() to continue MRO chain (e.g., BaseChatClient)
-        # Extract known kwargs that belong to other base classes
-        additional_properties = kwargs.pop("additional_properties", None)
-        middleware = kwargs.pop("middleware", None)
-
-        # Build super().__init__() args
-        super_kwargs = {}
-        if additional_properties is not None:
-            super_kwargs["additional_properties"] = additional_properties
-        if middleware is not None:
-            super_kwargs["middleware"] = middleware
-
-        super().__init__(**super_kwargs)
+        super().__init__(**kwargs)
 
     async def _inner_get_response(
         self,
@@ -119,7 +107,6 @@ class OllamaChatClient(BaseChatClient):
 
         try:
             response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
-                model=self.chat_model_id,
                 stream=False,
                 **options_dict,
                 **kwargs,
@@ -140,7 +127,6 @@ class OllamaChatClient(BaseChatClient):
 
         try:
             response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
-                model=self.chat_model_id,
                 stream=True,
                 **options_dict,
                 **kwargs,
@@ -175,6 +161,13 @@ class OllamaChatClient(BaseChatClient):
         # Always auto: remove tool_choice since Ollama does not expose configuration to force or disable tools.
         if "tool_choice" in options_dict:
             del options_dict["tool_choice"]
+
+        # Rename model_id to model for Ollama API, if no model is provided use the one from client initialization
+        if "model_id" in options_dict:
+            options_dict["model"] = options_dict.pop("model_id")
+
+        if "model_id" not in options_dict:
+            options_dict["model"] = self.model_id
 
         return options_dict
 
@@ -214,7 +207,11 @@ class OllamaChatClient(BaseChatClient):
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        assistant_message = OllamaMessage(role="assistant", content=message.text, thinking=message.reasoning)
+
+        text_content = message.text
+        reasoning_contents = "".join(c.text for c in message.contents if isinstance(c, TextReasoningContent))
+
+        assistant_message = OllamaMessage(role="assistant", content=text_content, thinking=reasoning_contents)
 
         tool_calls = [item for item in message.contents if isinstance(item, FunctionCallContent)]
         if tool_calls:

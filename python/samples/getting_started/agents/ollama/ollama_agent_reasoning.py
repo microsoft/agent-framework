@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import TextReasoningContent
 from agent_framework.ollama import OllamaChatClient
 
 """
@@ -29,7 +30,8 @@ async def reasoning_example() -> None:
     print(f"User: {query}")
     # Enable Reasoning on per request level
     result = await agent.run(query)
-    print(f"Reasoning: {result.reasoning}")
+    reasoning = "".join(c.text for c in result.messages[-1].contents if isinstance(c, TextReasoningContent))
+    print(f"Reasoning: {reasoning}")
     print(f"Answer: {result}\n")
 
 

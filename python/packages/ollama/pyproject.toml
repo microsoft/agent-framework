@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework",
+    "agent-framework-core",
     "ollama >= 0.5.3",
 ]
 
