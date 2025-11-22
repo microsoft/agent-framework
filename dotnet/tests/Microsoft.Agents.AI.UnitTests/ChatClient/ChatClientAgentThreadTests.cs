@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
@@ -90,50 +89,6 @@ public class ChatClientAgentThreadTests
     }
 
     #endregion Constructor and Property Tests
-
-    #region OnNewMessagesAsync Tests
-
-    [Fact]
-    public async Task OnNewMessagesAsyncDoesNothingWhenAgentServiceIdAsync()
-    {
-        // Arrange
-        var thread = new ChatClientAgentThread { ConversationId = "thread-123" };
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.User, "Hello"),
-            new(ChatRole.Assistant, "Hi there!")
-        };
-        var agent = new MessageSendingAgent();
-
-        // Act
-        await agent.SendMessagesAsync(thread, messages, CancellationToken.None);
-        Assert.Equal("thread-123", thread.ConversationId);
-        Assert.Null(thread.MessageStore);
-    }
-
-    [Fact]
-    public async Task OnNewMessagesAsyncAddsMessagesToStoreAsync()
-    {
-        // Arrange
-        var store = new InMemoryChatMessageStore();
-        var thread = new ChatClientAgentThread { MessageStore = store };
-        var messages = new List<ChatMessage>
-        {
-            new(ChatRole.User, "Hello"),
-            new(ChatRole.Assistant, "Hi there!")
-        };
-        var agent = new MessageSendingAgent();
-
-        // Act
-        await agent.SendMessagesAsync(thread, messages, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(2, store.Count);
-        Assert.Equal("Hello", store[0].Text);
-        Assert.Equal("Hi there!", store[1].Text);
-    }
-
-    #endregion OnNewMessagesAsync Tests
 
     #region Deserialize Tests
 
@@ -372,22 +327,4 @@ public class ChatClientAgentThreadTests
     }
 
     #endregion
-
-    private sealed class MessageSendingAgent : AIAgent
-    {
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => throw new NotImplementedException();
-
-        public override AgentThread GetNewThread()
-            => throw new NotImplementedException();
-
-        public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new NotImplementedException();
-
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new NotImplementedException();
-
-        public Task SendMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
-            => NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-    }
 }

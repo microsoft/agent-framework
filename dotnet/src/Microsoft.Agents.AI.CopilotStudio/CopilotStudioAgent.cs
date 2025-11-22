@@ -42,8 +42,8 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new CopilotStudioAgentThread();
+    public sealed override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
+        => new CopilotStudioAgentThread() { ConversationId = featureCollection?.Get<ConversationIdAgentFeature>()?.ConversationId };
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing conversation id, to continue that conversation.
@@ -54,7 +54,7 @@ public class CopilotStudioAgent : AIAgent
         => new CopilotStudioAgentThread() { ConversationId = conversationId };
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
         => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>

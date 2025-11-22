@@ -68,9 +68,6 @@ internal sealed class WorkflowThread : AgentThread
 
     public CheckpointInfo? LastCheckpoint { get; set; }
 
-    protected override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
-
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);

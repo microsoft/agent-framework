@@ -54,8 +54,8 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override AgentThread GetNewThread()
-        => new A2AAgentThread();
+    public sealed override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
+        => new A2AAgentThread() { ContextId = featureCollection?.Get<ConversationIdAgentFeature>()?.ConversationId };
 
     /// <summary>
     /// Get a new <see cref="AgentThread"/> instance using an existing context id, to continue that conversation.
@@ -66,7 +66,7 @@ internal sealed class A2AAgent : AIAgent
         => new A2AAgentThread() { ContextId = contextId };
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>

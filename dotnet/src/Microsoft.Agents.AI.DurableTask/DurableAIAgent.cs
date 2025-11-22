@@ -33,21 +33,17 @@ public sealed class DurableAIAgent : AIAgent
     /// Creates a new agent thread for this agent using a random session ID.
     /// </summary>
     /// <returns>A new agent thread.</returns>
-    public override AgentThread GetNewThread()
+    public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
     {
         AgentSessionId sessionId = this._context.NewAgentSessionId(this._agentName);
         return new DurableAgentThread(sessionId);
     }
 
-    /// <summary>
-    /// Deserializes an agent thread from JSON.
-    /// </summary>
-    /// <param name="serializedThread">The serialized thread data.</param>
-    /// <param name="jsonSerializerOptions">Optional JSON serializer options.</param>
-    /// <returns>The deserialized agent thread.</returns>
+    /// <inheritdoc/>
     public override AgentThread DeserializeThread(
         JsonElement serializedThread,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        IAgentFeatureCollection? featureCollection = null)
     {
         return DurableAgentThread.Deserialize(serializedThread, jsonSerializerOptions);
     }

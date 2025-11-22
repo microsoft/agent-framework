@@ -1,11 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -30,8 +26,8 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Chat history reduction, e.g. where messages needs to be summarized or truncated to reduce the size.</description></item>
 /// </list>
 /// An <see cref="AgentThread"/> is always constructed by an <see cref="AIAgent"/> so that the <see cref="AIAgent"/>
-/// can attach any necessary behaviors to the <see cref="AgentThread"/>. See the <see cref="AIAgent.GetNewThread()"/>
-/// and <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/> methods for more information.
+/// can attach any necessary behaviors to the <see cref="AgentThread"/>. See the <see cref="AIAgent.GetNewThread(Microsoft.Agents.AI.IAgentFeatureCollection?)"/>
+/// and <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?, Microsoft.Agents.AI.IAgentFeatureCollection?)"/> methods for more information.
 /// </para>
 /// <para>
 /// Because of these behaviors, an <see cref="AgentThread"/> may not be reusable across different agents, since each agent
@@ -41,13 +37,13 @@ namespace Microsoft.Agents.AI;
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentThread"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
 /// The <see cref="AgentThread"/> provides the <see cref="Serialize(JsonSerializerOptions?)"/> method to serialize the thread to a
-/// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/> method
+/// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?, Microsoft.Agents.AI.IAgentFeatureCollection?)"/> method
 /// can be used to deserialize the thread.
 /// </para>
 /// </remarks>
 /// <seealso cref="AIAgent"/>
-/// <seealso cref="AIAgent.GetNewThread()"/>
-/// <seealso cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?)"/>
+/// <seealso cref="AIAgent.GetNewThread(Microsoft.Agents.AI.IAgentFeatureCollection?)"/>
+/// <seealso cref="AIAgent.DeserializeThread(JsonElement, JsonSerializerOptions?, Microsoft.Agents.AI.IAgentFeatureCollection?)"/>
 public abstract class AgentThread
 {
     /// <summary>
@@ -64,19 +60,6 @@ public abstract class AgentThread
     /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
     public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
         => default;
-
-    /// <summary>
-    /// This method is called when new messages have been contributed to the chat by any participant.
-    /// </summary>
-    /// <remarks>
-    /// Inheritors can use this method to update their context based on the new message.
-    /// </remarks>
-    /// <param name="newMessages">The new messages.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that completes when the context has been updated.</returns>
-    /// <exception cref="InvalidOperationException">The thread has been deleted.</exception>
-    protected internal virtual Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
 
     /// <summary>Asks the <see cref="AgentThread"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>

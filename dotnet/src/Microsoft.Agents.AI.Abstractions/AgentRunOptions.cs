@@ -34,6 +34,7 @@ public class AgentRunOptions
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
         this.AdditionalProperties = options.AdditionalProperties?.Clone();
+        this.Features = options.Features;
     }
 
     /// <summary>
@@ -90,4 +91,9 @@ public class AgentRunOptions
     /// preserving implementation-specific details or extending the options with custom data.
     /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
+
+    /// <summary>
+    /// Gets or sets the collection of features provided by the caller and middleware for this run.
+    /// </summary>
+    public IAgentFeatureCollection? Features { get; set; }
 }
