@@ -37,7 +37,7 @@ export interface AgentInfo {
   deployment_reason?: string;
   // Agent-specific fields
   instructions?: string;
-  model?: string;
+  model_id?: string;
   chat_client_type?: string;
   context_providers?: string[];
   middleware?: string[];
@@ -157,9 +157,11 @@ export interface MetaResponse {
   ui_mode: "developer" | "user";
   version: string;
   framework: string;
+  runtime: "python" | "dotnet";
   capabilities: {
     tracing: boolean;
     openai_proxy: boolean;
+    deployment: boolean;
   };
   auth_required: boolean;
 }

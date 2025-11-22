@@ -17,7 +17,6 @@ namespace Microsoft.Agents.AI;
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
 public class ChatClientAgentThread : AgentThread
 {
-    private string? _conversationId;
     private ChatMessageStore? _messageStore;
 
     /// <summary>
@@ -75,8 +74,8 @@ public class ChatClientAgentThread : AgentThread
     /// <remarks>
     /// <para>
     /// Note that either <see cref="ConversationId"/> or <see cref="MessageStore "/> may be set, but not both.
-    /// If <see cref="MessageStore "/> is not null, and <see cref="ConversationId"/> is set, <see cref="MessageStore "/>
-    /// will be reverted to null, and vice versa.
+    /// If <see cref="MessageStore "/> is not null, setting <see cref="ConversationId"/> will throw an
+    /// <see cref="InvalidOperationException "/> exception.
     /// </para>
     /// <para>
     /// This property may be null in the following cases:
@@ -91,12 +90,13 @@ public class ChatClientAgentThread : AgentThread
     /// to fork the thread with each iteration.
     /// </para>
     /// </remarks>
+    /// <exception cref="InvalidOperationException">Attempted to set a conversation ID but a <see cref="MessageStore"/> is already set.</exception>
     public string? ConversationId
     {
-        get => this._conversationId;
+        get;
         internal set
         {
-            if (string.IsNullOrWhiteSpace(this._conversationId) && string.IsNullOrWhiteSpace(value))
+            if (string.IsNullOrWhiteSpace(field) && string.IsNullOrWhiteSpace(value))
             {
                 return;
             }
@@ -109,7 +109,7 @@ public class ChatClientAgentThread : AgentThread
                 throw new InvalidOperationException("Only the ConversationId or MessageStore may be set, but not both and switching from one to another is not supported.");
             }
 
-            this._conversationId = Throw.IfNullOrWhitespace(value);
+            field = Throw.IfNullOrWhitespace(value);
         }
     }
 
@@ -140,7 +140,7 @@ public class ChatClientAgentThread : AgentThread
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(this._conversationId))
+            if (!string.IsNullOrWhiteSpace(this.ConversationId))
             {
                 // If we have a conversation id already, we shouldn't switch the thread to use a message store
                 // since it means that the thread will not work with the original agent anymore.
@@ -210,7 +210,7 @@ public class ChatClientAgentThread : AgentThread
 
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
-        this._conversationId is { } conversationId ? $"ConversationId = {conversationId}" :
+        this.ConversationId is { } conversationId ? $"ConversationId = {conversationId}" :
         this._messageStore is InMemoryChatMessageStore inMemoryStore ? $"Count = {inMemoryStore.Count}" :
         this._messageStore is { } store ? $"Store = {store.GetType().Name}" :
         "Count = 0";

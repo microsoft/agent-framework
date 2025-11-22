@@ -1,8 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
@@ -20,8 +18,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework AzureAI</Title>
-    <Description>Provides Microsoft Agent Framework support for Azure AI.</Description>
+    <Title>Microsoft Agent Framework AzureAI Persistent Agents</Title>
+    <Description>Provides Microsoft Agent Framework support for Azure AI Persistent Agents.</Description>
   </PropertyGroup>
 
 </Project>

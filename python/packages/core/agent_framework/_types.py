@@ -897,6 +897,9 @@ class TextReasoningContent(BaseContent):
         return self
 
 
+TDataContent = TypeVar("TDataContent", bound="DataContent")
+
+
 class DataContent(BaseContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
 
@@ -1049,6 +1052,70 @@ class DataContent(BaseContent):
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
+
+    @staticmethod
+    def detect_image_format_from_base64(image_base64: str) -> str:
+        """Detect image format from base64 data by examining the binary header.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Image format as string (png, jpeg, webp, gif) with png as fallback
+        """
+        try:
+            # Constants for image format detection
+            # ~75 bytes of binary data should be enough to detect most image formats
+            FORMAT_DETECTION_BASE64_CHARS = 100
+
+            # Decode a small portion to detect format
+            decoded_data = base64.b64decode(image_base64[:FORMAT_DETECTION_BASE64_CHARS])
+            if decoded_data.startswith(b"\x89PNG"):
+                return "png"
+            if decoded_data.startswith(b"\xff\xd8\xff"):
+                return "jpeg"
+            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                return "webp"
+            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                return "gif"
+            return "png"  # Default fallback
+        except Exception:
+            return "png"  # Fallback if decoding fails
+
+    @staticmethod
+    def create_data_uri_from_base64(image_base64: str) -> tuple[str, str]:
+        """Create a data URI and media type from base64 image data.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Tuple of (data_uri, media_type)
+        """
+        format_type = DataContent.detect_image_format_from_base64(image_base64)
+        uri = f"data:image/{format_type};base64,{image_base64}"
+        media_type = f"image/{format_type}"
+        return uri, media_type
+
+    def get_data_bytes_as_str(self) -> str:
+        """Extracts and returns the base64-encoded data from the data URI.
+
+        Returns:
+            The binary data as str.
+        """
+        match = URI_PATTERN.match(self.uri)
+        if not match:
+            raise ValueError(f"Invalid data URI format: {self.uri}")
+        return match.group("base64_data")
+
+    def get_data_bytes(self) -> bytes:
+        """Extracts and returns the binary data from the data URI.
+
+        Returns:
+            The binary data as bytes.
+        """
+        base64_data = self.get_data_bytes_as_str()
+        return base64.b64decode(base64_data)
 
 
 class UriContent(BaseContent):
@@ -1906,6 +1973,7 @@ class ChatMessage(SerializationMixin):
         author_name: The name of the author of the message.
         message_id: The ID of the chat message.
         additional_properties: Any additional properties associated with the chat message.
+            Additional properties are used within Agent Framework, they are not sent to services.
         raw_representation: The raw representation of the chat message from an underlying implementation.
 
     Examples:
@@ -1966,6 +2034,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -1992,6 +2061,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -2019,6 +2089,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             kwargs: will be combined with additional_properties if provided.
         """
@@ -3134,6 +3205,40 @@ class ChatOptions(SerializationMixin):
         self._tools = self._validate_tools(tools)
         self.top_p = top_p
         self.user = user
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
+        """Create a runtime-safe copy without deep-copying tool instances."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for key, value in self.__dict__.items():
+            if key == "_tools":
+                setattr(clone, key, list(value) if value is not None else None)
+                continue
+            if key in {"logit_bias", "metadata", "additional_properties"}:
+                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
+                continue
+            setattr(clone, key, self._safe_deepcopy_value(value, memo))
+        return clone
+
+    @staticmethod
+    def _safe_deepcopy_mapping(
+        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
+    ) -> MutableMapping[str, Any] | None:
+        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
+        if value is None:
+            return None
+        try:
+            return deepcopy(value, memo)  # type: ignore[arg-type]
+        except Exception:
+            return dict(value)
+
+    @staticmethod
+    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
+        """Deep copy helper that avoids failing on non-copyable instances."""
+        try:
+            return deepcopy(value, memo)
+        except Exception:
+            return value
 
     @property
     def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:

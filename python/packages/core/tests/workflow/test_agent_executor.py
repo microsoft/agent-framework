@@ -111,6 +111,10 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     chat_store_state = thread_state["chat_message_store_state"]  # type: ignore[index]
     assert "messages" in chat_store_state, "Message store state should include messages"
 
+    # Verify checkpoint contains pending requests from agents and responses to be sent
+    assert "pending_agent_requests" in executor_state
+    assert "pending_responses_to_agent" in executor_state
+
     # Create a new agent and executor for restoration
     # This simulates starting from a fresh state and restoring from checkpoint
     restored_agent = _CountingAgent(id="test_agent", name="TestAgent")
@@ -154,8 +158,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert thread_messages[1].text == "Initial response 1"
 
 
-async def test_agent_executor_snapshot_and_restore_state_directly() -> None:
-    """Test AgentExecutor's snapshot_state and restore_state methods directly."""
+async def test_agent_executor_save_and_restore_state_directly() -> None:
+    """Test AgentExecutor's on_checkpoint_save and on_checkpoint_restore methods directly."""
     # Create agent with thread containing messages
     agent = _CountingAgent(id="direct_test_agent", name="DirectTestAgent")
     thread = AgentThread(message_store=ChatMessageStore())
@@ -178,7 +182,7 @@ async def test_agent_executor_snapshot_and_restore_state_directly() -> None:
     executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
 
     # Snapshot the state
-    state = await executor.snapshot_state()  # type: ignore[reportUnknownMemberType]
+    state = await executor.on_checkpoint_save()
 
     # Verify snapshot contains both cache and thread
     assert "cache" in state
@@ -202,7 +206,7 @@ async def test_agent_executor_snapshot_and_restore_state_directly() -> None:
     assert len(initial_thread_msgs) == 0
 
     # Restore state
-    await new_executor.restore_state(state)  # type: ignore[reportUnknownMemberType]
+    await new_executor.on_checkpoint_restore(state)
 
     # Verify cache is restored
     restored_cache = new_executor._cache  # type: ignore[reportPrivateUsage]

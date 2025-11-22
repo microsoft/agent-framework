@@ -50,7 +50,7 @@ async def main() -> None:
     # Create the AIFunction tool using dependency injection
     # The 'definition' dictionary contains the serialized tool configuration,
     # while the actual function implementation is provided via dependencies.
-    # 
+    #
     # Dependency structure: {"ai_function": {"name:add_numbers": {"func": func}}}
     # - "ai_function": matches the tool type identifier
     # - "name:add_numbers": instance-specific injection targeting tools with name="add_numbers"

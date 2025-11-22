@@ -68,7 +68,6 @@ public static class WorkflowProvider
     
             string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
             bool autoSend = true;
-            string? additionalInstructions = null;
             IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("[UserMessage(System.LastMessageText)]").ConfigureAwait(false);
     
             AgentRunResponse agentResponse =
@@ -77,7 +76,6 @@ public static class WorkflowProvider
                     agentName,
                     conversationId,
                     autoSend,
-                    additionalInstructions,
                     inputMessages,
                     cancellationToken).ConfigureAwait(false);
     

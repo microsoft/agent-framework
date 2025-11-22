@@ -1,10 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using A2A;
+using Microsoft.Agents.AI.Hosting.A2A.UnitTests.Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -477,26 +475,5 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         // Act & Assert - Should not throw
         var result = app.MapA2A(agentBuilder, "/a2a", agentCard);
         Assert.NotNull(result);
-    }
-
-    private sealed class DummyChatClient : IChatClient
-    {
-        public void Dispose()
-        {
-            throw new NotImplementedException();
-        }
-
-        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) =>
-            serviceType.IsInstanceOfType(this) ? this : null;
-
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        {
-            throw new NotImplementedException();
-        }
     }
 }

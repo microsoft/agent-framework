@@ -25,7 +25,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(input, AGUIJsonSerializerContext.Default.RunAgentInput);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
@@ -150,7 +150,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunStartedEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.RunStarted, jsonElement.GetProperty("type").GetString());
     }
 
@@ -162,7 +162,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunStartedEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
@@ -219,7 +219,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.RunFinished, jsonElement.GetProperty("type").GetString());
     }
 
@@ -227,11 +227,11 @@ public sealed class AGUIJsonSerializerContextTests
     public void RunFinishedEvent_Includes_ThreadIdRunIdAndOptionalResult()
     {
         // Arrange
-        RunFinishedEvent evt = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement.Clone() };
+        RunFinishedEvent evt = new() { ThreadId = "thread1", RunId = "run1", Result = JsonElement.Parse("\"Success\"") };
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunFinishedEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("threadId", out JsonElement threadIdProp));
@@ -269,7 +269,7 @@ public sealed class AGUIJsonSerializerContextTests
     public void RunFinishedEvent_RoundTrip_PreservesData()
     {
         // Arrange
-        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Done\"").RootElement.Clone() };
+        RunFinishedEvent original = new() { ThreadId = "thread1", RunId = "run1", Result = JsonElement.Parse("\"Done\"") };
 
         // Act
         string json = JsonSerializer.Serialize(original, AGUIJsonSerializerContext.Default.RunFinishedEvent);
@@ -292,7 +292,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunErrorEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.RunError, jsonElement.GetProperty("type").GetString());
     }
 
@@ -304,7 +304,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.RunErrorEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("message", out JsonElement messageProp));
@@ -360,7 +360,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageStartEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.TextMessageStart, jsonElement.GetProperty("type").GetString());
     }
 
@@ -372,7 +372,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageStartEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
@@ -428,7 +428,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageContentEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.TextMessageContent, jsonElement.GetProperty("type").GetString());
     }
 
@@ -440,7 +440,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageContentEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
@@ -496,7 +496,7 @@ public sealed class AGUIJsonSerializerContextTests
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageEndEvent);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         Assert.Equal(AGUIEventTypes.TextMessageEnd, jsonElement.GetProperty("type").GetString());
     }
 
@@ -508,7 +508,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.TextMessageEndEvent);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("messageId", out JsonElement msgIdProp));
@@ -557,7 +557,7 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Act
         string json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIMessage);
-        JsonElement jsonElement = JsonSerializer.Deserialize<JsonElement>(json);
+        JsonElement jsonElement = JsonElement.Parse(json);
 
         // Assert
         Assert.True(jsonElement.TryGetProperty("id", out JsonElement idProp));

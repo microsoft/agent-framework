@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <NoWarn>$(NoWarn);OPENAI001;</NoWarn>
   </PropertyGroup>

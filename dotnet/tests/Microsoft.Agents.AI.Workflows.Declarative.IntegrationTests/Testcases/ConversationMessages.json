@@ -10,7 +10,7 @@
     "conversation_count": 2,
     "min_action_count": 8,
     "min_message_count": 1,
-    "min_response_count": 0,
+    "min_response_count": 1,
     "actions": {
       "start": [
         "conversation_create1",
