@@ -464,8 +464,11 @@ class AgentFrameworkExecutor:
                     except Exception as e:
                         logger.warning(f"Could not convert HIL responses to proper types: {e}")
 
-                    # Step 2: Now send responses to the in-memory workflow
                     async for event in workflow.send_responses_streaming(hil_responses):
+                        # Enrich new RequestInfoEvents that may come from subsequent HIL requests
+                        if isinstance(event, RequestInfoEvent):
+                            self._enrich_request_info_event_with_response_schema(event, workflow)
+
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
                         yield event

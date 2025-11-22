@@ -1102,7 +1102,12 @@ export function WorkflowView({
         request
       );
 
+      // Track if new HIL requests arrive during response processing
+      let newHilRequestsArrived = false;
+      const newHilRequests: typeof pendingHilRequests = [];
+
       for await (const openAIEvent of streamGenerator) {
+
         // Store workflow-related events
         if (
           openAIEvent.type === "response.output_item.added" ||
@@ -1134,6 +1139,47 @@ export function WorkflowView({
 
         // Pass to debug panel
         onDebugEvent(openAIEvent);
+
+        // Check for new HIL requests after sending responses - handles multi-round HIL
+        if (openAIEvent.type === "response.request_info.requested") {
+          const hilEvent = openAIEvent as ResponseRequestInfoEvent;
+          newHilRequestsArrived = true;
+
+          // Cast to the correct type for setPendingHilRequests
+          const typedHilEvent = {
+            request_id: hilEvent.request_id,
+            request_data: hilEvent.request_data,
+            request_schema: hilEvent.request_schema as unknown as JSONSchemaProperty,
+          };
+
+          // Collect new requests (don't update state yet)
+          newHilRequests.push(typedHilEvent);
+
+          // Initialize response data with defaults from schema
+          const schema = hilEvent.request_schema as unknown as JSONSchemaProperty;
+          const defaultValues: Record<string, unknown> = {};
+
+          if (schema.properties) {
+            Object.entries(schema.properties).forEach(
+              ([fieldName, fieldSchema]) => {
+                const field = fieldSchema as JSONSchemaProperty;
+                // Set default for enum fields to first option
+                if (field.enum && field.enum.length > 0) {
+                  defaultValues[fieldName] = field.enum[0];
+                }
+                // Use explicit default value if provided
+                else if (field.default !== undefined) {
+                  defaultValues[fieldName] = field.default;
+                }
+              }
+            );
+          }
+
+          setHilResponses((prev) => ({
+            ...prev,
+            [hilEvent.request_id]: defaultValues,
+          }));
+        }
 
         // Handle workflow output items (from ctx.yield_output)
         if (openAIEvent.type === "response.output_item.added") {
@@ -1206,10 +1252,28 @@ export function WorkflowView({
         }
       }
 
-      // Clear HIL state after successful submission
-      setPendingHilRequests([]);
-      setHilResponses({});
-      setIsStreaming(false);
+      // Handle cleanup based on whether new HIL requests arrived
+      if (newHilRequestsArrived) {
+        // Replace old pending requests with new ones
+        setPendingHilRequests(newHilRequests);
+
+        // Clear old responses and keep only new ones
+        const newResponsesMap: Record<string, Record<string, unknown>> = {};
+        newHilRequests.forEach(req => {
+          if (hilResponses[req.request_id]) {
+            newResponsesMap[req.request_id] = hilResponses[req.request_id];
+          }
+        });
+        setHilResponses(newResponsesMap);
+
+        setShowHilModal(true);
+        setIsStreaming(false);
+      } else {
+        // No new requests - clear HIL state
+        setPendingHilRequests([]);
+        setHilResponses({});
+        setIsStreaming(false);
+      }
     } catch (error) {
       // Error will be displayed in timeline
       console.error("HIL submission error:", error);
@@ -1300,26 +1364,25 @@ export function WorkflowView({
             >
               <Info className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleReloadEntity}
-              disabled={
-                isReloading || selectedWorkflow.metadata?.source === "in_memory"
-              }
-              className="h-6 w-6 p-0 flex-shrink-0"
-              title={
-                selectedWorkflow.metadata?.source === "in_memory"
-                  ? "In-memory entities cannot be reloaded"
-                  : isReloading
-                  ? "Reloading..."
-                  : "Reload entity code (hot reload)"
-              }
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`}
-              />
-            </Button>
+            {/* Only show reload button for directory-based entities */}
+            {selectedWorkflow.source !== "in_memory" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleReloadEntity}
+                disabled={isReloading}
+                className="h-6 w-6 p-0 flex-shrink-0"
+                title={
+                  isReloading
+                    ? "Reloading..."
+                    : "Reload entity code (hot reload)"
+                }
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`}
+                />
+              </Button>
+            )}
           </div>
 
           {/* Workflow Session & Checkpoint Controls - Compact header like agent view */}
