@@ -366,8 +366,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     run_options[key] = value
-        if "store" not in run_options:
-            run_options["store"] = False
+        if "store" in run_options:
+            # keep store param as it is
+            pass
+        else:
+            # do not add store parameter
+            run_options.pop("store", None)
         if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
             run_options["tool_choice"] = tool_choice["mode"]
         return run_options
