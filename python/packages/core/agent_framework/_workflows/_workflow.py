@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import copy
 import functools
 import hashlib
 import json
@@ -8,7 +9,7 @@ import logging
 import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
@@ -34,6 +35,9 @@ from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._shared_state import SharedState
+
+if TYPE_CHECKING:
+    from ._workflow_builder import WorkflowConnection
 
 if sys.version_info >= (3, 11):
     pass  # pragma: no cover
@@ -841,3 +845,15 @@ class Workflow(DictConvertible):
         from ._agent import WorkflowAgent
 
         return WorkflowAgent(workflow=self, name=name)
+
+    def as_connection(self, prefix: str | None = None) -> "WorkflowConnection":
+        """Convert this workflow into a reusable connection for composition."""
+        # Import lazily to avoid circular dependency at module import time
+        from ._workflow_builder import WorkflowBuilder
+
+        builder = WorkflowBuilder(max_iterations=self.max_iterations, name=self.name, description=self.description)
+        builder._edge_groups = copy.deepcopy(self.edge_groups)
+        builder._executors = {eid: copy.deepcopy(executor) for eid, executor in self.executors.items()}
+        builder._start_executor = self.start_executor_id
+        connection = builder.as_connection()
+        return connection.with_prefix(prefix) if prefix else connection

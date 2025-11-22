@@ -1,15 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 import logging
 import sys
 from collections.abc import Callable, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, overload
 
 from .._agents import AgentProtocol
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS
+from ._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._edge import (
     Case,
     Default,
@@ -34,6 +36,204 @@ else:
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConnectionPoint:
+    """Describes an executor endpoint with its output types."""
+
+    id: str
+    output_types: list[type[Any]]
+    workflow_output_types: list[type[Any]]
+
+
+@dataclass(frozen=True)
+class ConnectionHandle:
+    """Reference to a merged connection's entry/exit points with type metadata."""
+
+    start_id: str
+    start_input_types: list[type[Any]]
+    output_points: list[ConnectionPoint]
+
+
+@dataclass
+class WorkflowConnection:
+    """Encapsulates a workflow connection that can be merged into another builder."""
+
+    builder: "WorkflowBuilder"
+    entry: str
+    exits: list[str]
+    start_input_types: list[type[Any]] | None = None
+    exit_points: list[ConnectionPoint] | None = None
+
+    def clone(self) -> "WorkflowConnection":
+        """Return a deep copy of this connection to avoid shared state."""
+        builder_clone = _clone_builder_for_connection(self.builder)
+        return WorkflowConnection(
+            builder=builder_clone,
+            entry=self.entry,
+            exits=list(self.exits),
+            start_input_types=list(self.start_input_types or []),
+            exit_points=[ConnectionPoint(p.id, list(p.output_types), list(p.workflow_output_types)) for p in self.exit_points or []],
+        )
+
+    def with_prefix(self, prefix: str | None) -> "WorkflowConnection":
+        """Return a prefixed copy to avoid executor ID collisions."""
+        if not prefix:
+            return self.clone()
+        builder_clone = _clone_builder_for_connection(self.builder)
+        mapping = _prefix_executor_ids(builder_clone, prefix)
+        entry = mapping.get(self.entry, self.entry)
+        exits = [mapping.get(e, e) for e in self.exits]
+        return WorkflowConnection(
+            builder=builder_clone,
+            entry=entry,
+            exits=exits,
+            start_input_types=list(self.start_input_types or []),
+            exit_points=[
+                ConnectionPoint(
+                    id=mapping.get(p.id, p.id),
+                    output_types=list(p.output_types),
+                    workflow_output_types=list(p.workflow_output_types),
+                )
+                for p in self.exit_points or []
+            ],
+        )
+
+
+def _clone_builder_for_connection(builder: "WorkflowBuilder") -> "WorkflowBuilder":
+    """Deep copy a builder so connections remain immutable when merged."""
+    clone = WorkflowBuilder(
+        max_iterations=builder._max_iterations,
+        name=builder._name,
+        description=builder._description,
+    )
+    clone._checkpoint_storage = builder._checkpoint_storage
+    clone._edge_groups = copy.deepcopy(builder._edge_groups)
+    clone._executors = {eid: copy.deepcopy(executor) for eid, executor in builder._executors.items()}
+    clone._start_executor = (
+        builder._start_executor if isinstance(builder._start_executor, str) else builder._start_executor.id
+    )
+    clone._agent_wrappers = {}
+    return clone
+
+
+def _get_executor_input_types(executors: dict[str, Executor], executor_id: str) -> list[type[Any]]:
+    """Return input types for a given executor id."""
+    exec_obj = executors.get(executor_id)
+    if exec_obj is None:
+        raise ValueError(f"Unknown executor id '{executor_id}' when deriving connection types.")
+    return list(exec_obj.input_types)
+
+
+def _prefix_executor_ids(builder: "WorkflowBuilder", prefix: str) -> dict[str, str]:
+    """Apply a deterministic prefix to executor ids and update edge references."""
+    mapping: dict[str, str] = {}
+    for executor_id in builder._executors:
+        mapping[executor_id] = f"{prefix}/{executor_id}"
+
+    # Update executors and remap keys
+    updated_executors: dict[str, Executor] = {}
+    for original_id, executor in builder._executors.items():
+        prefixed_id = mapping[original_id]
+        executor.id = prefixed_id
+        updated_executors[prefixed_id] = executor
+    builder._executors = updated_executors
+
+    # Update start executor reference
+    start_id = builder._start_executor.id if isinstance(builder._start_executor, Executor) else builder._start_executor
+    builder._start_executor = mapping.get(start_id, start_id)
+
+    builder._edge_groups = [_remap_edge_group_ids(group, mapping, prefix) for group in builder._edge_groups]
+
+    return mapping
+
+
+def _remap_edge_group_ids(group: EdgeGroup, mapping: dict[str, str], prefix: str) -> EdgeGroup:
+    """Remap executor ids inside an edge group."""
+    remapped = copy.deepcopy(group)
+    remapped.id = f"{prefix}/{group.id}"
+
+    for edge in remapped.edges:
+        # Adjust internal sources before generic mapping
+        for original, new in mapping.items():
+            internal_source = INTERNAL_SOURCE_ID(original)
+            if edge.source_id == internal_source:
+                edge.source_id = INTERNAL_SOURCE_ID(new)
+        if edge.source_id in mapping:
+            edge.source_id = mapping[edge.source_id]
+        if edge.target_id in mapping:
+            edge.target_id = mapping[edge.target_id]
+
+    if isinstance(remapped, FanOutEdgeGroup):
+        remapped._target_ids = [mapping.get(t, t) for t in remapped._target_ids]  # type: ignore[attr-defined]
+
+    if isinstance(remapped, SwitchCaseEdgeGroup):
+        new_targets: list[str] = []
+        for idx, target in enumerate(remapped._target_ids):  # type: ignore[attr-defined]
+            remapped._target_ids[idx] = mapping.get(target, target)  # type: ignore[attr-defined]
+            new_targets.append(remapped._target_ids[idx])  # type: ignore[attr-defined]
+        remapped.cases = [  # type: ignore[attr-defined]
+            _remap_switch_case(case, mapping) for case in remapped.cases  # type: ignore[attr-defined]
+        ]
+    return remapped
+
+
+def _remap_switch_case(
+    case: SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault,
+    mapping: dict[str, str],
+) -> SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault:
+    """Remap switch-case targets to prefixed ids."""
+    case.target_id = mapping.get(case.target_id, case.target_id)
+    return case
+
+
+def _derive_exit_ids(edge_groups: list[EdgeGroup], executors: dict[str, Executor]) -> list[str]:
+    """Infer exit executors as those without downstream edges or only targeting terminal nodes."""
+    outgoing: dict[str, list[str]] = {}
+    for group in edge_groups:
+        for edge in group.edges:
+            if edge.source_id not in executors:
+                continue
+            outgoing.setdefault(edge.source_id, []).append(edge.target_id)
+
+    exits: list[str] = []
+    for executor_id, executor in executors.items():
+        targets = outgoing.get(executor_id, [])
+        if not targets:
+            exits.append(executor_id)
+            continue
+        target_are_terminal = True
+        for target in targets:
+            target_exec = executors.get(target)
+            if target_exec is None:
+                target_are_terminal = False
+                break
+            if not target_exec.workflow_output_types:
+                target_are_terminal = False
+                break
+        if target_are_terminal:
+            exits.append(executor_id)
+
+    return exits
+
+
+def _derive_exit_points(edge_groups: list[EdgeGroup], executors: dict[str, Executor]) -> list[ConnectionPoint]:
+    """Return connection points (id + output types) for exit executors."""
+    exit_ids = _derive_exit_ids(edge_groups, executors)
+    points: list[ConnectionPoint] = []
+    for executor_id in exit_ids:
+        exec_obj = executors.get(executor_id)
+        if exec_obj is None:
+            continue
+        points.append(
+            ConnectionPoint(
+                id=executor_id,
+                output_types=list(exec_obj.output_types),
+                workflow_output_types=list(exec_obj.workflow_output_types),
+            )
+        )
+    return points
 
 
 class WorkflowBuilder:
@@ -102,6 +302,91 @@ class WorkflowBuilder:
         self._agent_wrappers: dict[int, Executor] = {}
 
     # Agents auto-wrapped by builder now always stream incremental updates.
+
+    def as_connection(self) -> WorkflowConnection:
+        """Render this builder as a reusable connection without finalising into a Workflow."""
+        if not self._start_executor:
+            raise ValueError("Starting executor must be set before calling as_connection().")
+
+        # Validate to ensure we don't emit malformed fragments
+        validate_workflow_graph(
+            self._edge_groups,
+            self._executors,
+            self._start_executor,
+        )
+
+        clone = _clone_builder_for_connection(self)
+        start_exec = clone._start_executor
+        entry_id = start_exec.id if isinstance(start_exec, Executor) else start_exec
+        entry_types = _get_executor_input_types(clone._executors, entry_id)
+        exit_points = _derive_exit_points(clone._edge_groups, clone._executors)
+        exit_ids = [p.id for p in exit_points]
+        return WorkflowConnection(
+            builder=clone,
+            entry=entry_id,
+            start_input_types=entry_types,
+            exit_points=exit_points,
+            exits=exit_ids,
+        )
+
+    Endpoint = Executor | AgentProtocol | ConnectionHandle | ConnectionPoint | str
+
+    def add_connection(self, connection: WorkflowConnection, *, prefix: str | None = None) -> ConnectionHandle:
+        """Merge a connection into this builder and return a handle for wiring."""
+        return self._merge_connection(connection, prefix=prefix)
+
+    def connect(self, source: Endpoint, target: Endpoint, /) -> Self:
+        """Connect two endpoints (executors, connection points, or executor ids)."""
+        src_id = self._normalize_endpoint(source)
+        tgt_id = self._normalize_endpoint(target)
+        self._edge_groups.append(SingleEdgeGroup(src_id, tgt_id))  # type: ignore[arg-type]
+        return self
+
+    def _merge_connection(self, fragment: WorkflowConnection, *, prefix: str | None) -> ConnectionHandle:
+        """Merge a connection into this builder, returning a handle to its connection points."""
+        prepared = fragment.with_prefix(prefix) if prefix else fragment.clone()
+
+        # Detect collisions before mutating state
+        for executor_id in prepared.builder._executors:
+            if executor_id in self._executors:
+                raise ValueError(
+                    f"Executor id '{executor_id}' already exists in builder. "
+                    "Provide a prefix when connecting the fragment."
+                )
+
+        # Merge executor map and edge groups
+        self._executors.update(prepared.builder._executors)
+        self._edge_groups.extend(prepared.builder._edge_groups)
+
+        start_id = (
+            prepared.builder._start_executor.id
+            if isinstance(prepared.builder._start_executor, Executor)
+            else prepared.builder._start_executor
+        )
+        start_types = prepared.start_input_types or _get_executor_input_types(prepared.builder._executors, start_id)
+        exit_points = prepared.exit_points or _derive_exit_points(prepared.builder._edge_groups, prepared.builder._executors)
+        handle = ConnectionHandle(
+            start_id=start_id,
+            start_input_types=start_types,
+            output_points=exit_points,
+        )
+        return handle
+
+    def _normalize_endpoint(self, endpoint: Executor | AgentProtocol | ConnectionHandle | str) -> str:
+        """Resolve a connect endpoint to an executor id, adding executors when provided."""
+        if isinstance(endpoint, ConnectionHandle):
+            return endpoint.start_id
+        if isinstance(endpoint, ConnectionPoint):
+            return endpoint.id
+        if isinstance(endpoint, str):
+            if endpoint not in self._executors:
+                raise ValueError(f"Unknown executor id '{endpoint}' in connect().")
+            return endpoint
+        executor = self._maybe_wrap_agent(endpoint)  # type: ignore[arg-type]
+        executor_id = executor.id
+        if executor_id not in self._executors:
+            self._add_executor(executor)
+        return executor_id
 
     def _add_executor(self, executor: Executor) -> str:
         """Add an executor to the map and return its ID."""

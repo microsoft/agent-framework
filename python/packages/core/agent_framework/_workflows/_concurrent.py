@@ -15,7 +15,7 @@ from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._workflow import Workflow
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -296,6 +296,11 @@ class ConcurrentBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    def as_connection(self) -> WorkflowConnection:
+        """Expose the concurrent wiring as a reusable connection."""
+        builder = self._build_workflow_builder()
+        return builder.as_connection()
+
     def build(self) -> Workflow:
         r"""Build and validate the concurrent workflow.
 
@@ -318,6 +323,11 @@ class ConcurrentBuilder:
 
             workflow = ConcurrentBuilder().participants([agent1, agent2]).build()
         """
+        builder = self._build_workflow_builder()
+        return builder.build()
+
+    def _build_workflow_builder(self) -> WorkflowBuilder:
+        """Internal helper to construct the workflow builder for this concurrent workflow."""
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")
 
@@ -332,4 +342,4 @@ class ConcurrentBuilder:
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 
-        return builder.build()
+        return builder

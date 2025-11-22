@@ -53,7 +53,7 @@ from ._executor import (
 )
 from ._message_utils import normalize_messages_input
 from ._workflow import Workflow
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,11 @@ class SequentialBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    def as_connection(self) -> WorkflowConnection:
+        """Expose the sequential wiring as a reusable connection."""
+        builder = self._build_workflow_builder()
+        return builder.as_connection()
+
     def build(self) -> Workflow:
         """Build and validate the sequential workflow.
 
@@ -168,6 +173,11 @@ class SequentialBuilder:
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
+        builder = self._build_workflow_builder()
+        return builder.build()
+
+    def _build_workflow_builder(self) -> WorkflowBuilder:
+        """Internal helper to construct the workflow builder for this sequential workflow."""
         if not self._participants:
             raise ValueError("No participants provided. Call .participants([...]) first.")
 
@@ -205,4 +215,4 @@ class SequentialBuilder:
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 
-        return builder.build()
+        return builder

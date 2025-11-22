@@ -96,7 +96,7 @@ from ._validation import (
 )
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowRunResult
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import ConnectionHandle, WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
@@ -163,6 +163,7 @@ __all__ = [
     "ValidationTypeEnum",
     "Workflow",
     "WorkflowAgent",
+    "WorkflowConnection",
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCheckpointSummary",
@@ -186,4 +187,5 @@ __all__ = [
     "handler",
     "response_handler",
     "validate_workflow_graph",
+    "ConnectionHandle",
 ]
