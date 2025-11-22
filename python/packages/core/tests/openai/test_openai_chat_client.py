@@ -99,6 +99,39 @@ def test_init_base_url_from_settings_env() -> None:
         assert str(client.client.base_url) == "https://custom-openai-endpoint.com/v1/"
 
 
+def test_openai_chat_client_max_tokens_mapping(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that max_tokens from ChatOptions is properly mapped to max_completion_tokens for OpenAI API."""
+    client = OpenAIChatClient()
+    
+    # Test with max_tokens set in ChatOptions
+    chat_options = ChatOptions(max_tokens=100)
+    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
+    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
+    
+    # Should have max_completion_tokens instead of max_tokens
+    assert "max_completion_tokens" in request_options
+    assert request_options["max_completion_tokens"] == 100
+    assert "max_tokens" not in request_options
+    
+    # Test with no max_tokens - should not add max_completion_tokens
+    chat_options_no_max = ChatOptions()
+    prepared_messages_no_max = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options_no_max)
+    request_options_no_max = client._prepare_options(prepared_messages_no_max, chat_options_no_max)  # type: ignore[reportPrivateUsage]
+    
+    # Should not have either field when not specified
+    assert "max_completion_tokens" not in request_options_no_max
+    assert "max_tokens" not in request_options_no_max
+    
+    # Test with max_tokens=None - should not add max_completion_tokens
+    chat_options_none = ChatOptions(max_tokens=None)
+    prepared_messages_none = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options_none)
+    request_options_none = client._prepare_options(prepared_messages_none, chat_options_none)  # type: ignore[reportPrivateUsage]
+    
+    # Should not have either field when max_tokens is None
+    assert "max_completion_tokens" not in request_options_none
+    assert "max_tokens" not in request_options_none
+
+
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(ServiceInitializationError):
