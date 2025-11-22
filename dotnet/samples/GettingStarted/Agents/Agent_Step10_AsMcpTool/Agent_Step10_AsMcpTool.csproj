@@ -16,10 +16,6 @@
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
-  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
-    <PackageReference Include="System.Net.ServerSentEvents" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.AzureAI.Persistent\Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
   </ItemGroup>
