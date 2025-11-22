@@ -58,13 +58,15 @@ interface AgentViewProps {
 
 interface ConversationItemBubbleProps {
   item: import("@/types/openai").ConversationItem;
+  toolCalls?: import("@/types/openai").ConversationFunctionCall[];
+  toolResults?: import("@/types/openai").ConversationFunctionCallOutput[];
 }
 
-function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
+function ConversationItemBubble({ item, toolCalls = [], toolResults = [] }: ConversationItemBubbleProps) {
   // All hooks must be at the top - cannot be conditional
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false); // For tool calls/results
+  const [showToolDetails, setShowToolDetails] = useState(false); // For tool call expansion
   const showToolCalls = useDevUIStore((state) => state.showToolCalls);
 
   // Extract text content from message for copying
@@ -186,37 +188,67 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
                 </span>
               </>
             )}
+            {/* Tool calls badge */}
+            {!isUser && showToolCalls && toolCalls.length > 0 && (
+              <>
+                <span>•</span>
+                <button
+                  onClick={() => setShowToolDetails(!showToolDetails)}
+                  className="flex items-center gap-1 hover:text-foreground transition-colors"
+                  title={`${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} - click to ${showToolDetails ? 'hide' : 'show'} details`}
+                >
+                  <Wrench className="h-3 w-3" />
+                  <span>{toolCalls.length}</span>
+                </button>
+              </>
+            )}
           </div>
-        </div>
-      </div>
-    );
-  }
 
-  // Function calls - compact, collapsible renderer
-  if (item.type === "function_call") {
-    // Don't render if showToolCalls is disabled or no name
-    if (!showToolCalls || !item.name) return null;
+          {/* Expandable tool call details */}
+          {!isUser && showToolDetails && toolCalls.length > 0 && (
+            <div className="mt-2 ml-0 p-3 bg-muted/30 rounded-md border border-muted">
+              <div className="space-y-2">
+                {toolCalls.map((call) => {
+                  // Find the matching result for this call
+                  const result = toolResults.find(r => r.call_id === call.call_id);
 
-    return (
-      <div className="flex gap-3 ml-11"> {/* Indent to align with message content */}
-        <div className="flex flex-col w-full">
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors w-fit group"
-          >
-            <Wrench className="h-3 w-3 text-muted-foreground" />
-            <span className="text-muted-foreground font-mono">{item.name}</span>
-            <span className="text-muted-foreground/60">→</span>
-            {isExpanded ? (
-              <span className="text-xs text-muted-foreground">▼</span>
-            ) : (
-              <span className="text-xs text-muted-foreground">▶</span>
-            )}
-          </button>
-
-          {isExpanded && item.arguments && (
-            <div className="ml-5 mt-1 text-xs font-mono text-muted-foreground border-l-2 border-muted pl-3">
-              <pre className="whitespace-pre-wrap break-all">{item.arguments}</pre>
+                  return (
+                    <div key={call.id} className="text-xs">
+                      <div className="flex items-start gap-2">
+                        <Wrench className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono text-muted-foreground">
+                            <span className="text-blue-600 dark:text-blue-400">{call.name}</span>
+                            <span className="text-muted-foreground/60 ml-1">
+                              {call.arguments && (
+                                <span className="break-all">({call.arguments})</span>
+                              )}
+                            </span>
+                          </div>
+                          {result && result.output && (
+                            <div className="mt-1 pl-5 border-l-2 border-green-600/20">
+                              <div className="flex items-start gap-1">
+                                <Check className="h-3 w-3 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                                <pre className="font-mono text-muted-foreground whitespace-pre-wrap break-all">
+                                  {result.output.substring(0, 200) + (result.output.length > 200 ? '...' : '')}
+                                </pre>
+                              </div>
+                            </div>
+                          )}
+                          {call.status === "incomplete" && (
+                            <div className="mt-1 pl-5 border-l-2 border-orange-600/20">
+                              <div className="flex items-start gap-1">
+                                <X className="h-3 w-3 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                                <span className="font-mono text-orange-600 dark:text-orange-400">Failed</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -224,35 +256,10 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
     );
   }
 
-  // Function results - compact renderer
-  if (item.type === "function_call_output") {
-    // Don't render if showToolCalls is disabled or no output
-    if (!showToolCalls || !item.output) return null;
-
-    return (
-      <div className="flex gap-3 ml-11">
-        <div className="flex flex-col w-full">
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-2 px-2 py-1 text-xs rounded hover:bg-muted/50 transition-colors w-fit"
-          >
-            <CheckCheck className="h-3 w-3 text-green-600 dark:text-green-400" />
-            <span className="text-muted-foreground/60 text-xs">Result</span>
-            {isExpanded ? (
-              <span className="text-xs text-muted-foreground">▼</span>
-            ) : (
-              <span className="text-xs text-muted-foreground">▶</span>
-            )}
-          </button>
-
-          {isExpanded && (
-            <div className="ml-5 mt-1 text-xs font-mono text-muted-foreground border-l-2 border-green-600/20 pl-3">
-              <pre className="whitespace-pre-wrap break-all">{item.output}</pre>
-            </div>
-          )}
-        </div>
-      </div>
-    );
+  // Function calls and results are now handled within message items
+  // Don't render them as separate items anymore
+  if (item.type === "function_call" || item.type === "function_call_output") {
+    return null;
   }
 
   return null;
@@ -1754,22 +1761,23 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 >
                   <Info className="h-4 w-4" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReloadEntity}
-                  disabled={isReloading || selectedAgent.metadata?.source === "in_memory"}
-                  className="h-6 w-6 p-0 flex-shrink-0"
-                  title={
-                    selectedAgent.metadata?.source === "in_memory"
-                      ? "In-memory entities cannot be reloaded"
-                      : isReloading
-                      ? "Reloading..."
-                      : "Reload entity code (hot reload)"
-                  }
-                >
-                  <RefreshCw className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
-                </Button>
+                {/* Only show reload button for directory-based entities */}
+                {selectedAgent.source !== "in_memory" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReloadEntity}
+                    disabled={isReloading}
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    title={
+                      isReloading
+                        ? "Reloading..."
+                        : "Reload entity code (hot reload)"
+                    }
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -1917,9 +1925,53 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               </div>
             </div>
           ) : (
-            chatItems.map((item) => (
-              <ConversationItemBubble key={item.id} item={item} />
-            ))
+            (() => {
+              // Group tool calls and results with their assistant messages
+              const processedItems: React.ReactElement[] = [];
+              const toolCallsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCall[]>();
+              const toolResultsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCallOutput[]>();
+
+              // First pass: collect tool calls and results, associate with preceding assistant message
+              let lastAssistantMessageId: string | null = null;
+
+              for (const item of chatItems) {
+                if (item.type === "message" && item.role === "assistant") {
+                  lastAssistantMessageId = item.id;
+                  // Initialize arrays for this message if they don't exist
+                  if (!toolCallsByMessage.has(item.id)) {
+                    toolCallsByMessage.set(item.id, []);
+                    toolResultsByMessage.set(item.id, []);
+                  }
+                } else if (item.type === "function_call" && lastAssistantMessageId) {
+                  const calls = toolCallsByMessage.get(lastAssistantMessageId) || [];
+                  calls.push(item);
+                  toolCallsByMessage.set(lastAssistantMessageId, calls);
+                } else if (item.type === "function_call_output" && lastAssistantMessageId) {
+                  const results = toolResultsByMessage.get(lastAssistantMessageId) || [];
+                  results.push(item);
+                  toolResultsByMessage.set(lastAssistantMessageId, results);
+                }
+              }
+
+              // Second pass: render items, passing tool calls/results to assistant messages
+              for (const item of chatItems) {
+                if (item.type === "message") {
+                  const toolCalls = toolCallsByMessage.get(item.id) || [];
+                  const toolResults = toolResultsByMessage.get(item.id) || [];
+                  processedItems.push(
+                    <ConversationItemBubble
+                      key={item.id}
+                      item={item}
+                      toolCalls={toolCalls}
+                      toolResults={toolResults}
+                    />
+                  );
+                }
+                // Tool calls and results are now rendered within messages, so skip them here
+              }
+
+              return processedItems;
+            })()
           )}
 
           <div ref={messagesEndRef} />

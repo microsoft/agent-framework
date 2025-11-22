@@ -142,7 +142,7 @@ class DevServer:
                 discovery = self.executor.entity_discovery
                 for entity in self._pending_entities:
                     try:
-                        entity_info = await discovery.create_entity_info_from_object(entity, source="in-memory")
+                        entity_info = await discovery.create_entity_info_from_object(entity, source="in_memory")
                         discovery.register_entity(entity_info.id, entity_info, entity)
                         logger.info(f"Registered in-memory entity: {entity_info.id}")
                     except Exception as e:
@@ -551,6 +551,14 @@ class DevServer:
                 entity_info = executor.get_entity_info(entity_id)
                 if not entity_info:
                     raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+
+                # Check if entity is in-memory (cannot be reloaded)
+                if entity_info.source == "in_memory":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="In-memory entities cannot be reloaded. "
+                        "They only exist in memory and have no source files to reload from.",
+                    )
 
                 # Invalidate cache
                 executor.entity_discovery.invalidate_entity(entity_id)
