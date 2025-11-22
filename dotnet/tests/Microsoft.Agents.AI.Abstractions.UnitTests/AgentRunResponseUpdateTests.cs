@@ -42,7 +42,7 @@ public class AgentRunResponseUpdateTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Role = ChatRole.Assistant,
-            ContinuationToken = new object(),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
 
         AgentRunResponseUpdate response = new(chatResponseUpdate);
