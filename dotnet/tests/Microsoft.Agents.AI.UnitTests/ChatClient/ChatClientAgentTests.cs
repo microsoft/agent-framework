@@ -2598,6 +2598,77 @@ public partial class ChatClientAgentTests
 
     #endregion
 
+    #region AdditionalProperties Tests
+
+    [Fact]
+    public void AdditionalProperties_DefaultValue_ReturnsNull()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var agent = new ChatClientAgent(chatClient);
+
+        // Act
+        var result = agent.AdditionalProperties;
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void AdditionalProperties_FromOptions_ReturnsOptionsValue()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var additionalProperties = new AdditionalPropertiesDictionary
+        {
+            ["beta"] = true,
+            ["icon"] = "agent-icon.png",
+            ["requiresAuth"] = true
+        };
+        var options = new ChatClientAgentOptions
+        {
+            AdditionalProperties = additionalProperties
+        };
+        var agent = new ChatClientAgent(chatClient, options);
+
+        // Act
+        var result = agent.AdditionalProperties;
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(3, result.Count);
+        Assert.Equal(true, result["beta"]);
+        Assert.Equal("agent-icon.png", result["icon"]);
+        Assert.Equal(true, result["requiresAuth"]);
+    }
+
+    [Fact]
+    public void GetService_AIAgentMetadata_ReturnsMetadataWithAdditionalProperties()
+    {
+        // Arrange
+        var chatClient = new Mock<IChatClient>().Object;
+        var additionalProperties = new AdditionalPropertiesDictionary
+        {
+            ["beta"] = true
+        };
+        var options = new ChatClientAgentOptions
+        {
+            AdditionalProperties = additionalProperties
+        };
+        var agent = new ChatClientAgent(chatClient, options);
+
+        // Act
+        var metadata = agent.GetService<AIAgentMetadata>();
+
+        // Assert
+        Assert.NotNull(metadata);
+        Assert.NotNull(metadata.AdditionalProperties);
+        Assert.Single(metadata.AdditionalProperties);
+        Assert.Equal(true, metadata.AdditionalProperties["beta"]);
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();
