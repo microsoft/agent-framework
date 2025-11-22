@@ -335,6 +335,24 @@ export function SettingsModal({
                 </details>
               </div>
               )}
+
+              {/* UI Settings */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Show Tool Calls
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Display function/tool calls and results in chat messages
+                    </p>
+                  </div>
+                  <Switch
+                    checked={useDevUIStore.getState().showToolCalls}
+                    onCheckedChange={(checked) => useDevUIStore.getState().setShowToolCalls(checked)}
+                  />
+                </div>
+              </div>
             </div>
           )}
 

@@ -29,7 +29,6 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
-    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -186,6 +185,8 @@ class MessageMapper:
             if isinstance(raw_event, AgentRunUpdateEvent):
                 # Extract the AgentRunResponseUpdate from the event's data attribute
                 if raw_event.data and isinstance(raw_event.data, AgentRunResponseUpdate):
+                    # Preserve executor_id in context for proper output routing
+                    context["current_executor_id"] = raw_event.executor_id
                     return await self._convert_agent_update(raw_event.data, context)
                 # If no data, treat as generic workflow event
                 return await self._convert_workflow_event(raw_event, context)
@@ -502,8 +503,17 @@ class MessageMapper:
             # Check if we're streaming text content
             has_text_content = any(content.__class__.__name__ == "TextContent" for content in update.contents)
 
-            # If we have text content and haven't created a message yet, create one
-            if has_text_content and "current_message_id" not in context:
+            # Check if we're in an executor context with an existing item
+            executor_id = context.get("current_executor_id")
+            executor_item_key = f"exec_item_{executor_id}" if executor_id else None
+
+            # If we have an executor item, use it for deltas instead of creating a message
+            if has_text_content and executor_item_key and executor_item_key in context:
+                # Use the executor's item ID for this agent's output
+                context["current_message_id"] = context[executor_item_key]
+                # Note: We don't create a new message item here since the executor item already exists
+            # Otherwise, create a message item if we haven't yet (for non-executor contexts)
+            elif has_text_content and "current_message_id" not in context:
                 message_id = f"msg_{uuid4().hex[:8]}"
                 context["current_message_id"] = message_id
                 context["output_index"] = context.get("output_index", -1) + 1
@@ -671,25 +681,9 @@ class MessageMapper:
                 ]
 
             if isinstance(event, AgentCompletedEvent):
-                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
-
-                response_obj = Response(
-                    id=f"resp_{execution_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                # Don't emit response.completed here - the server will emit a proper one
+                # with usage data after aggregating all events
+                return []
 
             if isinstance(event, AgentFailedEvent):
                 execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
@@ -839,35 +833,10 @@ class MessageMapper:
                         )
                     ]
 
-            # Handle WorkflowCompletedEvent - emit response.completed
+            # Handle WorkflowCompletedEvent - Don't emit response.completed here
+            # The server will emit a proper one with usage data after aggregating all events
             if event_class == "WorkflowCompletedEvent":
-                workflow_id = context.get("workflow_id", str(uuid4()))
-
-                # Import Response type for proper construction
-                from openai.types.responses import Response
-
-                # Get model name from request or use 'devui' as default
-                request_obj = context.get("request")
-                model_name = request_obj.model if request_obj and request_obj.model else "devui"
-
-                # Create a full Response object for completed state
-                response_obj = Response(
-                    id=f"resp_{workflow_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],  # Output items already sent via output_item.added events
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                return []
 
             if event_class == "WorkflowFailedEvent":
                 workflow_id = context.get("workflow_id", str(uuid4()))
@@ -1103,7 +1072,7 @@ class MessageMapper:
                         context[magentic_key] = message_id
                         context["output_index"] = context.get("output_index", -1) + 1
 
-                        # Import required types
+                        # Import required types for creating message containers
                         from openai.types.responses import ResponseOutputMessage, ResponseOutputText
                         from openai.types.responses.response_content_part_added_event import (
                             ResponseContentPartAddedEvent,
