@@ -96,13 +96,13 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         f"Content: {payload.email_content}"
     )
 
-    spam_result_raw = yield spam_agent.run(
+    spam_result_raw = yield from spam_agent.run(
         messages=spam_prompt,
         thread=spam_thread,
         response_format=SpamDetectionResult,
     )
 
-    spam_result = cast(SpamDetectionResult, _coerce_structured(spam_result_raw, SpamDetectionResult))
+    spam_result = cast(SpamDetectionResult, spam_result_raw.value)
 
     if spam_result.is_spam:
         result = yield context.call_activity("handle_spam_email", spam_result.reason)
@@ -117,13 +117,13 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         f"Content: {payload.email_content}"
     )
 
-    email_result_raw = yield email_agent.run(
+    email_result_raw = yield from email_agent.run(
         messages=email_prompt,
         thread=email_thread,
         response_format=EmailResponse,
     )
 
-    email_result = cast(EmailResponse, _coerce_structured(email_result_raw, EmailResponse))
+    email_result = cast(EmailResponse, email_result_raw.value)
 
     result = yield context.call_activity("send_email", email_result.response)
     return result
@@ -229,24 +229,6 @@ def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     if not base_url:
         base_url = request_url.rstrip("/")
     return f"{base_url}/api/{route}/status/{instance_id}"
-
-
-def _coerce_structured(result: Mapping[str, Any], model: type[BaseModel]) -> BaseModel:
-    structured = result.get("structured_response") if isinstance(result, Mapping) else None
-    if structured is not None:
-        return model.model_validate(structured)
-
-    response_text = result.get("response") if isinstance(result, Mapping) else None
-    if isinstance(response_text, str) and response_text.strip():
-        try:
-            parsed = json.loads(response_text)
-            if isinstance(parsed, Mapping):
-                return model.model_validate(parsed)
-        except json.JSONDecodeError:
-            logger.warning("[ConditionalOrchestration] Failed to parse agent JSON response; raising error.")
-
-    # If parsing failed, raise to surface the issue to the caller.
-    raise ValueError(f"Agent response could not be parsed as {model.__name__}.")
 
 
 """

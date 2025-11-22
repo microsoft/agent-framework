@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentThread
+from agent_framework import AgentRunResponse, AgentThread, ChatMessage
 
 from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
 from agent_framework_azurefunctions._models import AgentSessionId, DurableAgentThread
@@ -19,6 +19,44 @@ def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
         agent.name = name
         app.add_agent(agent)
     return app
+
+
+class TestAgentResponseHelpers:
+    """Tests for helper utilities that prepare AgentRunResponse values."""
+
+    @staticmethod
+    def _create_agent() -> DurableAIAgent:
+        mock_context = Mock()
+        mock_context.instance_id = "test-instance"
+        mock_context.new_uuid = Mock(return_value="helper-guid")
+        return DurableAIAgent(mock_context, "HelperAgent")
+
+    def test_load_agent_response_from_instance(self) -> None:
+        agent = self._create_agent()
+        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"foo": "bar"}')])
+
+        loaded = agent._load_agent_response(response)
+
+        assert loaded is response
+        assert loaded.value is None
+
+    def test_load_agent_response_from_serialized(self) -> None:
+        agent = self._create_agent()
+        serialized = AgentRunResponse(messages=[ChatMessage(role="assistant", text="structured")]).to_dict()
+        serialized["value"] = {"answer": 42}
+
+        loaded = agent._load_agent_response(serialized)
+
+        assert loaded is not None
+        assert loaded.value == {"answer": 42}
+        loaded_dict = loaded.to_dict()
+        assert loaded_dict["type"] == "agent_run_response"
+
+    def test_load_agent_response_rejects_none(self) -> None:
+        agent = self._create_agent()
+
+        with pytest.raises(ValueError):
+            agent._load_agent_response(None)
 
 
 class TestDurableAIAgent:
@@ -122,10 +160,11 @@ class TestDurableAIAgent:
         # Create thread
         thread = agent.get_new_thread()
 
-        # Call run() - it should return the Task directly
-        task = agent.run(messages="Test message", thread=thread, enable_tool_calls=True)
+        # Call run() - advance the generator to get the Task durable functions will yield
+        run_gen = agent.run(messages="Test message", thread=thread, enable_tool_calls=True)
+        task = next(run_gen)
 
-        # Verify run() returns the Task from call_entity
+        # Verify run() yields the Task from call_entity
         assert task == mock_task
 
         # Verify call_entity was called with correct parameters
@@ -155,7 +194,8 @@ class TestDurableAIAgent:
         agent = DurableAIAgent(mock_context, "TestAgent")
 
         # Call without thread
-        task = agent.run(messages="Test message")
+        run_gen = agent.run(messages="Test message")
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -186,7 +226,8 @@ class TestDurableAIAgent:
         # Create thread and call
         thread = agent.get_new_thread()
 
-        task = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        run_gen = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -229,7 +270,8 @@ class TestDurableAIAgent:
 
         # Call with ChatMessage
         msg = ChatMessage(role="user", text="Hello")
-        task = agent.run(messages=msg, thread=thread)
+        run_gen = agent.run(messages=msg, thread=thread)
+        task = next(run_gen)
 
         assert task == mock_task
 
@@ -261,7 +303,8 @@ class TestDurableAIAgent:
         thread = agent.get_new_thread()
 
         # Call run() to trigger entity ID creation
-        agent.run("Test", thread=thread)
+        run_gen = agent.run("Test", thread=thread)
+        next(run_gen)
 
         # Verify call_entity was called with correct EntityId
         call_args = mock_context.call_entity.call_args
@@ -330,12 +373,12 @@ class TestOrchestrationIntegration:
         # Create thread
         thread = agent.get_new_thread()
 
-        # First call - returns Task
-        task1 = agent.run("Write something", thread=thread)
+        # First call - returns Task when generator is advanced
+        task1 = next(agent.run("Write something", thread=thread))
         assert hasattr(task1, "_is_scheduled")
 
         # Second call - returns Task
-        task2 = agent.run("Improve: something", thread=thread)
+        task2 = next(agent.run("Improve: something", thread=thread))
         assert hasattr(task2, "_is_scheduled")
 
         # Verify both calls used the same entity (same session key)
@@ -372,8 +415,8 @@ class TestOrchestrationIntegration:
         editor_thread = editor.get_new_thread()
 
         # Call both agents - returns Tasks
-        writer_task = writer.run("Write", thread=writer_thread)
-        editor_task = editor.run("Edit", thread=editor_thread)
+        writer_task = next(writer.run("Write", thread=writer_thread))
+        editor_task = next(editor.run("Edit", thread=editor_thread))
 
         assert hasattr(writer_task, "_is_scheduled")
         assert hasattr(editor_task, "_is_scheduled")
