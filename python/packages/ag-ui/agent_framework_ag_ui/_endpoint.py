@@ -3,16 +3,19 @@
 """FastAPI endpoint creation for AG-UI agents."""
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
 from ag_ui.encoder import EventEncoder
 from agent_framework import AgentProtocol
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
 from ._agent import AgentFrameworkAgent
+from ._types import AGUIRequest
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TAGS: Sequence[str] = ["AG-UI"]
 
 
 def add_agent_framework_fastapi_endpoint(
@@ -22,17 +25,20 @@ def add_agent_framework_fastapi_endpoint(
     state_schema: dict[str, Any] | None = None,
     predict_state_config: dict[str, dict[str, str]] | None = None,
     allow_origins: list[str] | None = None,
+    tags: Sequence[str] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
     Args:
-        app: The FastAPI application
-        agent: The agent to expose (can be raw AgentProtocol or wrapped)
-        path: The endpoint path
-        state_schema: Optional state schema for shared state management
+        app: The FastAPI application.
+        agent: The agent to expose (can be raw AgentProtocol or wrapped).
+        path: The endpoint path.
+        state_schema: Optional state schema for shared state management.
         predict_state_config: Optional predictive state update configuration.
             Format: {"state_key": {"tool": "tool_name", "tool_argument": "arg_name"}}
-        allow_origins: CORS origins (not yet implemented)
+        allow_origins: CORS origins (not yet implemented).
+        tags: Optional list of tags for OpenAPI documentation grouping.
+            Defaults to ["AG-UI"].
     """
     if isinstance(agent, AgentProtocol):
         wrapped_agent = AgentFrameworkAgent(
@@ -43,15 +49,17 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path)
-    async def agent_endpoint(request: Request):  # type: ignore[misc]
+    endpoint_tags: list[str] = list(tags) if tags is not None else list(DEFAULT_TAGS)
+
+    @app.post(path, tags=endpoint_tags)  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
         despite appearing unused to static analysis.
         """
         try:
-            input_data = await request.json()
+            input_data = request_body.model_dump(exclude_none=True)
             logger.debug(
                 f"[{path}] Received request - Run ID: {input_data.get('run_id', 'no-run-id')}, "
                 f"Thread ID: {input_data.get('thread_id', 'no-thread-id')}, "

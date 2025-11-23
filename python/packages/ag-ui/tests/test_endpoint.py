@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
-from agent_framework_ag_ui._endpoint import add_agent_framework_fastapi_endpoint
+from agent_framework_ag_ui._endpoint import DEFAULT_TAGS, add_agent_framework_fastapi_endpoint
 
 
 class MockChatClient:
@@ -139,7 +139,11 @@ async def test_endpoint_event_streaming():
 
 
 async def test_endpoint_error_handling():
-    """Test endpoint error handling during request parsing."""
+    """Test endpoint error handling during request parsing.
+
+    With Pydantic model validation, FastAPI returns 422 Unprocessable Entity
+    for invalid request bodies, which is the correct HTTP semantics.
+    """
     app = FastAPI()
     agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
 
@@ -147,14 +151,13 @@ async def test_endpoint_error_handling():
 
     client = TestClient(app)
 
-    # Send invalid JSON to trigger parsing error before streaming
+    # Send invalid JSON to trigger validation error
     response = client.post("/failing", data="invalid json", headers={"content-type": "application/json"})
 
-    # The exception handler catches it and returns JSON error
-    assert response.status_code == 200
+    # FastAPI returns 422 for validation errors with Pydantic models
+    assert response.status_code == 422
     content = json.loads(response.content)
-    assert "error" in content
-    assert content["error"] == "An internal error has occurred."
+    assert "detail" in content
 
 
 async def test_endpoint_multiple_paths():
@@ -240,3 +243,98 @@ async def test_endpoint_complex_input():
     )
 
     assert response.status_code == 200
+
+
+async def test_endpoint_default_tags():
+    """Test that endpoint uses default tags when not specified."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/default-tags")
+
+    # Check OpenAPI schema for default tags
+    openapi_schema = app.openapi()
+    path_item = openapi_schema["paths"]["/default-tags"]["post"]
+
+    assert "tags" in path_item
+    assert path_item["tags"] == DEFAULT_TAGS
+
+
+async def test_endpoint_custom_tags():
+    """Test that endpoint uses custom tags when specified."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
+    custom_tags = ["Custom", "Agent"]
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/custom-tags", tags=custom_tags)
+
+    # Check OpenAPI schema for custom tags
+    openapi_schema = app.openapi()
+    path_item = openapi_schema["paths"]["/custom-tags"]["post"]
+
+    assert "tags" in path_item
+    assert path_item["tags"] == custom_tags
+
+
+async def test_endpoint_openapi_schema_includes_request_body():
+    """Test that endpoint OpenAPI schema includes request body definition."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/schema-test")
+
+    # Check OpenAPI schema for request body
+    openapi_schema = app.openapi()
+    path_item = openapi_schema["paths"]["/schema-test"]["post"]
+
+    assert "requestBody" in path_item
+    assert "content" in path_item["requestBody"]
+    assert "application/json" in path_item["requestBody"]["content"]
+
+    # Verify schema reference exists
+    json_content = path_item["requestBody"]["content"]["application/json"]
+    assert "schema" in json_content
+
+
+async def test_endpoint_openapi_schema_has_agui_request_properties():
+    """Test that OpenAPI schema includes AGUIRequest properties."""
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=MockChatClient())
+
+    add_agent_framework_fastapi_endpoint(app, agent, path="/properties-test")
+
+    openapi_schema = app.openapi()
+
+    # Find the AGUIRequest schema in components
+    assert "components" in openapi_schema
+    assert "schemas" in openapi_schema["components"]
+    assert "AGUIRequest" in openapi_schema["components"]["schemas"]
+
+    agui_schema = openapi_schema["components"]["schemas"]["AGUIRequest"]
+    assert "properties" in agui_schema
+    assert "messages" in agui_schema["properties"]
+    assert "run_id" in agui_schema["properties"]
+    assert "thread_id" in agui_schema["properties"]
+    assert "state" in agui_schema["properties"]
+
+
+async def test_endpoint_multiple_agents_different_tags():
+    """Test multiple agents with different tags."""
+    app = FastAPI()
+    agent1 = ChatAgent(name="agent1", instructions="First agent", chat_client=MockChatClient())
+    agent2 = ChatAgent(name="agent2", instructions="Second agent", chat_client=MockChatClient())
+
+    add_agent_framework_fastapi_endpoint(app, agent1, path="/agent1", tags=["Agent1"])
+    add_agent_framework_fastapi_endpoint(app, agent2, path="/agent2", tags=["Agent2"])
+
+    openapi_schema = app.openapi()
+
+    assert openapi_schema["paths"]["/agent1"]["post"]["tags"] == ["Agent1"]
+    assert openapi_schema["paths"]["/agent2"]["post"]["tags"] == ["Agent2"]
+
+
+def test_default_tags_constant():
+    """Test that DEFAULT_TAGS constant is correct."""
+    assert DEFAULT_TAGS == ["AG-UI"]
+    assert isinstance(DEFAULT_TAGS, list)
+    assert len(DEFAULT_TAGS) == 1

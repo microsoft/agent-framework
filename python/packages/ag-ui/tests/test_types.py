@@ -2,7 +2,7 @@
 
 """Tests for type definitions in _types.py."""
 
-from agent_framework_ag_ui._types import AgentState, PredictStateConfig, RunMetadata
+from agent_framework_ag_ui._types import AgentState, AGUIRequest, PredictStateConfig, RunMetadata
 
 
 class TestPredictStateConfig:
@@ -143,3 +143,109 @@ class TestAgentState:
         assert len(state["messages"]) == 2
         assert "metadata" in state["messages"][0]
         assert "tool_calls" in state["messages"][1]
+
+
+class TestAGUIRequest:
+    """Test AGUIRequest Pydantic model."""
+
+    def test_agui_request_creation_with_defaults(self) -> None:
+        """Test creating AGUIRequest with default values."""
+        request = AGUIRequest()
+
+        assert request.messages == []
+        assert request.run_id is None
+        assert request.thread_id is None
+        assert request.state is None
+
+    def test_agui_request_with_messages(self) -> None:
+        """Test AGUIRequest with messages."""
+        request = AGUIRequest(
+            messages=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there"},
+            ]
+        )
+
+        assert len(request.messages) == 2
+        assert request.messages[0]["role"] == "user"
+        assert request.messages[1]["role"] == "assistant"
+
+    def test_agui_request_with_all_fields(self) -> None:
+        """Test AGUIRequest with all fields populated."""
+        request = AGUIRequest(
+            messages=[{"role": "user", "content": "Test"}],
+            run_id="run-123",
+            thread_id="thread-456",
+            state={"document": "Hello world"},
+        )
+
+        assert len(request.messages) == 1
+        assert request.run_id == "run-123"
+        assert request.thread_id == "thread-456"
+        assert request.state == {"document": "Hello world"}
+
+    def test_agui_request_model_dump(self) -> None:
+        """Test AGUIRequest model_dump method."""
+        request = AGUIRequest(
+            messages=[{"role": "user", "content": "Test"}],
+            run_id="run-123",
+        )
+
+        data = request.model_dump()
+        assert "messages" in data
+        assert "run_id" in data
+        assert "thread_id" in data
+        assert "state" in data
+
+    def test_agui_request_model_dump_exclude_none(self) -> None:
+        """Test AGUIRequest model_dump with exclude_none."""
+        request = AGUIRequest(
+            messages=[{"role": "user", "content": "Test"}],
+            run_id="run-123",
+        )
+
+        data = request.model_dump(exclude_none=True)
+        assert "messages" in data
+        assert "run_id" in data
+        assert "thread_id" not in data
+        assert "state" not in data
+
+    def test_agui_request_allows_extra_fields(self) -> None:
+        """Test AGUIRequest allows extra fields."""
+        request = AGUIRequest(
+            messages=[],
+            custom_field="custom_value",
+        )
+
+        data = request.model_dump()
+        assert data["custom_field"] == "custom_value"
+
+    def test_agui_request_from_dict(self) -> None:
+        """Test creating AGUIRequest from dict."""
+        data = {
+            "messages": [{"role": "user", "content": "Hello"}],
+            "run_id": "run-789",
+            "thread_id": "thread-012",
+            "state": {"key": "value"},
+        }
+
+        request = AGUIRequest(**data)
+
+        assert len(request.messages) == 1
+        assert request.run_id == "run-789"
+        assert request.thread_id == "thread-012"
+        assert request.state == {"key": "value"}
+
+    def test_agui_request_json_schema(self) -> None:
+        """Test AGUIRequest generates proper JSON schema."""
+        schema = AGUIRequest.model_json_schema()
+
+        assert "properties" in schema
+        assert "messages" in schema["properties"]
+        assert "run_id" in schema["properties"]
+        assert "thread_id" in schema["properties"]
+        assert "state" in schema["properties"]
+
+        # Verify descriptions are present
+        assert "description" in schema["properties"]["messages"]
+        assert "description" in schema["properties"]["run_id"]
