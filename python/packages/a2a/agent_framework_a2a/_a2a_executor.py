@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from asyncio import CancelledError
-from typing import Awaitable, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
+from typing import Union
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -94,9 +95,9 @@ class A2aExecutor(AgentExecutor):
 
     def __init__(
         self,
-        agent: Union[ChatAgent, WorkflowAgent],
-        event_adapter: Optional[A2aEventAdapter] = None,
-        agent_thread_storage: Optional[AgentThreadStorage] = None,
+        agent: ChatAgent | WorkflowAgent,
+        event_adapter: A2aEventAdapter | None = None,
+        agent_thread_storage: AgentThreadStorage | None = None,
     ):
         """Initialize the A2aExecutor.
 
@@ -113,7 +114,7 @@ class A2aExecutor(AgentExecutor):
         self._agent_thread_storage: AgentThreadStorage = (
             agent_thread_storage if agent_thread_storage else InMemoryAgentThreadStorage()
         )
-        self._agent: Union[ChatAgent, WorkflowAgent] = agent
+        self._agent: ChatAgent | WorkflowAgent = agent
         self._event_adapter: A2aEventAdapter = event_adapter if event_adapter else BaseA2aEventAdapter()
 
     def build_context(self, request_context: RequestContext, task: Task, updater: TaskUpdater) -> A2aExecutionContext:

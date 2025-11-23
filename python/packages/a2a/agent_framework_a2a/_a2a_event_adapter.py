@@ -2,7 +2,6 @@
 
 import re
 from abc import ABC, abstractmethod
-from typing import List
 
 from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
 from agent_framework import AgentRunResponseUpdate, DataContent, Role, TextContent, UriContent
@@ -353,7 +352,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             # This is a user message, we can ignore it in the context of task updates
             return
 
-        parts: List[Part] = []
+        parts: list[Part] = []
         metadata = getattr(message, "additional_properties", None)
 
         for content in message.contents:

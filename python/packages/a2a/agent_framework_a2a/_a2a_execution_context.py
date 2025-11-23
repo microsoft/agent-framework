@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from typing import Union
 
 from a2a.server.agent_execution import RequestContext
 from a2a.server.tasks import TaskUpdater
@@ -75,7 +74,7 @@ class A2aExecutionContext(BaseModel):
         per task execution and passed through all downstream operations.
     """
 
-    streaming_chunks_id: Union[str, None] = None
+    streaming_chunks_id: str | None = None
 
     def __init__(
         self,
