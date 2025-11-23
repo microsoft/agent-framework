@@ -3,10 +3,9 @@
 import re
 from abc import ABC, abstractmethod
 
+from a2a.server.tasks import TaskUpdater
 from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
-from agent_framework import AgentRunResponseUpdate, DataContent, Role, TextContent, UriContent
-
-from ._a2a_execution_context import A2aExecutionContext
+from agent_framework import ChatMessage, DataContent, Role, TextContent, UriContent
 
 
 class A2aEventAdapter(ABC):
@@ -69,7 +68,7 @@ class A2aEventAdapter(ABC):
     """
 
     @abstractmethod
-    async def handle_events(self, message: AgentRunResponseUpdate, context: A2aExecutionContext) -> None:
+    async def handle_events(self, message: ChatMessage, updater: TaskUpdater) -> None:
         """Handle agent framework messages and convert them to A2A protocol events.
 
         This is the primary method called to process agent framework messages and translate them
@@ -79,8 +78,7 @@ class A2aEventAdapter(ABC):
         Args:
             message (AgentRunResponseUpdate): The agent framework response message containing
                 one or more content items to be processed
-            context (A2aExecutionContext): The execution context containing the task updater,
-                request context, and task information needed to update protocol state
+            updater (TaskUpdater): The task updater for sending status updates and protocol events
 
         Returns:
             None: Updates are sent through the context.updater
@@ -257,7 +255,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         - Malformed base64 in data URIs are passed through as-is
     """
 
-    async def handle_events(self, message: AgentRunResponseUpdate, context: A2aExecutionContext) -> None:
+    async def handle_events(self, message: ChatMessage, updater: TaskUpdater) -> None:
         """Process agent framework messages and update A2A task state.
 
         This implementation handles various types of agent framework messages and converts
@@ -267,8 +265,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         Args:
             message (AgentRunResponseUpdate): The message to process, containing one or more
                 content items of various types (text, data, URI)
-            context (A2aExecutionContext): The execution context providing access to task updater,
-                request information, and task state
+            updater (TaskUpdater): The task updater used to send status updates and protocol events
 
         Returns:
             None: All updates are sent through context.updater.update_status()
@@ -370,9 +367,9 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             # Silently skip unsupported content types
 
         if parts:
-            await context.updater.update_status(
+            await updater.update_status(
                 state=TaskState.working,
-                message=context.updater.new_agent_message(parts=parts, metadata=metadata),
+                message=updater.new_agent_message(parts=parts, metadata=metadata),
             )
 
 

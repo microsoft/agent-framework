@@ -6,14 +6,15 @@ from uuid import uuid4
 
 from a2a.types import Task, TaskState
 from agent_framework import (
-    AgentRunResponseUpdate,
+    AgentRunResponse,
     AgentThread,
     ChatAgent,
+    ChatMessage,
     Role,
     TextContent,
     WorkflowAgent,
 )
-from agent_framework.a2a import A2aEventAdapter, A2aExecutionContext, A2aExecutor, BaseA2aEventAdapter
+from agent_framework.a2a import A2aEventAdapter, A2aExecutor, BaseA2aEventAdapter
 from pytest import fixture
 
 
@@ -22,7 +23,7 @@ def mock_chat_agent() -> MagicMock:
     """Fixture that provides a mock ChatAgent."""
     agent = MagicMock(spec=ChatAgent)
     agent.get_new_thread = MagicMock(return_value=MagicMock(spec=AgentThread))
-    agent.run_stream = AsyncMock()
+    agent.run = AsyncMock()
     return agent
 
 
@@ -31,7 +32,7 @@ def mock_workflow_agent() -> MagicMock:
     """Fixture that provides a mock WorkflowAgent."""
     agent = MagicMock(spec=WorkflowAgent)
     agent.get_new_thread = MagicMock(return_value=MagicMock(spec=AgentThread))
-    agent.run_stream = AsyncMock()
+    agent.run = AsyncMock()
     return agent
 
 
@@ -179,61 +180,6 @@ class TestA2aExecutorInitialization:
         assert executor._agent_thread_storage is custom_storage
 
 
-class TestA2aExecutorBuildContext:
-    """Tests for the build_context method."""
-
-    def test_build_context_creates_execution_context(
-        self,
-        executor_with_chat_agent: A2aExecutor,
-        mock_request_context: MagicMock,
-        mock_task: Task,
-        mock_task_updater: MagicMock,
-    ) -> None:
-        """Arrange: Create executor and mock components
-        Act: Call build_context
-        Assert: Returns A2aExecutionContext with correct components
-        """
-        # Act
-        context = executor_with_chat_agent.build_context(mock_request_context, mock_task, mock_task_updater)
-
-        # Assert
-        assert isinstance(context, A2aExecutionContext)
-        assert context.request is mock_request_context
-        assert context.task is mock_task
-        assert context.updater is mock_task_updater
-
-    def test_build_context_with_different_parameters(
-        self,
-        executor_with_chat_agent: A2aExecutor,
-    ) -> None:
-        """Arrange: Create executor with different request contexts and tasks
-        Act: Call build_context multiple times with different parameters
-        Assert: Each context has correct references
-        """
-        # Arrange
-        request1 = MagicMock()
-        request1.context_id = "ctx-1"
-        task1 = MagicMock()
-        task1.id = "task-1"
-        updater1 = MagicMock()
-
-        request2 = MagicMock()
-        request2.context_id = "ctx-2"
-        task2 = MagicMock()
-        task2.id = "task-2"
-        updater2 = MagicMock()
-
-        # Act
-        context1 = executor_with_chat_agent.build_context(request1, task1, updater1)
-        context2 = executor_with_chat_agent.build_context(request2, task2, updater2)
-
-        # Assert
-        assert context1.request.context_id == "ctx-1"
-        assert context1.task.id == "task-1"
-        assert context2.request.context_id == "ctx-2"
-        assert context2.task.id == "task-2"
-
-
 class TestA2aExecutorCancel:
     """Tests for the cancel method."""
 
@@ -288,10 +234,8 @@ class TestA2aExecutorGetAgentThread:
         executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
         executor_with_chat_agent._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
 
-        execution_context = executor_with_chat_agent.build_context(mock_request_context, mock_task, mock_task_updater)
-
         # Act
-        result = await executor_with_chat_agent.get_agent_thread(execution_context)
+        result = await executor_with_chat_agent.get_agent_thread(mock_task)
 
         # Assert
         assert result is mock_agent_thread
@@ -314,10 +258,8 @@ class TestA2aExecutorGetAgentThread:
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
         executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
 
-        execution_context = executor_with_chat_agent.build_context(mock_request_context, mock_task, mock_task_updater)
-
         # Act
-        result = await executor_with_chat_agent.get_agent_thread(execution_context)
+        result = await executor_with_chat_agent.get_agent_thread(mock_task)
 
         # Assert
         assert result is mock_agent_thread
@@ -351,12 +293,9 @@ class TestA2aExecutorGetAgentThread:
         task2 = MagicMock()
         task2.context_id = "thread-2"
 
-        context1 = executor_with_chat_agent.build_context(mock_request_context, task1, mock_task_updater)
-        context2 = executor_with_chat_agent.build_context(mock_request_context, task2, mock_task_updater)
-
         # Act
-        result1 = await executor_with_chat_agent.get_agent_thread(context1)
-        result2 = await executor_with_chat_agent.get_agent_thread(context2)
+        result1 = await executor_with_chat_agent.get_agent_thread(task1)
+        result2 = await executor_with_chat_agent.get_agent_thread(task2)
 
         # Assert
         assert result1 is thread1
@@ -382,6 +321,7 @@ class TestA2aExecutorExecute:
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
         executor_with_chat_agent._agent.run_stream = AsyncMock(return_value=AsyncMock())
@@ -428,6 +368,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = None
         mock_request_context.message = mock_message
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
@@ -473,15 +414,15 @@ class TestA2aExecutorExecute:
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         async def cancel_stream(*_args, **_kwargs):  # type: ignore
             if True:
                 raise CancelledError
-            yield  # Make it a generator
 
-        executor_with_chat_agent._agent.run_stream = cancel_stream
+        executor_with_chat_agent._agent.run = cancel_stream
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -512,6 +453,7 @@ class TestA2aExecutorExecute:
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
@@ -557,20 +499,22 @@ class TestA2aExecutorExecute:
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         # Create response updates
-        response1 = MagicMock(spec=AgentRunResponseUpdate)
+        response1 = MagicMock(spec=ChatMessage)
         response1.contents = [TextContent(text="Response 1")]
-        response2 = MagicMock(spec=AgentRunResponseUpdate)
+        response2 = MagicMock(spec=ChatMessage)
         response2.contents = [TextContent(text="Response 2")]
 
         async def response_stream(*_args, **_kwargs):  # type: ignore
-            yield response1
-            yield response2
+            response = MagicMock(spec=AgentRunResponse)
+            response.messages = [response1, response2]
+            return response
 
-        executor_with_custom_adapter._agent.run_stream = response_stream
+        executor_with_custom_adapter._agent.run = response_stream
         executor_with_custom_adapter._event_adapter.handle_events = AsyncMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
@@ -603,20 +547,18 @@ class TestA2aExecutorExecute:
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         # Create response with no contents
-        response1 = MagicMock(spec=AgentRunResponseUpdate)
-        response1.contents = None
-        response2 = MagicMock(spec=AgentRunResponseUpdate)
-        response2.contents = []
+        response = MagicMock(spec=AgentRunResponse)
+        response.messages = []
 
         async def response_stream(*_args, **_kwargs):
-            yield response1
-            yield response2
+            return response
 
-        executor_with_custom_adapter._agent.run_stream = response_stream
+        executor_with_custom_adapter._agent.run = response_stream
         executor_with_custom_adapter._event_adapter.handle_events = AsyncMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
@@ -653,14 +595,18 @@ class TestA2aExecutorIntegration:
         mock_request_context.get_user_input = MagicMock(return_value="Hello agent")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
-        response = MagicMock(spec=AgentRunResponseUpdate)
-        response.contents = [TextContent(text="Hello user")]
+        response = MagicMock(spec=AgentRunResponse)
+        response_message = MagicMock(spec=ChatMessage)
+        response.messages = [response_message]
+        response_message.contents = [TextContent(text="Hello user")]
+        response_message.role = Role.ASSISTANT
 
         async def response_stream(*_args, **_kwargs):
-            yield response
+            return response
 
         executor_with_custom_adapter._agent.run_stream = response_stream
         executor_with_custom_adapter._event_adapter.handle_events = AsyncMock()
@@ -699,17 +645,20 @@ class TestA2aExecutorIntegration:
         mock_request_context.get_user_input = MagicMock(return_value="Test")
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
 
         executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
-        response = MagicMock(spec=AgentRunResponseUpdate)
-        response.contents = [TextContent(text="Hello user")]
-        response.role = Role.ASSISTANT
+        response = MagicMock(spec=AgentRunResponse)
+        response_message = MagicMock(spec=ChatMessage)
+        response.messages = [response_message]
+        response_message.contents = [TextContent(text="Hello user")]
+        response_message.role = Role.ASSISTANT
 
         async def response_stream(*_args, **_kwargs):
-            yield response
+            return response
 
-        executor._agent.run_stream = response_stream
+        executor._agent.run = response_stream
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = AsyncMock()

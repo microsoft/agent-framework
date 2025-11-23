@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from asyncio import CancelledError
-from collections.abc import Awaitable, Callable
-from typing import Union
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -12,7 +10,6 @@ from a2a.utils import new_task
 from agent_framework import (
     AgentThread,
     AgentThreadStorage,
-    BaseAgent,
     ChatAgent,
     ChatMessage,
     InMemoryAgentThreadStorage,
@@ -21,11 +18,6 @@ from agent_framework import (
 )
 
 from ._a2a_event_adapter import A2aEventAdapter, BaseA2aEventAdapter
-from ._a2a_execution_context import A2aExecutionContext
-
-SyncGetAgentFuncType = Callable[[A2aExecutionContext], BaseAgent]
-AsyncGetAgentFuncType = Callable[[A2aExecutionContext], Awaitable[BaseAgent]]
-GetAgentFuncType = Union[SyncGetAgentFuncType, AsyncGetAgentFuncType]
 
 
 class A2aExecutor(AgentExecutor):
@@ -117,20 +109,16 @@ class A2aExecutor(AgentExecutor):
         self._agent: ChatAgent | WorkflowAgent = agent
         self._event_adapter: A2aEventAdapter = event_adapter if event_adapter else BaseA2aEventAdapter()
 
-    def build_context(self, request_context: RequestContext, task: Task, updater: TaskUpdater) -> A2aExecutionContext:
-        """Build the execution context for the agent."""
-        return A2aExecutionContext(request_context, task, updater)
-
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         # Cancellation handled at A2A protocol level
         pass
 
-    async def get_agent_thread(self, context: A2aExecutionContext) -> AgentThread:
+    async def get_agent_thread(self, task: Task) -> AgentThread:
         """Get or create the agent thread for the given context."""
-        thread = await self._agent_thread_storage.load_thread(context.task.context_id)
+        thread = await self._agent_thread_storage.load_thread(task.context_id)
         if not thread:
             thread = self._agent.get_new_thread()
-            await self._agent_thread_storage.save_thread(context.task.context_id, thread)
+            await self._agent_thread_storage.save_thread(task.context_id, thread)
         return thread
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -150,8 +138,7 @@ class A2aExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task.id, context.context_id)
         await updater.submit()
 
-        execution_context = self.build_context(context, task, updater)
-        agent_thread = await self.get_agent_thread(execution_context)
+        agent_thread = await self.get_agent_thread(task)
         agent = self._agent
         try:
             await updater.start_work()
@@ -159,11 +146,12 @@ class A2aExecutor(AgentExecutor):
             user_message = ChatMessage(role=Role.USER, text=query)
 
             # Run the agent with the message
-            # Note: agent_framework's ChatAgent.run_stream returns AgentRunResponseUpdate objects
-            async for response_update in agent.run_stream(user_message, thread=agent_thread):
-                # Convert response updates to A2A protocol events
-                if response_update.contents:
-                    await self._event_adapter.handle_events(response_update, execution_context)
+            response = await agent.run(user_message, thread=agent_thread)
+            response_messages = response.messages
+            if not isinstance(response_messages, list):
+                response_messages = [response_messages]
+            for message in response_messages:
+                await self._event_adapter.handle_events(message, updater)
             # Mark as complete
             await updater.complete()
         except CancelledError:

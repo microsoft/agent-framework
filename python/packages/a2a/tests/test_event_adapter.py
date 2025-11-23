@@ -4,19 +4,10 @@ import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState
-from agent_framework import AgentRunResponseUpdate, DataContent, Role, TextContent, UriContent
-from agent_framework.a2a import A2aExecutionContext, BaseA2aEventAdapter
-
-
-class MockA2aExecutionContext(A2aExecutionContext):
-    """Mock implementation of A2aExecutionContext for testing."""
-
-    def __init__(self) -> None:
-        super().__init__(MagicMock(), MagicMock(), MagicMock())
-        self._updater = MagicMock()
-        self.updater.update_status = AsyncMock()
-        self.updater.new_agent_message = MagicMock(return_value="mock_message")
+from agent_framework import ChatMessage, DataContent, Role, TextContent, UriContent
+from agent_framework.a2a import BaseA2aEventAdapter
 
 
 class TestBaseA2aEventAdapter:
@@ -28,72 +19,69 @@ class TestBaseA2aEventAdapter:
         return BaseA2aEventAdapter()
 
     @pytest.fixture
-    def mock_context(self) -> MockA2aExecutionContext:
+    def mock_updater(self) -> TaskUpdater:
         """Create a mock execution context."""
-        return MockA2aExecutionContext()
+        updater = MagicMock()
+        updater.update_status = AsyncMock()
+        updater.new_agent_message = MagicMock(return_value="mock_message")
+        return updater
 
     @pytest.mark.asyncio
-    async def test_ignore_user_messages(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_ignore_user_messages(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test that messages from USER role are ignored."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="User input")],
             role=Role.USER,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_not_called()
+        mock_updater.update_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ignore_messages_with_no_contents(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test that messages with no contents are ignored."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_not_called()
+        mock_updater.update_status.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handle_text_content(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_text_content(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with text content."""
         # Arrange
         text = "Hello, this is a test message"
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text=text)],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_args = mock_context.updater.update_status.call_args
+        mock_updater.update_status.assert_called_once()
+        call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.working
-        assert mock_context.updater.new_agent_message.called
+        assert mock_updater.new_agent_message.called
 
     @pytest.mark.asyncio
-    async def test_handle_multiple_text_contents(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_multiple_text_contents(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with multiple text contents."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[
                 TextContent(text="First message"),
                 TextContent(text="Second message"),
@@ -102,84 +90,78 @@ class TestBaseA2aEventAdapter:
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        assert mock_context.updater.new_agent_message.called
+        mock_updater.update_status.assert_called_once()
+        assert mock_updater.new_agent_message.called
 
     @pytest.mark.asyncio
-    async def test_handle_data_content(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_data_content(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with data content."""
         # Arrange
         data = b"test file data"
         base64_data = base64.b64encode(data).decode("utf-8")
         data_uri = f"data:application/octet-stream;base64,{base64_data}"
 
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[DataContent(uri=data_uri)],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_args = mock_context.updater.update_status.call_args
+        mock_updater.update_status.assert_called_once()
+        call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.working
 
     @pytest.mark.asyncio
-    async def test_handle_uri_content(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_uri_content(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with URI content."""
         # Arrange
         uri = "https://example.com/file.pdf"
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[UriContent(uri=uri, media_type="pdf")],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_args = mock_context.updater.update_status.call_args
+        mock_updater.update_status.assert_called_once()
+        call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.working
 
     @pytest.mark.asyncio
     async def test_handle_uri_content_with_media_type(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test handling messages with URI content that includes media type."""
         # Arrange
         uri = "https://example.com/image.jpg"
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[UriContent(uri=uri, media_type="image/jpeg")],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
+        mock_updater.update_status.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_mixed_content_types(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_mixed_content_types(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with mixed content types."""
         # Arrange
         data = b"file data"
         base64_data = base64.b64encode(data).decode("utf-8")
         data_uri = f"data:application/octet-stream;base64,{base64_data}"
 
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[
                 TextContent(text="Processing file..."),
                 DataContent(uri=data_uri),
@@ -189,66 +171,66 @@ class TestBaseA2aEventAdapter:
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_args = mock_context.updater.update_status.call_args
+        mock_updater.update_status.assert_called_once()
+        call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.working
         # Verify all parts were created
-        new_agent_message_call = mock_context.updater.new_agent_message.call_args
+        new_agent_message_call = mock_updater.new_agent_message.call_args
         assert new_agent_message_call is not None
 
     @pytest.mark.asyncio
     async def test_handle_with_additional_properties(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test handling messages with additional properties metadata."""
         # Arrange
         additional_props = {"custom_field": "custom_value", "priority": "high"}
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="Test message")],
             role=Role.ASSISTANT,
             additional_properties=additional_props,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        mock_context.updater.new_agent_message.assert_called_once()
-        call_args = mock_context.updater.new_agent_message.call_args
+        mock_updater.update_status.assert_called_once()
+        mock_updater.new_agent_message.assert_called_once()
+        call_args = mock_updater.new_agent_message.call_args
         assert call_args.kwargs["metadata"] == additional_props
 
     @pytest.mark.asyncio
     async def test_handle_with_no_additional_properties(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test handling messages without additional properties."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="Test message")],
             role=Role.ASSISTANT,
             additional_properties=None,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        mock_context.updater.new_agent_message.assert_called_once()
-        call_args = mock_context.updater.new_agent_message.call_args
-        assert call_args.kwargs["metadata"] is None
+        mock_updater.update_status.assert_called_once()
+        mock_updater.new_agent_message.assert_called_once()
+        call_args = mock_updater.new_agent_message.call_args
+        assert call_args.kwargs["metadata"] == {}
 
     @pytest.mark.asyncio
     async def test_parts_list_passed_to_new_agent_message(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test that parts list is correctly passed to new_agent_message."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[
                 TextContent(text="Message 1"),
                 TextContent(text="Message 2"),
@@ -257,23 +239,23 @@ class TestBaseA2aEventAdapter:
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.new_agent_message.assert_called_once()
-        call_kwargs = mock_context.updater.new_agent_message.call_args.kwargs
+        mock_updater.new_agent_message.assert_called_once()
+        call_kwargs = mock_updater.new_agent_message.call_args.kwargs
         assert "parts" in call_kwargs
         parts_list = call_kwargs["parts"]
         assert len(parts_list) == 2
 
     @pytest.mark.asyncio
     async def test_unsupported_content_type_skipped(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test that unsupported content types are silently skipped."""
         # Arrange
         # Create a message with a valid content and mock an unsupported one
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[
                 TextContent(text="Valid text"),
             ],
@@ -281,117 +263,107 @@ class TestBaseA2aEventAdapter:
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert - should still process the valid text content
-        mock_context.updater.update_status.assert_called_once()
+        mock_updater.update_status.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_update_status_when_no_parts_created(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
+        self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock
     ) -> None:
         """Test that update_status is not called when no parts are created."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_not_called()
+        mock_updater.update_status.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handle_assistant_role(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_assistant_role(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with ASSISTANT role."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="Assistant response")],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
+        mock_updater.update_status.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_system_role(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_system_role(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with SYSTEM role."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="System message")],
             role=Role.SYSTEM,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
+        mock_updater.update_status.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_handle_empty_text_content(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_handle_empty_text_content(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with empty text content."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="")],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_kwargs = mock_context.updater.new_agent_message.call_args.kwargs
+        mock_updater.update_status.assert_called_once()
+        call_kwargs = mock_updater.new_agent_message.call_args.kwargs
         parts_list = call_kwargs["parts"]
         assert len(parts_list) == 1
 
     @pytest.mark.asyncio
-    async def test_task_state_always_working(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_task_state_always_working(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test that task state is always set to working."""
         # Arrange
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=[TextContent(text="Any message")],
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        call_kwargs = mock_context.updater.update_status.call_args.kwargs
+        call_kwargs = mock_updater.update_status.call_args.kwargs
         assert call_kwargs["state"] == TaskState.working
 
     @pytest.mark.asyncio
-    async def test_large_number_of_contents(
-        self, adapter: BaseA2aEventAdapter, mock_context: MockA2aExecutionContext
-    ) -> None:
+    async def test_large_number_of_contents(self, adapter: BaseA2aEventAdapter, mock_updater: MagicMock) -> None:
         """Test handling messages with a large number of content items."""
         # Arrange
         contents = [TextContent(text=f"Message {i}") for i in range(100)]
-        message = AgentRunResponseUpdate(
+        message = ChatMessage(
             contents=contents,
             role=Role.ASSISTANT,
         )
 
         # Act
-        await adapter.handle_events(message, mock_context)
+        await adapter.handle_events(message, mock_updater)
 
         # Assert
-        mock_context.updater.update_status.assert_called_once()
-        call_kwargs = mock_context.updater.new_agent_message.call_args.kwargs
+        mock_updater.update_status.assert_called_once()
+        call_kwargs = mock_updater.new_agent_message.call_args.kwargs
         parts_list = call_kwargs["parts"]
         assert len(parts_list) == 100
