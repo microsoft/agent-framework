@@ -117,7 +117,7 @@ class TestA2aExecutorInitialization:
         assert executor._agent is mock_chat_agent
         assert executor._event_adapter is not None
         assert isinstance(executor._event_adapter, BaseA2aEventAdapter)
-        assert executor.agent_thread_storage is not None
+        assert executor._agent_thread_storage is not None
 
     def test_initialization_with_workflow_agent_only(self, mock_workflow_agent: MagicMock) -> None:
         """Arrange: Create mock WorkflowAgent
@@ -156,7 +156,7 @@ class TestA2aExecutorInitialization:
         executor = A2aExecutor(agent=mock_chat_agent, agent_thread_storage=custom_storage)
 
         # Assert
-        assert executor.agent_thread_storage is custom_storage
+        assert executor._agent_thread_storage is custom_storage
 
     def test_initialization_with_all_custom_components(
         self, mock_chat_agent: MagicMock, mock_event_adapter: MagicMock
@@ -176,7 +176,7 @@ class TestA2aExecutorInitialization:
         # Assert
         assert executor._agent is mock_chat_agent
         assert executor._event_adapter is mock_event_adapter
-        assert executor.agent_thread_storage is custom_storage
+        assert executor._agent_thread_storage is custom_storage
 
 
 class TestA2aExecutorBuildContext:
@@ -284,8 +284,8 @@ class TestA2aExecutorGetAgentThread:
         Assert: New thread is created and saved
         """
         # Arrange
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=None)
-        executor_with_chat_agent.agent_thread_storage.save_thread = AsyncMock()
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=None)
+        executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
         executor_with_chat_agent._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
 
         execution_context = executor_with_chat_agent.build_context(
@@ -297,8 +297,8 @@ class TestA2aExecutorGetAgentThread:
 
         # Assert
         assert result is mock_agent_thread
-        executor_with_chat_agent.agent_thread_storage.load_thread.assert_called_once()
-        executor_with_chat_agent.agent_thread_storage.save_thread.assert_called_once()
+        executor_with_chat_agent._agent_thread_storage.load_thread.assert_called_once()
+        executor_with_chat_agent._agent_thread_storage.save_thread.assert_called_once()
 
     async def test_get_agent_thread_returns_existing_thread(
         self,
@@ -313,8 +313,8 @@ class TestA2aExecutorGetAgentThread:
         Assert: Existing thread is returned without creating new one
         """
         # Arrange
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-        executor_with_chat_agent.agent_thread_storage.save_thread = AsyncMock()
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
 
         execution_context = executor_with_chat_agent.build_context(
             mock_request_context, mock_task, mock_task_updater
@@ -325,7 +325,7 @@ class TestA2aExecutorGetAgentThread:
 
         # Assert
         assert result is mock_agent_thread
-        executor_with_chat_agent.agent_thread_storage.save_thread.assert_not_called()
+        executor_with_chat_agent._agent_thread_storage.save_thread.assert_not_called()
 
     async def test_get_agent_thread_with_different_contexts(
         self,
@@ -348,7 +348,7 @@ class TestA2aExecutorGetAgentThread:
                 return thread2
             return None
 
-        executor_with_chat_agent.agent_thread_storage.load_thread = mock_load_thread
+        executor_with_chat_agent._agent_thread_storage.load_thread = mock_load_thread
 
         task1 = MagicMock()
         task1.context_id = "thread-1"
@@ -387,7 +387,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
         executor_with_chat_agent._agent.run_stream = AsyncMock(return_value=AsyncMock())
 
         # Create an async generator that yields no responses
@@ -433,7 +433,7 @@ class TestA2aExecutorExecute:
         mock_request_context.message = mock_message
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         async def empty_stream(*_args, **_kwargs):
             if True:
@@ -478,7 +478,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         async def cancel_stream(*_args, **_kwargs):  # type: ignore
             if True:
@@ -517,7 +517,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_chat_agent.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         async def error_stream(*_args, **_kwargs):  # type: ignore
             if True:
@@ -563,7 +563,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_custom_adapter.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         # Create response updates
         response1 = MagicMock(spec=AgentRunResponseUpdate)
@@ -609,7 +609,7 @@ class TestA2aExecutorExecute:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_custom_adapter.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         # Create response with no contents
         response1 = MagicMock(spec=AgentRunResponseUpdate)
@@ -659,7 +659,7 @@ class TestA2aExecutorIntegration:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor_with_custom_adapter.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         response = MagicMock(spec=AgentRunResponseUpdate)
         response.contents = [TextContent(text="Hello user")]
@@ -705,7 +705,7 @@ class TestA2aExecutorIntegration:
         mock_request_context.current_task = mock_task
         mock_request_context.context_id = "ctx-123"
 
-        executor.agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
 
         response = MagicMock(spec=AgentRunResponseUpdate)
         response.contents = [TextContent(text="Hello user")]
