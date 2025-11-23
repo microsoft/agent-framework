@@ -56,6 +56,15 @@ if TYPE_CHECKING:
 
         def activity_trigger(self, input_name: str) -> Callable[[HandlerT], HandlerT]: ...
 
+        def mcp_tool_trigger(
+            self,
+            arg_name: str,
+            tool_name: str,
+            description: str,
+            tool_properties: str,
+            data_type: func.DataType,
+        ) -> Callable[[HandlerT], HandlerT]: ...
+
 else:
     DFAppBase = df.DFApp  # type: ignore[assignment]
 
@@ -117,6 +126,7 @@ class AgentFunctionApp(DFAppBase):
         agents: Dictionary of agent name to AgentProtocol instance
         enable_health_check: Whether health check endpoint is enabled
         enable_http_endpoints: Whether HTTP endpoints are created for agents
+        enable_mcp_tool_endpoint: Whether MCP tool endpoints are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
     """
@@ -124,7 +134,9 @@ class AgentFunctionApp(DFAppBase):
     agents: dict[str, AgentProtocol]
     enable_health_check: bool
     enable_http_endpoints: bool
+    enable_mcp_tool_endpoint: bool
     agent_http_endpoint_flags: dict[str, bool]
+    agent_mcp_tool_flags: dict[str, bool]
 
     def __init__(
         self,
@@ -134,6 +146,7 @@ class AgentFunctionApp(DFAppBase):
         enable_http_endpoints: bool = True,
         max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        enable_mcp_tool_endpoint: bool = False,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
@@ -142,6 +155,8 @@ class AgentFunctionApp(DFAppBase):
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
+        :param enable_mcp_tool_endpoint: Enable MCP tool endpoints for agents (default: ``False``).
+            When enabled, agents will be exposed as MCP tools that can be invoked by MCP-compatible clients.
         :param max_poll_retries: Maximum polling attempts when waiting for a response.
             Defaults to ``DEFAULT_MAX_POLL_RETRIES``.
         :param poll_interval_seconds: Delay in seconds between polling attempts.
@@ -158,8 +173,10 @@ class AgentFunctionApp(DFAppBase):
         # Initialize agents dictionary
         self.agents = {}
         self.agent_http_endpoint_flags = {}
+        self.agent_mcp_tool_flags = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
+        self.enable_mcp_tool_endpoint = enable_mcp_tool_endpoint
         self.default_callback = default_callback
 
         try:
@@ -191,6 +208,7 @@ class AgentFunctionApp(DFAppBase):
         agent: AgentProtocol,
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
+        enable_mcp_tool_endpoint: bool | None = None,
     ) -> None:
         """Add an agent to the function app after initialization.
 
@@ -198,8 +216,10 @@ class AgentFunctionApp(DFAppBase):
             agent: The Microsoft Agent Framework agent instance (must implement AgentProtocol)
                    The agent must have a 'name' attribute.
             callback: Optional callback invoked during agent execution
-            enable_http_endpoint: Optional flag that overrides the app-level
-                                   HTTP endpoint setting for this agent
+            enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
+                                   If None, uses the app-level enable_http_endpoints setting.
+            enable_mcp_tool_endpoint: Optional flag to enable/disable MCP tool endpoint for this agent.
+                                      If None, uses the app-level enable_mcp_tool_endpoint setting.
 
         Raises:
             ValueError: If the agent doesn't have a 'name' attribute or if an agent
@@ -216,6 +236,11 @@ class AgentFunctionApp(DFAppBase):
         effective_enable_http_endpoint = (
             self.enable_http_endpoints if enable_http_endpoint is None else self._coerce_to_bool(enable_http_endpoint)
         )
+        effective_enable_mcp_endpoint = (
+            self.enable_mcp_tool_endpoint
+            if enable_mcp_tool_endpoint is None
+            else self._coerce_to_bool(enable_mcp_tool_endpoint)
+        )
 
         logger.debug(f"[AgentFunctionApp] Adding agent: {name}")
         logger.debug(f"[AgentFunctionApp] Route: /api/agents/{name}")
@@ -224,17 +249,18 @@ class AgentFunctionApp(DFAppBase):
             "enabled" if effective_enable_http_endpoint else "disabled",
             name,
         )
+        logger.debug(
+            f"[AgentFunctionApp] MCP tool trigger: {'enabled' if effective_enable_mcp_endpoint else 'disabled'}"
+        )
 
         self.agents[name] = agent
+        self.agent_mcp_tool_flags[name] = effective_enable_mcp_endpoint
         self.agent_http_endpoint_flags[name] = effective_enable_http_endpoint
 
         effective_callback = callback or self.default_callback
 
         self._setup_agent_functions(
-            agent,
-            name,
-            effective_callback,
-            effective_enable_http_endpoint,
+            agent, name, effective_callback, effective_enable_http_endpoint, effective_enable_mcp_endpoint
         )
 
         logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
@@ -269,15 +295,16 @@ class AgentFunctionApp(DFAppBase):
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
         enable_http_endpoint: bool,
+        enable_mcp_tool_endpoint: bool,
     ) -> None:
-        """Set up the HTTP trigger and entity for a specific agent.
+        """Set up the HTTP trigger, entity, and MCP tool trigger for a specific agent.
 
         Args:
             agent: The agent instance
             agent_name: The name to use for routing and entity registration
             callback: Optional callback to receive response updates
-            enable_http_endpoint: Whether the HTTP run route is enabled for
-                                   this agent
+            enable_http_endpoint: Whether to create HTTP endpoint
+            enable_mcp_tool_endpoint: Whether to create MCP tool endpoint
         """
         logger.debug(f"[AgentFunctionApp] Setting up functions for agent '{agent_name}'...")
 
@@ -289,6 +316,12 @@ class AgentFunctionApp(DFAppBase):
                 agent_name,
             )
         self._setup_agent_entity(agent, agent_name, callback)
+
+        if enable_mcp_tool_endpoint:
+            agent_description = getattr(agent, "description", None)
+            self._setup_mcp_tool_trigger(agent_name, agent_description)
+        else:
+            logger.debug(f"[AgentFunctionApp] MCP tool trigger disabled for agent '{agent_name}'")
 
     def _setup_http_run_route(self, agent_name: str) -> None:
         """Register the POST route that triggers agent execution.
@@ -448,6 +481,162 @@ class AgentFunctionApp(DFAppBase):
         entity_function.__name__ = entity_name_with_prefix
         self.entity_trigger(context_name="context", entity_name=entity_name_with_prefix)(entity_function)
 
+    def _setup_mcp_tool_trigger(self, agent_name: str, agent_description: str | None) -> None:
+        """Register an MCP tool trigger for an agent using Azure Functions native MCP support.
+
+        This creates a native Azure Functions MCP tool trigger that exposes the agent
+        as an MCP tool, allowing it to be invoked by MCP-compatible clients.
+
+        Args:
+            agent_name: The agent name (used as the MCP tool name)
+            agent_description: Optional description for the MCP tool (shown to clients)
+        """
+        mcp_function_name = self._build_function_name(agent_name, "mcptool")
+
+        # Define tool properties as JSON (MCP tool parameters)
+        tool_properties = json.dumps([
+            {
+                "propertyName": "query",
+                "propertyType": "string",
+                "description": "The query to send to the agent.",
+                "isRequired": True,
+                "isArray": False,
+            },
+            {
+                "propertyName": "threadId",
+                "propertyType": "string",
+                "description": "Optional thread identifier for conversation continuity.",
+                "isRequired": False,
+                "isArray": False,
+            },
+        ])
+
+        function_name_decorator = self.function_name(mcp_function_name)
+        mcp_tool_decorator = self.mcp_tool_trigger(
+            arg_name="context",
+            tool_name=agent_name,
+            description=agent_description or f"Interact with {agent_name} agent",
+            tool_properties=tool_properties,
+            data_type=func.DataType.UNDEFINED,
+        )
+        durable_client_decorator = self.durable_client_input(client_name="client")
+
+        @function_name_decorator
+        @mcp_tool_decorator
+        @durable_client_decorator
+        async def mcp_tool_handler(context: str, client: df.DurableOrchestrationClient) -> str:
+            """Handle MCP tool invocation for the agent.
+
+            Args:
+                context: MCP tool invocation context containing arguments (query, threadId)
+                client: Durable orchestration client for entity communication
+
+            Returns:
+                Agent response text
+            """
+            logger.debug("[MCP Tool Trigger] Received invocation for agent: %s", agent_name)
+            return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
+
+        logger.debug("[AgentFunctionApp] Registered MCP tool trigger for agent: %s", agent_name)
+
+    async def _handle_mcp_tool_invocation(
+        self, agent_name: str, context: str | dict[str, Any], client: df.DurableOrchestrationClient
+    ) -> str:
+        """Handle an MCP tool invocation.
+
+        This method processes MCP tool requests and delegates to the agent entity.
+
+        Args:
+            agent_name: Name of the agent being invoked
+            context: MCP tool invocation context, either as a JSON string or pre-parsed dict
+            client: Durable orchestration client
+
+        Returns:
+            Agent response text
+
+        Raises:
+            ValueError: If required arguments are missing or context is invalid JSON
+            RuntimeError: If agent execution fails
+        """
+        logger.debug("[MCP Tool Handler] Processing invocation for agent '%s'", agent_name)
+
+        # Parse context if it's a JSON string
+        if isinstance(context, str):
+            try:
+                parsed_context = json.loads(context)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid MCP context format: {e}") from e
+        else:
+            parsed_context = context
+
+        # Extract arguments from MCP context
+        arguments = parsed_context.get("arguments", {}) if isinstance(parsed_context, dict) else {}
+
+        # Validate required 'query' argument
+        query = arguments.get("query")
+        if not query or not isinstance(query, str):
+            raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
+
+        # Extract optional threadId
+        thread_id = arguments.get("threadId")
+
+        # Create or parse session ID
+        if thread_id and isinstance(thread_id, str) and thread_id.strip():
+            try:
+                session_id = AgentSessionId.parse(thread_id)
+            except ValueError as e:
+                logger.warning(
+                    "Failed to parse AgentSessionId from thread_id '%s': %s. Falling back to new session ID.",
+                    thread_id,
+                    e,
+                )
+                session_id = AgentSessionId(name=agent_name, key=thread_id)
+        else:
+            # Generate new session ID
+            session_id = AgentSessionId.with_random_key(agent_name)
+
+        # Build entity instance ID
+        entity_instance_id = session_id.to_entity_id()
+
+        # Create run request
+        correlation_id = self._generate_unique_id()
+        run_request = self._build_request_data(
+            req_body={"message": query, "role": "user"},
+            message=query,
+            thread_id=str(session_id),
+            correlation_id=correlation_id,
+            request_response_format=REQUEST_RESPONSE_FORMAT_TEXT,
+        )
+
+        query_preview = query[:50] + "..." if len(query) > 50 else query
+        logger.info("[MCP Tool] Invoking agent '%s' with query: %s", agent_name, query_preview)
+
+        # Signal entity to run agent
+        await client.signal_entity(entity_instance_id, "run_agent", run_request)
+
+        # Poll for response (similar to HTTP handler)
+        try:
+            result = await self._get_response_from_entity(
+                client=client,
+                entity_instance_id=entity_instance_id,
+                correlation_id=correlation_id,
+                message=query,
+                thread_id=str(session_id),
+            )
+
+            # Extract and return response text
+            if result.get("status") == "success":
+                response_text = str(result.get("response", "No response"))
+                logger.info("[MCP Tool] Agent '%s' responded successfully", agent_name)
+                return response_text
+            error_msg = result.get("error", "Unknown error")
+            logger.error("[MCP Tool] Agent '%s' execution failed: %s", agent_name, error_msg)
+            raise RuntimeError(f"Agent execution failed: {error_msg}")
+
+        except Exception as exc:
+            logger.error("[MCP Tool] Error invoking agent '%s': %s", agent_name, exc, exc_info=True)
+            raise
+
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
         health_route = self.route(route="health", methods=["GET"])
@@ -463,6 +652,7 @@ class AgentFunctionApp(DFAppBase):
                         name,
                         self.enable_http_endpoints,
                     ),
+                    "mcp_tool_enabled": self.agent_mcp_tool_flags.get(name, self.enable_mcp_tool_endpoint),
                 }
                 for name, agent in self.agents.items()
             ]
