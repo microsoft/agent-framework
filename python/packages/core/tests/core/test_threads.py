@@ -6,7 +6,12 @@ from typing import Any
 import pytest
 
 from agent_framework import AgentThread, ChatMessage, ChatMessageStore, Role
-from agent_framework._threads import AgentThreadState, ChatMessageStoreState
+from agent_framework._threads import (
+    AgentThreadState,
+    AgentThreadStorage,
+    ChatMessageStoreState,
+    InMemoryAgentThreadStorage,
+)
 from agent_framework.exceptions import AgentThreadException
 
 
@@ -415,3 +420,267 @@ class TestThreadState:
 
         assert state.service_thread_id is None
         assert state.chat_message_store_state is None
+
+
+class TestAgentThreadStorage:
+    """Test cases for AgentThreadStorage abstract base class."""
+
+    def test_cannot_instantiate_abstract_class(self) -> None:
+        """Test that AgentThreadStorage cannot be instantiated directly."""
+
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            AgentThreadStorage()  # pyright: ignore[abstract]
+
+    async def test_abstract_methods_exist(self) -> None:
+        """Test that all abstract methods are defined in AgentThreadStorage."""
+
+        assert hasattr(AgentThreadStorage, "save_thread")
+        assert hasattr(AgentThreadStorage, "load_thread")
+        assert hasattr(AgentThreadStorage, "delete_thread")
+
+
+class TestInMemoryAgentThreadStorage:
+    """Test cases for InMemoryAgentThreadStorage class."""
+
+    def test_init(self) -> None:
+        """Test InMemoryAgentThreadStorage initialization."""
+
+        storage = InMemoryAgentThreadStorage()
+        assert storage is not None
+        assert hasattr(storage, "_threads")
+
+    async def test_save_thread(self, sample_messages: list[ChatMessage]) -> None:
+        """Test saving a thread to the storage."""
+
+        storage = InMemoryAgentThreadStorage()
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        thread_id = "thread_123"
+
+        result = await storage.save_thread(thread_id, thread)
+
+        assert result == thread_id
+        assert thread_id in storage._threads  # pyright: ignore[reportPrivateUsage]
+        assert storage._threads[thread_id] is thread  # pyright: ignore[reportPrivateUsage]
+
+    async def test_save_thread_multiple(self, sample_messages: list[ChatMessage]) -> None:
+        """Test saving multiple threads to the storage."""
+
+        storage = InMemoryAgentThreadStorage()
+        store1 = ChatMessageStore(sample_messages)
+        store2 = ChatMessageStore(sample_messages[:1])
+
+        thread1 = AgentThread(message_store=store1)
+        thread2 = AgentThread(message_store=store2)
+
+        await storage.save_thread("thread_1", thread1)
+        await storage.save_thread("thread_2", thread2)
+
+        assert len(storage._threads) == 2  # pyright: ignore[reportPrivateUsage]
+        assert storage._threads["thread_1"] is thread1  # pyright: ignore[reportPrivateUsage]
+        assert storage._threads["thread_2"] is thread2  # pyright: ignore[reportPrivateUsage]
+
+    async def test_save_thread_overwrites_existing(self, sample_messages: list[ChatMessage]) -> None:
+        """Test saving a thread with an existing ID overwrites the previous one."""
+
+        storage = InMemoryAgentThreadStorage()
+        store1 = ChatMessageStore(sample_messages)
+        store2 = ChatMessageStore(sample_messages[:1])
+
+        thread1 = AgentThread(message_store=store1)
+        thread2 = AgentThread(message_store=store2)
+
+        await storage.save_thread("thread_1", thread1)
+        await storage.save_thread("thread_1", thread2)
+
+        assert len(storage._threads) == 1  # pyright: ignore[reportPrivateUsage]
+        assert storage._threads["thread_1"] is thread2  # pyright: ignore[reportPrivateUsage]
+
+    async def test_load_thread(self, sample_messages: list[ChatMessage]) -> None:
+        """Test loading a thread from the storage."""
+
+        storage = InMemoryAgentThreadStorage()
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        thread_id = "thread_456"
+
+        await storage.save_thread(thread_id, thread)
+        loaded_thread = await storage.load_thread(thread_id)
+
+        assert loaded_thread is thread
+        assert loaded_thread is not None
+        assert loaded_thread.message_store is not None
+
+    async def test_load_thread_not_found(self) -> None:
+        """Test loading a non-existent thread returns None."""
+
+        storage = InMemoryAgentThreadStorage()
+        loaded_thread = await storage.load_thread("non_existent_thread")
+
+        assert loaded_thread is None
+
+    async def test_load_thread_with_service_thread_id(self) -> None:
+        """Test loading a thread with service_thread_id."""
+
+        storage = InMemoryAgentThreadStorage()
+        thread = AgentThread(service_thread_id="service_123")
+        thread_id = "thread_789"
+
+        await storage.save_thread(thread_id, thread)
+        loaded_thread = await storage.load_thread(thread_id)
+
+        assert loaded_thread is not None
+        assert loaded_thread.service_thread_id == "service_123"
+        assert loaded_thread.message_store is None
+
+    async def test_delete_thread(self, sample_messages: list[ChatMessage]) -> None:
+        """Test deleting a thread from the storage."""
+
+        storage = InMemoryAgentThreadStorage()
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        thread_id = "thread_delete_1"
+
+        await storage.save_thread(thread_id, thread)
+        assert thread_id in storage._threads  # pyright: ignore[reportPrivateUsage]
+
+        result = await storage.delete_thread(thread_id)
+
+        assert result is True
+        assert thread_id not in storage._threads  # pyright: ignore[reportPrivateUsage]
+
+    async def test_delete_thread_not_found(self) -> None:
+        """Test deleting a non-existent thread returns False."""
+
+        storage = InMemoryAgentThreadStorage()
+        result = await storage.delete_thread("non_existent_thread")
+
+        assert result is False
+
+    async def test_delete_thread_twice(self, sample_messages: list[ChatMessage]) -> None:
+        """Test deleting the same thread twice."""
+
+        storage = InMemoryAgentThreadStorage()
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        thread_id = "thread_delete_2"
+
+        await storage.save_thread(thread_id, thread)
+        result1 = await storage.delete_thread(thread_id)
+        result2 = await storage.delete_thread(thread_id)
+
+        assert result1 is True
+        assert result2 is False
+
+    async def test_save_load_delete_workflow(self, sample_messages: list[ChatMessage]) -> None:
+        """Test a complete workflow of save, load, and delete operations."""
+
+        storage = InMemoryAgentThreadStorage()
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+        thread_id = "workflow_thread"
+
+        # Save thread
+        save_result = await storage.save_thread(thread_id, thread)
+        assert save_result == thread_id
+
+        # Load thread
+        loaded_thread = await storage.load_thread(thread_id)
+        assert loaded_thread is thread
+
+        # Delete thread
+        delete_result = await storage.delete_thread(thread_id)
+        assert delete_result is True
+
+        # Verify thread is deleted
+        verify_loaded = await storage.load_thread(thread_id)
+        assert verify_loaded is None
+
+    async def test_storage_isolation(self, sample_messages: list[ChatMessage]) -> None:
+        """Test that different storage instances are isolated from each other."""
+
+        storage1 = InMemoryAgentThreadStorage()
+        storage2 = InMemoryAgentThreadStorage()
+
+        store = ChatMessageStore(sample_messages)
+        thread = AgentThread(message_store=store)
+
+        await storage1.save_thread("thread_shared", thread)
+
+        # Thread should not exist in storage2
+        loaded_from_storage2 = await storage2.load_thread("thread_shared")
+        assert loaded_from_storage2 is None
+
+        # Thread should exist in storage1
+        loaded_from_storage1 = await storage1.load_thread("thread_shared")
+        assert loaded_from_storage1 is not None
+
+    async def test_multiple_threads_operations(self) -> None:
+        """Test operations on multiple threads in the same storage."""
+
+        storage = InMemoryAgentThreadStorage()
+        thread_ids = ["thread_1", "thread_2", "thread_3", "thread_4", "thread_5"]
+        threads = {}
+
+        # Save multiple threads
+        for thread_id in thread_ids:
+            thread = AgentThread(service_thread_id=f"service_{thread_id}")
+            threads[thread_id] = thread
+            await storage.save_thread(thread_id, thread)
+
+        # Verify all threads are saved
+        for thread_id in thread_ids:
+            loaded = await storage.load_thread(thread_id)
+            assert loaded is not None
+            assert loaded.service_thread_id == f"service_{thread_id}"
+
+        # Delete some threads
+        await storage.delete_thread("thread_1")
+        await storage.delete_thread("thread_3")
+
+        # Verify deleted threads are gone
+        assert await storage.load_thread("thread_1") is None
+        assert await storage.load_thread("thread_3") is None
+
+        # Verify remaining threads still exist
+        assert await storage.load_thread("thread_2") is not None
+        assert await storage.load_thread("thread_4") is not None
+        assert await storage.load_thread("thread_5") is not None
+
+    async def test_save_thread_with_serialized_state(self, sample_messages: list[ChatMessage]) -> None:
+        """Test saving a thread that has been serialized and deserialized."""
+
+        storage = InMemoryAgentThreadStorage()
+
+        # Create original thread
+        store = ChatMessageStore(sample_messages)
+        original_thread = AgentThread(message_store=store)
+
+        # Serialize and deserialize thread
+        serialized = await original_thread.serialize()
+        deserialized_thread = await AgentThread.deserialize(serialized)
+
+        # Save deserialized thread
+        thread_id = "serialized_thread"
+        await storage.save_thread(thread_id, deserialized_thread)
+
+        # Load and verify
+        loaded_thread = await storage.load_thread(thread_id)
+        assert loaded_thread is not None
+        assert loaded_thread.message_store is not None
+        loaded_messages = await loaded_thread.message_store.list_messages()
+        assert len(loaded_messages) == len(sample_messages)
+
+    async def test_save_and_load_empty_thread(self) -> None:
+        """Test saving and loading an empty thread."""
+
+        storage = InMemoryAgentThreadStorage()
+        empty_thread = AgentThread()
+        thread_id = "empty_thread"
+
+        await storage.save_thread(thread_id, empty_thread)
+        loaded_thread = await storage.load_thread(thread_id)
+
+        assert loaded_thread is not None
+        assert loaded_thread.service_thread_id is None
+        assert loaded_thread.message_store is None
