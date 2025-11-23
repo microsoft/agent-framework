@@ -8,6 +8,7 @@ For more information about the A2A protocol specification, visit: https://a2a-pr
 | File | Description |
 |------|-------------|
 | [`agent_with_a2a.py`](agent_with_a2a.py) | The simplest way to connect to and use a single A2A agent. Demonstrates agent discovery via agent cards and basic message exchange using the A2A protocol. |
+| [`agent_framework_to_a2a.py`](agent_framework_to_a2a.py) | Exposes an agent_framework agent as an A2A-compliant server. Demonstrates how to wrap an agent_framework agent and expose it as an A2A service that other A2A clients can discover and communicate with. |
 
 ## Environment Variables
 
@@ -28,4 +29,7 @@ For quick testing and demonstration, you can use the pre-built .NET A2A servers 
 ```powershell
 # Simple A2A sample (single agent)
 uv run python agent_with_a2a.py
+
+# A2A server exposing an agent_framework agent
+uv run python agent_framework_to_a2a.py
 ```

@@ -5,7 +5,7 @@ from typing import Any
 
 PACKAGE_NAME = "agent_framework_a2a"
 PACKAGE_EXTRA = "a2a"
-_IMPORTS = ["__version__", "A2AAgent"]
+_IMPORTS = ["__version__", "A2AAgent", "A2aEventAdapter", "BaseA2aEventAdapter", "A2aExecutionContext", "A2aExecutor"]
 
 
 def __getattr__(name: str) -> Any:
