@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from typing import Union
 
 from a2a.server.agent_execution import RequestContext
 from a2a.server.tasks import TaskUpdater
@@ -35,18 +36,12 @@ class A2aExecutionContext(BaseModel):
         from a2a.types import Task, TaskState
 
         # Initialize the execution context
-        context = A2aExecutionContext(
-            request=request_context,
-            task=current_task,
-            updater=task_updater
-        )
+        context = A2aExecutionContext(request=request_context, task=current_task, updater=task_updater)
 
         # Update task status during execution
         await context.updater.update_status(
             state=TaskState.working,
-            message=context.updater.new_agent_message([
-                Part(root=TextPart(text="Starting task processing..."))
-            ])
+            message=context.updater.new_agent_message([Part(root=TextPart(text="Starting task processing..."))]),
         )
 
         # Check current task state
@@ -63,9 +58,7 @@ class A2aExecutionContext(BaseModel):
         # Mark task as complete
         await context.updater.update_status(
             state=TaskState.completed,
-            message=context.updater.new_agent_message([
-                Part(root=TextPart(text="Task completed successfully"))
-            ])
+            message=context.updater.new_agent_message([Part(root=TextPart(text="Task completed successfully"))]),
         )
         ```
 
@@ -82,7 +75,7 @@ class A2aExecutionContext(BaseModel):
         per task execution and passed through all downstream operations.
     """
 
-    streaming_chunks_id: str | None = None
+    streaming_chunks_id: Union[str, None] = None
 
     def __init__(
         self,
@@ -110,63 +103,12 @@ class A2aExecutionContext(BaseModel):
             Comprehensive example showing different update scenarios:
 
             ```python
-            # Scenario 1: Update task to working state with progress message
+            # Scenario: Update task to working state with progress message
             await context.updater.update_status(
                 state=TaskState.working,
-                message=context.updater.new_agent_message([
-                    Part(root=TextPart(text="Processing started..."))
-                ])
-            )
-
-            # Scenario 2: Send an intermediate progress update
-            await context.updater.update_status(
-                state=TaskState.working,
-                message=context.updater.new_agent_message([
-                    Part(root=TextPart(text="Progress: 50% complete"))
-                ])
-            )
-
-            # Scenario 3: Complete the task with success result
-            result_message = context.updater.new_agent_message([
-                Part(root=TextPart(text="Task completed successfully"))
-            ])
-            await context.updater.update_status(
-                state=TaskState.completed,
-                message=result_message
-            )
-
-            # Scenario 4: Handle task failure with error details
-            error_message = context.updater.new_agent_message([
-                Part(root=TextPart(text="Task failed: Invalid input parameters"))
-            ])
-            await context.updater.update_status(
-                state=TaskState.failed,
-                message=error_message
-            )
-
-            # Scenario 5: Create structured messages with multiple parts
-            complex_message = context.updater.new_agent_message([
-                Part(root=TextPart(text="Analysis Results:\n")),
-                Part(root=TextPart(text="- Total items processed: 150\n")),
-                Part(root=TextPart(text="- Success rate: 98%"))
-            ])
-            await context.updater.update_status(
-                state=TaskState.working,
-                message=complex_message
+                message=context.updater.new_agent_message([Part(root=TextPart(text="Processing started..."))]),
             )
             ```
-
-        Note:
-            The TaskUpdater handles:
-            - Task state transitions (working, completed, failed, etc.)
-            - Message creation and formatting
-            - Event queueing for protocol delivery
-            - Progress tracking and updates
-            - Error reporting and propagation
-
-        Warning:
-            State transitions should follow the valid state machine defined by TaskState.
-            Invalid state transitions may result in protocol violations.
         """
         return self._updater
 
@@ -185,60 +127,11 @@ class A2aExecutionContext(BaseModel):
             Comprehensive example showing different request context access patterns:
 
             ```python
-            # Scenario 1: Access basic request identifiers
+            # Scenario: Access basic request identifiers
             context_id = context.request.context_id
             request_id = context.request.request_id
             print(f"Processing request {request_id} in context {context_id}")
-
-            # Scenario 2: Retrieve request metadata
-            metadata = context.request.metadata
-            if "user_id" in metadata:
-                current_user = metadata["user_id"]
-            if "session_id" in metadata:
-                session = metadata["session_id"]
-
-            # Scenario 3: Access request parameters
-            params = context.request.params
-            timeout = params.get("timeout", 30)
-            retry_count = params.get("retry_count", 3)
-
-            # Scenario 4: Check protocol version and features
-            protocol_version = context.request.protocol_version
-            if protocol_version >= "2.0":
-                # Use newer protocol features
-                pass
-
-            # Scenario 5: Access session information for stateful processing
-            session_info = context.request.session_info
-            if session_info:
-                previous_state = session_info.get("previous_state")
-                user_preferences = session_info.get("preferences")
-
-            # Scenario 6: Use context for logging and tracing
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"Request {context.request.request_id} "
-                f"in context {context.request.context_id} "
-                f"started with params {context.request.params}"
-            )
             ```
-
-        Note:
-            The request context contains:
-            - Protocol metadata (version, format, encoding)
-            - Request parameters and configuration
-            - Session information for stateful operations
-            - Context identifiers for request correlation
-            - Authentication and authorization metadata
-
-        Tip:
-            Use context information for:
-            - Request correlation and tracing
-            - Session state management
-            - Configuration overrides
-            - Access control decisions
-            - Protocol-level feature detection
         """
         return self._request
 
@@ -257,93 +150,11 @@ class A2aExecutionContext(BaseModel):
             Comprehensive example showing different task access and decision patterns:
 
             ```python
-            # Scenario 1: Access basic task information
+            # Scenario: Access basic task information
             task_id = context.task.id
             task_type = context.task.type
             task_name = context.task.name
             print(f"Executing task {task_id} of type {task_type}: {task_name}")
-
-            # Scenario 2: Check task state and make decisions
-            from a2a.types import TaskState
-
-            if context.task.state == TaskState.pending:
-                # Initialize task processing
-                print("Starting new task")
-            elif context.task.state == TaskState.working:
-                # Continue or resume processing
-                print("Resuming task processing")
-            elif context.task.state == TaskState.completed:
-                # Task already done
-                print("Task already completed")
-            elif context.task.state == TaskState.failed:
-                # Handle failure
-                print("Task previously failed")
-
-            # Scenario 3: Access task metadata and parameters
-            metadata = context.task.metadata
-            task_title = metadata.get("title", "Untitled")
-            task_description = metadata.get("description", "")
-            task_priority = metadata.get("priority", "normal")
-
-            parameters = context.task.parameters
-            input_data = parameters.get("input")
-            options = parameters.get("options", {})
-
-            # Scenario 4: Check task retry information
-            retry_count = context.task.retry_count
-            max_retries = context.task.max_retries
-            if retry_count >= max_retries:
-                print(f"Task has exceeded maximum retries ({max_retries})")
-
-            # Scenario 5: Access task timing information
-            created_time = context.task.created_at
-            started_time = context.task.started_at
-            elapsed = started_time - created_time if started_time else None
-            print(f"Task created {created_time}, started {started_time}")
-
-            # Scenario 6: Check task dependencies and relationships
-            parent_task_id = context.task.parent_id
-            dependent_tasks = context.task.dependencies
-            if parent_task_id:
-                print(f"This is a subtask of {parent_task_id}")
-            if dependent_tasks:
-                print(f"This task depends on: {dependent_tasks}")
-
-            # Scenario 7: Use task information for logging and monitoring
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"Task {context.task.id} ({context.task.type}) "
-                f"in state {context.task.state} "
-                f"with priority {task_priority}"
-            )
-
-            # Scenario 8: Access task execution context and history
-            execution_history = context.task.execution_history
-            if execution_history:
-                last_execution = execution_history[-1]
-                print(f"Last executed: {last_execution.timestamp}")
             ```
-
-        Note:
-            The task object contains:
-            - Task identifier (unique within the protocol session)
-            - Task type and classification
-            - Current execution state
-            - Associated metadata (title, description, priority, etc.)
-            - Task parameters and input data
-            - Retry information and limits
-            - Timing information (created, started, completed)
-            - Relationships (parent task, dependencies)
-            - Execution history and audit trail
-
-        Tip:
-            Use task information for:
-            - State-based execution decisions
-            - Retry logic and error handling
-            - Progress tracking and reporting
-            - Audit logging and monitoring
-            - Task dependency management
-            - Priority-based scheduling
         """
         return self._task

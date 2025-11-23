@@ -6,9 +6,8 @@ from uuid import uuid4
 from a2a.server.agent_execution import RequestContext
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Task, TaskState
-from pytest import fixture
-
 from agent_framework.a2a import A2aExecutionContext
+from pytest import fixture
 
 
 @fixture
@@ -529,4 +528,3 @@ class TestA2aExecutionContextIntegration:
         # Assert
         assert original_updater is modified_updater
         assert modified_updater is mock_task_updater
-

@@ -15,8 +15,8 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "A2AAgent",
     "A2aEventAdapter",
-    "BaseA2aEventAdapter",
     "A2aExecutionContext",
     "A2aExecutor",
+    "BaseA2aEventAdapter",
     "__version__",
 ]

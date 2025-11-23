@@ -8,8 +8,16 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import Part, Task, TaskState, TextPart
 from a2a.utils import new_task
-from agent_framework import ChatMessage, Role, BaseAgent, AgentThread, AgentThreadStorage, InMemoryAgentThreadStorage, \
-    ChatAgent, WorkflowAgent
+from agent_framework import (
+    AgentThread,
+    AgentThreadStorage,
+    BaseAgent,
+    ChatAgent,
+    ChatMessage,
+    InMemoryAgentThreadStorage,
+    Role,
+    WorkflowAgent,
+)
 
 from ._a2a_event_adapter import A2aEventAdapter, BaseA2aEventAdapter
 from ._a2a_execution_context import A2aExecutionContext
@@ -56,10 +64,7 @@ class A2aExecutor(AgentExecutor):
         >>> # Execute an agent within an async context
         >>> async def run_example():
         ...     event_queue = EventQueue()
-        ...     request_context = RequestContext(
-        ...         user_input="What is the weather today?",
-        ...         context_id="user-123"
-        ...     )
+        ...     request_context = RequestContext(user_input="What is the weather today?", context_id="user-123")
         ...     await executor.execute(request_context, event_queue)
         ...     # Events are queued in event_queue for processing
 
@@ -71,11 +76,7 @@ class A2aExecutor(AgentExecutor):
         >>> custom_adapter = BaseA2aEventAdapter()
         >>> storage = InMemoryAgentThreadStorage()
         >>>
-        >>> executor = A2aExecutor(
-        ...     agent=agent,
-        ...     event_adapter=custom_adapter,
-        ...     agent_thread_storage=storage
-        ... )
+        >>> executor = A2aExecutor(agent=agent, event_adapter=custom_adapter, agent_thread_storage=storage)
         >>>
         >>> # The same context_id will reuse the same conversation thread
         >>> async def run_multi_turn():
@@ -83,17 +84,11 @@ class A2aExecutor(AgentExecutor):
         ...     context_id = "conversation-session-1"
         ...
         ...     # First turn
-        ...     request1 = RequestContext(
-        ...         user_input="Hello, who are you?",
-        ...         context_id=context_id
-        ...     )
+        ...     request1 = RequestContext(user_input="Hello, who are you?", context_id=context_id)
         ...     await executor.execute(request1, event_queue)
         ...
         ...     # Second turn (same conversation thread)
-        ...     request2 = RequestContext(
-        ...         user_input="What did I just ask?",
-        ...         context_id=context_id
-        ...     )
+        ...     request2 = RequestContext(user_input="What did I just ask?", context_id=context_id)
         ...     await executor.execute(request2, event_queue)
     """
 
@@ -115,16 +110,13 @@ class A2aExecutor(AgentExecutor):
                 consider using persistent storage to maintain conversation state across restarts.
         """
         super().__init__()
-        self._agent_thread_storage: AgentThreadStorage = agent_thread_storage if agent_thread_storage else InMemoryAgentThreadStorage()
+        self._agent_thread_storage: AgentThreadStorage = (
+            agent_thread_storage if agent_thread_storage else InMemoryAgentThreadStorage()
+        )
         self._agent: Union[ChatAgent, WorkflowAgent] = agent
         self._event_adapter: A2aEventAdapter = event_adapter if event_adapter else BaseA2aEventAdapter()
 
-    def build_context(
-        self,
-        request_context: RequestContext,
-        task: Task,
-        updater: TaskUpdater
-    ) -> A2aExecutionContext:
+    def build_context(self, request_context: RequestContext, task: Task, updater: TaskUpdater) -> A2aExecutionContext:
         """Build the execution context for the agent."""
         return A2aExecutionContext(request_context, task, updater)
 
@@ -145,10 +137,8 @@ class A2aExecutor(AgentExecutor):
         query = context.get_user_input()
         task = context.current_task
         if not task:
-            assert context.message
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
-        assert context.context_id
 
         updater = TaskUpdater(event_queue, task.id, context.context_id)
         await updater.submit()

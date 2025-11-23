@@ -1,6 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-import uuid
-from abc import ABCMeta, abstractmethod
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
@@ -10,7 +8,13 @@ from ._serialization import SerializationMixin
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
 
-__all__ = ["AgentThread", "ChatMessageStore", "ChatMessageStoreProtocol", "AgentThreadStorage", "InMemoryAgentThreadStorage"]
+__all__ = [
+    "AgentThread",
+    "AgentThreadStorage",
+    "ChatMessageStore",
+    "ChatMessageStoreProtocol",
+    "InMemoryAgentThreadStorage",
+]
 
 
 class ChatMessageStoreProtocol(Protocol):
@@ -505,9 +509,12 @@ class AgentThread:
         # Create the message store from the default.
         self.message_store = ChatMessageStore(messages=state.chat_message_store_state.messages, **kwargs)
 
+
 class AgentThreadStorage(ABC):
     """Abstract base class for storing and retrieving AgentThread instances.
+
     This class defines the interface for persisting and managing AgentThread objects.
+
     Example:
         ```python
         class FileBasedAgentThreadStorage(AgentThreadStorage):
@@ -533,6 +540,7 @@ class AgentThreadStorage(ABC):
             str: The identifier of the saved thread.
         """
         pass
+
     @abstractmethod
     async def load_thread(self, thread_id: str) -> AgentThread | None:
         """Load an AgentThread instance by its identifier.
@@ -544,6 +552,7 @@ class AgentThreadStorage(ABC):
             AgentThread | None: The loaded AgentThread instance, or None if not found.
         """
         pass
+
     @abstractmethod
     async def delete_thread(self, thread_id: str) -> bool:
         """Delete an AgentThread instance by its identifier.
@@ -555,6 +564,7 @@ class AgentThreadStorage(ABC):
             bool: True if the thread was successfully deleted, False otherwise.
         """
         pass
+
 
 class InMemoryAgentThreadStorage(AgentThreadStorage):
     """In-memory storage for AgentThread instances, useful for testing and development.

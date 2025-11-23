@@ -1,5 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework_a2a import  __version__, A2AAgent, A2aEventAdapter, BaseA2aEventAdapter, A2aExecutionContext, A2aExecutor
+from agent_framework_a2a import (
+    A2AAgent,
+    A2aEventAdapter,
+    A2aExecutionContext,
+    A2aExecutor,
+    BaseA2aEventAdapter,
+    __version__,
+)
 
-__all__ = ["__version__", "A2AAgent", "A2aEventAdapter", "BaseA2aEventAdapter", "A2aExecutionContext", "A2aExecutor"]
+__all__ = ["A2AAgent", "A2aEventAdapter", "A2aExecutionContext", "A2aExecutor", "BaseA2aEventAdapter", "__version__"]

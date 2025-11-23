@@ -1,12 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import re
-
 from abc import ABC, abstractmethod
 from typing import List
 
 from a2a.types import FilePart, FileWithBytes, FileWithUri, Part, TaskState, TextPart
-from agent_framework import AgentRunResponseUpdate, Role, TextContent, DataContent, UriContent
+from agent_framework import AgentRunResponseUpdate, DataContent, Role, TextContent, UriContent
 
 from ._a2a_execution_context import A2aExecutionContext
 
@@ -71,9 +70,7 @@ class A2aEventAdapter(ABC):
     """
 
     @abstractmethod
-    async def handle_events(
-        self, message: AgentRunResponseUpdate, context: A2aExecutionContext
-    ) -> None:
+    async def handle_events(self, message: AgentRunResponseUpdate, context: A2aExecutionContext) -> None:
         """Handle agent framework messages and convert them to A2A protocol events.
 
         This is the primary method called to process agent framework messages and translate them
@@ -107,9 +104,7 @@ class A2aEventAdapter(ABC):
             Typical implementation pattern:
 
             ```python
-            async def handle_events(
-                self, message: AgentRunResponseUpdate, context: A2aExecutionContext
-            ) -> None:
+            async def handle_events(self, message: AgentRunResponseUpdate, context: A2aExecutionContext) -> None:
                 # Scenario 1: Skip user messages
                 if message.role == Role.USER:
                     return
@@ -126,9 +121,9 @@ class A2aEventAdapter(ABC):
                         parts.append(Part(root=FilePart(file=FileWithBytes(bytes=binary_data))))
                     elif isinstance(content, UriContent):
                         # Create file reference
-                        parts.append(Part(root=FilePart(
-                            file=FileWithUri(uri=content.uri, mime_type=content.media_type)
-                        )))
+                        parts.append(
+                            Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type)))
+                        )
 
                 # Scenario 3: Send update to A2A protocol
                 if parts:
@@ -184,10 +179,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         context = A2aExecutionContext(request=req, task=task, updater=updater)
 
         # Scenario 1: Handle a simple text message
-        message = AgentRunResponseUpdate(
-            role=Role.ASSISTANT,
-            contents=[TextContent(text="Analysis complete")]
-        )
+        message = AgentRunResponseUpdate(role=Role.ASSISTANT, contents=[TextContent(text="Analysis complete")])
         await adapter.handle_events(message, context)
 
         # Scenario 2: Handle message with multiple content types
@@ -196,22 +188,19 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             contents=[
                 TextContent(text="Processing result:"),
                 DataContent(uri="data:application/json;base64,eyJyZXN1bHQiOiAidmFsdWUifQ=="),
-                UriContent(uri="https://example.com/file.pdf", media_type="application/pdf")
-            ]
+                UriContent(uri="https://example.com/file.pdf", media_type="application/pdf"),
+            ],
         )
         await adapter.handle_events(message, context)
 
         # Scenario 3: User messages are automatically filtered
-        message = AgentRunResponseUpdate(
-            role=Role.USER,
-            contents=[TextContent(text="User request")]
-        )
+        message = AgentRunResponseUpdate(role=Role.USER, contents=[TextContent(text="User request")])
         await adapter.handle_events(message, context)  # This is safely ignored
 
         # Scenario 4: Empty messages don't create updates
         message = AgentRunResponseUpdate(
             role=Role.ASSISTANT,
-            contents=[]  # Empty
+            contents=[],  # Empty
         )
         await adapter.handle_events(message, context)  # No update sent
         ```
@@ -224,6 +213,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             async for response in agent.stream_responses():
                 # Adapter handles all conversion and update logic
                 await adapter.handle_events(response, context)
+
 
         # Integration with task execution loop
         async def execute_task(task, request, updater):
@@ -255,7 +245,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         message = AgentRunResponseUpdate(
             role=Role.ASSISTANT,
             contents=[TextContent(text="Result")],
-            additional_properties={"timestamp": "2025-11-23T10:30:00Z", "source": "agent_v2"}
+            additional_properties={"timestamp": "2025-11-23T10:30:00Z", "source": "agent_v2"},
         )
         await adapter.handle_events(message, context)
         # Metadata is included in the A2A protocol update
@@ -268,9 +258,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         - Malformed base64 in data URIs are passed through as-is
     """
 
-    async def handle_events(
-        self, message: AgentRunResponseUpdate, context: A2aExecutionContext
-    ) -> None:
+    async def handle_events(self, message: AgentRunResponseUpdate, context: A2aExecutionContext) -> None:
         """Process agent framework messages and update A2A task state.
 
         This implementation handles various types of agent framework messages and converts
@@ -309,8 +297,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             ```python
             # Example 1: Text message processing
             message = AgentRunResponseUpdate(
-                role=Role.ASSISTANT,
-                contents=[TextContent(text="Task processing started")]
+                role=Role.ASSISTANT, contents=[TextContent(text="Task processing started")]
             )
             # Internally:
             # - Role check: ASSISTANT role, continue processing
@@ -325,8 +312,8 @@ class BaseA2aEventAdapter(A2aEventAdapter):
                 contents=[
                     TextContent(text="Summary:"),
                     DataContent(uri="data:text/plain;base64,SGVsbG8gV29ybGQ="),
-                    UriContent(uri="s3://bucket/results.json", media_type="application/json")
-                ]
+                    UriContent(uri="s3://bucket/results.json", media_type="application/json"),
+                ],
             )
             # Internally:
             # - Creates 3 parts: TextPart, FilePart(base64), FilePart(URI)
@@ -334,10 +321,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             await adapter.handle_events(message, context)
 
             # Example 3: User message filtering
-            message = AgentRunResponseUpdate(
-                role=Role.USER,
-                contents=[TextContent(text="Some user input")]
-            )
+            message = AgentRunResponseUpdate(role=Role.USER, contents=[TextContent(text="Some user input")])
             # Internally:
             # - Role check: USER role detected
             # - Early return: No processing, no update sent
@@ -347,7 +331,7 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             message = AgentRunResponseUpdate(
                 role=Role.ASSISTANT,
                 contents=[TextContent(text="Result")],
-                additional_properties={"model": "gpt-4", "version": "1.0"}
+                additional_properties={"model": "gpt-4", "version": "1.0"},
             )
             # Internally:
             # - Metadata extracted from additional_properties
@@ -368,10 +352,10 @@ class BaseA2aEventAdapter(A2aEventAdapter):
         if message.role == Role.USER:
             # This is a user message, we can ignore it in the context of task updates
             return
-        
+
         parts: List[Part] = []
-        metadata = getattr(message, 'additional_properties', None)
-        
+        metadata = getattr(message, "additional_properties", None)
+
         for content in message.contents:
             if isinstance(content, TextContent):
                 parts.append(Part(root=TextPart(text=content.text)))
@@ -380,13 +364,12 @@ class BaseA2aEventAdapter(A2aEventAdapter):
             if isinstance(content, UriContent):
                 # Handle URI content
                 parts.append(
-                    Part(root=FilePart(file=FileWithUri(
-                        uri=content.uri,
-                        mime_type=getattr(content, 'media_type', None)
-                    )))
+                    Part(
+                        root=FilePart(file=FileWithUri(uri=content.uri, mime_type=getattr(content, "media_type", None)))
+                    )
                 )
             # Silently skip unsupported content types
-        
+
         if parts:
             await context.updater.update_status(
                 state=TaskState.working,
@@ -416,60 +399,6 @@ def _extract_base64_from_uri(uri: str) -> str:
             base64 encoding, returns the base64 string. If the URI doesn't match the expected
             format, returns the input URI unchanged (as a fallback).
 
-    Example:
-        Standard data URI extraction:
-
-        ```python
-        # Scenario 1: JSON data URI
-        uri = "data:application/json;base64,eyJyZXN1bHQiOiAic3VjY2VzcyJ9"
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns: "eyJyZXN1bHQiOiAic3VjY2VzcyJ9"
-
-        # Scenario 2: Plain text data URI
-        uri = "data:text/plain;base64,SGVsbG8gV29ybGQ="
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns: "SGVsbG8gV29ybGQ="
-        # Can be decoded: base64.b64decode("SGVsbG8gV29ybGQ=") -> b"Hello World"
-
-        # Scenario 3: Image data URI (partial)
-        uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns the full base64 string that can be decoded to PNG bytes
-
-        # Scenario 4: CSV data URI
-        uri = "data:text/csv;base64,bmFtZSxhZ2UKQWxpY2UsIDMwCkJvYiwgMjU="
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns: "bmFtZSxhZ2UKQWxpY2UsIDMwCkJvYiwgMjU="
-
-        # Scenario 5: Invalid/non-matching URI (fallback behavior)
-        uri = "https://example.com/file.json"
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns: "https://example.com/file.json" (unchanged, as fallback)
-
-        # Scenario 6: Malformed data URI (fallback behavior)
-        uri = "data:text/plain;Invalid,SomeData"
-        base64_data = _extract_base64_from_uri(uri)
-        # Returns: "data:text/plain;Invalid,SomeData" (unchanged, no match)
-        ```
-
-        Practical usage in data extraction:
-
-        ```python
-        import base64
-
-        # Extract and decode binary data
-        uri = "data:application/pdf;base64,JVBERi0xLjQK..."
-        base64_data = _extract_base64_from_uri(uri)
-        binary_data = base64.b64decode(base64_data)
-
-        # Extract and decode JSON
-        uri = "data:application/json;base64,eyJrZXkiOiAidmFsdWUifQ=="
-        base64_data = _extract_base64_from_uri(uri)
-        json_bytes = base64.b64decode(base64_data)
-        json_str = json_bytes.decode('utf-8')
-        data = json.loads(json_str)
-        ```
-
     Pattern Explanation:
         The regex pattern used for matching:
         `^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$`
@@ -489,15 +418,9 @@ def _extract_base64_from_uri(uri: str) -> str:
         - Supports any media type (text/plain, application/json, image/png, etc.)
         - Handles edge cases gracefully: malformed URIs, missing encoding declaration,
           incomplete data portions are all returned unchanged
-
-    Warning:
-        - Large base64 payloads should be handled carefully to avoid memory issues
-        - Downstream consumers should validate base64 data before decoding
-        - The function performs regex matching which may be slow for very long URIs
-        - No size limits are enforced; excessively large data URIs are processed as-is
     """
-    pattern = r'^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$'
+    pattern = r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$"
     match = re.match(pattern, uri)
     if match:
-        return match.group('base64_data')
+        return match.group("base64_data")
     return uri

@@ -7,14 +7,14 @@ from uuid import uuid4
 from a2a.types import Task, TaskState
 from agent_framework import (
     AgentRunResponseUpdate,
-    TextContent,
     AgentThread,
     ChatAgent,
-    WorkflowAgent, Role,
+    Role,
+    TextContent,
+    WorkflowAgent,
 )
+from agent_framework.a2a import A2aEventAdapter, A2aExecutionContext, A2aExecutor, BaseA2aEventAdapter
 from pytest import fixture
-
-from agent_framework.a2a import A2aExecutionContext, A2aExecutor, A2aEventAdapter, BaseA2aEventAdapter
 
 
 @fixture
@@ -288,9 +288,7 @@ class TestA2aExecutorGetAgentThread:
         executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
         executor_with_chat_agent._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
 
-        execution_context = executor_with_chat_agent.build_context(
-            mock_request_context, mock_task, mock_task_updater
-        )
+        execution_context = executor_with_chat_agent.build_context(mock_request_context, mock_task, mock_task_updater)
 
         # Act
         result = await executor_with_chat_agent.get_agent_thread(execution_context)
@@ -316,9 +314,7 @@ class TestA2aExecutorGetAgentThread:
         executor_with_chat_agent._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
         executor_with_chat_agent._agent_thread_storage.save_thread = AsyncMock()
 
-        execution_context = executor_with_chat_agent.build_context(
-            mock_request_context, mock_task, mock_task_updater
-        )
+        execution_context = executor_with_chat_agent.build_context(mock_request_context, mock_task, mock_task_updater)
 
         # Act
         result = await executor_with_chat_agent.get_agent_thread(execution_context)
@@ -344,7 +340,7 @@ class TestA2aExecutorGetAgentThread:
         async def mock_load_thread(thread_id: str) -> MagicMock | None:  # type: ignore
             if thread_id == "thread-1":
                 return thread1
-            elif thread_id == "thread-2":
+            if thread_id == "thread-2":
                 return thread2
             return None
 
@@ -482,7 +478,7 @@ class TestA2aExecutorExecute:
 
         async def cancel_stream(*_args, **_kwargs):  # type: ignore
             if True:
-                raise CancelledError()
+                raise CancelledError
             yield  # Make it a generator
 
         executor_with_chat_agent._agent.run_stream = cancel_stream
@@ -541,8 +537,7 @@ class TestA2aExecutorExecute:
             # Verify update_status was called with failed state
             call_args_list = mock_updater.update_status.call_args_list
             assert any(
-                call[1].get("state") == TaskState.failed or call[0][0] == TaskState.failed
-                for call in call_args_list
+                call[1].get("state") == TaskState.failed or call[0][0] == TaskState.failed for call in call_args_list
             )
 
     async def test_execute_calls_event_adapter_for_responses(
@@ -728,4 +723,3 @@ class TestA2aExecutorIntegration:
 
             # Assert
             mock_updater.complete.assert_called_once()
-
