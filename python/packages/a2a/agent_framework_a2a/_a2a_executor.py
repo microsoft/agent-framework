@@ -135,8 +135,14 @@ class A2aExecutor(AgentExecutor):
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """Execute the agent with the given context and event queue."""
+        if context.context_id is None:
+            raise ValueError("Context ID must be provided in the RequestContext")
+        if context.message is None:
+            raise ValueError("Message must be provided in the RequestContext")
+
         query = context.get_user_input()
         task = context.current_task
+
         if not task:
             task = new_task(context.message)
             await event_queue.enqueue_event(task)
