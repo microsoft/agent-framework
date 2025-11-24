@@ -120,7 +120,7 @@ public class Workflow
             throw new InvalidOperationException($"Existing ownership does not match check value. {Summarize(maybeOwned)} vs. {Summarize(existingOwnershipSignoff)}");
         }
 
-        string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
+        static string Summarize(object? maybeOwnerToken) => maybeOwnerToken switch
         {
             string s => $"'{s}'",
             null => "<null>",
@@ -168,11 +168,8 @@ public class Workflow
             Justification = "Does not exist in NetFx 4.7.2")]
     internal async ValueTask ReleaseOwnershipAsync(object ownerToken)
     {
-        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken);
-        if (originalToken == null)
-        {
+        object? originalToken = Interlocked.CompareExchange(ref this._ownerToken, null, ownerToken) ??
             throw new InvalidOperationException("Attempting to release ownership of a Workflow that is not owned.");
-        }
 
         if (!ReferenceEquals(originalToken, ownerToken))
         {

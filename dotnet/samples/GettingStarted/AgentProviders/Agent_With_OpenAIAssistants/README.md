@@ -5,7 +5,7 @@ For more information see the OpenAI documentation: https://platform.openai.com/d
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - OpenAI API key
 
 Set the following environment variables:

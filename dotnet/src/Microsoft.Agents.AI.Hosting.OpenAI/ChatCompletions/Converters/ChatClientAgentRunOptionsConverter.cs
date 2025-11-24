@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
 
 internal static class ChatClientAgentRunOptionsConverter
 {
-    private static readonly JsonElement s_emptyJson = JsonDocument.Parse("{}").RootElement;
+    private static readonly JsonElement s_emptyJson = JsonElement.Parse("{}");
 
     public static ChatClientAgentRunOptions BuildOptions(this CreateChatCompletion request)
     {
