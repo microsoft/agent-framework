@@ -10,13 +10,11 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
-internal sealed class RequestPortOptions
-{
-}
+internal sealed class RequestPortOptions;
 
 internal sealed class RequestInfoExecutor : Executor
 {
-    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = new();
+    private readonly Dictionary<string, ExternalRequest> _wrappedRequests = [];
     private RequestPort Port { get; }
     private IExternalRequestSink? RequestSink { get; set; }
 

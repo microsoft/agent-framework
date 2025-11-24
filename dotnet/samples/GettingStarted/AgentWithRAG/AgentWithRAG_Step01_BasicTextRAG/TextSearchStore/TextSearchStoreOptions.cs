@@ -107,15 +107,8 @@ public sealed class TextSearchStoreOptions
         /// <param name="text">The source text that was retrieved.</param>
         public SourceRetrievalResponse(SourceRetrievalRequest request, string text)
         {
-            if (request == null)
-            {
-                throw new ArgumentNullException(nameof(request));
-            }
-
-            if (text == null)
-            {
-                throw new ArgumentNullException(nameof(text));
-            }
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(text);
 
             this.SourceId = request.SourceId;
             this.SourceLink = request.SourceLink;
