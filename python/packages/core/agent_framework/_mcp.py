@@ -69,8 +69,52 @@ def _mcp_prompt_message_to_chat_message(
 def _mcp_call_tool_result_to_ai_contents(
     mcp_type: types.CallToolResult,
 ) -> list[Contents]:
-    """Convert a MCP container type to a Agent Framework type."""
-    return [_mcp_type_to_ai_content(item) for item in mcp_type.content]
+    """Convert a MCP container type to a Agent Framework type.
+
+    This function extracts the complete _meta field from CallToolResult objects
+    and merges all metadata into the additional_properties field of converted
+    content items.
+
+    Note: The _meta field from CallToolResult is applied to ALL content items
+    in the result, as the Agent Framework's content model doesn't have a
+    result-level metadata container. This ensures metadata is preserved but
+    means it will be duplicated across multiple content items if present.
+
+    Args:
+        mcp_type: The MCP CallToolResult object to convert.
+
+    Returns:
+        A list of Agent Framework content items with metadata merged into
+        additional_properties.
+    """
+    # Extract _meta field using getattr for compatibility
+    meta_data = getattr(mcp_type, "_meta", None)
+
+    # Prepare merged metadata once if present
+    merged_meta_props = None
+    if meta_data:
+        merged_meta_props = {}
+        if hasattr(meta_data, "__dict__"):
+            merged_meta_props.update(meta_data.__dict__)
+        elif isinstance(meta_data, dict):
+            merged_meta_props.update(meta_data)
+        else:
+            merged_meta_props["_meta"] = meta_data
+
+    # Convert each content item and merge metadata
+    result_contents = []
+    for item in mcp_type.content:
+        content = _mcp_type_to_ai_content(item)
+
+        if merged_meta_props:
+            existing_props = getattr(content, "additional_properties", None) or {}
+            # Merge with content-specific properties, letting content-specific props override
+            final_props = merged_meta_props.copy()
+            final_props.update(existing_props)
+            content.additional_properties = final_props
+        result_contents.append(content)
+
+    return result_contents
 
 
 def _mcp_type_to_ai_content(
@@ -81,10 +125,16 @@ def _mcp_type_to_ai_content(
         case types.TextContent():
             return TextContent(text=mcp_type.text, raw_representation=mcp_type)
         case types.ImageContent() | types.AudioContent():
-            return DataContent(uri=mcp_type.data, media_type=mcp_type.mimeType, raw_representation=mcp_type)
+            return DataContent(
+                uri=mcp_type.data,
+                media_type=mcp_type.mimeType,
+                raw_representation=mcp_type,
+            )
         case types.ResourceLink():
             return UriContent(
-                uri=str(mcp_type.uri), media_type=mcp_type.mimeType or "application/json", raw_representation=mcp_type
+                uri=str(mcp_type.uri),
+                media_type=mcp_type.mimeType or "application/json",
+                raw_representation=mcp_type,
             )
         case _:
             match mcp_type.resource:
@@ -92,14 +142,14 @@ def _mcp_type_to_ai_content(
                     return TextContent(
                         text=mcp_type.resource.text,
                         raw_representation=mcp_type,
-                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else None,
+                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
                 case types.BlobResourceContents():
                     return DataContent(
                         uri=mcp_type.resource.blob,
                         media_type=mcp_type.resource.mimeType,
                         raw_representation=mcp_type,
-                        additional_properties=mcp_type.annotations.model_dump() if mcp_type.annotations else None,
+                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
 
 
@@ -124,9 +174,11 @@ def _ai_content_to_mcp_types(
                         # uri's are not limited in MCP but they have to be set.
                         # the uri of data content, contains the data uri, which
                         # is not the uri meant here, UriContent would match this.
-                        uri=content.additional_properties.get("uri", "af://binary")
-                        if content.additional_properties
-                        else "af://binary",  # type: ignore[reportArgumentType]
+                        uri=(
+                            content.additional_properties.get("uri", "af://binary")
+                            if content.additional_properties
+                            else "af://binary"
+                        ),  # type: ignore[reportArgumentType]
                     ),
                 )
             return None
@@ -135,9 +187,9 @@ def _ai_content_to_mcp_types(
                 type="resource_link",
                 uri=content.uri,  # type: ignore[reportArgumentType]
                 mimeType=content.media_type,
-                name=content.additional_properties.get("name", "Unknown")
-                if content.additional_properties
-                else "Unknown",
+                name=(
+                    content.additional_properties.get("name", "Unknown") if content.additional_properties else "Unknown"
+                ),
             )
         case _:
             return None
@@ -272,7 +324,7 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
+        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
         load_prompts: bool = True,
@@ -300,6 +352,8 @@ class MCPTool:
         self.chat_client = chat_client
         self._functions: list[AIFunction[Any, Any]] = []
         self.is_connected: bool = False
+        self._tools_loaded: bool = False
+        self._prompts_loaded: bool = False
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -336,7 +390,9 @@ class MCPTool:
                     ClientSession(
                         read_stream=transport[0],
                         write_stream=transport[1],
-                        read_timeout_seconds=timedelta(seconds=self.request_timeout) if self.request_timeout else None,
+                        read_timeout_seconds=(
+                            timedelta(seconds=self.request_timeout) if self.request_timeout else None
+                        ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         sampling_callback=self.sampling_callback,
@@ -345,7 +401,8 @@ class MCPTool:
             except Exception as ex:
                 await self._exit_stack.aclose()
                 raise ToolException(
-                    message="Failed to create MCP session. Please check your configuration.", inner_exception=ex
+                    message="Failed to create MCP session. Please check your configuration.",
+                    inner_exception=ex,
                 ) from ex
             try:
                 await session.initialize()
@@ -368,8 +425,10 @@ class MCPTool:
         self.is_connected = True
         if self.load_tools_flag:
             await self.load_tools()
+            self._tools_loaded = True
         if self.load_prompts_flag:
             await self.load_prompts()
+            self._prompts_loaded = True
 
         if logger.level != logging.NOTSET:
             try:
@@ -380,7 +439,9 @@ class MCPTool:
                 logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
 
     async def sampling_callback(
-        self, context: RequestContext[ClientSession, Any], params: types.CreateMessageRequestParams
+        self,
+        context: RequestContext[ClientSession, Any],
+        params: types.CreateMessageRequestParams,
     ) -> types.CreateMessageResult | types.ErrorData:
         """Callback function for sampling.
 
@@ -458,7 +519,7 @@ class MCPTool:
 
     async def message_handler(
         self,
-        message: RequestResponder[types.ServerRequest, types.ClientResult] | types.ServerNotification | Exception,
+        message: (RequestResponder[types.ServerRequest, types.ClientResult] | types.ServerNotification | Exception),
     ) -> None:
         """Handle messages from the MCP server.
 
@@ -517,8 +578,17 @@ class MCPTool:
                 exc_info=exc,
             )
             prompt_list = None
+
+        # Track existing function names to prevent duplicates
+        existing_names = {func.name for func in self._functions}
+
         for prompt in prompt_list.prompts if prompt_list else []:
             local_name = _normalize_mcp_name(prompt.name)
+
+            # Skip if already loaded
+            if local_name in existing_names:
+                continue
+
             input_model = _get_input_model_from_mcp_prompt(prompt)
             approval_mode = self._determine_approval_mode(local_name)
             func: AIFunction[BaseModel, list[ChatMessage]] = AIFunction(
@@ -529,6 +599,7 @@ class MCPTool:
                 input_model=input_model,
             )
             self._functions.append(func)
+            existing_names.add(local_name)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -549,8 +620,17 @@ class MCPTool:
                 exc_info=exc,
             )
             tool_list = None
+
+        # Track existing function names to prevent duplicates
+        existing_names = {func.name for func in self._functions}
+
         for tool in tool_list.tools if tool_list else []:
             local_name = _normalize_mcp_name(tool.name)
+
+            # Skip if already loaded
+            if local_name in existing_names:
+                continue
+
             input_model = _get_input_model_from_mcp_tool(tool)
             approval_mode = self._determine_approval_mode(local_name)
             # Create AIFunctions out of each tool
@@ -562,6 +642,7 @@ class MCPTool:
                 input_model=input_model,
             )
             self._functions.append(func)
+            existing_names.add(local_name)
 
     async def close(self) -> None:
         """Disconnect from the MCP server.
@@ -662,7 +743,10 @@ class MCPTool:
             raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: Any
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
     ) -> None:
         """Exit the async context manager.
 
@@ -714,7 +798,7 @@ class MCPStdioTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
+        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
@@ -824,7 +908,7 @@ class MCPStreamableHTTPTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
+        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         headers: dict[str, Any] | None = None,
         timeout: float | None = None,
@@ -939,7 +1023,7 @@ class MCPWebsocketTool(MCPTool):
         request_timeout: int | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None = None,
+        approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,

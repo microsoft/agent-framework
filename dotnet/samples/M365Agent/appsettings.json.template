@@ -1,0 +1,54 @@
+{
+  "TokenValidation": {
+    "Enabled": false,
+    "Audiences": [
+      "{{ClientId}}" // this is the Client ID used for the Azure Bot
+    ],
+    "TenantId": "{{TenantId}}"
+  },
+
+  "AgentApplication": {
+    "StartTypingTimer": true,
+    "RemoveRecipientMention": false,
+    "NormalizeMentions": false
+  },
+
+  "Connections": {
+    "ServiceConnection": {
+      "Settings": {
+        // this is the AuthType for the connection, valid values can be found in Microsoft.Agents.Authentication.Msal.Model.AuthTypes.  The default is ClientSecret.
+        "AuthType": "" 
+
+        // Other properties dependent on the authorization type the Azure Bot uses.
+      }
+    }
+  },
+  "ConnectionsMap": [
+    {
+      "ServiceUrl": "*",
+      "Connection": "ServiceConnection"
+    }
+  ],
+
+  // This is the configuration for the AI services, use environment variables or user secrets to store sensitive information.
+  // Do not store sensitive information in this file
+  "AIServices": {
+    "AzureOpenAI": {
+      "DeploymentName": "", // This is the Deployment (as opposed to model) Name of the Azure OpenAI model
+      "Endpoint": "", // This is the Endpoint of the Azure OpenAI resource
+      "ApiKey": "" // This is the API Key of the Azure OpenAI resource. Optional, uses AzureCliCredential if not provided
+    },
+    "OpenAI": {
+      "ModelId": "", // This is the Model ID of the OpenAI model
+      "ApiKey": "" // This is your API Key for the OpenAI service
+    },
+    "UseAzureOpenAI": false // This is a flag to determine whether to use the Azure OpenAI or the OpenAI service
+  },
+
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}

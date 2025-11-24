@@ -93,18 +93,17 @@ public abstract class Executor : IIdentified
         return new HashSet<Type>();
     }
 
-    private MessageRouter? _router;
     internal MessageRouter Router
     {
         get
         {
-            if (this._router is null)
+            if (field is null)
             {
                 RouteBuilder routeBuilder = this.ConfigureRoutes(new RouteBuilder());
-                this._router = routeBuilder.Build();
+                field = routeBuilder.Build();
             }
 
-            return this._router;
+            return field;
         }
     }
 

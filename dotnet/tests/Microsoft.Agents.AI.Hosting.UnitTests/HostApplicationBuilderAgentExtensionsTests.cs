@@ -67,7 +67,7 @@ public class HostApplicationBuilderAgentExtensionsTests
     public void AddAIAgentWithKey_NullInstructions_AllowsNull()
     {
         var builder = new HostApplicationBuilder();
-        var result = builder.AddAIAgent("agentName", null!, "key");
+        var result = builder.AddAIAgent("agentName", null, "key");
         Assert.NotNull(result);
     }
 

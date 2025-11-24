@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251120] - 2025-11-20
+
+### Added
+
+- **agent-framework-core**: Introducing support for declarative YAML spec ([#2002](https://github.com/microsoft/agent-framework/pull/2002))
+- **agent-framework-core**: Use AI Foundry evaluators for self-reflection ([#2250](https://github.com/microsoft/agent-framework/pull/2250))
+- **agent-framework-core**: Propagate `as_tool()` kwargs and add runtime context + middleware sample ([#2311](https://github.com/microsoft/agent-framework/pull/2311))
+- **agent-framework-anthropic**: Anthropic Foundry integration ([#2302](https://github.com/microsoft/agent-framework/pull/2302))
+- **samples**: M365 Agent SDK Hosting sample ([#2292](https://github.com/microsoft/agent-framework/pull/2292))
+- **samples**: Foundry Sample for A2A + SharePoint Samples ([#2313](https://github.com/microsoft/agent-framework/pull/2313))
+
+### Changed
+
+- **agent-framework-azurefunctions**: [BREAKING] Schema changes for Azure Functions package ([#2151](https://github.com/microsoft/agent-framework/pull/2151))
+- **agent-framework-core**: Move evaluation folders under `evaluations` ([#2355](https://github.com/microsoft/agent-framework/pull/2355))
+- **agent-framework-core**: Move red teaming files to their own folder ([#2333](https://github.com/microsoft/agent-framework/pull/2333))
+- **agent-framework-core**: "fix all" task now single source of truth ([#2303](https://github.com/microsoft/agent-framework/pull/2303))
+- **agent-framework-core**: Improve and clean up exception handling ([#2337](https://github.com/microsoft/agent-framework/pull/2337), [#2319](https://github.com/microsoft/agent-framework/pull/2319))
+- **agent-framework-core**: Clean up imports ([#2318](https://github.com/microsoft/agent-framework/pull/2318))
+
+### Fixed
+
+- **agent-framework-azure-ai**: Fix for Azure AI client ([#2358](https://github.com/microsoft/agent-framework/pull/2358))
+- **agent-framework-core**: Fix tool execution bleed-over in aiohttp/Bot Framework scenarios ([#2314](https://github.com/microsoft/agent-framework/pull/2314))
+- **agent-framework-core**: `@ai_function` now correctly handles `self` parameter ([#2266](https://github.com/microsoft/agent-framework/pull/2266))
+- **agent-framework-core**: Resolve string annotations in `FunctionExecutor` ([#2308](https://github.com/microsoft/agent-framework/pull/2308))
+- **agent-framework-core**: Langfuse observability captures ChatAgent system instructions ([#2316](https://github.com/microsoft/agent-framework/pull/2316))
+- **agent-framework-core**: Incomplete URL substring sanitization fix ([#2274](https://github.com/microsoft/agent-framework/pull/2274))
+- **observability**: Handle datetime serialization in tool results ([#2248](https://github.com/microsoft/agent-framework/pull/2248))
+
+## [1.0.0b251117] - 2025-11-17
+
+### Fixed
+
+- **agent-framework-ag-ui**: Fix ag-ui state handling issues ([#2289](https://github.com/microsoft/agent-framework/pull/2289))
+
+## [1.0.0b251114] - 2025-11-14
+
+### Added
+
+- **samples**: Bing Custom Search sample using `HostedWebSearchTool` ([#2226](https://github.com/microsoft/agent-framework/pull/2226))
+- **samples**: Fabric and Browser Automation samples ([#2207](https://github.com/microsoft/agent-framework/pull/2207))
+- **samples**: Hosted agent samples ([#2205](https://github.com/microsoft/agent-framework/pull/2205))
+- **samples**: Azure OpenAI Responses API Hosted MCP sample ([#2108](https://github.com/microsoft/agent-framework/pull/2108))
+- **samples**: Bing Grounding and Custom Search samples ([#2200](https://github.com/microsoft/agent-framework/pull/2200))
+
+### Changed
+
+- **agent-framework-azure-ai**: Enhance Azure AI Search citations with complete URL information ([#2066](https://github.com/microsoft/agent-framework/pull/2066))
+- **agent-framework-azurefunctions**: Update samples to latest stable Azure Functions Worker packages ([#2189](https://github.com/microsoft/agent-framework/pull/2189))
+- **agent-framework-azure-ai**: Agent name now required for `AzureAIClient` ([#2198](https://github.com/microsoft/agent-framework/pull/2198))
+- **build**: Use `uv build` for packaging ([#2161](https://github.com/microsoft/agent-framework/pull/2161))
+- **tooling**: Pre-commit improvements ([#2222](https://github.com/microsoft/agent-framework/pull/2222))
+- **dependencies**: Updated package versions ([#2208](https://github.com/microsoft/agent-framework/pull/2208))
+
+### Fixed
+
+- **agent-framework-core**: Prevent duplicate MCP tools and prompts ([#1876](https://github.com/microsoft/agent-framework/pull/1876)) ([#1890](https://github.com/microsoft/agent-framework/pull/1890))
+- **agent-framework-devui**: Fix HIL regression ([#2167](https://github.com/microsoft/agent-framework/pull/2167))
+- **agent-framework-chatkit**: ChatKit sample fixes ([#2174](https://github.com/microsoft/agent-framework/pull/2174))
+
+## [1.0.0b251112.post1] - 2025-11-12
+
+### Added
+
+- **agent-framework-azurefunctions**: Merge Azure Functions feature branch (#1916)
+
+### Fixed
+
+- **agent-framework-ag-ui**: fix tool call id mismatch in ag-ui ([#2166](https://github.com/microsoft/agent-framework/pull/2166))
+
+## [1.0.0b251112] - 2025-11-12
+
+### Added
+
+- **agent-framework-azure-ai**: Azure AI client based on new `azure-ai-projects` package ([#1910](https://github.com/microsoft/agent-framework/pull/1910))
+- **agent-framework-anthropic**: Add convenience method on data content ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
+### Changed
+
+- **agent-framework-core**: Update OpenAI samples to use agents ([#2012](https://github.com/microsoft/agent-framework/pull/2012))
+
+### Fixed
+
+- **agent-framework-anthropic**: Fixed image handling in Anthropic client ([#2083](https://github.com/microsoft/agent-framework/pull/2083))
+
 ## [1.0.0b251111] - 2025-11-11
 
 ### Added
@@ -204,7 +290,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...HEAD
+[1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
+[1.0.0b251117]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...python-1.0.0b251117
+[1.0.0b251114]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112.post1...python-1.0.0b251114
+[1.0.0b251112.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112...python-1.0.0b251112.post1
+[1.0.0b251112]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251111...python-1.0.0b251112
 [1.0.0b251111]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251108...python-1.0.0b251111
 [1.0.0b251108]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106.post1...python-1.0.0b251108
 [1.0.0b251106.post1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251106...python-1.0.0b251106.post1

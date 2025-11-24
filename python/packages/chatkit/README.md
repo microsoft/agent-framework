@@ -60,8 +60,17 @@ class MyChatKitServer(ChatKitServer[dict[str, Any]]):
         if input_user_message is None:
             return
 
-        # Convert ChatKit message to Agent Framework format
-        agent_messages = await simple_to_agent_input(input_user_message)
+        # Load full thread history to maintain conversation context
+        thread_items_page = await self.store.load_thread_items(
+            thread_id=thread.id,
+            after=None,
+            limit=1000,
+            order="asc",
+            context=context,
+        )
+
+        # Convert all ChatKit messages to Agent Framework format
+        agent_messages = await simple_to_agent_input(thread_items_page.data)
 
         # Run the agent and stream responses
         response_stream = agent.run_stream(agent_messages)
