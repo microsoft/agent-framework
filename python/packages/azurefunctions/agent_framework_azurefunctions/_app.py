@@ -143,7 +143,7 @@ class AgentFunctionApp(DFAppBase):
         agents: Dictionary of agent name to AgentProtocol instance
         enable_health_check: Whether health check endpoint is enabled
         enable_http_endpoints: Whether HTTP endpoints are created for agents
-        enable_mcp_tool_endpoint: Whether MCP tool endpoints are created for agents
+        enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
     """
@@ -151,7 +151,7 @@ class AgentFunctionApp(DFAppBase):
     _agent_metadata: dict[str, AgentMetadata]
     enable_health_check: bool
     enable_http_endpoints: bool
-    enable_mcp_tool_endpoint: bool
+    enable_mcp_tool_trigger: bool
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ class AgentFunctionApp(DFAppBase):
         enable_http_endpoints: bool = True,
         max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
-        enable_mcp_tool_endpoint: bool = False,
+        enable_mcp_tool_trigger: bool = False,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
@@ -170,7 +170,7 @@ class AgentFunctionApp(DFAppBase):
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
-        :param enable_mcp_tool_endpoint: Enable MCP tool endpoints for agents (default: ``False``).
+        :param enable_mcp_tool_trigger: Enable MCP tool triggers for agents (default: ``False``).
             When enabled, agents will be exposed as MCP tools that can be invoked by MCP-compatible clients.
         :param max_poll_retries: Maximum polling attempts when waiting for a response.
             Defaults to ``DEFAULT_MAX_POLL_RETRIES``.
@@ -189,7 +189,7 @@ class AgentFunctionApp(DFAppBase):
         self._agent_metadata = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
-        self.enable_mcp_tool_endpoint = enable_mcp_tool_endpoint
+        self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
 
         try:
@@ -230,7 +230,7 @@ class AgentFunctionApp(DFAppBase):
         agent: AgentProtocol,
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
-        enable_mcp_tool_endpoint: bool | None = None,
+        enable_mcp_tool_trigger: bool | None = None,
     ) -> None:
         """Add an agent to the function app after initialization.
 
@@ -240,8 +240,8 @@ class AgentFunctionApp(DFAppBase):
             callback: Optional callback invoked during agent execution
             enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
                                   The app level enable_http_endpoints setting will override this setting.
-            enable_mcp_tool_endpoint: Optional flag to enable/disable MCP tool endpoint for this agent.
-                                      The app level enable_mcp_tool_endpoint setting will override this setting.
+            enable_mcp_tool_trigger: Optional flag to enable/disable MCP tool trigger for this agent.
+                                     The app level enable_mcp_tool_trigger setting will override this setting.
 
         Raises:
             ValueError: If the agent doesn't have a 'name' attribute or if an agent
@@ -259,9 +259,9 @@ class AgentFunctionApp(DFAppBase):
             self.enable_http_endpoints if enable_http_endpoint is None else self._coerce_to_bool(enable_http_endpoint)
         )
         effective_enable_mcp_endpoint = (
-            self.enable_mcp_tool_endpoint
-            if enable_mcp_tool_endpoint is None
-            else self._coerce_to_bool(enable_mcp_tool_endpoint)
+            self.enable_mcp_tool_trigger
+            if enable_mcp_tool_trigger is None
+            else self._coerce_to_bool(enable_mcp_tool_trigger)
         )
 
         logger.debug(f"[AgentFunctionApp] Adding agent: {name}")
@@ -320,7 +320,7 @@ class AgentFunctionApp(DFAppBase):
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
         enable_http_endpoint: bool,
-        enable_mcp_tool_endpoint: bool,
+        enable_mcp_tool_trigger: bool,
     ) -> None:
         """Set up the HTTP trigger, entity, and MCP tool trigger for a specific agent.
 
@@ -329,7 +329,7 @@ class AgentFunctionApp(DFAppBase):
             agent_name: The name to use for routing and entity registration
             callback: Optional callback to receive response updates
             enable_http_endpoint: Whether to create HTTP endpoint
-            enable_mcp_tool_endpoint: Whether to create MCP tool endpoint
+            enable_mcp_tool_trigger: Whether to create MCP tool trigger
         """
         logger.debug(f"[AgentFunctionApp] Setting up functions for agent '{agent_name}'...")
 
@@ -342,7 +342,7 @@ class AgentFunctionApp(DFAppBase):
             )
         self._setup_agent_entity(agent, agent_name, callback)
 
-        if enable_mcp_tool_endpoint:
+        if enable_mcp_tool_trigger:
             agent_description = agent.description
             self._setup_mcp_tool_trigger(agent_name, agent_description)
         else:

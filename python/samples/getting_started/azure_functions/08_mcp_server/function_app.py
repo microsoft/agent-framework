@@ -57,7 +57,7 @@ app = AgentFunctionApp(
 app.add_agent(agent1)
 
 # Agent 2: Disable HTTP trigger, enable MCP tool trigger only
-app.add_agent(agent2, enable_http_endpoint=False, enable_mcp_tool_endpoint=True)
+app.add_agent(agent2, enable_http_endpoint=False, enable_mcp_tool_trigger=True)
 
 # Agent 3: Enable both HTTP and MCP tool triggers
-app.add_agent(agent3, enable_http_endpoint=True, enable_mcp_tool_endpoint=True)
+app.add_agent(agent3, enable_http_endpoint=True, enable_mcp_tool_trigger=True)

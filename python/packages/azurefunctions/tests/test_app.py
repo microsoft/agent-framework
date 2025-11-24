@@ -88,7 +88,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent, callback=specific_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is specific_callback
         assert enable_http_endpoint is True
 
@@ -104,7 +104,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -119,7 +119,7 @@ class TestAgentFunctionAppInit:
             AgentFunctionApp(agents=[mock_agent], default_callback=default_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -806,9 +806,9 @@ class TestMCPToolEndpoint:
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
-        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_endpoint=True)
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_trigger=True)
 
-        assert app.enable_mcp_tool_endpoint is True
+        assert app.enable_mcp_tool_trigger is True
 
     def test_init_with_mcp_tool_endpoint_disabled(self) -> None:
         """Test initialization with MCP tool endpoint disabled (default)."""
@@ -817,7 +817,7 @@ class TestMCPToolEndpoint:
 
         app = AgentFunctionApp(agents=[mock_agent])
 
-        assert app.enable_mcp_tool_endpoint is False
+        assert app.enable_mcp_tool_trigger is False
 
     def test_add_agent_with_mcp_tool_trigger_enabled(self) -> None:
         """Test adding an agent with MCP tool trigger explicitly enabled."""
@@ -827,7 +827,7 @@ class TestMCPToolEndpoint:
 
         with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
             app = AgentFunctionApp()
-            app.add_agent(mock_agent, enable_mcp_tool_endpoint=True)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=True)
 
         setup_mock.assert_called_once()
         _, _, _, _, enable_mcp = setup_mock.call_args[0]
@@ -839,8 +839,8 @@ class TestMCPToolEndpoint:
         mock_agent.name = "NoMCPAgent"
 
         with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
-            app = AgentFunctionApp(enable_mcp_tool_endpoint=True)
-            app.add_agent(mock_agent, enable_mcp_tool_endpoint=False)
+            app = AgentFunctionApp(enable_mcp_tool_trigger=True)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=False)
 
         setup_mock.assert_called_once()
         _, _, _, _, enable_mcp = setup_mock.call_args[0]
@@ -852,8 +852,8 @@ class TestMCPToolEndpoint:
         mock_agent.name = "OverrideAgent"
 
         with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
-            app = AgentFunctionApp(enable_mcp_tool_endpoint=False)
-            app.add_agent(mock_agent, enable_mcp_tool_endpoint=True)
+            app = AgentFunctionApp(enable_mcp_tool_trigger=False)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=True)
 
         mcp_setup_mock.assert_called_once()
 
@@ -863,8 +863,8 @@ class TestMCPToolEndpoint:
         mock_agent.name = "NoOverrideAgent"
 
         with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
-            app = AgentFunctionApp(enable_mcp_tool_endpoint=True)
-            app.add_agent(mock_agent, enable_mcp_tool_endpoint=False)
+            app = AgentFunctionApp(enable_mcp_tool_trigger=True)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=False)
 
         mcp_setup_mock.assert_not_called()
 
@@ -1031,7 +1031,7 @@ class TestMCPToolEndpoint:
         mock_agent = Mock()
         mock_agent.name = "HealthAgent"
 
-        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_endpoint=True)
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_trigger=True)
 
         # Capture the health check handler function
         captured_handler = None
