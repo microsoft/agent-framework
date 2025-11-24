@@ -52,13 +52,8 @@ public static class HostedAgentBuilderExtensions
             Throw.IfNull(key);
             var keyString = key as string;
             Throw.IfNullOrEmpty(keyString);
-            var store = createAgentThreadStore(sp, keyString);
-            if (store is null)
-            {
+            return createAgentThreadStore(sp, keyString) ??
                 throw new InvalidOperationException($"The agent thread store factory did not return a valid {nameof(AgentThreadStore)} instance for key '{keyString}'.");
-            }
-
-            return store;
         });
         return builder;
     }

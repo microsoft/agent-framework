@@ -15,7 +15,7 @@ internal abstract class ContentBase : GraphDataTypeBase
     /// Creates a new instance of the <see cref="ContentBase"/> class.
     /// </summary>
     /// <param name="dataType">The graph data type of the content.</param>
-    public ContentBase(string dataType) : base(dataType)
+    protected ContentBase(string dataType) : base(dataType)
     {
     }
 }

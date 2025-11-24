@@ -22,16 +22,16 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_SendsRequestAndParsesSSEStream_SuccessfullyAsync()
     {
         // Arrange
-        BaseEvent[] events = new BaseEvent[]
-        {
+        BaseEvent[] events =
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageEndEvent { MessageId = "msg1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        };
+        ];
 
-        HttpClient httpClient = this.CreateMockHttpClient(events, HttpStatusCode.OK);
+        HttpClient httpClient = CreateMockHttpClient(events, HttpStatusCode.OK);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");
         RunAgentInput input = new()
         {
@@ -60,7 +60,7 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_WithNonSuccessStatusCode_ThrowsHttpRequestExceptionAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient([], HttpStatusCode.InternalServerError);
+        HttpClient httpClient = CreateMockHttpClient([], HttpStatusCode.InternalServerError);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");
         RunAgentInput input = new()
         {
@@ -83,14 +83,14 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_DeserializesMultipleEventTypes_CorrectlyAsync()
     {
         // Arrange
-        BaseEvent[] events = new BaseEvent[]
-        {
+        BaseEvent[] events =
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunErrorEvent { Message = "Error occurred", Code = "ERR001" },
-            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonDocument.Parse("\"Success\"").RootElement.Clone() }
-        };
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1", Result = JsonElement.Parse("\"Success\"") }
+        ];
 
-        HttpClient httpClient = this.CreateMockHttpClient(events, HttpStatusCode.OK);
+        HttpClient httpClient = CreateMockHttpClient(events, HttpStatusCode.OK);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");
         RunAgentInput input = new()
         {
@@ -120,7 +120,7 @@ public sealed class AGUIHttpServiceTests
     public async Task PostRunAsync_WithEmptyEventStream_CompletesSuccessfullyAsync()
     {
         // Arrange
-        HttpClient httpClient = this.CreateMockHttpClient([], HttpStatusCode.OK);
+        HttpClient httpClient = CreateMockHttpClient([], HttpStatusCode.OK);
         AGUIHttpService service = new(httpClient, "http://localhost/agent");
         RunAgentInput input = new()
         {
@@ -175,9 +175,9 @@ public sealed class AGUIHttpServiceTests
         });
     }
 
-    private HttpClient CreateMockHttpClient(BaseEvent[] events, HttpStatusCode statusCode)
+    private static HttpClient CreateMockHttpClient(BaseEvent[] events, HttpStatusCode statusCode)
     {
-        string sseContent = string.Join("", events.Select(e =>
+        string sseContent = string.Concat(events.Select(e =>
             $"data: {JsonSerializer.Serialize(e, AGUIJsonSerializerContext.Default.BaseEvent)}\n\n"));
 
         Mock<HttpMessageHandler> handlerMock = new(MockBehavior.Strict);

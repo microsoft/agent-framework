@@ -155,8 +155,8 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         // Create a definition so that we can use the dimensions provided at runtime.
         var definition = new VectorStoreCollectionDefinition
         {
-            Properties = new List<VectorStoreProperty>
-            {
+            Properties =
+            [
                 new VectorStoreKeyProperty("Key", typeof(Guid)),
                 new VectorStoreDataProperty("Role", typeof(string)) { IsIndexed = true },
                 new VectorStoreDataProperty("MessageId", typeof(string)) { IsIndexed = true },
@@ -168,7 +168,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 new VectorStoreDataProperty("Content", typeof(string)) { IsFullTextIndexed = true },
                 new VectorStoreDataProperty("CreatedAt", typeof(string)) { IsIndexed = true },
                 new VectorStoreVectorProperty("ContentEmbedding", typeof(string), Throw.IfLessThan(vectorDimensions, 1))
-            }
+            ]
         };
 
         this._collection = this._vectorStore.GetDynamicCollection(Throw.IfNullOrWhitespace(collectionName), definition);

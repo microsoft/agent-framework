@@ -13,7 +13,7 @@ internal abstract class GraphDataTypeBase
     /// Create a new instance of the <see cref="GraphDataTypeBase"/> class.
     /// </summary>
     /// <param name="dataType">The data type of the graph object.</param>
-    public GraphDataTypeBase(string dataType)
+    protected GraphDataTypeBase(string dataType)
     {
         this.DataType = dataType;
     }

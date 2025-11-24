@@ -95,7 +95,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         // Assert
         JsonElement approvalEvent = events.FirstOrDefault(e =>
             e.GetProperty("type").GetString() == "response.function_approval.requested");
-        Assert.True(approvalEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, approvalEvent.ValueKind);
 
         JsonElement functionCallElement = approvalEvent.GetProperty("function_call");
         JsonElement argumentsElement = functionCallElement.GetProperty("arguments");
@@ -235,7 +235,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         // Assert
         JsonElement approvalEvent = events.FirstOrDefault(e =>
             e.GetProperty("type").GetString() == "response.function_approval.responded");
-        Assert.True(approvalEvent.ValueKind != JsonValueKind.Undefined);
+        Assert.NotEqual(JsonValueKind.Undefined, approvalEvent.ValueKind);
 
         Assert.Equal(RequestId, approvalEvent.GetProperty("request_id").GetString());
         Assert.False(approvalEvent.GetProperty("approved").GetBoolean());
@@ -340,7 +340,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
     private static List<JsonElement> ParseSseEvents(string sseContent)
     {
-        List<JsonElement> events = new();
+        List<JsonElement> events = [];
         string[] lines = sseContent.Split('\n');
 
         for (int i = 0; i < lines.Length; i++)

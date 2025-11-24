@@ -13,8 +13,6 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public abstract class GroupChatManager
 {
-    private int _maximumIterationCount = 40;
-
     /// <summary>
     /// Initializes a new instance of the <see cref="GroupChatManager"/> class.
     /// </summary>
@@ -34,9 +32,9 @@ public abstract class GroupChatManager
     /// </remarks>
     public int MaximumIterationCount
     {
-        get => this._maximumIterationCount;
-        set => this._maximumIterationCount = Throw.IfLessThan(value, 1);
-    }
+        get;
+        set => field = Throw.IfLessThan(value, 1);
+    } = 40;
 
     /// <summary>
     /// Selects the next agent to participate in the group chat based on the provided chat history and team.

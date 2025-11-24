@@ -16,7 +16,7 @@ namespace AgentWebChat.Web;
 /// </summary>
 internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : AgentClientBase
 {
-    public async override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,

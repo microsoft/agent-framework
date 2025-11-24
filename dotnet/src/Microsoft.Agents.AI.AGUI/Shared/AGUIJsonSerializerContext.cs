@@ -59,6 +59,4 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(float))]
 [JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(decimal))]
-internal sealed partial class AGUIJsonSerializerContext : JsonSerializerContext
-{
-}
+internal sealed partial class AGUIJsonSerializerContext : JsonSerializerContext;

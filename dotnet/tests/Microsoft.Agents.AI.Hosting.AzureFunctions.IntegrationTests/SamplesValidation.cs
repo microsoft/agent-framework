@@ -111,7 +111,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 startResponse.IsSuccessStatusCode,
                 $"Start orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
             Uri statusUri = new(statusUriElement.GetString()!);
@@ -126,7 +126,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 $"Status check failed with status: {statusResponse.StatusCode}");
 
             string statusText = await statusResponse.Content.ReadAsStringAsync();
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
             Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -154,7 +154,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
             Assert.True(startResponse.IsSuccessStatusCode, $"Start orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("instanceId", out JsonElement instanceIdElement));
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
@@ -169,7 +169,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             Assert.True(statusResponse.IsSuccessStatusCode, $"Status check failed with status: {statusResponse.StatusCode}");
 
             string statusText = await statusResponse.Content.ReadAsStringAsync();
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
             Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -233,7 +233,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 startResponse.IsSuccessStatusCode,
                 $"Start HITL orchestration failed with status: {startResponse.StatusCode}");
             string startResponseText = await startResponse.Content.ReadAsStringAsync();
-            JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+            JsonElement startResult = JsonElement.Parse(startResponseText);
 
             Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
             Uri statusUri = new(statusUriElement.GetString()!);
@@ -250,7 +250,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             string statusText = await statusResponse.Content.ReadAsStringAsync();
             this._outputHelper.WriteLine($"HITL orchestration status text: {statusText}");
 
-            JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+            JsonElement statusResult = JsonElement.Parse(statusText);
 
             // The orchestration should complete with a failed status due to timeout
             Assert.Equal("Failed", statusResult.GetProperty("runtimeStatus").GetString());
@@ -423,7 +423,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
         Assert.True(startResponse.IsSuccessStatusCode, $"Start orchestration failed with status: {startResponse.StatusCode}");
         string startResponseText = await startResponse.Content.ReadAsStringAsync();
-        JsonElement startResult = JsonSerializer.Deserialize<JsonElement>(startResponseText);
+        JsonElement startResult = JsonElement.Parse(startResponseText);
 
         Assert.True(startResult.TryGetProperty("statusQueryGetUri", out JsonElement statusUriElement));
         Uri statusUri = new(statusUriElement.GetString()!);
@@ -436,7 +436,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         Assert.True(statusResponse.IsSuccessStatusCode, $"Status check failed with status: {statusResponse.StatusCode}");
 
         string statusText = await statusResponse.Content.ReadAsStringAsync();
-        JsonElement statusResult = JsonSerializer.Deserialize<JsonElement>(statusText);
+        JsonElement statusResult = JsonElement.Parse(statusText);
 
         Assert.Equal("Completed", statusResult.GetProperty("runtimeStatus").GetString());
         Assert.True(statusResult.TryGetProperty("output", out JsonElement outputElement));
@@ -722,15 +722,12 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 if (response.IsSuccessStatusCode)
                 {
                     string responseText = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                    JsonElement result = JsonSerializer.Deserialize<JsonElement>(responseText);
+                    JsonElement result = JsonElement.Parse(responseText);
 
-                    if (result.TryGetProperty("runtimeStatus", out JsonElement statusElement))
+                    if (result.TryGetProperty("runtimeStatus", out JsonElement statusElement) &&
+                        statusElement.GetString() is "Completed" or "Failed" or "Terminated")
                     {
-                        string status = statusElement.GetString()!;
-                        if (status == "Completed" || status == "Failed" || status == "Terminated")
-                        {
-                            return;
-                        }
+                        return;
                     }
                 }
             }
