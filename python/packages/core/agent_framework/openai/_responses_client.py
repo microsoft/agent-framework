@@ -366,36 +366,58 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    def _openai_chat_message_parser(
-        self,
-        message: ChatMessage,
-        call_id_to_id: dict[str, str],
-    ) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
+    def _openai_chat_message_parser(self, message: ChatMessage, callidtoid: dict[str, str]) -> list[dict[str, Any]]:
+        """Parse a chat message into the openai Responses format.
+        
+        Returns a list because some content types (like approval responses) need to be
+        top-level items separate from the message structure.
+        """
         all_messages: list[dict[str, Any]] = []
-        args: dict[str, Any] = {
+        msg: dict[str, Any] = {
             "role": message.role.value if isinstance(message.role, Role) else message.role,
         }
         if message.additional_properties:
-            args["metadata"] = message.additional_properties
+            msg["metadata"] = message.additional_properties
+
         for content in message.contents:
             match content:
-                case FunctionResultContent():
-                    new_args: dict[str, Any] = {}
-                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
-                    all_messages.append(new_args)
+                case FunctionApprovalRequestContent():
+                    # Approval requests are top-level items in the Responses API
+                    all_messages.append(self._openai_content_parser(message.role, content, callidtoid))
+                case FunctionApprovalResponseContent():
+                    # Approval responses are top-level items in the Responses API
+                    all_messages.append(self._openai_content_parser(message.role, content, callidtoid))
                 case FunctionCallContent():
-                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
-                    all_messages.append(function_call)  # type: ignore
-                case FunctionApprovalResponseContent() | FunctionApprovalRequestContent():
-                    all_messages.append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+                    if "tool_calls" not in msg:
+                        msg["tool_calls"] = []
+                    msg["tool_calls"].append(self._openai_content_parser(message.role, content, callidtoid))
+                case FunctionResultContent():
+                    # FunctionResultContent requires separate message with role=tool
+                    # Handle both result and exception cases
+                    if content.result is not None:
+                        result_content = prepare_function_call_results(content.result)
+                    elif content.exception is not None:
+                        # Send the exception message to the model
+                        result_content = "Error: " + str(content.exception)
+                    else:
+                        result_content = ""
+                    
+                    return [{
+                        "role": "tool",
+                        "tool_call_id": content.call_id,
+                        "content": result_content,
+                    }]
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
-        if "content" in args or "tool_calls" in args:
-            all_messages.append(args)
+                    if "content" not in msg:
+                        msg["content"] = []
+                    msg["content"].append(self._openai_content_parser(message.role, content, callidtoid))
+
+        # Only add the main message if it has content or tool_calls
+        if "content" in msg or "tool_calls" in msg:
+            all_messages.append(msg)
+        
         return all_messages
+
 
     def _openai_content_parser(
         self,
@@ -469,8 +491,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
                 }
-                if content.result:
+                # Handle both result and exception cases
+                if content.result is not None:
                     args["output"] = prepare_function_call_results(content.result)
+                elif content.exception is not None:
+                    # Send the exception message to the model
+                    args["output"] = "Error: " + str(content.exception)
+                else:
+                    args["output"] = ""
                 return args
             case FunctionApprovalRequestContent():
                 return {
@@ -496,6 +524,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
                 logger.debug("Unsupported content type passed (type: %s)", type(content))
                 return {}
+
 
     # region Response creation methods
 

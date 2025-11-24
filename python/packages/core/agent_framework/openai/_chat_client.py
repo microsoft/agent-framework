@@ -30,6 +30,8 @@ from .._types import (
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     Role,
     TextContent,
     UriContent,
@@ -343,38 +345,47 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
     # region Parsers
 
     def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
-        all_messages: list[dict[str, Any]] = []
+        msg: dict[str, Any] = {
+            "role": message.role.value if isinstance(message.role, Role) else message.role,
+        }
+        if message.additional_properties:
+            msg["metadata"] = message.additional_properties
+
         for content in message.contents:
-            args: dict[str, Any] = {
-                "role": message.role.value if isinstance(message.role, Role) else message.role,
-            }
-            if message.additional_properties:
-                args["metadata"] = message.additional_properties
             match content:
                 case FunctionCallContent():
-                    if all_messages and "tool_calls" in all_messages[-1]:
-                        # If the last message already has tool calls, append to it
-                        all_messages[-1]["tool_calls"].append(self._openai_content_parser(content))
-                    else:
-                        args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
+                    if "tool_calls" not in msg:
+                        msg["tool_calls"] = []
+                    msg["tool_calls"].append(self._openai_content_parser(content))
                 case FunctionResultContent():
-                    args["tool_call_id"] = content.call_id
+                    # FunctionResultContent requires a separate message with role=tool
+                    # Handle both result and exception cases
                     if content.result is not None:
-                        args["content"] = prepare_function_call_results(content.result)
+                        result_content = prepare_function_call_results(content.result)
                     elif content.exception is not None:
                         # Send the exception message to the model
-                        # Otherwise we won't have any channels to talk to OpenAI
-                        # TODO(yuge): This should ideally be customizable
-                        args["content"] = "Error: " + str(content.exception)
+                        result_content = "Error: " + str(content.exception)
+                    else:
+                        result_content = ""
+                    
+                    return [{
+                        "role": "tool",
+                        "tool_call_id": content.call_id,
+                        "content": result_content,
+                    }]
+                case FunctionApprovalRequestContent() | FunctionApprovalResponseContent():
+                    # These need special handling - add them as content
+                    if "content" not in msg:
+                        msg["content"] = []
+                    msg["content"].append(self._openai_content_parser(content))
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    # this is a list to allow multi-modal content
-                    args["content"].append(self._openai_content_parser(content))  # type: ignore
-            if "content" in args or "tool_calls" in args:
-                all_messages.append(args)
-        return all_messages
+                    if "content" not in msg:
+                        msg["content"] = []
+                    msg["content"].append(self._openai_content_parser(content))
+
+        return [msg] if ("content" in msg or "tool_calls" in msg) else []
+
+
 
     def _openai_content_parser(self, content: Contents) -> dict[str, Any]:
         """Parse contents into the openai format."""
