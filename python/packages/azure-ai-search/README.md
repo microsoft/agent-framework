@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-aisearch --pre
+pip install agent-framework-azure-ai-search --pre
 ```
 
 ## Azure AI Search Integration
