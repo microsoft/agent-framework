@@ -12,15 +12,18 @@ tools:
   - kind: function
     name: GetWeather
     description: Get the weather for a given location.
+    bindings:
+      get_weather: get_weather
     parameters:
-      - name: location
-        type: string
-        description: The city and state, e.g. San Francisco, CA
-        required: true
-      - name: unit
-        type: string
-        description: The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.
-        required: false
-        enum:
-          - celsius
-          - fahrenheit
+      properties:
+        location:
+          kind: string
+          description: The city and state, e.g. San Francisco, CA
+          required: true
+        unit:
+          kind: string
+          description: The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.
+          required: false
+          enum:
+            - celsius
+            - fahrenheit

@@ -91,4 +91,4 @@ def add_agent_framework_fastapi_endpoint(
             )
         except Exception as e:
             logger.error(f"Error in agent endpoint: {e}", exc_info=True)
-            return {"error": str(e)}
+            return {"error": "An internal error has occurred."}

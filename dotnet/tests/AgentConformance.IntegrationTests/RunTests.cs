@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;
@@ -16,6 +17,8 @@ namespace AgentConformance.IntegrationTests;
 public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
     where TAgentFixture : IAgentFixture
 {
+    public virtual Func<Task<AgentRunOptions?>> AgentRunOptionsFactory { get; set; } = () => Task.FromResult(default(AgentRunOptions));
+
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithNoMessageDoesNotFailAsync()
     {
@@ -40,7 +43,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var response = await agent.RunAsync("What is the capital of France.", thread);
+        var response = await agent.RunAsync("What is the capital of France.", thread, await this.AgentRunOptionsFactory.Invoke());
 
         // Assert
         Assert.NotNull(response);
@@ -58,7 +61,7 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread);
+        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread, await this.AgentRunOptionsFactory.Invoke());
 
         // Assert
         Assert.NotNull(response);
@@ -80,7 +83,8 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
             ],
-            thread);
+            thread,
+            await this.AgentRunOptionsFactory.Invoke());
 
         // Assert
         Assert.NotNull(response);
@@ -99,8 +103,9 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var result1 = await agent.RunAsync(Q1, thread);
-        var result2 = await agent.RunAsync(Q2, thread);
+        var options = await this.AgentRunOptionsFactory.Invoke();
+        var result1 = await agent.RunAsync(Q1, thread, options);
+        var result2 = await agent.RunAsync(Q2, thread, options);
 
         // Assert
         Assert.Contains("Paris", result1.Text);
@@ -111,8 +116,8 @@ public abstract class RunTests<TAgentFixture>(Func<TAgentFixture> createAgentFix
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.User));
         Assert.Equal(2, chatHistory.Count(x => x.Role == ChatRole.Assistant));
         Assert.Equal(Q1, chatHistory[0].Text);
-        Assert.Equal(Q2, chatHistory[2].Text);
         Assert.Contains("Paris", chatHistory[1].Text);
+        Assert.Equal(Q2, chatHistory[2].Text);
         Assert.Contains("Vienna", chatHistory[3].Text);
     }
 }

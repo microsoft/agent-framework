@@ -1,8 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
@@ -11,7 +9,8 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.Agents" />
+    <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Azure.AI.Projects.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="OpenAI" />
@@ -23,8 +22,8 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework Azure AI Agents</Title>
-    <Description>Provides Microsoft Agent Framework support for Azure AI Agents.</Description>
+    <Title>Microsoft Agent Framework for Foundry Agents</Title>
+    <Description>Provides Microsoft Agent Framework support for Foundry Agents.</Description>
   </PropertyGroup>
 
 </Project>

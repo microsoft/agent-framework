@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -15,7 +16,7 @@ namespace Demo.Workflows.Declarative.InputArguments;
 /// </summary>
 /// <remarks>
 /// See the README.md file in the parent folder (../README.md) for detailed
-/// information the configuration required to run this sample.
+/// information about the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program
 {
@@ -46,19 +47,19 @@ internal sealed class Program
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentClient agentsClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentsClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "LocationTriageAgent",
             agentDefinition: DefineLocationTriageAgent(configuration),
             agentDescription: "Chats with the user to solicit a location of interest.");
 
-        await agentsClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "LocationCaptureAgent",
             agentDefinition: DefineLocationCaptureAgent(configuration),
             agentDescription: "Evaluate the status of soliciting the location.");
 
-        await agentsClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "LocationAwareAgent",
             agentDefinition: DefineLocationAwareAgent(configuration),
             agentDescription: "Chats with the user with location awareness.");

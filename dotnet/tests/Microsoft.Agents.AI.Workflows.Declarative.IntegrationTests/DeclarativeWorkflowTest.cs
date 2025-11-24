@@ -35,7 +35,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample: true), testcaseFileName, externalConveration);
 
     [Theory]
-    [InlineData("ConfirmInput.yaml", "ConfirmInput.json", true)]
+    [InlineData("ConfirmInput.yaml", "ConfirmInput.json", false)]
     [InlineData("RequestExternalInput.yaml", "RequestExternalInput.json", false)]
     public Task ValidateMultiTurnAsync(string workflowFileName, string testcaseFileName, bool isSample) =>
         this.RunWorkflowAsync(GetWorkflowPath(workflowFileName, isSample), testcaseFileName, useJsonCheckpoint: true);

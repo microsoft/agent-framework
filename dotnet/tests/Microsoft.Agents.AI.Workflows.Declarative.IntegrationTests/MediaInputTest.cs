@@ -4,7 +4,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Threading.Tasks;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
@@ -42,9 +42,9 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     public async Task ValidateImageUploadAsync()
     {
         byte[] imageData = await DownloadFileAsync();
-        AgentClient client = new(this.TestEndpoint, new AzureCliCredential());
+        AIProjectClient client = new(this.TestEndpoint, new AzureCliCredential());
         using MemoryStream contentStream = new(imageData);
-        OpenAIFileClient fileClient = client.GetOpenAIClient().GetOpenAIFileClient();
+        OpenAIFileClient fileClient = client.GetProjectOpenAIClient().GetOpenAIFileClient();
         OpenAIFile fileInfo = await fileClient.UploadFileAsync(contentStream, "basic-text.pdf", FileUploadPurpose.Assistants);
         try
         {

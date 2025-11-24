@@ -103,11 +103,11 @@ async def main() -> None:
 
                 print()
 
-                # Display collected citations
+                # Display collected citation
                 if citations:
-                    print("\n\nCitations:")
+                    print("\n\nCitation:")
                     for i, citation in enumerate(citations, 1):
-                        print(f"[{i}] Reference: {citation.url}")
+                        print(f"[{i}] {citation.url}")
 
                 print("\n" + "=" * 50 + "\n")
                 print("Hotel search conversation completed!")

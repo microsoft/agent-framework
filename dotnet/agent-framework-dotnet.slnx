@@ -23,6 +23,17 @@
     <Project Path="samples/AGUIClientServer/AGUIDojoServer/AGUIDojoServer.csproj" />
     <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
   </Folder>
+  <Folder Name="/Samples/AzureFunctions/">
+    <File Path="samples/AzureFunctions/.editorconfig" />
+    <File Path="samples/AzureFunctions/README.md" />
+    <Project Path="samples/AzureFunctions/01_SingleAgent/01_SingleAgent.csproj" />
+    <Project Path="samples/AzureFunctions/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
+    <Project Path="samples/AzureFunctions/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
+    <Project Path="samples/AzureFunctions/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
+    <Project Path="samples/AzureFunctions/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
+    <Project Path="samples/AzureFunctions/06_LongRunningTools/06_LongRunningTools.csproj" />
+    <Project Path="samples/AzureFunctions/07_AgentAsMcpTool/07_AgentAsMcpTool.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
   </Folder>
@@ -33,8 +44,8 @@
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgent/Agent_With_AzureAIAgent.csproj" />
-    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryAgent/Agent_With_AzureFoundryAgent.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
@@ -64,8 +75,8 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step15_Plugins/Agent_Step15_Plugins.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
-    <Project Path="samples/GettingStarted/Agents/Agent_Step18_Declarative/Agent_Step18_Declarative.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
@@ -89,11 +100,35 @@
     <Project Path="samples/GettingStarted/DeclarativeAgents/FoundryPersistent/DeclarativeFoundryPersistentAgents.csproj" />
     <Project Path="samples/GettingStarted/DeclarativeAgents/OpenAI/DeclarativeOpenAIAgents.csproj" />
   </Folder>
+  <Folder Name="/Samples/Purview/" />
+  <Folder Name="/Samples/Purview/AgentWithPurview/">
+    <Project Path="samples/Purview/AgentWithPurview/AgentWithPurview.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithRAG/">
     <File Path="samples/GettingStarted/AgentWithRAG/README.md" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/FoundryAgents/">
+    <File Path="samples/GettingStarted/FoundryAgents/README.md" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.1_Basics/FoundryAgents_Step01.1_Basics.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step01.2_Running/FoundryAgents_Step01.2_Running.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step02_MultiturnConversation/FoundryAgents_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step03_UsingFunctionTools/FoundryAgents_Step03_UsingFunctionTools.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step04_UsingFunctionToolsWithApprovals/FoundryAgents_Step04_UsingFunctionToolsWithApprovals.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step05_StructuredOutput/FoundryAgents_Step05_StructuredOutput.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step06_PersistedConversations/FoundryAgents_Step06_PersistedConversations.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step07_Observability/FoundryAgents_Step07_Observability.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step08_DependencyInjection/FoundryAgents_Step08_DependencyInjection.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step09_UsingMcpClientAsTools/FoundryAgents_Step09_UsingMcpClientAsTools.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step10_UsingImages/FoundryAgents_Step10_UsingImages.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step11_AsFunctionTool/FoundryAgents_Step11_AsFunctionTool.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step12_Middleware/FoundryAgents_Step12_Middleware.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step13_Plugins/FoundryAgents_Step13_Plugins.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step14_CodeInterpreter/FoundryAgents_Step14_CodeInterpreter.csproj" />
+    <Project Path="samples/GettingStarted/FoundryAgents/FoundryAgents_Step15_ComputerUse/FoundryAgents_Step15_ComputerUse.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/ModelContextProtocol/">
     <File Path="samples/GettingStarted/ModelContextProtocol/README.md" />
@@ -120,11 +155,13 @@
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/">
     <File Path="samples/GettingStarted/Workflows/Declarative/README.md" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ConfirmInput/ConfirmInput.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/CustomerSupport/CustomerSupport.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/DeepResearch/DeepResearch.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/FunctionTools/FunctionTools.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/GenerateCode/GenerateCode.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
@@ -163,7 +200,7 @@
     <Project Path="samples/GettingStarted/Workflows/Observability/WorkflowAsAnAgent/WorkflowAsAnAgentObservability.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
-    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" Id="99bf0bc6-2440-428e-b3e7-d880e4b7a5fd" />
+    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
     <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
@@ -177,8 +214,11 @@
   </Folder>
   <Folder Name="/Samples/HostedAgents/">
     <Project Path="samples/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
-    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
     <Project Path="samples/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
+    <Project Path="samples/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+  </Folder>
+  <Folder Name="/Samples/M365Agent/">
+    <Project Path="samples/M365Agent/M365Agent.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
@@ -309,13 +349,16 @@
     <Project Path="src/Microsoft.Agents.AI.Declarative.AzureAI/Microsoft.Agents.AI.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.DurableTask/Microsoft.Agents.AI.DurableTask.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.AzureAI/Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
@@ -324,10 +367,13 @@
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
+    <Project Path="tests/AzureAI.IntegrationTests/AzureAI.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Declarative.IntegrationTests/Microsoft.Agents.AI.Declarative.IntegrationTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.DurableTask.IntegrationTests/Microsoft.Agents.AI.DurableTask.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.IntegrationTests/Microsoft.Agents.AI.Mem0.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests/Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.csproj" />
     <Project Path="tests/OpenAIAssistant.IntegrationTests/OpenAIAssistant.IntegrationTests.csproj" />
@@ -341,12 +387,16 @@
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.DurableTask.UnitTests/Microsoft.Agents.AI.DurableTask.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.UnitTests/Microsoft.Agents.AI.Mem0.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.OpenAI.UnitTests/Microsoft.Agents.AI.OpenAI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Purview.UnitTests/Microsoft.Agents.AI.Purview.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.UnitTests/Microsoft.Agents.AI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests/Microsoft.Agents.AI.Workflows.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />

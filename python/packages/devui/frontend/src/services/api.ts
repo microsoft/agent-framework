@@ -33,12 +33,13 @@ interface BackendEntityInfo {
   tools?: (string | Record<string, unknown>)[];
   metadata: Record<string, unknown>;
   source?: string;
+  required_env_vars?: import("@/types").EnvVarRequirement[];
   // Deployment support
   deployment_supported?: boolean;
   deployment_reason?: string;
   // Agent-specific fields (present when type === "agent")
   instructions?: string;
-  model?: string;
+  model_id?: string;
   chat_client_type?: string;
   context_providers?: string[];
   middleware?: string[];
@@ -205,41 +206,51 @@ class ApiClient {
           tools: (entity.tools || []).map((tool) =>
             typeof tool === "string" ? tool : JSON.stringify(tool)
           ),
-          has_env: false, // Default value
+          has_env: !!(entity.required_env_vars && entity.required_env_vars.length > 0),
           module_path:
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          required_env_vars: entity.required_env_vars,
           metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
           // Deployment support
           deployment_supported: entity.deployment_supported,
           deployment_reason: entity.deployment_reason,
           // Agent-specific fields
           instructions: entity.instructions,
-          model: entity.model,
+          model_id: entity.model_id,
           chat_client_type: entity.chat_client_type,
           context_providers: entity.context_providers,
           middleware: entity.middleware,
         };
       } else {
-        // Workflow
-        const firstTool = entity.tools?.[0];
-        const startExecutorId = typeof firstTool === "string" ? firstTool : "";
-
+        // Workflow - prefer executors field, fall back to tools for backward compatibility
+        const executorList = entity.executors || entity.tools || [];
+        
+        // Determine start_executor_id: use entity value, or first executor if it's a string
+        let startExecutorId = entity.start_executor_id || "";
+        if (!startExecutorId && executorList.length > 0) {
+          const firstExecutor = executorList[0];
+          if (typeof firstExecutor === "string") {
+            startExecutorId = firstExecutor;
+          }
+        }
+        
         return {
           id: entity.id,
           name: entity.name,
           description: entity.description,
           type: "workflow" as const,
           source: (entity.source as AgentSource) || "directory",
-          executors: (entity.tools || []).map((tool) =>
-            typeof tool === "string" ? tool : JSON.stringify(tool)
+          executors: executorList.map((executor) =>
+            typeof executor === "string" ? executor : JSON.stringify(executor)
           ),
-          has_env: false,
+          has_env: !!(entity.required_env_vars && entity.required_env_vars.length > 0),
           module_path:
             typeof entity.metadata?.module_path === "string"
               ? entity.metadata.module_path
               : undefined,
+          required_env_vars: entity.required_env_vars,
           metadata: entity.metadata, // Preserve metadata including lazy_loaded flag
           // Deployment support
           deployment_supported: entity.deployment_supported,
@@ -250,6 +261,7 @@ class ApiClient {
             }, // Default schema
           input_type_name: entity.input_type_name || "Input",
           start_executor_id: startExecutorId,
+          tools: [],
         };
       }
     });
@@ -589,7 +601,8 @@ class ApiClient {
               return;
             }
 
-            buffer += decoder.decode(value, { stream: true });
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
 
             // Parse SSE events
             const lines = buffer.split("\n");
@@ -644,12 +657,12 @@ class ApiClient {
                       } as ExtendedResponseStreamEvent;
                       lastSequenceNumber = eventSeq;
                       hasYieldedAnyEvent = true;
-                      
+
                       // Save new event to storage
                       if (conversationId && currentResponseId) {
                         updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                       }
-                      
+
                       yield openAIEvent;
                     }
                     // Skip events we've already seen (resume from last position)
@@ -658,23 +671,23 @@ class ApiClient {
                     } else {
                       lastSequenceNumber = eventSeq;
                       hasYieldedAnyEvent = true;
-                      
+
                       // Save event to storage before yielding
                       if (conversationId && currentResponseId) {
                         updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                       }
-                      
+
                       yield openAIEvent;
                     }
                   } else {
                     // No sequence number - just yield the event
                     hasYieldedAnyEvent = true;
-                    
+
                     // Still save to storage if we have conversation context
                     if (conversationId && currentResponseId) {
                       updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                     }
-                    
+
                     yield openAIEvent;
                   }
                 } catch (e) {

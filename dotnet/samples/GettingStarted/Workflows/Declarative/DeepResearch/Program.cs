@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -15,7 +16,7 @@ namespace Demo.Workflows.Declarative.DeepResearch;
 /// </summary>
 /// <remarks>
 /// See the README.md file in the parent folder (../README.md) for detailed
-/// information the configuration required to run this sample.
+/// information about the configuration required to run this sample.
 /// </remarks>
 internal sealed class Program
 {
@@ -46,39 +47,63 @@ internal sealed class Program
 
     private static async Task CreateAgentsAsync(Uri foundryEndpoint, IConfiguration configuration)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
-        await agentClient.CreateAgentAsync(
+        await aiProjectClient.CreateAgentAsync(
             agentName: "ResearchAgent",
             agentDefinition: DefineResearchAgent(configuration),
             agentDescription: "Planner agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "PlannerAgent",
             agentDefinition: DefinePlannerAgent(configuration),
             agentDescription: "Planner agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "ManagerAgent",
             agentDefinition: DefineManagerAgent(configuration),
             agentDescription: "Manager agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "SummaryAgent",
             agentDefinition: DefineSummaryAgent(configuration),
             agentDescription: "Summary agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "KnowledgeAgent",
             agentDefinition: DefineKnowledgeAgent(configuration),
             agentDescription: "Research agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "CoderAgent",
             agentDefinition: DefineCoderAgent(configuration),
             agentDescription: "Coder agent for DeepResearch workflow");
 
+<<<<<<< HEAD
         await agentClient.CreateAgentAsync(
+=======
+        await aiProjectClient.CreateAgentAsync(
+>>>>>>> upstream/main
             agentName: "WeatherAgent",
             agentDefinition: DefineWeatherAgent(configuration),
             agentDescription: "Weather agent for DeepResearch workflow");
@@ -271,10 +296,17 @@ internal sealed class Program
             Tools =
             {
                 AgentTool.CreateOpenApiTool(
+<<<<<<< HEAD
                     new OpenApiFunctionDefinition(
                         "weather-forecast",
                         BinaryData.FromString(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wttr.json"))),
                         new OpenApiAnonymousAuthDetails()))
+=======
+                    new OpenAPIFunctionDefinition(
+                        "weather-forecast",
+                        BinaryData.FromString(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wttr.json"))),
+                        new OpenAPIAnonymousAuthenticationDetails()))
+>>>>>>> upstream/main
             }
         };
 }

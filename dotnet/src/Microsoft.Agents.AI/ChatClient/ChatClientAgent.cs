@@ -281,6 +281,8 @@ public sealed partial class ChatClientAgent : AIAgent
         base.GetService(serviceType, serviceKey) ??
         (serviceType == typeof(AIAgentMetadata) ? this._agentMetadata
         : serviceType == typeof(IChatClient) ? this.ChatClient
+        : serviceType == typeof(ChatOptions) ? this._agentOptions?.ChatOptions
+        : serviceType == typeof(ChatClientAgentOptions) ? this._agentOptions
         : this.ChatClient.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
@@ -549,7 +551,7 @@ public sealed partial class ChatClientAgent : AIAgent
             {
                 chatOptions ??= new ChatOptions();
                 chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
-                chatOptions.ContinuationToken = agentRunOptions.ContinuationToken;
+                chatOptions.ContinuationToken = agentRunOptions.ContinuationToken as ResponseContinuationToken;
             }
 
             return chatOptions;

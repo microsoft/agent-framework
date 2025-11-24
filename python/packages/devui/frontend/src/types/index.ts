@@ -37,7 +37,7 @@ export interface AgentInfo {
   deployment_reason?: string;
   // Agent-specific fields
   instructions?: string;
-  model?: string;
+  model_id?: string;
   chat_client_type?: string;
   context_providers?: string[];
   middleware?: string[];

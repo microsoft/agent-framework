@@ -8,6 +8,7 @@ metadata:
   authors:
     - Microsoft Agent Framework Team
   tags:
+    - Azure AI AgentServer
     - Microsoft Agent Framework
     - Workflows
 template:

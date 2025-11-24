@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.Reflection;
 
 internal static class IMessageHandlerReflection
 {
-    private const string Nameof_HandleAsync = nameof(IMessageHandler<object>.HandleAsync);
+    private const string Nameof_HandleAsync = nameof(IMessageHandler<>.HandleAsync);
     internal static readonly MethodInfo HandleAsync_1 = typeof(IMessageHandler<>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
     internal static readonly MethodInfo HandleAsync_2 = typeof(IMessageHandler<,>).GetMethod(Nameof_HandleAsync, BindingFlags.Public | BindingFlags.Instance)!;
 

@@ -1,12 +1,13 @@
 # Azure AI Agent Examples
 
-This folder contains examples demonstrating different ways to create and use agents with the Azure AI chat client from the `agent_framework.azure` package.
+This folder contains examples demonstrating different ways to create and use agents with the Azure AI chat client from the `agent_framework.azure` package. These examples use the `AzureAIAgentClient` with the `azure-ai-agents` 1.x (V1) API surface. For updated V2 (`azure-ai-projects` 2.x) samples, see the [Azure AI V2 examples folder](../azure_ai/).
 
 ## Examples
 
 | File | Description |
 |------|-------------|
 | [`azure_ai_basic.py`](azure_ai_basic.py) | The simplest way to create an agent using `ChatAgent` with `AzureAIAgentClient`. It automatically handles all configuration using environment variables. |
+| [`azure_ai_with_bing_custom_search.py`](azure_ai_with_bing_custom_search.py) | Shows how to use Bing Custom Search with Azure AI agents to find real-time information from the web using custom search configurations. Demonstrates how to set up and use HostedWebSearchTool with custom search instances. |
 | [`azure_ai_with_bing_grounding.py`](azure_ai_with_bing_grounding.py) | Shows how to use Bing Grounding search with Azure AI agents to find real-time information from the web. Demonstrates web search capabilities with proper source citations and comprehensive error handling. |
 | [`azure_ai_with_code_interpreter.py`](azure_ai_with_code_interpreter.py) | Shows how to use the HostedCodeInterpreterTool with Azure AI agents to write and execute Python code. Includes helper methods for accessing code interpreter data from response chunks. |
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with a pre-existing agent by providing the agent ID to the Azure AI chat client. This example also demonstrates proper cleanup of manually created agents. |
@@ -19,6 +20,8 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_ai_with_local_mcp.py`](azure_ai_with_local_mcp.py) | Shows how to integrate Azure AI agents with local Model Context Protocol (MCP) servers for enhanced functionality and tool integration. Demonstrates both agent-level and run-level tool configuration. |
 | [`azure_ai_with_multiple_tools.py`](azure_ai_with_multiple_tools.py) | Demonstrates how to use multiple tools together with Azure AI agents, including web search, MCP servers, and function tools. Shows coordinated multi-tool interactions and approval workflows. |
 | [`azure_ai_with_openapi_tools.py`](azure_ai_with_openapi_tools.py) | Demonstrates how to use OpenAPI tools with Azure AI agents to integrate external REST APIs. Shows OpenAPI specification loading, anonymous authentication, thread context management, and coordinated multi-API conversations using weather and countries APIs. |
+| [`azure_ai_with_search_context_agentic.py`](azure_ai_with_search_context_agentic.py) | Shows how to use AzureAISearchContextProvider with agentic mode. Uses Knowledge Bases for multi-hop reasoning across documents with query planning. Recommended for most scenarios - slightly slower with more token consumption for query planning, but more accurate results. |
+| [`azure_ai_with_search_context_semantic.py`](azure_ai_with_search_context_semantic.py) | Shows how to use AzureAISearchContextProvider with semantic mode. Fast hybrid search with vector + keyword search and semantic ranking for RAG. Best for simple queries where speed is critical. |
 | [`azure_ai_with_thread.py`](azure_ai_with_thread.py) | Demonstrates thread management with Azure AI agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
 
 ## Environment Variables
@@ -49,6 +52,18 @@ Before running the examples, you need to set up your environment variables. You 
    - Add a new connection for "Grounding with Bing Search"
    - Copy the ID
 
+4. For samples using Bing Custom Search (like `azure_ai_with_bing_custom_search.py`), you'll also need:
+   ```
+   BING_CUSTOM_CONNECTION_ID="your-bing-custom-connection-id"
+   BING_CUSTOM_INSTANCE_NAME="your-bing-custom-instance-name"
+   ```
+
+   To get your Bing Custom Search connection details:
+   - Go to [Azure AI Foundry portal](https://ai.azure.com)
+   - Navigate to your project's "Connected resources" section
+   - Add a new connection for "Grounding with Bing Custom Search"
+   - Copy the connection ID and instance name
+
 ### Option 2: Using environment variables directly
 
 Set the environment variables in your shell:
@@ -57,6 +72,8 @@ Set the environment variables in your shell:
 export AZURE_AI_PROJECT_ENDPOINT="your-project-endpoint"
 export AZURE_AI_MODEL_DEPLOYMENT_NAME="your-model-deployment-name"
 export BING_CONNECTION_ID="your-bing-connection-id"
+export BING_CUSTOM_CONNECTION_ID="your-bing-custom-connection-id"
+export BING_CUSTOM_INSTANCE_NAME="your-bing-custom-instance-name"
 ```
 
 ### Required Variables
@@ -67,3 +84,5 @@ export BING_CONNECTION_ID="your-bing-connection-id"
 ### Optional Variables
 
 - `BING_CONNECTION_ID`: Your Bing connection ID (required for `azure_ai_with_bing_grounding.py` and `azure_ai_with_multiple_tools.py`)
+- `BING_CUSTOM_CONNECTION_ID`: Your Bing Custom Search connection ID (required for `azure_ai_with_bing_custom_search.py`)
+- `BING_CUSTOM_INSTANCE_NAME`: Your Bing Custom Search instance name (required for `azure_ai_with_bing_custom_search.py`)

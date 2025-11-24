@@ -2,7 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using Azure.AI.Agents;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -13,22 +14,22 @@ internal sealed class MarketingAgentProvider(IConfiguration configuration) : Age
 {
     protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
-        AgentClient agentClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "AnalystAgent",
                 agentDefinition: this.DefineAnalystAgent(),
                 agentDescription: "Analyst agent for Marketing workflow");
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "WriterAgent",
                 agentDefinition: this.DefineWriterAgent(),
                 agentDescription: "Writer agent for Marketing workflow");
 
         yield return
-            await agentClient.CreateAgentAsync(
+            await aiProjectClient.CreateAgentAsync(
                 agentName: "EditorAgent",
                 agentDefinition: this.DefineEditorAgent(),
                 agentDescription: "Editor agent for Marketing workflow");
