@@ -37,6 +37,7 @@ import {
   Copy,
   CheckCheck,
   RefreshCw,
+  Wrench,
 } from "lucide-react";
 import { apiClient } from "@/services/api";
 import type {
@@ -57,11 +58,16 @@ interface AgentViewProps {
 
 interface ConversationItemBubbleProps {
   item: import("@/types/openai").ConversationItem;
+  toolCalls?: import("@/types/openai").ConversationFunctionCall[];
+  toolResults?: import("@/types/openai").ConversationFunctionCallOutput[];
 }
 
-function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
+function ConversationItemBubble({ item, toolCalls = [], toolResults = [] }: ConversationItemBubbleProps) {
+  // All hooks must be at the top - cannot be conditional
   const [isHovered, setIsHovered] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showToolDetails, setShowToolDetails] = useState(false); // For tool call expansion
+  const showToolCalls = useDevUIStore((state) => state.showToolCalls);
 
   // Extract text content from message for copying
   const getMessageText = () => {
@@ -182,25 +188,81 @@ function ConversationItemBubble({ item }: ConversationItemBubbleProps) {
                 </span>
               </>
             )}
+            {/* Tool calls badge */}
+            {!isUser && showToolCalls && toolCalls.length > 0 && (
+              <>
+                <span>•</span>
+                <button
+                  onClick={() => setShowToolDetails(!showToolDetails)}
+                  className="flex items-center gap-1 hover:text-foreground transition-colors"
+                  title={`${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''} - click to ${showToolDetails ? 'hide' : 'show'} details`}
+                >
+                  <Wrench className="h-3 w-3" />
+                  <span>{toolCalls.length}</span>
+                </button>
+              </>
+            )}
           </div>
+
+          {/* Expandable tool call details */}
+          {!isUser && showToolDetails && toolCalls.length > 0 && (
+            <div className="mt-2 ml-0 p-3 bg-muted/30 rounded-md border border-muted">
+              <div className="space-y-2">
+                {toolCalls.map((call) => {
+                  // Find the matching result for this call
+                  const result = toolResults.find(r => r.call_id === call.call_id);
+
+                  return (
+                    <div key={call.id} className="text-xs">
+                      <div className="flex items-start gap-2">
+                        <Wrench className="h-3 w-3 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-mono text-muted-foreground">
+                            <span className="text-blue-600 dark:text-blue-400">{call.name}</span>
+                            <span className="text-muted-foreground/60 ml-1">
+                              {call.arguments && (
+                                <span className="break-all">({call.arguments})</span>
+                              )}
+                            </span>
+                          </div>
+                          {result && result.output && (
+                            <div className="mt-1 pl-5 border-l-2 border-green-600/20">
+                              <div className="flex items-start gap-1">
+                                <Check className="h-3 w-3 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                                <pre className="font-mono text-muted-foreground whitespace-pre-wrap break-all">
+                                  {result.output.substring(0, 200) + (result.output.length > 200 ? '...' : '')}
+                                </pre>
+                              </div>
+                            </div>
+                          )}
+                          {call.status === "incomplete" && (
+                            <div className="mt-1 pl-5 border-l-2 border-orange-600/20">
+                              <div className="flex items-start gap-1">
+                                <X className="h-3 w-3 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                                <span className="font-mono text-orange-600 dark:text-orange-400">Failed</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
-  // Function calls and results - render with neutral styling
-  return (
-    <div className="flex gap-3">
-      <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-md border bg-muted">
-        <Bot className="h-4 w-4" />
-      </div>
-      <div className="flex flex-col space-y-1 items-start max-w-[80%]">
-        <div className="rounded px-3 py-2 text-sm bg-muted">
-          <OpenAIMessageRenderer item={item} />
-        </div>
-      </div>
-    </div>
-  );
+  // Function calls and results are now handled within message items
+  // Don't render them as separate items anymore
+  if (item.type === "function_call" || item.type === "function_call_output") {
+    return null;
+  }
+
+  return null;
 }
 
 export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
@@ -351,7 +413,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             const error = failedEvent.response?.error;
             const errorMessage = error
               ? typeof error === "object" && "message" in error
-                ? (error as any).message
+                ? (error as { message: string }).message
                 : JSON.stringify(error)
               : "Request failed";
 
@@ -1336,6 +1398,24 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             continue;
           }
 
+          // Handle function call arguments delta (streaming arguments)
+          if (openAIEvent.type === "response.function_call_arguments.delta") {
+            const argsEvent = openAIEvent as import("@/types/openai").ResponseFunctionCallArgumentsDelta;
+
+            // Update the function call item with accumulated arguments
+            const currentItems = useDevUIStore.getState().chatItems;
+            setChatItems(currentItems.map((item) => {
+              if (item.type === "function_call" && item.call_id === argsEvent.item_id) {
+                return {
+                  ...item,
+                  arguments: (item.arguments || "") + (argsEvent.delta || ""),
+                };
+              }
+              return item;
+            }));
+            continue;
+          }
+
           // Handle function result events (after function execution)
           if (openAIEvent.type === "response.function_result.complete") {
             const resultEvent = openAIEvent as import("@/types/openai").ResponseFunctionResultComplete;
@@ -1382,10 +1462,27 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             return; // Exit stream processing early on error
           }
 
-          // Handle output item added events (images, files, data)
+          // Handle output item added events (images, files, data, function calls)
           if (openAIEvent.type === "response.output_item.added") {
             const outputItemEvent = openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent;
             const item = outputItemEvent.item;
+
+            // Handle function calls as separate conversation items
+            if (item.type === "function_call") {
+              const functionCallItem: import("@/types/openai").ConversationFunctionCall = {
+                id: item.id || `call-${Date.now()}`,
+                type: "function_call",
+                name: item.name,
+                arguments: item.arguments || "",
+                call_id: item.call_id,
+                status: (item.status === "failed" || item.status === "cancelled" ? "incomplete" : item.status) || "in_progress",
+                created_at: Math.floor(Date.now() / 1000),
+              };
+
+              const currentItems = useDevUIStore.getState().chatItems;
+              setChatItems([...currentItems, functionCallItem]);
+              continue;
+            }
 
             // Add output items to assistant message content
             const currentItems = useDevUIStore.getState().chatItems;
@@ -1664,22 +1761,23 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 >
                   <Info className="h-4 w-4" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReloadEntity}
-                  disabled={isReloading || selectedAgent.metadata?.source === "in_memory"}
-                  className="h-6 w-6 p-0 flex-shrink-0"
-                  title={
-                    selectedAgent.metadata?.source === "in_memory"
-                      ? "In-memory entities cannot be reloaded"
-                      : isReloading
-                      ? "Reloading..."
-                      : "Reload entity code (hot reload)"
-                  }
-                >
-                  <RefreshCw className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
-                </Button>
+                {/* Only show reload button for directory-based entities */}
+                {selectedAgent.source !== "in_memory" && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleReloadEntity}
+                    disabled={isReloading}
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    title={
+                      isReloading
+                        ? "Reloading..."
+                        : "Reload entity code (hot reload)"
+                    }
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`} />
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -1827,9 +1925,53 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               </div>
             </div>
           ) : (
-            chatItems.map((item) => (
-              <ConversationItemBubble key={item.id} item={item} />
-            ))
+            (() => {
+              // Group tool calls and results with their assistant messages
+              const processedItems: React.ReactElement[] = [];
+              const toolCallsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCall[]>();
+              const toolResultsByMessage = new Map<string, import("@/types/openai").ConversationFunctionCallOutput[]>();
+
+              // First pass: collect tool calls and results, associate with preceding assistant message
+              let lastAssistantMessageId: string | null = null;
+
+              for (const item of chatItems) {
+                if (item.type === "message" && item.role === "assistant") {
+                  lastAssistantMessageId = item.id;
+                  // Initialize arrays for this message if they don't exist
+                  if (!toolCallsByMessage.has(item.id)) {
+                    toolCallsByMessage.set(item.id, []);
+                    toolResultsByMessage.set(item.id, []);
+                  }
+                } else if (item.type === "function_call" && lastAssistantMessageId) {
+                  const calls = toolCallsByMessage.get(lastAssistantMessageId) || [];
+                  calls.push(item);
+                  toolCallsByMessage.set(lastAssistantMessageId, calls);
+                } else if (item.type === "function_call_output" && lastAssistantMessageId) {
+                  const results = toolResultsByMessage.get(lastAssistantMessageId) || [];
+                  results.push(item);
+                  toolResultsByMessage.set(lastAssistantMessageId, results);
+                }
+              }
+
+              // Second pass: render items, passing tool calls/results to assistant messages
+              for (const item of chatItems) {
+                if (item.type === "message") {
+                  const toolCalls = toolCallsByMessage.get(item.id) || [];
+                  const toolResults = toolResultsByMessage.get(item.id) || [];
+                  processedItems.push(
+                    <ConversationItemBubble
+                      key={item.id}
+                      item={item}
+                      toolCalls={toolCalls}
+                      toolResults={toolResults}
+                    />
+                  );
+                }
+                // Tool calls and results are now rendered within messages, so skip them here
+              }
+
+              return processedItems;
+            })()
           )}
 
           <div ref={messagesEndRef} />

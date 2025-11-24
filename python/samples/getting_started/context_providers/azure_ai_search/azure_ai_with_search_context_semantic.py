@@ -3,12 +3,10 @@
 import asyncio
 import os
 
-from dotenv import load_dotenv
-
 from agent_framework import ChatAgent
-from agent_framework_aisearch import AzureAISearchContextProvider
-from agent_framework_azure_ai import AzureAIAgentClient
-from azure.identity.aio import DefaultAzureCredential
+from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
+from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -58,7 +56,7 @@ async def main() -> None:
         endpoint=search_endpoint,
         index_name=index_name,
         api_key=search_key,  # Use api_key for API key auth, or credential for managed identity
-        credential=DefaultAzureCredential() if not search_key else None,
+        credential=AzureCliCredential() if not search_key else None,
         mode="semantic",  # Default mode
         top_k=3,  # Retrieve top 3 most relevant documents
     )
@@ -69,7 +67,7 @@ async def main() -> None:
         AzureAIAgentClient(
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment,
-            async_credential=DefaultAzureCredential(),
+            async_credential=AzureCliCredential(),
         ) as client,
         ChatAgent(
             chat_client=client,

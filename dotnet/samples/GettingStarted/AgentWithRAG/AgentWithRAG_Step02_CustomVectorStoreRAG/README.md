@@ -6,7 +6,7 @@ This sample uses Qdrant for the vector store, but this can easily be swapped out
 
 ## Prerequisites
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure OpenAI service endpoint
 - Both a chat completion and embedding deployment configured in the Azure OpenAI resource
 - Azure CLI installed and authenticated (for Azure credential authentication)

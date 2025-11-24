@@ -46,9 +46,7 @@ RESPONSE_TYPE = Union[
 OPTION_TYPE = Union[ChatOptions, dict[str, Any]]
 
 
-__all__ = [
-    "OpenAISettings",
-]
+__all__ = ["OpenAISettings"]
 
 
 def _check_openai_version_for_callable_api_key() -> None:

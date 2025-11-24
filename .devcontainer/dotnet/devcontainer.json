@@ -1,10 +1,11 @@
 {
   "name": "C# (.NET)",
-  "image": "mcr.microsoft.com/devcontainers/dotnet:9.0",
+  "image": "mcr.microsoft.com/devcontainers/dotnet:10.0",
   "features": {
     "ghcr.io/devcontainers/features/dotnet:2.4.0": {},
     "ghcr.io/devcontainers/features/powershell:1.5.1": {},
-    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {}
+    "ghcr.io/devcontainers/features/azure-cli:1.2.8": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {}
   },
   "workspaceFolder": "/workspaces/agent-framework/dotnet/",
   "customizations": {
