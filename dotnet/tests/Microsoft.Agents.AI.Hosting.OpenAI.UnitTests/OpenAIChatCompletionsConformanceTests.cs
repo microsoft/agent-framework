@@ -138,7 +138,7 @@ public sealed class OpenAIChatCompletionsConformanceTests : ConformanceTestBase
         AssertJsonPropertyExists(response, "service_tier");
         var serviceTier = response.GetProperty("service_tier").GetString();
         Assert.NotNull(serviceTier);
-        Assert.True(serviceTier == "default" || serviceTier == "auto", $"service_tier should be 'default' or 'auto', got '{serviceTier}'");
+        Assert.True(serviceTier is "default" or "auto", $"service_tier should be 'default' or 'auto', got '{serviceTier}'");
     }
 
     [Fact]

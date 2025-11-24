@@ -118,9 +118,7 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
     /// <summary>
     /// Dummy AITool implementation for testing.
     /// </summary>
-    private sealed class DummyAITool : AITool
-    {
-    }
+    private sealed class DummyAITool : AITool;
 
     /// <summary>
     /// Mock chat client for testing.

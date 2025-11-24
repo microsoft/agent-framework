@@ -11,7 +11,7 @@ from agent_framework._types import ChatResponseUpdate
 
 async def test_agent_initialization_basic():
     """Test basic agent initialization without state schema."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -28,7 +28,7 @@ async def test_agent_initialization_basic():
 
 async def test_agent_initialization_with_state_schema():
     """Test agent initialization with state_schema."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -43,7 +43,7 @@ async def test_agent_initialization_with_state_schema():
 
 async def test_agent_initialization_with_predict_state_config():
     """Test agent initialization with predict_state_config."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -58,7 +58,7 @@ async def test_agent_initialization_with_predict_state_config():
 
 async def test_run_started_event_emission():
     """Test RunStartedEvent is emitted at start of run."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -81,7 +81,7 @@ async def test_run_started_event_emission():
 
 async def test_predict_state_custom_event_emission():
     """Test PredictState CustomEvent is emitted when predict_state_config is present."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -112,7 +112,7 @@ async def test_predict_state_custom_event_emission():
 
 async def test_initial_state_snapshot_with_schema():
     """Test initial StateSnapshotEvent emission when state_schema present."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -141,7 +141,7 @@ async def test_initial_state_snapshot_with_schema():
 
 async def test_state_initialization_object_type():
     """Test state initialization with object type in schema."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -167,7 +167,7 @@ async def test_state_initialization_object_type():
 
 async def test_state_initialization_array_type():
     """Test state initialization with array type in schema."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -193,7 +193,7 @@ async def test_state_initialization_array_type():
 
 async def test_run_finished_event_emission():
     """Test RunFinishedEvent is emitted at end of run."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -214,7 +214,7 @@ async def test_run_finished_event_emission():
 
 async def test_tool_result_confirm_changes_accepted():
     """Test confirm_changes tool result handling when accepted."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -260,7 +260,7 @@ async def test_tool_result_confirm_changes_accepted():
 
 async def test_tool_result_confirm_changes_rejected():
     """Test confirm_changes tool result handling when rejected."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -293,7 +293,7 @@ async def test_tool_result_confirm_changes_rejected():
 
 async def test_tool_result_function_approval_accepted():
     """Test function approval tool result when steps are accepted."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -338,7 +338,7 @@ async def test_tool_result_function_approval_accepted():
 
 async def test_tool_result_function_approval_rejected():
     """Test function approval tool result when rejected."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -374,7 +374,7 @@ async def test_tool_result_function_approval_rejected():
 
 async def test_thread_metadata_tracking():
     """Test that thread metadata includes ag_ui_thread_id and ag_ui_run_id."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     thread_metadata = {}
 
@@ -405,7 +405,7 @@ async def test_thread_metadata_tracking():
 
 async def test_state_context_injection():
     """Test that current state is injected into thread metadata."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     thread_metadata = {}
 
@@ -436,7 +436,7 @@ async def test_state_context_injection():
 
 async def test_no_messages_provided():
     """Test handling when no messages are provided."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -459,7 +459,7 @@ async def test_no_messages_provided():
 
 async def test_message_end_event_emission():
     """Test TextMessageEndEvent is emitted for assistant messages."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -486,7 +486,7 @@ async def test_message_end_event_emission():
 
 async def test_error_handling_with_exception():
     """Test that exceptions during agent execution are re-raised."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class FailingChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -506,7 +506,7 @@ async def test_error_handling_with_exception():
 
 async def test_json_decode_error_in_tool_result():
     """Test handling of orphaned tool result - should be sanitized out."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):
@@ -543,7 +543,7 @@ async def test_json_decode_error_in_tool_result():
 
 async def test_suppressed_summary_with_document_state():
     """Test suppressed summary uses document state for confirmation message."""
-    from agent_framework_ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
+    from agent_framework.ag_ui import AgentFrameworkAgent, DocumentWriterConfirmationStrategy
 
     class MockChatClient:
         async def get_streaming_response(self, messages, chat_options, **kwargs):

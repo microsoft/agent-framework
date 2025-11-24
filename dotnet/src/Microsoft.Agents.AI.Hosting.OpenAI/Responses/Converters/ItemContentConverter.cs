@@ -140,10 +140,7 @@ internal static class ItemContentConverter
             _ => null
         };
 
-        if (result is not null)
-        {
-            result.RawRepresentation = content;
-        }
+        result?.RawRepresentation = content;
 
         return result;
     }

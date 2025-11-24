@@ -38,7 +38,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         AIAgent agent = new TestAgent();
 
         // Act
-        IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUI(endpointsMock.Object, Pattern, agent);
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(Pattern, agent);
 
         // Assert
         Assert.NotNull(result);
@@ -305,7 +305,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     public async Task MapAGUIAgent_WithCustomAgent_ProducesExpectedStreamStructureAsync()
     {
         // Arrange
-        AIAgent customAgentFactory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        static AIAgent CustomAgentFactory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
         {
             return new MultiResponseAgent();
         }
@@ -322,7 +322,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         MemoryStream responseStream = new();
         httpContext.Response.Body = responseStream;
 
-        RequestDelegate handler = this.CreateRequestDelegate(customAgentFactory);
+        RequestDelegate handler = this.CreateRequestDelegate(CustomAgentFactory);
 
         // Act
         await handler(httpContext);
@@ -332,7 +332,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         string responseContent = Encoding.UTF8.GetString(responseStream.ToArray());
 
         List<JsonElement> events = ParseSseEvents(responseContent);
-        List<JsonElement> contentEvents = new();
+        List<JsonElement> contentEvents = [];
         foreach (JsonElement evt in events)
         {
             if (evt.GetProperty("type").GetString() == AGUIEventTypes.TextMessageContent)
