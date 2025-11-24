@@ -32,4 +32,4 @@ while (response.ContinuationToken is { } token)
 }
 
 // Display the result
-Console.WriteLine(response.Text);
+Console.WriteLine(response);
