@@ -44,7 +44,7 @@ public sealed class HandOffWorkflowBuilder
     /// By default, simple instructions are included. This may be set to <see langword="null"/> to avoid including
     /// any additional instructions, or may be customized to provide more specific guidance.
     /// </remarks>
-    public HandOffWorkflowBuilder WithHandOffs(string handoffInstructions)
+    public HandOffWorkflowBuilder WithHandoffInstructions(string handoffInstructions)
     {
         this._handoffInstructions = handoffInstructions;
 

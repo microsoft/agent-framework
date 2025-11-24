@@ -53,6 +53,38 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task WithHandoffInstructions_SetsCustomInstructions()
+    {
+        // Arrange
+        const string customInstructions = "Custom handoff instructions for testing.";
+        string? capturedInstructions = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedInstructions = options?.Instructions;
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent2"))),
+            name: "nextAgent",
+            description: "The second agent");
+
+        // Act
+        var workflow = AgentWorkflowBuilder.CreateHandOffBuilderWith(initialAgent)
+            .WithHandoffInstructions(customInstructions)
+            .WithHandOff(initialAgent, nextAgent)
+            .Build();
+
+        await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.Equal(customInstructions, capturedInstructions);
+    }
+
+    [Fact]
     public void BuildGroupChat_InvalidArguments_Throws()
     {
         Assert.Throws<ArgumentNullException>("managerFactory", () => AgentWorkflowBuilder.CreateGroupChatBuilderWith(null!));
