@@ -17,7 +17,7 @@ internal static class A2AAgentTaskExtensions
 
         List<ChatMessage>? messages = null;
 
-        if (agentTask.Artifacts is not null)
+        if (agentTask?.Artifacts is { Count: > 0 })
         {
             foreach (var artifact in agentTask.Artifacts)
             {
