@@ -1,0 +1,2 @@
+azure-ai-agentserver-agentframework==1.0.0b3
+agent-framework

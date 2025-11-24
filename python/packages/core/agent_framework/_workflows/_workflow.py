@@ -1,29 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
-from .._agents import AgentProtocol
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS
 from ._edge import (
-    Case,
-    Default,
     EdgeGroup,
-    FanInEdgeGroup,
     FanOutEdgeGroup,
-    SingleEdgeGroup,
-    SwitchCaseEdgeGroup,
-    SwitchCaseEdgeGroupCase,
-    SwitchCaseEdgeGroupDefault,
 )
 from ._events import (
     RequestInfoEvent,
@@ -36,18 +29,16 @@ from ._events import (
     WorkflowStatusEvent,
     _framework_event_origin,  # type: ignore
 )
-from ._executor import AgentExecutor, Executor, RequestInfoExecutor
+from ._executor import Executor
 from ._model_utils import DictConvertible
 from ._runner import Runner
-from ._runner_context import InProcRunnerContext, RunnerContext
+from ._runner_context import RunnerContext
 from ._shared_state import SharedState
-from ._validation import validate_workflow_graph
-from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    pass  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    pass  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -118,9 +109,9 @@ class Workflow(DictConvertible):
     """A graph-based execution engine that orchestrates connected executors.
 
     ## Overview
-    A workflow executes a directed graph of executors connected via edge groups using a Pregel-like model,
-    running in supersteps until the graph becomes idle. Workflows are created using the
-    WorkflowBuilder class - do not instantiate this class directly.
+    A workflow executes a directed graph of executors connected via edge groups using a
+    Pregel-like model, running in supersteps until the graph becomes idle. Workflows
+    are created using the WorkflowBuilder class - do not instantiate this class directly.
 
     ## Execution Model
     Executors run in synchronized supersteps where each executor:
@@ -140,19 +131,39 @@ class Workflow(DictConvertible):
     Access these via the input_types and output_types properties.
 
     ## Execution Methods
-    - run(): Execute to completion, returns WorkflowRunResult with all events
-    - run_stream(): Returns async generator yielding events as they occur
-    - run_from_checkpoint(): Resume from a saved checkpoint
-    - run_stream_from_checkpoint(): Resume from checkpoint with streaming
+    The workflow provides two primary execution APIs, each supporting multiple scenarios:
+
+    - **run()**: Execute to completion, returns WorkflowRunResult with all events
+    - **run_stream()**: Returns async generator yielding events as they occur
+
+    Both methods support:
+    - Initial workflow runs: Provide `message` parameter
+    - Checkpoint restoration: Provide `checkpoint_id` (and optionally `checkpoint_storage`)
+    - HIL continuation: Provide `responses` to continue after RequestInfoExecutor requests
+    - Runtime checkpointing: Provide `checkpoint_storage` to enable/override checkpointing for this run
+
+    ## State Management
+    Workflow instances contain states and states are preserved across calls to `run` and `run_stream`.
+    To execute multiple independent runs, create separate Workflow instances via WorkflowBuilder.
 
     ## External Input Requests
-    Workflows can request external input using a RequestInfoExecutor:
-    1. Executor connects to RequestInfoExecutor via edge group and back to itself
-    2. Executor sends RequestInfoMessage to RequestInfoExecutor
-    3. RequestInfoExecutor emits RequestInfoEvent and workflow enters IDLE_WITH_PENDING_REQUESTS
-    4. Caller handles requests and uses send_responses()/send_responses_streaming() to continue
+    Executors within a workflow can request external input using `ctx.request_info()`:
+    1. Executor calls `ctx.request_info()` to request input
+    2. Executor implements `response_handler()` to process the response
+    3. Requests are emitted as RequestInfoEvent instances in the event stream
+    4. Workflow enters IDLE_WITH_PENDING_REQUESTS state
+    5. Caller handles requests and provides responses via the `send_responses` or `send_responses_streaming` methods
+    6. Responses are routed to the requesting executors and response handlers are invoked
 
     ## Checkpointing
+    Checkpointing can be configured at build time or runtime:
+
+    Build-time (via WorkflowBuilder):
+        workflow = WorkflowBuilder().with_checkpointing(storage).build()
+
+    Runtime (via run/run_stream parameters):
+        result = await workflow.run(message, checkpoint_storage=runtime_storage)
+
     When enabled, checkpoints are created at the end of each superstep, capturing:
     - Executor states
     - Messages in transit
@@ -172,6 +183,8 @@ class Workflow(DictConvertible):
         start_executor: Executor | str,
         runner_context: RunnerContext,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        name: str | None = None,
+        description: str | None = None,
         **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
@@ -182,18 +195,20 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+            name: Optional human-readable name for the workflow.
+            description: Optional description of what the workflow does.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         # Convert start_executor to string ID if it's an Executor instance
         start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
 
-        id = str(uuid.uuid4())
-
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
         self.start_executor_id = start_executor_id
         self.max_iterations = max_iterations
-        self.id = id
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.description = description
 
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
@@ -204,7 +219,7 @@ class Workflow(DictConvertible):
             self._shared_state,
             runner_context,
             max_iterations=max_iterations,
-            workflow_id=id,
+            workflow_id=self.id,
         )
 
         # Flag to prevent concurrent workflow executions
@@ -235,6 +250,12 @@ class Workflow(DictConvertible):
             "edge_groups": [group.to_dict() for group in self.edge_groups],
             "executors": {executor_id: executor.to_dict() for executor_id, executor in self.executors.items()},
         }
+
+        # Add optional name and description if provided
+        if self.name is not None:
+            data["name"] = self.name
+        if self.description is not None:
+            data["description"] = self.description
 
         executors_data: dict[str, dict[str, Any]] = data.get("executors", {})
         for executor_id, executor_payload in executors_data.items():
@@ -269,7 +290,10 @@ class Workflow(DictConvertible):
         return list(self.executors.values())
 
     async def _run_workflow_with_tracing(
-        self, initial_executor_fn: Callable[[], Awaitable[None]] | None = None, reset_context: bool = True
+        self,
+        initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
+        reset_context: bool = True,
+        streaming: bool = False,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -279,16 +303,21 @@ class Workflow(DictConvertible):
         Args:
             initial_executor_fn: Optional function to execute initial executor
             reset_context: Whether to reset the context for a new run
+            streaming: Whether to enable streaming mode for agents
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
         # Create workflow span that encompasses the entire execution
+        attributes: dict[str, Any] = {OtelAttr.WORKFLOW_ID: self.id}
+        if self.name:
+            attributes[OtelAttr.WORKFLOW_NAME] = self.name
+        if self.description:
+            attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
+
         with create_workflow_span(
             OtelAttr.WORKFLOW_RUN_SPAN,
-            {
-                OtelAttr.WORKFLOW_ID: self.id,
-            },
+            attributes,
         ) as span:
             saw_request = False
             emitted_in_progress_pending = False
@@ -305,7 +334,12 @@ class Workflow(DictConvertible):
 
                 # Reset context for a new run if supported
                 if reset_context:
-                    self._runner.context.reset_for_new_run(self._shared_state)
+                    self._runner.reset_iteration_count()
+                    self._runner.context.reset_for_new_run()
+                    await self._shared_state.clear()
+
+                # Set streaming mode after reset
+                self._runner_context.set_streaming(streaming)
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
@@ -354,115 +388,146 @@ class Workflow(DictConvertible):
                 capture_exception(span, exception=exc)
                 raise
 
-    async def run_stream(self, message: Any) -> AsyncIterable[WorkflowEvent]:
-        """Run the workflow with a starting message and stream events.
+    async def _execute_with_message_or_checkpoint(
+        self,
+        message: Any | None,
+        checkpoint_id: str | None,
+        checkpoint_storage: CheckpointStorage | None,
+    ) -> None:
+        """Internal handler for executing workflow with either initial message or checkpoint restoration.
 
         Args:
-            message: The message to be sent to the starting executor.
+            message: Initial message for the start executor (for new runs).
+            checkpoint_id: ID of checkpoint to restore from (for resuming runs).
+            checkpoint_storage: Runtime checkpoint storage.
 
-        Yields:
-            WorkflowEvent: The events generated during the workflow execution.
+        Raises:
+            ValueError: If both message and checkpoint_id are None (nothing to execute).
         """
-        self._ensure_not_running()
-        try:
+        # Validate that we have something to execute
+        if message is None and checkpoint_id is None:
+            raise ValueError("Must provide either 'message' or 'checkpoint_id'")
 
-            async def initial_execution() -> None:
-                executor = self.get_start_executor()
-                await executor.execute(
-                    message,
-                    [self.__class__.__name__],  # source_executor_ids
-                    self._shared_state,  # shared_state
-                    self._runner.context,  # runner_context
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
+        # Handle checkpoint restoration
+        if checkpoint_id is not None:
+            has_checkpointing = self._runner.context.has_checkpointing()
+
+            if not has_checkpointing and checkpoint_storage is None:
+                raise ValueError(
+                    "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
+                    "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
                 )
 
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=initial_execution, reset_context=True
-            ):
-                yield event
-        finally:
-            self._reset_running_flag()
+            restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
-    async def run_stream_from_checkpoint(
+            if not restored:
+                raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
+
+        # Handle initial message
+        elif message is not None:
+            executor = self.get_start_executor()
+            await executor.execute(
+                message,
+                [self.__class__.__name__],
+                self._shared_state,
+                self._runner.context,
+                trace_contexts=None,
+                source_span_ids=None,
+            )
+
+    async def run_stream(
         self,
-        checkpoint_id: str,
+        message: Any | None = None,
+        *,
+        checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
-        """Resume workflow execution from a checkpoint and stream events.
+        """Run the workflow and stream events.
+
+        Unified streaming interface supporting initial runs and checkpoint restoration.
 
         Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: Optional checkpoint storage to use for restoration.
-                              If not provided, the workflow must have been built with checkpointing enabled.
-            responses: Optional dictionary of responses to inject into the workflow
-                      after restoration. Keys are request IDs, values are response data.
+            message: Initial message for the start executor. Required for new workflow runs,
+                    should be None when resuming from checkpoint.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
+                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
+                          must be provided (either at build time or runtime) to load the checkpoint.
+            checkpoint_storage: Runtime checkpoint storage with two behaviors:
+                               - With checkpoint_id: Used to load and restore the specified checkpoint
+                               - Without checkpoint_id: Enables checkpointing for this run, overriding
+                                 build-time configuration
 
         Yields:
             WorkflowEvent: Events generated during workflow execution.
 
         Raises:
-            ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
+            ValueError: If both message and checkpoint_id are provided, or if neither is provided.
+            ValueError: If checkpoint_id is provided but no checkpoint storage is available
+                       (neither at build time nor runtime).
             RuntimeError: If checkpoint restoration fails.
+
+        Examples:
+            Initial run:
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream("start message"):
+                    process(event)
+
+            Enable checkpointing at runtime:
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                async for event in workflow.run_stream("start", checkpoint_storage=storage):
+                    process(event)
+
+            Resume from checkpoint (storage provided at build time):
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream(checkpoint_id="cp_123"):
+                    process(event)
+
+            Resume from checkpoint (storage provided at runtime):
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                async for event in workflow.run_stream(checkpoint_id="cp_123", checkpoint_storage=storage):
+                    process(event)
         """
+        # Validate mutually exclusive parameters BEFORE setting running flag
+        if message is not None and checkpoint_id is not None:
+            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+
+        if message is None and checkpoint_id is None:
+            raise ValueError("Must provide either 'message' (new run) or 'checkpoint_id' (resume).")
+
         self._ensure_not_running()
+
+        # Enable runtime checkpointing if storage provided
+        # Two cases:
+        # 1. checkpoint_storage + checkpoint_id: Load checkpoint from this storage and resume
+        # 2. checkpoint_storage without checkpoint_id: Enable checkpointing for this run
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
         try:
-
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
-
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-                    )
-
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
-
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
-
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
-
-                if responses:
-                    request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
-                            )
-
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
-
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
+            # Reset context only for new runs (not checkpoint restoration)
+            reset_context = message is not None and checkpoint_id is None
 
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=checkpoint_restoration,
-                reset_context=False,  # Don't reset context when resuming from checkpoint
+                initial_executor_fn=functools.partial(
+                    self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
+                ),
+                reset_context=reset_context,
+                streaming=True,
             ):
                 yield event
         finally:
+            if checkpoint_storage is not None:
+                self._runner.context.clear_runtime_checkpoint_storage()
             self._reset_running_flag()
 
     async def send_responses_streaming(self, responses: dict[str, Any]) -> AsyncIterable[WorkflowEvent]:
@@ -477,106 +542,112 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
-
-            async def send_responses() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
-
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
-
             async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=send_responses,
+                initial_executor_fn=functools.partial(self._send_responses_internal, responses),
                 reset_context=False,  # Don't reset context when sending responses
+                streaming=True,
             ):
                 yield event
         finally:
             self._reset_running_flag()
 
-    async def run(self, message: Any, *, include_status_events: bool = False) -> WorkflowRunResult:
-        """Run the workflow with the given message.
+    async def run(
+        self,
+        message: Any | None = None,
+        *,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        include_status_events: bool = False,
+    ) -> WorkflowRunResult:
+        """Run the workflow to completion and return all events.
+
+        Unified non-streaming interface supporting initial runs and checkpoint restoration.
 
         Args:
-            message: The message to be processed by the workflow.
+            message: Initial message for the start executor. Required for new workflow runs,
+                    should be None when resuming from checkpoint.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow resumes
+                          from this checkpoint instead of starting fresh. When resuming, checkpoint_storage
+                          must be provided (either at build time or runtime) to load the checkpoint.
+            checkpoint_storage: Runtime checkpoint storage with two behaviors:
+                               - With checkpoint_id: Used to load and restore the specified checkpoint
+                               - Without checkpoint_id: Enables checkpointing for this run, overriding
+                                 build-time configuration
             include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
 
         Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
+            A WorkflowRunResult instance containing events generated during workflow execution.
+
+        Raises:
+            ValueError: If both message and checkpoint_id are provided, or if neither is provided.
+            ValueError: If checkpoint_id is provided but no checkpoint storage is available
+                       (neither at build time nor runtime).
+            RuntimeError: If checkpoint restoration fails.
+
+        Examples:
+            Initial run:
+
+            .. code-block:: python
+
+                result = await workflow.run("start message")
+                outputs = result.get_outputs()
+
+            Enable checkpointing at runtime:
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                result = await workflow.run("start", checkpoint_storage=storage)
+
+            Resume from checkpoint (storage provided at build time):
+
+            .. code-block:: python
+
+                result = await workflow.run(checkpoint_id="cp_123")
+
+            Resume from checkpoint (storage provided at runtime):
+
+            .. code-block:: python
+
+                storage = FileCheckpointStorage("./checkpoints")
+                result = await workflow.run(checkpoint_id="cp_123", checkpoint_storage=storage)
         """
+        # Validate mutually exclusive parameters BEFORE setting running flag
+        if message is not None and checkpoint_id is not None:
+            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
+
+        if message is None and checkpoint_id is None:
+            raise ValueError("Must provide either 'message' (new run) or 'checkpoint_id' (resume).")
+
         self._ensure_not_running()
+
+        # Enable runtime checkpointing if storage provided
+        if checkpoint_storage is not None:
+            self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
+
         try:
-            from agent_framework import AgentRunResponse, AgentRunResponseUpdate
-
-            from ._events import AgentRunEvent, AgentRunUpdateEvent  # Local import to avoid cycles
-
-            async def initial_execution() -> None:
-                executor = self.get_start_executor()
-                await executor.execute(
-                    message,
-                    [self.__class__.__name__],  # source_executor_ids
-                    self._shared_state,  # shared_state
-                    self._runner.context,  # runner_context
-                    trace_contexts=None,  # No parent trace context for workflow start
-                    source_span_ids=None,  # No source span for workflow start
-                )
+            # Reset context only for new runs (not checkpoint restoration)
+            reset_context = message is not None and checkpoint_id is None
 
             raw_events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=initial_execution, reset_context=True
+                    initial_executor_fn=functools.partial(
+                        self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
+                    ),
+                    reset_context=reset_context,
                 )
             ]
         finally:
+            if checkpoint_storage is not None:
+                self._runner.context.clear_runtime_checkpoint_storage()
             self._reset_running_flag()
 
-        # Coalesce streaming update events into a single AgentRunEvent per executor sequence.
-        coalesced: list[WorkflowEvent] = []
-        pending_updates: list[AgentRunResponseUpdate] = []
-        pending_executor: str | None = None
+        # Filter events for non-streaming mode
+        filtered: list[WorkflowEvent] = []
         status_events: list[WorkflowStatusEvent] = []
 
-        def _flush_pending() -> None:
-            nonlocal pending_updates, pending_executor
-            if pending_executor is None or not pending_updates:
-                return
-            # Aggregate updates into a final AgentRunResponse using existing helper
-            aggregated = AgentRunResponse.from_agent_run_response_updates(pending_updates)
-            coalesced.append(AgentRunEvent(pending_executor, aggregated))
-            pending_updates = []
-            pending_executor = None
-
         for ev in raw_events:
-            if isinstance(ev, AgentRunUpdateEvent):
-                # Start new grouping or continue existing if same executor
-                if pending_executor is None:
-                    pending_executor = ev.executor_id
-                if ev.executor_id != pending_executor:
-                    # Different executor encountered; flush previous first
-                    _flush_pending()
-                    pending_executor = ev.executor_id
-                if ev.data is not None:
-                    pending_updates.append(ev.data)
-                # Do NOT append update event itself (non-streaming contract)
-                continue
-            # Flush before adding any non-update event
-            _flush_pending()
             # Omit WorkflowStartedEvent from non-streaming (telemetry-only)
             if isinstance(ev, WorkflowStartedEvent):
                 continue
@@ -584,101 +655,11 @@ class Workflow(DictConvertible):
             if isinstance(ev, WorkflowStatusEvent):
                 status_events.append(ev)
                 if include_status_events:
-                    coalesced.append(ev)
+                    filtered.append(ev)
                 continue
-            coalesced.append(ev)
+            filtered.append(ev)
 
-        # Flush any trailing updates
-        _flush_pending()
-
-        # coalesced already excludes start events; includes status events only if opted in
-        return WorkflowRunResult(coalesced, status_events)
-
-    async def run_from_checkpoint(
-        self,
-        checkpoint_id: str,
-        checkpoint_storage: CheckpointStorage | None = None,
-        responses: dict[str, Any] | None = None,
-    ) -> WorkflowRunResult:
-        """Resume workflow execution from a checkpoint.
-
-        Args:
-            checkpoint_id: The ID of the checkpoint to restore from.
-            checkpoint_storage: Optional checkpoint storage to use for restoration.
-                              If not provided, the workflow must have been built with checkpointing enabled.
-            responses: Optional dictionary of responses to inject into the workflow
-                      after restoration. Keys are request IDs, values are response data.
-
-        Returns:
-            A WorkflowRunResult instance containing a list of events generated during the workflow execution.
-
-        Raises:
-            ValueError: If neither checkpoint_storage is provided nor checkpointing is enabled.
-            RuntimeError: If checkpoint restoration fails.
-        """
-        self._ensure_not_running()
-        try:
-
-            async def checkpoint_restoration() -> None:
-                has_checkpointing = self._runner.context.has_checkpointing()
-
-                if not has_checkpointing and checkpoint_storage is None:
-                    raise ValueError(
-                        "Cannot restore from checkpoint: either provide checkpoint_storage parameter "
-                        "or build workflow with WorkflowBuilder.with_checkpointing(checkpoint_storage)."
-                    )
-
-                restored = await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
-
-                if not restored:
-                    raise RuntimeError(f"Failed to restore from checkpoint: {checkpoint_id}")
-
-                # Process any pending messages from the checkpoint first
-                # This ensures that RequestInfoExecutor state is properly populated
-                # before we try to handle responses
-                if await self._runner.context.has_messages():
-                    # Run one iteration to process pending messages
-                    # This will populate RequestInfoExecutor._request_events properly
-                    await self._runner._run_iteration()  # type: ignore
-
-                if responses:
-                    request_info_executor = self._find_request_info_executor()
-                    if request_info_executor:
-                        for request_id, response_data in responses.items():
-                            ctx: WorkflowContext[Any] = WorkflowContext(
-                                request_info_executor.id,
-                                [self.__class__.__name__],
-                                self._shared_state,
-                                self._runner.context,
-                                trace_contexts=None,  # No parent trace context for new workflow span
-                                source_span_ids=None,  # No source span for response handling
-                            )
-
-                            if not await request_info_executor.has_pending_request(request_id, ctx):
-                                logger.debug(
-                                    f"Skipping pre-supplied response for request {request_id}; "
-                                    f"no pending request found after checkpoint restoration."
-                                )
-                                continue
-
-                            await request_info_executor.handle_response(
-                                response_data,
-                                request_id,
-                                ctx,
-                            )
-
-            events = [
-                event
-                async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=checkpoint_restoration,
-                    reset_context=False,  # Don't reset context when resuming from checkpoint
-                )
-            ]
-            status_events = [e for e in events if isinstance(e, WorkflowStatusEvent)]
-            filtered_events = [e for e in events if not isinstance(e, (WorkflowStatusEvent, WorkflowStartedEvent))]
-            return WorkflowRunResult(filtered_events, status_events)
-        finally:
-            self._reset_running_flag()
+        return WorkflowRunResult(filtered, status_events)
 
     async def send_responses(self, responses: dict[str, Any]) -> WorkflowRunResult:
         """Send responses back to the workflow.
@@ -691,35 +672,10 @@ class Workflow(DictConvertible):
         """
         self._ensure_not_running()
         try:
-
-            async def send_responses_internal() -> None:
-                request_info_executor = self._find_request_info_executor()
-                if not request_info_executor:
-                    raise ValueError("No RequestInfoExecutor found in workflow.")
-
-                async def _handle_response(response: Any, request_id: str) -> None:
-                    """Handle the response from the RequestInfoExecutor."""
-                    await request_info_executor.handle_response(
-                        response,
-                        request_id,
-                        WorkflowContext(
-                            request_info_executor.id,
-                            [self.__class__.__name__],
-                            self._shared_state,
-                            self._runner.context,
-                            trace_contexts=None,  # No parent trace context for new workflow span
-                            source_span_ids=None,  # No source span for response handling
-                        ),
-                    )
-
-                await asyncio.gather(*[
-                    _handle_response(response, request_id) for request_id, response in responses.items()
-                ])
-
             events = [
                 event
                 async for event in self._run_workflow_with_tracing(
-                    initial_executor_fn=send_responses_internal,
+                    initial_executor_fn=functools.partial(self._send_responses_internal, responses),
                     reset_context=False,  # Don't reset context when sending responses
                 )
             ]
@@ -728,6 +684,28 @@ class Workflow(DictConvertible):
             return WorkflowRunResult(filtered_events, status_events)
         finally:
             self._reset_running_flag()
+
+    async def _send_responses_internal(self, responses: dict[str, Any]) -> None:
+        """Internal method to validate and send responses to the executors."""
+        pending_requests = await self._runner_context.get_pending_request_info_events()
+        if not pending_requests:
+            raise RuntimeError("No pending requests found in workflow context.")
+
+        # Validate responses against pending requests
+        for request_id, response in responses.items():
+            if request_id not in pending_requests:
+                raise ValueError(f"Response provided for unknown request ID: {request_id}")
+            pending_request = pending_requests[request_id]
+            if not isinstance(response, pending_request.response_type):
+                raise ValueError(
+                    f"Response type mismatch for request ID {request_id}: "
+                    f"expected {pending_request.response_type}, got {type(response)}"
+                )
+
+        await asyncio.gather(*[
+            self._runner_context.send_request_info_response(request_id, response)
+            for request_id, response in responses.items()
+        ])
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
@@ -741,19 +719,6 @@ class Workflow(DictConvertible):
         if executor_id not in self.executors:
             raise ValueError(f"Executor with ID {executor_id} not found.")
         return self.executors[executor_id]
-
-    def _find_request_info_executor(self) -> RequestInfoExecutor | None:
-        """Find the RequestInfoExecutor instance in this workflow.
-
-        Returns:
-            The RequestInfoExecutor instance if found, None otherwise.
-        """
-        from ._executor import RequestInfoExecutor
-
-        for executor in self.executors.values():
-            if isinstance(executor, RequestInfoExecutor):
-                return executor
-        return None
 
     # Graph signature helpers
 
@@ -853,355 +818,26 @@ class Workflow(DictConvertible):
     def as_agent(self, name: str | None = None) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
+        The returned agent converts standard agent inputs (strings, ChatMessage, or lists of these)
+        into a list[ChatMessage] that is passed to the workflow's start executor. This conversion
+        happens in WorkflowAgent._normalize_messages() which transforms:
+        - str -> [ChatMessage(role=USER, text=str)]
+        - ChatMessage -> [ChatMessage]
+        - list[str | ChatMessage] -> list[ChatMessage] (with string elements converted)
+
+        The workflow's start executor must accept list[ChatMessage] as an input type, otherwise
+        initialization will fail with a ValueError.
+
         Args:
             name: Optional name for the agent. If None, a default name will be generated.
 
         Returns:
             A WorkflowAgent instance that wraps this workflow.
+
+        Raises:
+            ValueError: If the workflow's start executor cannot handle list[ChatMessage] input.
         """
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent
 
         return WorkflowAgent(workflow=self, name=name)
-
-
-# region WorkflowBuilder
-
-
-class WorkflowBuilder:
-    """A builder class for constructing workflows.
-
-    This class provides methods to add edges and set the starting executor for the workflow.
-    """
-
-    def __init__(self, max_iterations: int = DEFAULT_MAX_ITERATIONS):
-        """Initialize the WorkflowBuilder with an empty list of edges and no starting executor."""
-        self._edge_groups: list[EdgeGroup] = []
-        self._executors: dict[str, Executor] = {}
-        self._duplicate_executor_ids: set[str] = set()
-        self._start_executor: Executor | str | None = None
-        self._checkpoint_storage: CheckpointStorage | None = None
-        self._max_iterations: int = max_iterations
-        # Maps underlying AgentProtocol object id -> wrapped Executor so we reuse the same wrapper
-        # across set_start_executor / add_edge calls. Without this, unnamed agents (which receive
-        # random UUID based executor ids) end up wrapped multiple times, giving different ids for
-        # the start node vs edge nodes and triggering a GraphConnectivityError during validation.
-        self._agent_wrappers: dict[int, Executor] = {}
-
-    # Agents auto-wrapped by builder now always stream incremental updates.
-
-    def _add_executor(self, executor: Executor) -> str:
-        """Add an executor to the map and return its ID."""
-        existing = self._executors.get(executor.id)
-        if existing is not None and existing is not executor:
-            self._duplicate_executor_ids.add(executor.id)
-        else:
-            self._executors[executor.id] = executor
-        return executor.id
-
-    def _maybe_wrap_agent(self, candidate: Executor | AgentProtocol) -> Executor:
-        """If the provided object implements AgentProtocol, wrap it in an AgentExecutor.
-
-        This allows fluent builder APIs to directly accept agents instead of
-        requiring callers to manually instantiate AgentExecutor.
-        """
-        try:  # Local import to avoid hard dependency at import time
-            from agent_framework import AgentProtocol  # type: ignore
-        except Exception:  # pragma: no cover - defensive
-            AgentProtocol = object  # type: ignore
-
-        if isinstance(candidate, Executor):  # Already an executor
-            return candidate
-        if isinstance(candidate, AgentProtocol):  # type: ignore[arg-type]
-            # Reuse existing wrapper for the same agent instance if present
-            existing = self._agent_wrappers.get(id(candidate))
-            if existing is not None:
-                return existing
-            # Use agent name if available and unique among current executors
-            name = getattr(candidate, "name", None)
-            proposed_id: str | None = None
-            if name:
-                proposed_id = str(name)
-                if proposed_id in self._executors:
-                    raise ValueError(
-                        f"Duplicate executor ID '{proposed_id}' from agent name. "
-                        "Agent names must be unique within a workflow."
-                    )
-            wrapper = AgentExecutor(candidate, id=proposed_id, streaming=True)
-            self._agent_wrappers[id(candidate)] = wrapper
-            return wrapper
-        raise TypeError(
-            f"WorkflowBuilder expected an Executor or AgentProtocol instance; got {type(candidate).__name__}."
-        )
-
-    def add_edge(
-        self,
-        source: Executor | AgentProtocol,
-        target: Executor | AgentProtocol,
-        condition: Callable[[Any], bool] | None = None,
-    ) -> Self:
-        """Add a directed edge between two executors.
-
-        The output types of the source and the input types of the target must be compatible.
-
-        Args:
-            source: The source executor of the edge.
-            target: The target executor of the edge.
-            condition: An optional condition function that determines whether the edge
-                       should be traversed based on the message type.
-        """
-        # TODO(@taochen): Support executor factories for lazy initialization
-        source_exec = self._maybe_wrap_agent(source)
-        target_exec = self._maybe_wrap_agent(target)
-        source_id = self._add_executor(source_exec)
-        target_id = self._add_executor(target_exec)
-        self._edge_groups.append(SingleEdgeGroup(source_id, target_id, condition))  # type: ignore[call-arg]
-        return self
-
-    def add_fan_out_edges(
-        self,
-        source: Executor | AgentProtocol,
-        targets: Sequence[Executor | AgentProtocol],
-    ) -> Self:
-        """Add multiple edges to the workflow where messages from the source will be sent to all target.
-
-        The output types of the source and the input types of the targets must be compatible.
-
-        Args:
-            source: The source executor of the edges.
-            targets: A list of target executors for the edges.
-        """
-        source_exec = self._maybe_wrap_agent(source)
-        target_execs = [self._maybe_wrap_agent(t) for t in targets]
-        source_id = self._add_executor(source_exec)
-        target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))  # type: ignore[call-arg]
-
-        return self
-
-    def add_switch_case_edge_group(
-        self,
-        source: Executor | AgentProtocol,
-        cases: Sequence[Case | Default],
-    ) -> Self:
-        """Add an edge group that represents a switch-case statement.
-
-        The output types of the source and the input types of the targets must be compatible.
-        Messages from the source executor will be sent to one of the target executors based on
-        the provided conditions.
-
-        Think of this as a switch statement where each target executor corresponds to a case.
-        Each condition function will be evaluated in order, and the first one that returns True
-        will determine which target executor receives the message.
-
-        The last case (the default case) will receive messages that fall through all conditions
-        (i.e., no condition matched).
-
-        Args:
-            source: The source executor of the edges.
-            cases: A list of case objects that determine the target executor for each message.
-        """
-        source_exec = self._maybe_wrap_agent(source)
-        source_id = self._add_executor(source_exec)
-        # Convert case data types to internal types that only uses target_id.
-        internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
-        for case in cases:
-            # Allow case targets to be agents
-            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[attr-defined]
-            self._add_executor(case.target)
-            if isinstance(case, Default):
-                internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
-            else:
-                internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))  # type: ignore[call-arg]
-
-        return self
-
-    def add_multi_selection_edge_group(
-        self,
-        source: Executor | AgentProtocol,
-        targets: Sequence[Executor | AgentProtocol],
-        selection_func: Callable[[Any, list[str]], list[str]],
-    ) -> Self:
-        """Add an edge group that represents a multi-selection execution model.
-
-        The output types of the source and the input types of the targets must be compatible.
-        Messages from the source executor will be sent to multiple target executors based on
-        the provided selection function.
-
-        The selection function should take a message and the name of the target executors,
-        and return a list of indices indicating which target executors should receive the message.
-
-        Args:
-            source: The source executor of the edges.
-            targets: A list of target executors for the edges.
-            selection_func: A function that selects target executors for messages.
-        """
-        source_exec = self._maybe_wrap_agent(source)
-        target_execs = [self._maybe_wrap_agent(t) for t in targets]
-        source_id = self._add_executor(source_exec)
-        target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))  # type: ignore[call-arg]
-
-        return self
-
-    def add_fan_in_edges(
-        self,
-        sources: Sequence[Executor | AgentProtocol],
-        target: Executor | AgentProtocol,
-    ) -> Self:
-        """Add multiple edges from sources to a single target executor.
-
-        The edges will be grouped together for synchronized processing, meaning
-        the target executor will only be executed once all source executors have completed.
-
-        The target executor will receive a list of messages aggregated from all source executors.
-        Thus the input types of the target executor must be compatible with a list of the output
-        types of the source executors. For example:
-
-            class Target(Executor):
-                @handler
-                def handle_messages(self, messages: list[Message]) -> None:
-                    # Process the aggregated messages from all sources
-
-            class Source(Executor):
-                @handler(output_type=[Message])
-                def handle_message(self, message: Message) -> None:
-                    # Send a message to the target executor
-                    self.send_message(message)
-
-            workflow = (
-                WorkflowBuilder()
-                .add_fan_in_edges(
-                    [Source(id="source1"), Source(id="source2")],
-                    Target(id="target")
-                )
-                .build()
-            )
-
-        Args:
-            sources: A list of source executors for the edges.
-            target: The target executor for the edges.
-        """
-        source_execs = [self._maybe_wrap_agent(s) for s in sources]
-        target_exec = self._maybe_wrap_agent(target)
-        source_ids = [self._add_executor(s) for s in source_execs]
-        target_id = self._add_executor(target_exec)
-        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))  # type: ignore[call-arg]
-
-        return self
-
-    def add_chain(self, executors: Sequence[Executor | AgentProtocol]) -> Self:
-        """Add a chain of executors to the workflow.
-
-        The output of each executor in the chain will be sent to the next executor in the chain.
-        The input types of each executor must be compatible with the output types of the previous executor.
-
-        Circles in the chain are not allowed, meaning the chain cannot have two executors with the same ID.
-
-        Args:
-            executors: A list of executors to be added to the chain.
-        """
-        # Wrap each candidate first to ensure stable IDs before adding edges
-        wrapped: list[Executor] = [self._maybe_wrap_agent(e) for e in executors]
-        for i in range(len(wrapped) - 1):
-            self.add_edge(wrapped[i], wrapped[i + 1])
-        return self
-
-    def set_start_executor(self, executor: Executor | AgentProtocol | str) -> Self:
-        """Set the starting executor for the workflow.
-
-        Args:
-            executor: The starting executor, which can be an Executor instance or its ID.
-        """
-        if isinstance(executor, str):
-            self._start_executor = executor
-        else:
-            wrapped = self._maybe_wrap_agent(executor)  # type: ignore[arg-type]
-            self._start_executor = wrapped
-            # Ensure the start executor is present in the executor map so validation succeeds
-            # even if no edges are added yet, or before edges wrap the same agent again.
-            existing = self._executors.get(wrapped.id)
-            if existing is not wrapped:
-                self._add_executor(wrapped)
-        return self
-
-    def set_max_iterations(self, max_iterations: int) -> Self:
-        """Set the maximum number of iterations for the workflow.
-
-        Args:
-            max_iterations: The maximum number of iterations the workflow will run for convergence.
-        """
-        self._max_iterations = max_iterations
-        return self
-
-    # Removed explicit set_agent_streaming() API; agents always stream updates.
-
-    def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> Self:
-        """Enable checkpointing with the specified storage.
-
-        Args:
-            checkpoint_storage: The checkpoint storage to use.
-        """
-        self._checkpoint_storage = checkpoint_storage
-        return self
-
-    def build(self) -> Workflow:
-        """Build and return the constructed workflow.
-
-        This method performs validation before building the workflow.
-
-        Returns:
-            A Workflow instance with the defined edges and starting executor.
-
-        Raises:
-            ValueError: If starting executor is not set.
-            WorkflowValidationError: If workflow validation fails (includes EdgeDuplicationError,
-                TypeCompatibilityError, and GraphConnectivityError subclasses).
-        """
-        # Create workflow build span that includes validation and workflow creation
-        with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
-            try:
-                # Add workflow build started event
-                span.add_event(OtelAttr.BUILD_STARTED)
-
-                if not self._start_executor:
-                    raise ValueError(
-                        "Starting executor must be set using set_start_executor before building the workflow."
-                    )
-
-                # Perform validation before creating the workflow
-                validate_workflow_graph(
-                    self._edge_groups,
-                    self._executors,
-                    self._start_executor,
-                    duplicate_executor_ids=tuple(self._duplicate_executor_ids),
-                )
-
-                # Add validation completed event
-                span.add_event(OtelAttr.BUILD_VALIDATION_COMPLETED)
-
-                context = InProcRunnerContext(self._checkpoint_storage)
-
-                # Create workflow instance after validation
-                workflow = Workflow(
-                    self._edge_groups, self._executors, self._start_executor, context, self._max_iterations
-                )
-                span.set_attributes({
-                    OtelAttr.WORKFLOW_ID: workflow.id,
-                    OtelAttr.WORKFLOW_DEFINITION: workflow.to_json(),
-                })
-
-                # Add workflow build completed event
-                span.add_event(OtelAttr.BUILD_COMPLETED)
-
-                return workflow
-
-            except Exception as exc:
-                attributes = {
-                    OtelAttr.BUILD_ERROR_MESSAGE: str(exc),
-                    OtelAttr.BUILD_ERROR_TYPE: type(exc).__name__,
-                }
-                span.add_event(OtelAttr.BUILD_ERROR, attributes)  # type: ignore[reportArgumentType, arg-type]
-                capture_exception(span, exc)
-                raise

@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Reflection;
 
@@ -23,9 +25,9 @@ internal static class Step1EntryPoint
         }
     }
 
-    public static async ValueTask RunAsync(TextWriter writer)
+    public static async ValueTask RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment)
     {
-        StreamingRun run = await InProcessExecution.StreamAsync(WorkflowInstance, "Hello, World!").ConfigureAwait(false);
+        StreamingRun run = await environment.StreamAsync(WorkflowInstance, input: "Hello, World!").ConfigureAwait(false);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().ConfigureAwait(false))
         {
@@ -37,19 +39,19 @@ internal static class Step1EntryPoint
     }
 }
 
-internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor"), IMessageHandler<string, string>
+internal sealed class UppercaseExecutor() : ReflectingExecutor<UppercaseExecutor>("UppercaseExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context) =>
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         message.ToUpperInvariant();
 }
 
-internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor"), IMessageHandler<string, string>
+internal sealed class ReverseTextExecutor() : ReflectingExecutor<ReverseTextExecutor>("ReverseTextExecutor", declareCrossRunShareable: true), IMessageHandler<string, string>
 {
-    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context)
+    public async ValueTask<string> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         string result = string.Concat(message.Reverse());
 
-        await context.YieldOutputAsync(result).ConfigureAwait(false);
+        await context.YieldOutputAsync(result, cancellationToken).ConfigureAwait(false);
         return result;
     }
 }

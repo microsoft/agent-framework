@@ -180,6 +180,8 @@ class OtelAttr(str, Enum):
 
     # Workflow attributes
     WORKFLOW_ID = "workflow.id"
+    WORKFLOW_NAME = "workflow.name"
+    WORKFLOW_DESCRIPTION = "workflow.description"
     WORKFLOW_DEFINITION = "workflow.definition"
     WORKFLOW_BUILD_SPAN = "workflow.build"
     WORKFLOW_RUN_SPAN = "workflow.run"
@@ -208,6 +210,7 @@ class OtelAttr(str, Enum):
     MESSAGE_SOURCE_ID = "message.source_id"
     MESSAGE_TARGET_ID = "message.target_id"
     MESSAGE_TYPE = "message.type"
+    MESSAGE_PAYLOAD_TYPE = "message.payload_type"
     MESSAGE_DESTINATION_EXECUTOR_ID = "message.destination_executor_id"
 
     # Activity events
@@ -276,11 +279,17 @@ def _get_azure_monitor_exporters(
     credential: "TokenCredential | None" = None,
 ) -> list["LogExporter | SpanExporter | MetricExporter"]:
     """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
-    from azure.monitor.opentelemetry.exporter import (
-        AzureMonitorLogExporter,
-        AzureMonitorMetricExporter,
-        AzureMonitorTraceExporter,
-    )
+    try:
+        from azure.monitor.opentelemetry.exporter import (
+            AzureMonitorLogExporter,
+            AzureMonitorMetricExporter,
+            AzureMonitorTraceExporter,
+        )
+    except ImportError as e:
+        raise ImportError(
+            "azure-monitor-opentelemetry-exporter is required for Azure Monitor exporters. "
+            "Install it with: pip install azure-monitor-opentelemetry-exporter>=1.0.0b41"
+        ) from e
 
     exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
     for conn_string in connection_strings:
@@ -347,18 +356,33 @@ class ObservabilitySettings(AFBaseSettings):
     Warning:
         Sensitive events should only be enabled on test and development environments.
 
-    Args:
+    Keyword Args:
         enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-                    (Env var ENABLE_OTEL)
+            Can be set via environment variable ENABLE_OTEL.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
-                    (Env var ENABLE_SENSITIVE_DATA)
+            Can be set via environment variable ENABLE_SENSITIVE_DATA.
         applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
-                    (Env var APPLICATIONINSIGHTS_CONNECTION_STRING)
-        otlp_endpoint:  The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-                    (Env var OTLP_ENDPOINT)
-        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code extensions are listening on.
-                    Default is None.
-                    (Env var VS_CODE_EXTENSION_PORT)
+            Can be set via environment variable APPLICATIONINSIGHTS_CONNECTION_STRING.
+        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
+            Can be set via environment variable OTLP_ENDPOINT.
+        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code extensions are listening on.
+            Default is None.
+            Can be set via environment variable VS_CODE_EXTENSION_PORT.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import ObservabilitySettings
+
+            # Using environment variables
+            # Set ENABLE_OTEL=true
+            # Set APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+            settings = ObservabilitySettings()
+
+            # Or passing parameters directly
+            settings = ObservabilitySettings(
+                enable_otel=True, applicationinsights_connection_string="InstrumentationKey=..."
+            )
     """
 
     env_prefix: ClassVar[str] = ""
@@ -792,6 +816,8 @@ def _trace_get_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -806,7 +832,7 @@ def _trace_get_response(
         ) -> "ChatResponse":
             global OBSERVABILITY_SETTINGS
             if not OBSERVABILITY_SETTINGS.ENABLED:
-                # If model diagnostics are not enabled, just return the completion
+                # If model_id diagnostics are not enabled, just return the completion
                 return await func(
                     self,
                     messages=messages,
@@ -817,9 +843,10 @@ def _trace_get_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -829,7 +856,7 @@ def _trace_get_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -878,6 +905,8 @@ def _trace_get_streaming_response(
 
     Args:
         func: The function to trace.
+
+    Keyword Args:
         provider_name: The model provider name.
     """
 
@@ -902,9 +931,10 @@ def _trace_get_streaming_response(
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
             model_id = (
-                kwargs.get("model")
+                kwargs.get("model_id")
                 or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
                 or getattr(self, "model_id", None)
+                or "unknown"
             )
             service_url = str(
                 service_url_func()
@@ -914,7 +944,7 @@ def _trace_get_streaming_response(
             attributes = _get_span_attributes(
                 operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
                 provider_name=provider_name,
-                model_id=model_id,
+                model=model_id,
                 service_url=service_url,
                 **kwargs,
             )
@@ -991,7 +1021,7 @@ def use_observability(
         .. code-block:: python
 
             from agent_framework import use_observability, setup_observability
-            from agent_framework._clients import ChatClientProtocol
+            from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
@@ -1074,6 +1104,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1082,7 +1113,7 @@ def _trace_agent_run(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1090,7 +1121,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1119,7 +1150,6 @@ def _trace_agent_run_stream(
     """Decorator to trace streaming agent run activities.
 
     Args:
-        agent: The agent that is wrapped.
         run_streaming_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
     """
@@ -1144,6 +1174,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1152,7 +1183,7 @@ def _trace_agent_run_stream(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1160,7 +1191,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1297,7 +1328,10 @@ def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
 ) -> Generator["trace.Span", Any, Any]:
-    """Start a span for a agent run."""
+    """Start a span for a agent run.
+
+    Note: `attributes` must contain the `span_name_attribute` key.
+    """
     span = get_tracer().start_span(f"{attributes[OtelAttr.OPERATION]} {attributes[span_name_attribute]}")
     span.set_attributes(attributes)
     with trace.use_span(
@@ -1326,7 +1360,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    attributes[SpanAttributes.LLM_REQUEST_MODEL] = kwargs.get("model_id", "unknown")
+    if model_id := kwargs.get("model", chat_options.model_id):
+        attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
     if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):
@@ -1386,7 +1421,7 @@ def _capture_messages(
     finish_reason: "FinishReason | None" = None,
 ) -> None:
     """Log messages with extra information."""
-    from ._clients import prepare_messages
+    from ._types import prepare_messages
 
     prepped = prepare_messages(messages)
     otel_messages: list[dict[str, Any]] = []
@@ -1439,10 +1474,10 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
                         elif isinstance(item, BaseModel):
                             res.append(item.model_dump(exclude_none=True))
                         else:
-                            res.append(json.dumps(item))
-                    response = json.dumps(res)
+                            res.append(json.dumps(item, default=str))
+                    response = json.dumps(res, default=str)
                 else:
-                    response = json.dumps(content.result)
+                    response = json.dumps(content.result, default=str)
             return {"type": "tool_call_response", "id": content.call_id, "response": response}
         case _:
             # GenericPart in otel output messages json spec.
@@ -1547,6 +1582,7 @@ def create_processing_span(
     executor_id: str,
     executor_type: str,
     message_type: str,
+    payload_type: str,
     source_trace_contexts: list[dict[str, str]] | None = None,
     source_span_ids: list[str] | None = None,
 ) -> "_AgnosticContextManager[trace.Span]":
@@ -1555,6 +1591,14 @@ def create_processing_span(
     Processing spans are created as children of the current workflow span and
     linked (not nested) to the source publishing spans for causality tracking.
     This supports multiple links for fan-in scenarios.
+
+    Args:
+        executor_id: The unique ID of the executor processing the message.
+        executor_type: The type of the executor (class name).
+        message_type: The type of the message being processed ("standard" or "response").
+        payload_type: The data type of the message being processed.
+        source_trace_contexts: Optional trace contexts from source spans for linking.
+        source_span_ids: Optional source span IDs for linking.
     """
     # Create links to source spans for causality without nesting
     links: list[trace.Link] = []
@@ -1588,6 +1632,7 @@ def create_processing_span(
             OtelAttr.EXECUTOR_ID: executor_id,
             OtelAttr.EXECUTOR_TYPE: executor_type,
             OtelAttr.MESSAGE_TYPE: message_type,
+            OtelAttr.MESSAGE_PAYLOAD_TYPE: payload_type,
         },
         links=links,
     )

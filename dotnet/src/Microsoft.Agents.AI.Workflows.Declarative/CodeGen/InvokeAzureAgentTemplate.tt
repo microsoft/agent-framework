@@ -19,7 +19,6 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         <#
         EvaluateStringExpression(this.Model.ConversationId, "conversationId", isNullable: true);
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
-        EvaluateMessageTemplate(this.Model.Input?.AdditionalInstructions, "additionalInstructions");
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");#>
         
         AgentRunResponse agentResponse =
@@ -28,7 +27,6 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
                 agentName,
                 conversationId, 
                 autoSend, 
-                additionalInstructions, 
                 inputMessages, 
                 cancellationToken).ConfigureAwait(false);
 

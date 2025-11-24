@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Microsoft.Agents.AI.DevUI.UnitTests": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:63009;http://localhost:63010"
+    }
+  }
+}

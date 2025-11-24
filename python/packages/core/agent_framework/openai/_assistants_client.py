@@ -2,7 +2,7 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Mapping, MutableMapping, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -37,6 +37,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
 from ..observability import use_observability
@@ -59,11 +60,12 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     def __init__(
         self,
+        *,
         model_id: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
         thread_id: str | None = None,
-        api_key: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -74,27 +76,44 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     ) -> None:
         """Initialize an OpenAI Assistants client.
 
-        Args:
-            model_id: OpenAI model name, see
-                https://platform.openai.com/docs/models
+        Keyword Args:
+            model_id: OpenAI model name, see https://platform.openai.com/docs/models.
+                Can also be set via environment variable OPENAI_CHAT_MODEL_ID.
             assistant_id: The ID of an OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
-                conversation_id property, when making a request.
+                conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
-            api_key: The optional API key to use. If provided will override,
-                the env vars or .env file value.
-            org_id: The optional org ID to use. If provided will override,
-                the env vars or .env file value.
-            base_url: The optional base URL to use. If provided will override,
+            api_key: The API key to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_API_KEY.
+            org_id: The org ID to use. If provided will override the env vars or .env file value.
+                Can also be set via environment variable OPENAI_ORG_ID.
+            base_url: The base URL to use. If provided will override the standard value.
+                Can also be set via environment variable OPENAI_BASE_URL.
             default_headers: The default headers mapping of string keys to
-                string values for HTTP requests. (Optional)
-            async_client: An existing client to use. (Optional)
+                string values for HTTP requests.
+            async_client: An existing client to use.
             env_file_path: Use the environment settings file as a fallback
-                to environment variables. (Optional)
-            env_file_encoding: The encoding of the environment settings file. (Optional)
+                to environment variables.
+            env_file_encoding: The encoding of the environment settings file.
             kwargs: Other keyword parameters.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.openai import OpenAIAssistantsClient
+
+                # Using environment variables
+                # Set OPENAI_API_KEY=sk-...
+                # Set OPENAI_CHAT_MODEL_ID=gpt-4
+                client = OpenAIAssistantsClient()
+
+                # Or passing parameters directly
+                client = OpenAIAssistantsClient(model_id="gpt-4", api_key="sk-...")
+
+                # Or loading from a .env file
+                client = OpenAIAssistantsClient(env_file_path="path/to/.env")
         """
         try:
             openai_settings = OpenAISettings(
@@ -120,7 +139,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         super().__init__(
             model_id=openai_settings.chat_model_id,
-            api_key=openai_settings.api_key.get_secret_value() if openai_settings.api_key else None,
+            api_key=self._get_api_key(openai_settings.api_key),
             org_id=openai_settings.org_id,
             default_headers=default_headers,
             client=async_client,
@@ -142,7 +161,8 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     async def close(self) -> None:
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
-            await self.client.beta.assistants.delete(self.assistant_id)
+            client = await self.ensure_client()
+            await client.beta.assistants.delete(self.assistant_id)
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
@@ -196,7 +216,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
-            created_assistant = await self.client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
+            if not self.model_id:
+                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+
+            client = await self.ensure_client()
+            created_assistant = await client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
 
@@ -214,6 +238,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
+        client = await self.ensure_client()
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
@@ -221,7 +246,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
-            stream = self.client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
                 run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
             )
             final_thread_id = thread_run.thread_id
@@ -230,7 +255,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
 
             # Now create a new run and stream the results.
-            stream = self.client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
                 assistant_id=assistant_id, thread_id=final_thread_id, **run_options
             )
 
@@ -238,19 +263,21 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
         """Get any active run for the given thread."""
+        client = await self.ensure_client()
         if thread_id is None:
             return None
 
-        async for run in self.client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
+        async for run in client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
             if run.status not in ["completed", "cancelled", "failed", "expired"]:
                 return run
         return None
 
     async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
+        client = await self.ensure_client()
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
-            thread = await self.client.beta.threads.create(  # type: ignore[reportDeprecated]
+            thread = await client.beta.threads.create(  # type: ignore[reportDeprecated]
                 messages=run_options["additional_messages"],
                 tool_resources=run_options.get("tool_resources"),
                 metadata=run_options.get("metadata"),
@@ -261,7 +288,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None:
             # There was an active run; we need to cancel it before starting a new run.
-            await self.client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
+            await client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
 
         return thread_id
 
@@ -389,7 +416,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice
+                    run_options["tool_choice"] = chat_options.tool_choice.mode
                 elif (
                     isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
@@ -406,7 +433,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     "json_schema": chat_options.response_format.model_json_schema(),
                 }
 
-        instructions: list[str] = [chat_options.instructions] if chat_options and chat_options.instructions else []
+        instructions: list[str] = []
         tool_results: list[FunctionResultContent] | None = None
 
         additional_messages: list[AdditionalMessage] | None = None
@@ -481,7 +508,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
                 if tool_outputs is None:
                     tool_outputs = []
-                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=str(function_result_content.result)))
+                if function_result_content.result:
+                    output = prepare_function_call_results(function_result_content.result)
+                else:
+                    output = "No output received."
+                tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
 

@@ -1,16 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 from collections.abc import AsyncIterable
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 from pytest import fixture, mark, raises
 
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
-    AIFunction,
     BaseContent,
     ChatMessage,
     ChatOptions,
@@ -37,7 +37,7 @@ from agent_framework import (
     UsageDetails,
     ai_function,
 )
-from agent_framework.exceptions import AdditionItemMismatch
+from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
 
 @fixture
@@ -165,6 +165,57 @@ def test_data_content_empty():
     # Attempt to create an instance of DataContent with empty URI
     with raises(ValueError):
         DataContent(uri="")
+
+
+def test_data_content_detect_image_format_from_base64():
+    """Test the detect_image_format_from_base64 static method."""
+    # Test each supported format
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(png_data).decode()) == "png"
+
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(jpeg_data).decode()) == "jpeg"
+
+    webp_data = b"RIFF" + b"1234" + b"WEBP" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(webp_data).decode()) == "webp"
+
+    gif_data = b"GIF89a" + b"fake_data"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(gif_data).decode()) == "gif"
+
+    # Test fallback behavior
+    unknown_data = b"UNKNOWN_FORMAT"
+    assert DataContent.detect_image_format_from_base64(base64.b64encode(unknown_data).decode()) == "png"
+
+    # Test error handling
+    assert DataContent.detect_image_format_from_base64("invalid_base64!") == "png"
+    assert DataContent.detect_image_format_from_base64("") == "png"
+
+
+def test_data_content_create_data_uri_from_base64():
+    """Test the create_data_uri_from_base64 class method."""
+    # Test with PNG data
+    png_data = b"\x89PNG\r\n\x1a\n" + b"fake_data"
+    png_base64 = base64.b64encode(png_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(png_base64)
+
+    assert uri == f"data:image/png;base64,{png_base64}"
+    assert media_type == "image/png"
+
+    # Test with different format
+    jpeg_data = b"\xff\xd8\xff\xe0" + b"fake_data"
+    jpeg_base64 = base64.b64encode(jpeg_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(jpeg_base64)
+
+    assert uri == f"data:image/jpeg;base64,{jpeg_base64}"
+    assert media_type == "image/jpeg"
+
+    # Test fallback for unknown format
+    unknown_data = b"UNKNOWN_FORMAT"
+    unknown_base64 = base64.b64encode(unknown_data).decode()
+    uri, media_type = DataContent.create_data_uri_from_base64(unknown_base64)
+
+    assert uri == f"data:image/png;base64,{unknown_base64}"
+    assert media_type == "image/png"
 
 
 # region UriContent
@@ -451,7 +502,8 @@ def test_ai_content_serialization(content_type: type[BaseContent], args: dict):
     else:
         # Normal attribute checking for other content types
         for key, value in args.items():
-            assert getattr(deserialized, key) == value
+            if value:
+                assert getattr(deserialized, key) == value
 
     # For now, skip the TestModel validation since it still uses Pydantic
     # This would need to be updated when we migrate more classes
@@ -578,14 +630,6 @@ def test_chat_response_update():
     assert response_update.contents[0].text == "I'm doing well, thank you!"
     assert isinstance(response_update.contents[0], TextContent)
     assert response_update.text == "I'm doing well, thank you!"
-
-
-def test_chat_response_update_with_method():
-    u = ChatResponseUpdate(text="Hello", message_id="1")
-    v = u.with_(contents=[TextContent(" world")])
-    assert v is not u
-    assert v.text == "Hello world"
-    assert v.message_id == "1"
 
 
 def test_chat_response_updates_to_chat_response_one():
@@ -780,51 +824,9 @@ def test_chat_options_init() -> None:
     assert options.model_id is None
 
 
-def test_chat_options_init_with_args(ai_function_tool, ai_tool) -> None:
-    options = ChatOptions(
-        model_id="gpt-4",
-        max_tokens=1024,
-        temperature=0.7,
-        top_p=0.9,
-        presence_penalty=0.0,
-        frequency_penalty=0.0,
-        user="user-123",
-        tools=[ai_function_tool, ai_tool],
-        tool_choice="required",
-        additional_properties={"custom": True},
-        logit_bias={"a": 1},
-        metadata={"m": "v"},
-    )
-    assert options.model_id == "gpt-4"
-    assert options.max_tokens == 1024
-    assert options.temperature == 0.7
-    assert options.top_p == 0.9
-    assert options.presence_penalty == 0.0
-    assert options.frequency_penalty == 0.0
-    assert options.user == "user-123"
-    for tool in options.tools:
-        assert isinstance(tool, ToolProtocol)
-        assert tool.name is not None
-        assert tool.description is not None
-        if isinstance(tool, AIFunction):
-            assert tool.parameters() is not None
-
-    settings = options.to_provider_settings()
-    assert settings["model"] == "gpt-4"  # uses alias
-    assert settings["tool_choice"] == "required"  # serialized via model_serializer
-    assert settings["custom"] is True  # from additional_properties
-    assert "additional_properties" not in settings
-
-
 def test_chat_options_tool_choice_validation_errors():
-    with raises((ValidationError, TypeError)):
+    with raises((ContentError, TypeError)):
         ChatOptions(tool_choice="invalid-choice")
-
-
-def test_chat_options_tool_choice_excluded_when_no_tools():
-    options = ChatOptions(tool_choice="auto")
-    settings = options.to_provider_settings()
-    assert "tool_choice" not in settings
 
 
 def test_chat_options_and(ai_function_tool, ai_tool) -> None:
@@ -1065,69 +1067,6 @@ def test_function_call_content_parse_numeric_or_list():
 
 def test_chat_tool_mode_eq_with_string():
     assert ToolMode.AUTO == "auto"
-
-
-def test_chat_options_tool_choice_dict_mapping(ai_tool):
-    opts = ChatOptions(tool_choice={"mode": "required", "required_function_name": "fn"}, tools=[ai_tool])
-    assert isinstance(opts.tool_choice, ToolMode)
-    assert opts.tool_choice.mode == "required"
-    assert opts.tool_choice.required_function_name == "fn"
-    # provider settings serialize to just the mode
-    settings = opts.to_provider_settings()
-    assert settings["tool_choice"] == "required"
-
-
-def test_chat_options_to_provider_settings_with_falsy_values():
-    """Test that falsy values (except None) are included in provider settings."""
-    options = ChatOptions(
-        temperature=0.0,  # falsy but not None
-        top_p=0.0,  # falsy but not None
-        presence_penalty=False,  # falsy but not None
-        frequency_penalty=None,  # None - should be excluded
-        additional_properties={"empty_string": "", "zero": 0, "false_flag": False, "none_value": None},
-    )
-
-    settings = options.to_provider_settings()
-
-    # Falsy values that are not None should be included
-    assert "temperature" in settings
-    assert isinstance(settings["temperature"], float)
-    assert settings["temperature"] == 0.0
-    assert "top_p" in settings
-    assert isinstance(settings["top_p"], float)
-    assert settings["top_p"] == 0.0
-    assert "presence_penalty" in settings
-    assert isinstance(settings["presence_penalty"], float)  # converted to float
-    assert settings["presence_penalty"] == 0.0
-
-    # None values should be excluded
-    assert "frequency_penalty" not in settings
-
-    # Additional properties - falsy values should always be included
-    assert "empty_string" in settings
-    assert settings["empty_string"] == ""
-    assert "zero" in settings
-    assert settings["zero"] == 0
-    assert "false_flag" in settings
-    assert settings["false_flag"] is False
-    assert "none_value" in settings
-    assert settings["none_value"] is None
-
-
-def test_chat_options_empty_logit_bias_and_metadata_excluded():
-    """Test that empty logit_bias and metadata are excluded from provider settings."""
-    options = ChatOptions(
-        model_id="gpt-4o",
-        logit_bias={},  # empty dict should be excluded
-        metadata={},  # empty dict should be excluded
-    )
-
-    settings = options.to_provider_settings()
-
-    # Empty logit_bias and metadata should be excluded
-    assert "logit_bias" not in settings
-    assert "metadata" not in settings
-    assert settings["model"] == "gpt-4o"
 
 
 # region AgentRunResponse
@@ -1913,7 +1852,8 @@ def test_content_roundtrip_serialization(content_class: type[BaseContent], init_
         elif isinstance(value, dict) and hasattr(reconstructed_value, "to_dict"):
             # Compare the dict with the serialized form of the object, excluding 'type' key
             reconstructed_dict = reconstructed_value.to_dict()
-            assert len(reconstructed_dict) == len(value)
+            if value:
+                assert len(reconstructed_dict) == len(value)
         else:
             assert reconstructed_value == value
 

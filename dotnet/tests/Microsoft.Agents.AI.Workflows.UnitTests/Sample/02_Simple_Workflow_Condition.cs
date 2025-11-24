@@ -3,6 +3,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Reflection;
 
@@ -28,9 +29,9 @@ internal static class Step2EntryPoint
         }
     }
 
-    public static async ValueTask<string> RunAsync(TextWriter writer, string input = "This is a spam message.")
+    public static async ValueTask<string> RunAsync(TextWriter writer, IWorkflowExecutionEnvironment environment, string input = "This is a spam message.")
     {
-        StreamingRun handle = await InProcessExecution.StreamAsync(WorkflowInstance, input).ConfigureAwait(false);
+        StreamingRun handle = await environment.StreamAsync(WorkflowInstance, input: input).ConfigureAwait(false);
         await foreach (WorkflowEvent evt in handle.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (evt)
@@ -51,17 +52,17 @@ internal static class Step2EntryPoint
 }
 
 internal sealed class DetectSpamExecutor(string id, params string[] spamKeywords) :
-    ReflectingExecutor<DetectSpamExecutor>(id), IMessageHandler<string, bool>
+    ReflectingExecutor<DetectSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<string, bool>
 {
-    public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context) =>
+    public async ValueTask<bool> HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default) =>
         spamKeywords.Any(keyword => message.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
 }
 
-internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id), IMessageHandler<bool>
+internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<RespondToMessageExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Message processed successfully.";
 
-    public async ValueTask HandleAsync(bool message, IWorkflowContext context)
+    public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (message)
         {
@@ -69,18 +70,18 @@ internal sealed class RespondToMessageExecutor(string id) : ReflectingExecutor<R
             throw new InvalidOperationException("Received a spam message that should not be getting a reply.");
         }
 
-        await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
+        await Task.Delay(1000, cancellationToken).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.YieldOutputAsync(ActionResult)
+        await context.YieldOutputAsync(ActionResult, cancellationToken)
                      .ConfigureAwait(false);
     }
 }
 
-internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id), IMessageHandler<bool>
+internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveSpamExecutor>(id, declareCrossRunShareable: true), IMessageHandler<bool>
 {
     public const string ActionResult = "Spam message removed.";
 
-    public async ValueTask HandleAsync(bool message, IWorkflowContext context)
+    public async ValueTask HandleAsync(bool message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         if (!message)
         {
@@ -88,9 +89,9 @@ internal sealed class RemoveSpamExecutor(string id) : ReflectingExecutor<RemoveS
             throw new InvalidOperationException("Received a non-spam message that should not be getting removed.");
         }
 
-        await Task.Delay(1000).ConfigureAwait(false); // Simulate some processing delay
+        await Task.Delay(1000, cancellationToken).ConfigureAwait(false); // Simulate some processing delay
 
-        await context.YieldOutputAsync(ActionResult)
+        await context.YieldOutputAsync(ActionResult, cancellationToken)
                      .ConfigureAwait(false);
     }
 }

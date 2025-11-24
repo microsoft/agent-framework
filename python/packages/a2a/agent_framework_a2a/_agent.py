@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
+from a2a.client.auth.interceptor import AuthInterceptor
 from a2a.types import (
     AgentCard,
     Artifact,
@@ -78,11 +79,12 @@ class A2AAgent(BaseAgent):
         url: str | None = None,
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
+        auth_interceptor: AuthInterceptor | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
 
-        Args:
+        Keyword Args:
             name: The name of the agent.
             id: The unique identifier for the agent, will be created automatically if not provided.
             description: A brief description of the agent's purpose.
@@ -90,6 +92,7 @@ class A2AAgent(BaseAgent):
             url: The URL for the A2A server.
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
+            auth_interceptor: Optional authentication interceptor for secured endpoints.
             kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
@@ -123,7 +126,22 @@ class A2AAgent(BaseAgent):
             supported_transports=[TransportProtocol.jsonrpc],
         )
         factory = ClientFactory(config)
-        self.client = factory.create(agent_card)
+        interceptors = [auth_interceptor] if auth_interceptor is not None else None
+
+        # Attempt transport negotiation with the provided agent card
+        try:
+            self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+        except Exception as transport_error:
+            # Transport negotiation failed - fall back to minimal agent card with JSONRPC
+            fallback_card = minimal_agent_card(agent_card.url, [TransportProtocol.jsonrpc])
+            try:
+                self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"A2A transport negotiation failed. "
+                    f"Primary error: {transport_error}. "
+                    f"Fallback error: {fallback_error}"
+                ) from transport_error
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""
@@ -155,6 +173,8 @@ class A2AAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -179,6 +199,8 @@ class A2AAgent(BaseAgent):
 
         Args:
             messages: The message(s) to send to the agent.
+
+        Keyword Args:
             thread: The conversation thread associated with the message(s).
             kwargs: Additional keyword arguments.
 
@@ -366,6 +388,17 @@ class A2AAgent(BaseAgent):
         if task.artifacts is not None:
             for artifact in task.artifacts:
                 messages.append(self._artifact_to_chat_message(artifact))
+        elif task.history is not None and len(task.history) > 0:
+            # Include the last history item as the agent response
+            history_item = task.history[-1]
+            contents = self._a2a_parts_to_contents(history_item.parts)
+            messages.append(
+                ChatMessage(
+                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
+                    contents=contents,
+                    raw_representation=history_item,
+                )
+            )
 
         return messages
 

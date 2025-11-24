@@ -28,25 +28,21 @@ static string GetWeather([Description("The location to get the weather for.")] s
 static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
-// Adding middleware to the chat client level
-var chatClient = azureOpenAIClient.AsIChatClient()
+// Adding middleware to the chat client level and building an agent on top of it
+var originalAgent = azureOpenAIClient.AsIChatClient()
     .AsBuilder()
-        .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
-    .Build();
-
-// For flexibility we create the agent without any middleware.
-var originalAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(
+    .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
+    .BuildAIAgent(
         instructions: "You are an AI assistant that helps people find information.",
-        // Agent level tools
-        tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]));
+        tools: [AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime))]);
 
 // Adding middleware to the agent level
 var middlewareEnabledAgent = originalAgent
     .AsBuilder()
-        .Use(FunctionCallMiddleware)
-        .Use(FunctionCallOverrideWeather)
-        .Use(PIIMiddleware, null)
-        .Use(GuardrailMiddleware, null)
+    .Use(FunctionCallMiddleware)
+    .Use(FunctionCallOverrideWeather)
+    .Use(PIIMiddleware, null)
+    .Use(GuardrailMiddleware, null)
     .Build();
 
 var thread = middlewareEnabledAgent.GetNewThread();
@@ -83,15 +79,15 @@ var optionsWithApproval = new ChatClientAgentRunOptions(new()
 {
     ChatClientFactory = (chatClient) => chatClient
         .AsBuilder()
-            .Use(PerRequestChatClientMiddleware, null) // Using the non-streaming for handling streaming as well
+        .Use(PerRequestChatClientMiddleware, null) // Using the non-streaming for handling streaming as well
         .Build()
 };
 
 // var response = middlewareAgent  // Using per-request middleware pipeline in addition to existing agent-level middleware
 var response = await originalAgent // Using per-request middleware pipeline without existing agent-level middleware
     .AsBuilder()
-        .Use(PerRequestFunctionCallingMiddleware)
-        .Use(ConsolePromptingApprovalMiddleware, null)
+    .Use(PerRequestFunctionCallingMiddleware)
+    .Use(ConsolePromptingApprovalMiddleware, null)
     .Build()
     .RunAsync("What's the current time and the weather in Seattle?", thread, optionsWithApproval);
 
@@ -158,10 +154,11 @@ async Task<AgentRunResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Ag
     static string FilterPii(string content)
     {
         // Regex patterns for PII detection (simplified for demonstration)
-        Regex[] piiPatterns = [
+        Regex[] piiPatterns =
+        [
             new(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled), // Phone number (e.g., 123-456-7890)
-                    new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
-                    new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
+            new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
+            new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
         ];
 
         foreach (var pattern in piiPatterns)

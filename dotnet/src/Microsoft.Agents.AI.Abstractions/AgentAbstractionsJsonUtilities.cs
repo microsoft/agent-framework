@@ -50,12 +50,16 @@ public static partial class AgentAbstractionsJsonUtilities
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // same as AIJsonUtilities
         };
 
-        // Chain with all supported types from Microsoft.Extensions.AI.Abstractions.
+        // Chain in the resolvers from both AIJsonUtilities and our source generated context.
+        // We want AIJsonUtilities first to ensure any M.E.AI types are handled via its resolver.
+        options.TypeInfoResolverChain.Clear();
+        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
+        options.TypeInfoResolverChain.Add(JsonContext.Default.Options.TypeInfoResolver!);
+
         // If reflection-based serialization is enabled by default, this includes
         // the default type info resolver that utilizes reflection, but we need to manually
         // apply the same converter AIJsonUtilities adds for string-based enum serialization,
         // as that's not propagated as part of the resolver.
-        options.TypeInfoResolverChain.Add(AIJsonUtilities.DefaultOptions.TypeInfoResolver!);
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             options.Converters.Add(new JsonStringEnumConverter());

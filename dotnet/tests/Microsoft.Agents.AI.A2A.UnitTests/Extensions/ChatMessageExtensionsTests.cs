@@ -17,7 +17,7 @@ public sealed class ChatMessageExtensionsTests
         // Arrange
         var contents = new List<AIContent>
         {
-            new HostedFileContent("https://example.com/report.pdf"),
+            new UriContent("https://example.com/report.pdf", "file/pdf"),
             new TextContent("please summarize the file content"),
             new TextContent("and send it to me over email")
         };
@@ -39,8 +39,7 @@ public sealed class ChatMessageExtensionsTests
 
         var filePart = Assert.IsType<FilePart>(a2aMessage.Parts[0]);
         Assert.NotNull(filePart.File);
-        var fileWithUri = Assert.IsType<FileWithUri>(filePart.File);
-        Assert.Equal("https://example.com/report.pdf", fileWithUri.Uri);
+        Assert.Equal("https://example.com/report.pdf", filePart.File.Uri?.ToString());
 
         var secondTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[1]);
         Assert.Equal("please summarize the file content", secondTextPart.Text);
@@ -54,7 +53,7 @@ public sealed class ChatMessageExtensionsTests
     {
         // Arrange
         var firstMessage = new ChatMessage(ChatRole.User, [
-            new HostedFileContent("https://example.com/report.pdf")
+            new UriContent("https://example.com/report.pdf", "file/pdf"),
         ]);
         var secondMessage = new ChatMessage(ChatRole.User, [
             new TextContent("please summarize the file content")
@@ -79,8 +78,7 @@ public sealed class ChatMessageExtensionsTests
 
         var filePart = Assert.IsType<FilePart>(a2aMessage.Parts[0]);
         Assert.NotNull(filePart.File);
-        var fileWithUri = Assert.IsType<FileWithUri>(filePart.File);
-        Assert.Equal("https://example.com/report.pdf", fileWithUri.Uri);
+        Assert.Equal("https://example.com/report.pdf", filePart.File.Uri?.ToString());
 
         var secondTextPart = Assert.IsType<TextPart>(a2aMessage.Parts[1]);
         Assert.Equal("please summarize the file content", secondTextPart.Text);

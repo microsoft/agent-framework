@@ -19,12 +19,19 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
     {
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };
 
-        await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
+        // Capture the created message, which includes the assigned ID.
+        newMessage = await agentProvider.CreateMessageAsync(conversationId, newMessage, cancellationToken).ConfigureAwait(false);
 
         await this.AssignAsync(this.Model.Message?.Path, newMessage.ToRecord(), context).ConfigureAwait(false);
+
+        if (isWorkflowConversation)
+        {
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentRunResponse(newMessage)), cancellationToken).ConfigureAwait(false);
+        }
 
         return default;
     }
