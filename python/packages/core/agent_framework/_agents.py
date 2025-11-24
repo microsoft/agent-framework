@@ -853,6 +853,7 @@ class ChatAgent(BaseAgent):
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
             model_id=model_id,
             conversation_id=thread.service_thread_id,
@@ -871,7 +872,7 @@ class ChatAgent(BaseAgent):
             tools=final_tools,
             top_p=top_p,
             user=user,
-            **(additional_chat_options or {}),
+            additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
@@ -986,6 +987,7 @@ class ChatAgent(BaseAgent):
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
             conversation_id=thread.service_thread_id,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
@@ -1004,7 +1006,7 @@ class ChatAgent(BaseAgent):
             tools=final_tools,
             top_p=top_p,
             user=user,
-            **(additional_chat_options or {}),
+            additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
 
         # Filter chat_options from kwargs to prevent duplicate keyword argument

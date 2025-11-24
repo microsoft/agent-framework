@@ -8,7 +8,7 @@ This Agent Sample is intended to introduce you the basics of integrating Agent F
 
 ## Prerequisites
 
-- [.NET 8.0 SDK or later](https://dotnet.microsoft.com/download)
+- [.NET 10.0 SDK or later](https://dotnet.microsoft.com/download)
 - [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started?tabs=windows)
 - [Microsoft 365 Agents Toolkit](https://github.com/OfficeDev/microsoft-365-agents-toolkit)
 

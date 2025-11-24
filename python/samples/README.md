@@ -118,6 +118,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/openai/openai_chat_client_with_local_mcp.py`](./getting_started/agents/openai/openai_chat_client_with_local_mcp.py) | OpenAI Chat Client with Local MCP Example |
 | [`getting_started/agents/openai/openai_chat_client_with_thread.py`](./getting_started/agents/openai/openai_chat_client_with_thread.py) | OpenAI Chat Client with Thread Management Example |
 | [`getting_started/agents/openai/openai_chat_client_with_web_search.py`](./getting_started/agents/openai/openai_chat_client_with_web_search.py) | OpenAI Chat Client with Web Search Example |
+| [`getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py`](./getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py) | OpenAI Chat Client with runtime JSON Schema for structured output without a Pydantic model |
 | [`getting_started/agents/openai/openai_responses_client_basic.py`](./getting_started/agents/openai/openai_responses_client_basic.py) | OpenAI Responses Client Basic Example |
 | [`getting_started/agents/openai/openai_responses_client_image_analysis.py`](./getting_started/agents/openai/openai_responses_client_image_analysis.py) | OpenAI Responses Client Image Analysis Example |
 | [`getting_started/agents/openai/openai_responses_client_image_generation.py`](./getting_started/agents/openai/openai_responses_client_image_generation.py) | OpenAI Responses Client Image Generation Example |
@@ -186,6 +187,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 |------|-------------|
 | [`getting_started/evaluation/red_teaming/red_team_agent_sample.py`](./getting_started/evaluation/red_teaming/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
 | [`getting_started/evaluation/self_reflection/self_reflection.py`](./getting_started/evaluation/self_reflection/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
+| [`demos/workflow_evaluation/run_evaluation.py`](./demos/workflow_evaluation/run_evaluation.py) | Multi-agent workflow evaluation demo with travel planning agents evaluated using Azure AI Foundry evaluators |
 
 ## MCP (Model Context Protocol)
 
