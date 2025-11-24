@@ -28,10 +28,10 @@ from .._types import (
     Contents,
     DataContent,
     FinishReason,
-    FunctionCallContent,
-    FunctionResultContent,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
+    FunctionCallContent,
+    FunctionResultContent,
     Role,
     TextContent,
     UriContent,
@@ -367,12 +367,14 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                         result_content = "Error: " + str(content.exception)
                     else:
                         result_content = ""
-                    
-                    return [{
-                        "role": "tool",
-                        "tool_call_id": content.call_id,
-                        "content": result_content,
-                    }]
+
+                    return [
+                        {
+                            "role": "tool",
+                            "tool_call_id": content.call_id,
+                            "content": result_content,
+                        }
+                    ]
                 case FunctionApprovalRequestContent() | FunctionApprovalResponseContent():
                     # These need special handling - add them as content
                     if "content" not in msg:
@@ -384,8 +386,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     msg["content"].append(self._openai_content_parser(content))
 
         return [msg] if ("content" in msg or "tool_calls" in msg) else []
-
-
 
     def _openai_content_parser(self, content: Contents) -> dict[str, Any]:
         """Parse contents into the openai format."""

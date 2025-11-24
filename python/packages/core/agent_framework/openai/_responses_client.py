@@ -368,7 +368,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
     def _openai_chat_message_parser(self, message: ChatMessage, callidtoid: dict[str, str]) -> list[dict[str, Any]]:
         """Parse a chat message into the openai Responses format.
-        
+
         Returns a list because some content types (like approval responses) need to be
         top-level items separate from the message structure.
         """
@@ -401,12 +401,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         result_content = "Error: " + str(content.exception)
                     else:
                         result_content = ""
-                    
-                    return [{
-                        "role": "tool",
-                        "tool_call_id": content.call_id,
-                        "content": result_content,
-                    }]
+
+                    return [
+                        {
+                            "role": "tool",
+                            "tool_call_id": content.call_id,
+                            "content": result_content,
+                        }
+                    ]
                 case _:
                     if "content" not in msg:
                         msg["content"] = []
@@ -415,9 +417,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         # Only add the main message if it has content or tool_calls
         if "content" in msg or "tool_calls" in msg:
             all_messages.append(msg)
-        
-        return all_messages
 
+        return all_messages
 
     def _openai_content_parser(
         self,
@@ -524,7 +525,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case _:  # should catch UsageDetails and ErrorContent and HostedVectorStoreContent
                 logger.debug("Unsupported content type passed (type: %s)", type(content))
                 return {}
-
 
     # region Response creation methods
 
