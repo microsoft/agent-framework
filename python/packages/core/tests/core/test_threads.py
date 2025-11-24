@@ -384,6 +384,18 @@ class TestStoreState:
 
         assert len(state.messages) == 0
 
+    def test_init_none(self) -> None:
+        """Test ChatMessageStoreState initialization with None messages."""
+        state = ChatMessageStoreState(messages=None)
+
+        assert len(state.messages) == 0
+
+    def test_init_no_messages_arg(self) -> None:
+        """Test ChatMessageStoreState initialization without messages argument."""
+        state = ChatMessageStoreState()
+
+        assert len(state.messages) == 0
+
 
 class TestThreadState:
     """Test cases for AgentThreadState class."""
@@ -415,3 +427,22 @@ class TestThreadState:
 
         assert state.service_thread_id is None
         assert state.chat_message_store_state is None
+
+    def test_init_with_chat_message_store_state_no_messages(self) -> None:
+        """Test AgentThreadState initialization with chat_message_store_state without messages field.
+
+        This tests the scenario where a custom ChatMessageStore (like RedisChatMessageStore)
+        serializes its state without a 'messages' field, containing only configuration data
+        like thread_id, redis_url, etc.
+        """
+        store_data: dict[str, Any] = {
+            "type": "redis_store_state",
+            "thread_id": "test_thread_123",
+            "redis_url": "redis://localhost:6379",
+            "key_prefix": "chat_messages",
+        }
+        state = AgentThreadState.from_dict({"chat_message_store_state": store_data})
+
+        assert state.service_thread_id is None
+        assert state.chat_message_store_state is not None
+        assert state.chat_message_store_state.messages == []
