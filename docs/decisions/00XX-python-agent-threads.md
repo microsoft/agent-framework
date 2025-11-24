@@ -20,7 +20,7 @@ This all means that at various moments a thread can be different things and have
 
 ## Decision Drivers
 
-- Ease of use: make it easy for users to understand how to use threads in the Python SDK -> zen of python: "Explicit is better than implicit".
+- Ease of use: make it easy for users to understand how to use threads in the Python SDK -> Zen of Python: "Explicit is better than implicit".
 - Clarity: make it clear what a thread is and what it can do.
 
 ## Considered Options
