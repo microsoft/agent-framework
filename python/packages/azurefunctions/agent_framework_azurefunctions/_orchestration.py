@@ -123,7 +123,6 @@ class DurableAIAgent(AgentProtocol):
                 result = yield from agent.run("Hello", thread=thread)
         """
         message_str = self._normalize_messages(messages)
-        logger.debug(f"[DurableAIAgent] Running agent '{self.agent_name}' with message: {message_str[:100]}...")
 
         # Extract optional parameters from kwargs
         enable_tool_calls = kwargs.get("enable_tool_calls", True)
@@ -201,19 +200,12 @@ class DurableAIAgent(AgentProtocol):
     ) -> None:
         """Ensure the AgentRunResponse value is parsed into the expected response_format."""
         if response_format is not None and not isinstance(response.value, response_format):
-            logger.debug(
-                "[DurableAIAgent] Response value type %s does not match expected %s for correlation_id %s",
-                type(response.value),
-                response_format,
-                correlation_id,
-            )
-
             response.try_parse_value(response_format)
 
             logger.debug(
                 "[DurableAIAgent] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
                 correlation_id,
-                type(response.value),
+                type(response.value).__name__,
             )
 
     def run_stream(

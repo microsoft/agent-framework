@@ -172,10 +172,7 @@ class AgentEntity:
             return agent_run_response
 
         except Exception as exc:
-            import traceback
-
-            error_traceback = traceback.format_exc()
-            logger.error(f"[AgentEntity.run_agent] Agent execution failed. Full traceback:\n{error_traceback}")
+            logger.exception("[AgentEntity.run_agent] Agent execution failed.")
 
             # Create error message
             error_message = ChatMessage(
@@ -397,10 +394,7 @@ def create_agent_entity(
             logger.info(f"[entity_function] Operation {operation} completed successfully")
 
         except Exception as exc:
-            import traceback
-
-            logger.error("[entity_function] Error in entity: %s", exc)
-            logger.error(f"[entity_function] Traceback:\n{traceback.format_exc()}")
+            logger.exception("[entity_function] Error executing entity operation %s", exc)
             context.set_result({"error": str(exc), "status": "error"})
 
     def entity_function(context: df.DurableEntityContext) -> None:
