@@ -2,6 +2,7 @@
 
 """Unit tests for AgentFunctionApp."""
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 from unittest.mock import ANY, AsyncMock, Mock, patch
@@ -239,7 +240,7 @@ class TestAgentFunctionAppSetup:
 
         http_route_mock.assert_called_once_with("OverrideAgent")
         agent_entity_mock.assert_called_once_with(mock_agent, "OverrideAgent", ANY)
-        assert app.agent_http_endpoint_flags["OverrideAgent"] is True
+        assert app._agent_metadata["OverrideAgent"].http_endpoint_enabled is True
 
     def test_agent_override_disables_http_route_when_app_enabled(self) -> None:
         """Agent-level override should disable HTTP route even when app enables it."""
@@ -256,7 +257,7 @@ class TestAgentFunctionAppSetup:
 
         http_route_mock.assert_not_called()
         agent_entity_mock.assert_called_once_with(mock_agent, "DisabledOverride", ANY)
-        assert app.agent_http_endpoint_flags["DisabledOverride"] is False
+        assert app._agent_metadata["DisabledOverride"].http_endpoint_enabled is False
 
     def test_multiple_apps_independent(self) -> None:
         """Test that multiple AgentFunctionApp instances are independent."""
@@ -946,8 +947,8 @@ class TestMCPToolEndpoint:
             assert result == "Test response"
             get_response_mock.assert_called_once()
 
-    async def test_handle_mcp_tool_invocation_with_dict_context(self) -> None:
-        """Test _handle_mcp_tool_invocation with pre-parsed dict context."""
+    async def test_handle_mcp_tool_invocation_with_json_context(self) -> None:
+        """Test _handle_mcp_tool_invocation with JSON string context."""
         mock_agent = Mock()
         mock_agent.name = "TestAgent"
 
@@ -962,8 +963,8 @@ class TestMCPToolEndpoint:
         }
         client.read_entity_state.return_value = mock_state
 
-        # Create dict context
-        context = {"arguments": {"query": "test query", "threadId": "test-thread"}}
+        # Create JSON string context
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "test-thread"}})
 
         with patch.object(app, "_get_response_from_entity") as get_response_mock:
             get_response_mock.return_value = {"status": "success", "response": "Test response"}
@@ -981,8 +982,8 @@ class TestMCPToolEndpoint:
         app = AgentFunctionApp(agents=[mock_agent])
         client = AsyncMock()
 
-        # Context missing query
-        context = {"arguments": {}}
+        # Context missing query (as JSON string)
+        context = json.dumps({"arguments": {}})
 
         with pytest.raises(ValueError, match="missing required 'query' argument"):
             await app._handle_mcp_tool_invocation("TestAgent", context, client)
@@ -1031,7 +1032,6 @@ class TestMCPToolEndpoint:
         mock_agent.name = "HealthAgent"
 
         app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_endpoint=True)
-        app.agent_mcp_tool_flags["HealthAgent"] = True
 
         # Capture the health check handler function
         captured_handler = None

@@ -9,6 +9,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 import json
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
@@ -38,6 +39,22 @@ logger = get_logger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+
+@dataclass
+class AgentMetadata:
+    """Metadata for a registered agent.
+
+    Attributes:
+        agent: The agent instance implementing AgentProtocol
+        http_endpoint_enabled: Whether HTTP endpoint is enabled for this agent
+        mcp_tool_enabled: Whether MCP tool endpoint is enabled for this agent
+    """
+
+    agent: AgentProtocol
+    http_endpoint_enabled: bool
+    mcp_tool_enabled: bool
+
 
 if TYPE_CHECKING:
 
@@ -131,12 +148,10 @@ class AgentFunctionApp(DFAppBase):
         poll_interval_seconds: Delay (seconds) between polling attempts
     """
 
-    agents: dict[str, AgentProtocol]
+    _agent_metadata: dict[str, AgentMetadata]
     enable_health_check: bool
     enable_http_endpoints: bool
     enable_mcp_tool_endpoint: bool
-    agent_http_endpoint_flags: dict[str, bool]
-    agent_mcp_tool_flags: dict[str, bool]
 
     def __init__(
         self,
@@ -170,10 +185,8 @@ class AgentFunctionApp(DFAppBase):
         # Initialize parent DFApp
         super().__init__(http_auth_level=http_auth_level)
 
-        # Initialize agents dictionary
-        self.agents = {}
-        self.agent_http_endpoint_flags = {}
-        self.agent_mcp_tool_flags = {}
+        # Initialize agent metadata dictionary
+        self._agent_metadata = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
         self.enable_mcp_tool_endpoint = enable_mcp_tool_endpoint
@@ -203,6 +216,15 @@ class AgentFunctionApp(DFAppBase):
 
         logger.debug("[AgentFunctionApp] Initialization complete")
 
+    @property
+    def agents(self) -> dict[str, AgentProtocol]:
+        """Returns dict of agent names to agent instances.
+
+        Returns:
+            Dictionary mapping agent names to their AgentProtocol instances.
+        """
+        return {name: metadata.agent for name, metadata in self._agent_metadata.items()}
+
     def add_agent(
         self,
         agent: AgentProtocol,
@@ -217,9 +239,9 @@ class AgentFunctionApp(DFAppBase):
                    The agent must have a 'name' attribute.
             callback: Optional callback invoked during agent execution
             enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
-                                   If None, uses the app-level enable_http_endpoints setting.
+                                  The app level enable_http_endpoints setting will override this setting.
             enable_mcp_tool_endpoint: Optional flag to enable/disable MCP tool endpoint for this agent.
-                                      If None, uses the app-level enable_mcp_tool_endpoint setting.
+                                      The app level enable_mcp_tool_endpoint setting will override this setting.
 
         Raises:
             ValueError: If the agent doesn't have a 'name' attribute or if an agent
@@ -230,7 +252,7 @@ class AgentFunctionApp(DFAppBase):
         if name is None:
             raise ValueError("Agent does not have a 'name' attribute. All agents must have a 'name' attribute.")
 
-        if name in self.agents:
+        if name in self._agent_metadata:
             raise ValueError(f"Agent with name '{name}' is already registered. Each agent must have a unique name.")
 
         effective_enable_http_endpoint = (
@@ -253,9 +275,12 @@ class AgentFunctionApp(DFAppBase):
             f"[AgentFunctionApp] MCP tool trigger: {'enabled' if effective_enable_mcp_endpoint else 'disabled'}"
         )
 
-        self.agents[name] = agent
-        self.agent_mcp_tool_flags[name] = effective_enable_mcp_endpoint
-        self.agent_http_endpoint_flags[name] = effective_enable_http_endpoint
+        # Store agent metadata
+        self._agent_metadata[name] = AgentMetadata(
+            agent=agent,
+            http_endpoint_enabled=effective_enable_http_endpoint,
+            mcp_tool_enabled=effective_enable_mcp_endpoint,
+        )
 
         effective_callback = callback or self.default_callback
 
@@ -284,7 +309,7 @@ class AgentFunctionApp(DFAppBase):
         """
         normalized_name = str(agent_name)
 
-        if normalized_name not in self.agents:
+        if normalized_name not in self._agent_metadata:
             raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
 
         return DurableAIAgent(context, normalized_name)
@@ -318,7 +343,7 @@ class AgentFunctionApp(DFAppBase):
         self._setup_agent_entity(agent, agent_name, callback)
 
         if enable_mcp_tool_endpoint:
-            agent_description = getattr(agent, "description", None)
+            agent_description = agent.description
             self._setup_mcp_tool_trigger(agent_name, agent_description)
         else:
             logger.debug(f"[AgentFunctionApp] MCP tool trigger disabled for agent '{agent_name}'")
@@ -540,7 +565,7 @@ class AgentFunctionApp(DFAppBase):
         logger.debug("[AgentFunctionApp] Registered MCP tool trigger for agent: %s", agent_name)
 
     async def _handle_mcp_tool_invocation(
-        self, agent_name: str, context: str | dict[str, Any], client: df.DurableOrchestrationClient
+        self, agent_name: str, context: str, client: df.DurableOrchestrationClient
     ) -> str:
         """Handle an MCP tool invocation.
 
@@ -548,7 +573,7 @@ class AgentFunctionApp(DFAppBase):
 
         Args:
             agent_name: Name of the agent being invoked
-            context: MCP tool invocation context, either as a JSON string or pre-parsed dict
+            context: MCP tool invocation context as a JSON string
             client: Durable orchestration client
 
         Returns:
@@ -560,14 +585,11 @@ class AgentFunctionApp(DFAppBase):
         """
         logger.debug("[MCP Tool Handler] Processing invocation for agent '%s'", agent_name)
 
-        # Parse context if it's a JSON string
-        if isinstance(context, str):
-            try:
-                parsed_context = json.loads(context)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid MCP context format: {e}") from e
-        else:
-            parsed_context = context
+        # Parse JSON context string
+        try:
+            parsed_context = json.loads(context)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid MCP context format: {e}") from e
 
         # Extract arguments from MCP context
         arguments = parsed_context.get("arguments", {}) if isinstance(parsed_context, dict) else {}
@@ -647,17 +669,14 @@ class AgentFunctionApp(DFAppBase):
             agent_info = [
                 {
                     "name": name,
-                    "type": type(agent).__name__,
-                    "http_endpoint_enabled": self.agent_http_endpoint_flags.get(
-                        name,
-                        self.enable_http_endpoints,
-                    ),
-                    "mcp_tool_enabled": self.agent_mcp_tool_flags.get(name, self.enable_mcp_tool_endpoint),
+                    "type": type(metadata.agent).__name__,
+                    "http_endpoint_enabled": metadata.http_endpoint_enabled,
+                    "mcp_tool_enabled": metadata.mcp_tool_enabled,
                 }
-                for name, agent in self.agents.items()
+                for name, metadata in self._agent_metadata.items()
             ]
             return func.HttpResponse(
-                json.dumps({"status": "healthy", "agents": agent_info, "agent_count": len(self.agents)}),
+                json.dumps({"status": "healthy", "agents": agent_info, "agent_count": len(self._agent_metadata)}),
                 status_code=200,
                 mimetype=MIMETYPE_APPLICATION_JSON,
             )
