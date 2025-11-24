@@ -15,7 +15,7 @@ This pattern is useful when an AI model cannot complete a complex task in a sing
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 9.0 SDK or later
+- .NET 10.0 SDK or later
 - An A2A agent server running and accessible via HTTP
 
 Set the following environment variable:
