@@ -3,6 +3,7 @@
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
 using Shared.Workflows;
@@ -31,10 +32,13 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
+        // Create the agent provider for Foundry agents.
+        AzureAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential());
+
         // Create the workflow factory.  This class demonstrates how to initialize a
         // declarative workflow from a YAML file. Once the workflow is created, it
         // can be executed just like any regular workflow.
-        WorkflowFactory workflowFactory = new("MathChat.yaml", foundryEndpoint);
+        WorkflowFactory workflowFactory = new("MathChat.yaml", agentProvider);
 
         // Execute the workflow:  The WorkflowRunner demonstrates how to execute
         // a workflow, handle the workflow events, and providing external input.

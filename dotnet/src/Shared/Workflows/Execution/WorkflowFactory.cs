@@ -1,19 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Shared.Workflows;
 
-internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
+internal sealed class WorkflowFactory(string workflowFile, WorkflowAgentProvider agentProvider)
 {
-    public IList<AIFunction> Functions { get; init; } = [];
-
     public IConfiguration? Configuration { get; init; }
 
     // Assign to continue an existing conversation
@@ -28,13 +24,6 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
     /// </summary>
     public Workflow CreateWorkflow()
     {
-        // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential())
-        {
-            // Functions included here will be auto-executed by the framework.
-            Functions = this.Functions
-        };
-
         // Define the workflow options.
         DeclarativeWorkflowOptions options =
             new(agentProvider)

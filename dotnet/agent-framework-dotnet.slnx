@@ -157,6 +157,8 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/Marketing/Marketing.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/OpenAIChatAgent/OpenAIChatAgent.csproj" />
+    <Project Path="samples/GettingStarted/Workflows/Declarative/OpenAIResponseAgent/OpenAIResponseAgent.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/StudentTeacher/StudentTeacher.csproj" />
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
