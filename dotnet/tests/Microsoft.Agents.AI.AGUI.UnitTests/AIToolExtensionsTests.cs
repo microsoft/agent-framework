@@ -87,7 +87,7 @@ public sealed class AIToolExtensionsTests
         // Arrange - mix of AIFunction and non-function tools
         AIFunction function = AIFunctionFactory.Create(() => "Result", "TestTool");
         // Create a custom AITool that's not an AIFunction
-        var declaration = AIFunctionFactory.CreateDeclaration("DeclarationOnly", "Description", JsonDocument.Parse("{}").RootElement);
+        var declaration = AIFunctionFactory.CreateDeclaration("DeclarationOnly", "Description", JsonElement.Parse("{}"));
 
         List<AITool> tools = [function, declaration];
 
@@ -107,7 +107,7 @@ public sealed class AIToolExtensionsTests
         {
             Name = "TestTool",
             Description = "Test description",
-            Parameters = JsonDocument.Parse("{\"type\":\"object\",\"properties\":{}}").RootElement
+            Parameters = JsonElement.Parse("""{"type":"object","properties":{}}""")
         };
         List<AGUITool> aguiTools = [aguiTool];
 
@@ -116,7 +116,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         AITool tool = Assert.Single(tools);
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(tool);
+        Assert.IsType<AIFunctionDeclaration>(tool, exactMatch: false);
         var declaration = (AIFunctionDeclaration)tool;
         Assert.Equal("TestTool", declaration.Name);
         Assert.Equal("Test description", declaration.Description);
@@ -128,9 +128,9 @@ public sealed class AIToolExtensionsTests
         // Arrange
         List<AGUITool> aguiTools =
         [
-            new AGUITool { Name = "Tool1", Description = "Desc1", Parameters = JsonDocument.Parse("{}").RootElement },
-            new AGUITool { Name = "Tool2", Description = "Desc2", Parameters = JsonDocument.Parse("{}").RootElement },
-            new AGUITool { Name = "Tool3", Description = "Desc3", Parameters = JsonDocument.Parse("{}").RootElement }
+            new AGUITool { Name = "Tool1", Description = "Desc1", Parameters = JsonElement.Parse("{}") },
+            new AGUITool { Name = "Tool2", Description = "Desc2", Parameters = JsonElement.Parse("{}") },
+            new AGUITool { Name = "Tool3", Description = "Desc3", Parameters = JsonElement.Parse("{}") }
         ];
 
         // Act
@@ -138,7 +138,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         Assert.Equal(3, tools.Count);
-        Assert.All(tools, t => Assert.IsAssignableFrom<AIFunctionDeclaration>(t));
+        Assert.All(tools, t => Assert.IsType<AIFunctionDeclaration>(t, exactMatch: false));
     }
 
     [Fact]
@@ -176,7 +176,7 @@ public sealed class AIToolExtensionsTests
         {
             Name = "RemoteTool",
             Description = "Tool implemented on server",
-            Parameters = JsonDocument.Parse("{\"type\":\"object\"}").RootElement
+            Parameters = JsonElement.Parse("""{"type":"object"}""")
         };
 
         // Act
@@ -185,7 +185,7 @@ public sealed class AIToolExtensionsTests
 
         // Assert
         // The tool should be a declaration, not an executable function
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(tool);
+        Assert.IsType<AIFunctionDeclaration>(tool, exactMatch: false);
         // AIFunctionDeclaration cannot be invoked (no implementation)
         // This is correct since the actual implementation exists on the client side
     }
@@ -206,7 +206,7 @@ public sealed class AIToolExtensionsTests
         AITool reconstructed = aguiToolsList.AsAITools().Single();
 
         // Assert
-        Assert.IsAssignableFrom<AIFunctionDeclaration>(reconstructed);
+        Assert.IsType<AIFunctionDeclaration>(reconstructed, exactMatch: false);
         var declaration = (AIFunctionDeclaration)reconstructed;
         Assert.Equal("FormatPerson", declaration.Name);
         Assert.Equal("Formats person information", declaration.Description);
