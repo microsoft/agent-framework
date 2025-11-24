@@ -64,7 +64,7 @@ void RestoreAgentState(AIAgent agent, out AgentThread thread, out ResponseContin
     JsonElement? serializedToken = stateStore["continuationToken"];
 
     thread = agent.DeserializeThread(serializedThread);
-    continuationToken = serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken))) as ResponseContinuationToken;
+    continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
 [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]
