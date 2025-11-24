@@ -108,7 +108,7 @@ internal sealed class A2AAgent : AIAgent
                 ResponseId = message.MessageId,
                 RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
-                AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+                AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
             };
         }
 
@@ -116,15 +116,22 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, agentTask.ContextId, agentTask.Id);
 
-            return new AgentRunResponse
+            var response = new AgentRunResponse
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
                 RawRepresentation = agentTask,
                 Messages = agentTask.ToChatMessages() ?? [],
                 ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
-                AdditionalProperties = agentTask.Metadata.ToAdditionalProperties(),
+                AdditionalProperties = agentTask.Metadata?.ToAdditionalProperties(),
             };
+
+            if (agentTask.ToChatMessages() is { Count: > 0 } taskMessages)
+            {
+                response.Messages = taskMessages;
+            }
+
+            return response;
         }
 
         throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.GetType().FullName ?? "null"}");
@@ -280,7 +287,7 @@ internal sealed class A2AAgent : AIAgent
             Role = ChatRole.Assistant,
             MessageId = message.MessageId,
             Contents = message.Parts.ConvertAll(part => part.ToAIContent()),
-            AdditionalProperties = message.Metadata.ToAdditionalProperties(),
+            AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
         };
     }
 
@@ -293,7 +300,7 @@ internal sealed class A2AAgent : AIAgent
             RawRepresentation = task,
             Role = ChatRole.Assistant,
             Contents = task.ToAIContents(),
-            AdditionalProperties = task.Metadata.ToAdditionalProperties(),
+            AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
         };
     }
 
@@ -305,7 +312,7 @@ internal sealed class A2AAgent : AIAgent
             ResponseId = taskUpdateEvent.TaskId,
             RawRepresentation = taskUpdateEvent,
             Role = ChatRole.Assistant,
-            AdditionalProperties = taskUpdateEvent.Metadata.ToAdditionalProperties() ?? [],
+            AdditionalProperties = taskUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
         };
 
         if (taskUpdateEvent is TaskArtifactUpdateEvent artifactUpdateEvent)

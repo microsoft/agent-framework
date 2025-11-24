@@ -1,4 +1,4 @@
-# What This Sample Shows
+# Polling for A2A Agent Task Completion
 
 This sample demonstrates how to poll for long-running task completion using continuation tokens with an A2A AI agent. 
 

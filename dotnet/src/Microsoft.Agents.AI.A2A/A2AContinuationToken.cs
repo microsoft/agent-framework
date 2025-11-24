@@ -46,7 +46,7 @@ internal class A2AContinuationToken : ResponseContinuationToken
                 break;
             }
 
-            string propertyName = reader.GetString()!;
+            string propertyName = reader.GetString() ?? throw new JsonException("Failed to read property name from continuation token.");
 
             switch (propertyName)
             {
