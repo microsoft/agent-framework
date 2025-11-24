@@ -1,0 +1,22 @@
+kind: Prompt
+name: Assistant
+description: Helpful assistant
+instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format.
+model:
+    id: =Env.AZURE_FOUNDRY_PROJECT_MODEL_ID
+    options:
+        temperature: 0.9
+        topP: 0.95
+    connection:
+        kind: remote
+        endpoint: =Env.AZURE_FOUNDRY_PROJECT_ENDPOINT
+outputSchema:
+    properties:
+        language:
+            kind: string
+            required: true
+            description: The language of the answer.
+        answer:
+            kind: string
+            required: true
+            description: The answer text.

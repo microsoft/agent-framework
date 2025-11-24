@@ -2,8 +2,6 @@
 
 """Custom exception types for the durable agent framework."""
 
-from __future__ import annotations
-
 
 class IncomingRequestError(ValueError):
     """Raised when an incoming HTTP request cannot be parsed or validated."""
