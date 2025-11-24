@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
-public sealed partial class ChatClientAgent
+public partial class ChatClientAgent
 {
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread, and requesting a response of the specified type <typeparamref name="T"/>.

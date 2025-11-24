@@ -17,9 +17,14 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="AIAgent"/> that delegates to an <see cref="IChatClient"/> implementation.
 /// </summary>
-public sealed partial class ChatClientAgent : AIAgent
+public partial class ChatClientAgent : AIAgent
 {
     private readonly ChatClientAgentOptions? _agentOptions;
+
+    /// <summary>
+    /// Gets the agent options provided when the agent was constructed.
+    /// </summary>
+    protected ChatClientAgentOptions? AgentOptions => this._agentOptions;
     private readonly AIAgentMetadata _agentMetadata;
     private readonly ILogger _logger;
     private readonly Type _chatClientType;
@@ -121,13 +126,13 @@ public sealed partial class ChatClientAgent : AIAgent
     public IChatClient ChatClient { get; }
 
     /// <inheritdoc/>
-    public override string Id => this._agentOptions?.Id ?? base.Id;
+    public override string Id => this.AgentOptions?.Id ?? base.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._agentOptions?.Name;
+    public override string? Name => this.AgentOptions?.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._agentOptions?.Description;
+    public override string? Description => this.AgentOptions?.Description;
 
     /// <summary>
     /// Gets the system instructions that guide the agent's behavior during conversations.
@@ -141,12 +146,12 @@ public sealed partial class ChatClientAgent : AIAgent
     /// These instructions are typically provided to the AI model as system messages to establish
     /// the context and expected behavior for the agent's responses.
     /// </remarks>
-    public string? Instructions => this._agentOptions?.Instructions;
+    public string? Instructions => this.AgentOptions?.Instructions;
 
     /// <summary>
-    /// Gets of the default <see cref="ChatOptions"/> used by the agent.
+    /// Gets the default <see cref="ChatOptions"/> used by the agent.
     /// </summary>
-    internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
+    internal ChatOptions? ChatOptions => this.AgentOptions?.ChatOptions;
 
     /// <inheritdoc/>
     public override Task<AgentRunResponse> RunAsync(
@@ -289,7 +294,7 @@ public sealed partial class ChatClientAgent : AIAgent
     public override AgentThread GetNewThread()
         => new ChatClientAgentThread
         {
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+            AIContextProvider = this.AgentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
     /// <summary>
@@ -313,19 +318,19 @@ public sealed partial class ChatClientAgent : AIAgent
         => new ChatClientAgentThread()
         {
             ConversationId = conversationId,
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+            AIContextProvider = this.AgentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
         };
 
     /// <inheritdoc/>
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this.AgentOptions?.ChatMessageStoreFactory is null ?
             null :
-            (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
+            (jse, jso) => this.AgentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
-        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = this._agentOptions?.AIContextProviderFactory is null ?
+        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = this.AgentOptions?.AIContextProviderFactory is null ?
             null :
-            (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
+            (jse, jso) => this.AgentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
 
         return new ChatClientAgentThread(
             serializedThread,
@@ -444,7 +449,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
         // If no agent chat options were provided, return the request chat options as is.
-        if (this._agentOptions?.ChatOptions is null)
+        if (this.AgentOptions?.ChatOptions is null)
         {
             return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
@@ -452,41 +457,41 @@ public sealed partial class ChatClientAgent : AIAgent
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
+            return ApplyBackgroundResponsesProperties(this.AgentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
         // The merge strategy will prioritize the request options over the agent options,
         // and will fill the blanks with agent options where the request options were not set.
-        requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
-        requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
-        requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
-        requestChatOptions.Instructions ??= this._agentOptions.ChatOptions.Instructions;
-        requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
-        requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
-        requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
-        requestChatOptions.ResponseFormat ??= this._agentOptions.ChatOptions.ResponseFormat;
-        requestChatOptions.Seed ??= this._agentOptions.ChatOptions.Seed;
-        requestChatOptions.Temperature ??= this._agentOptions.ChatOptions.Temperature;
-        requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
-        requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
-        requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+        requestChatOptions.AllowMultipleToolCalls ??= this.AgentOptions.ChatOptions.AllowMultipleToolCalls;
+        requestChatOptions.ConversationId ??= this.AgentOptions.ChatOptions.ConversationId;
+        requestChatOptions.FrequencyPenalty ??= this.AgentOptions.ChatOptions.FrequencyPenalty;
+        requestChatOptions.Instructions ??= this.AgentOptions.ChatOptions.Instructions;
+        requestChatOptions.MaxOutputTokens ??= this.AgentOptions.ChatOptions.MaxOutputTokens;
+        requestChatOptions.ModelId ??= this.AgentOptions.ChatOptions.ModelId;
+        requestChatOptions.PresencePenalty ??= this.AgentOptions.ChatOptions.PresencePenalty;
+        requestChatOptions.ResponseFormat ??= this.AgentOptions.ChatOptions.ResponseFormat;
+        requestChatOptions.Seed ??= this.AgentOptions.ChatOptions.Seed;
+        requestChatOptions.Temperature ??= this.AgentOptions.ChatOptions.Temperature;
+        requestChatOptions.TopP ??= this.AgentOptions.ChatOptions.TopP;
+        requestChatOptions.TopK ??= this.AgentOptions.ChatOptions.TopK;
+        requestChatOptions.ToolMode ??= this.AgentOptions.ChatOptions.ToolMode;
 
         // Merge only the additional properties from the agent if they are not already set in the request options.
-        if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
+        if (requestChatOptions.AdditionalProperties is not null && this.AgentOptions.ChatOptions.AdditionalProperties is not null)
         {
-            foreach (var propertyKey in this._agentOptions.ChatOptions.AdditionalProperties.Keys)
+            foreach (var propertyKey in this.AgentOptions.ChatOptions.AdditionalProperties.Keys)
             {
-                _ = requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this._agentOptions.ChatOptions.AdditionalProperties[propertyKey]);
+                _ = requestChatOptions.AdditionalProperties.TryAdd(propertyKey, this.AgentOptions.ChatOptions.AdditionalProperties[propertyKey]);
             }
         }
         else
         {
-            requestChatOptions.AdditionalProperties ??= this._agentOptions.ChatOptions.AdditionalProperties?.Clone();
+            requestChatOptions.AdditionalProperties ??= this.AgentOptions.ChatOptions.AdditionalProperties?.Clone();
         }
 
         // Chain the raw representation factory from the request options with the agent's factory if available.
-        if (this._agentOptions.ChatOptions.RawRepresentationFactory is { } agentFactory)
+        if (this.AgentOptions.ChatOptions.RawRepresentationFactory is { } agentFactory)
         {
             requestChatOptions.RawRepresentationFactory = requestChatOptions.RawRepresentationFactory is { } requestFactory
                 ? chatClient => requestFactory(chatClient) ?? agentFactory(chatClient)
@@ -494,22 +499,22 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         // We concatenate the request stop sequences with the agent's stop sequences when available.
-        if (this._agentOptions.ChatOptions.StopSequences is { Count: not 0 })
+        if (this.AgentOptions.ChatOptions.StopSequences is { Count: not 0 })
         {
             if (requestChatOptions.StopSequences is null || requestChatOptions.StopSequences.Count == 0)
             {
                 // If the request stop sequences are not set or empty, we use the agent's stop sequences directly.
-                requestChatOptions.StopSequences = [.. this._agentOptions.ChatOptions.StopSequences];
+                requestChatOptions.StopSequences = [.. this.AgentOptions.ChatOptions.StopSequences];
             }
             else if (requestChatOptions.StopSequences is List<string> requestStopSequences)
             {
                 // If the request stop sequences are set, we concatenate them with the agent's stop sequences.
-                requestStopSequences.AddRange(this._agentOptions.ChatOptions.StopSequences);
+                requestStopSequences.AddRange(this.AgentOptions.ChatOptions.StopSequences);
             }
             else
             {
                 // If both agent's and request's stop sequences are set, we concatenate them.
-                foreach (string stopSequence in this._agentOptions.ChatOptions.StopSequences)
+                foreach (string stopSequence in this.AgentOptions.ChatOptions.StopSequences)
                 {
                     requestChatOptions.StopSequences.Add(stopSequence);
                 }
@@ -517,24 +522,24 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         // We concatenate the request tools with the agent's tools when available.
-        if (this._agentOptions.ChatOptions.Tools is { Count: not 0 })
+        if (this.AgentOptions.ChatOptions.Tools is { Count: not 0 })
         {
             if (requestChatOptions.Tools is not { Count: > 0 })
             {
                 // If the request tools are not set or empty, we use the agent's tools.
-                requestChatOptions.Tools = [.. this._agentOptions.ChatOptions.Tools];
+                requestChatOptions.Tools = [.. this.AgentOptions.ChatOptions.Tools];
             }
             else
             {
                 if (requestChatOptions.Tools is List<AITool> requestTools)
                 {
                     // If the request tools are set, we concatenate them with the agent's tools.
-                    requestTools.AddRange(this._agentOptions.ChatOptions.Tools);
+                    requestTools.AddRange(this.AgentOptions.ChatOptions.Tools);
                 }
                 else
                 {
                     // If the both agent's and request's tools are set, we concatenate all tools.
-                    foreach (var tool in this._agentOptions.ChatOptions.Tools)
+                    foreach (var tool in this.AgentOptions.ChatOptions.Tools)
                     {
                         requestChatOptions.Tools.Add(tool);
                     }
@@ -684,7 +689,7 @@ public sealed partial class ChatClientAgent : AIAgent
             // If the service doesn't use service side thread storage (i.e. we got no id back from invocation), and
             // the thread has no MessageStore yet, and we have a custom messages store, we should update the thread
             // with the custom MessageStore so that it has somewhere to store the chat history.
-            thread.MessageStore ??= this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null });
+            thread.MessageStore ??= this.AgentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null });
         }
     }
 
