@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Hello"
+        }
+      ]
+    }
+  ]
+}

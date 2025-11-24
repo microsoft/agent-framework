@@ -210,23 +210,21 @@ class RequestInfoEvent(WorkflowEvent):
         self,
         request_id: str,
         source_executor_id: str,
-        request_type: type,
         request_data: Any,
-        response_type: type,
+        response_type: type[Any],
     ):
         """Initialize the request info event.
 
         Args:
             request_id: Unique identifier for the request.
             source_executor_id: ID of the executor that made the request.
-            request_type: Type of the request (e.g., a specific data type).
             request_data: The data associated with the request.
             response_type: Expected type of the response.
         """
         super().__init__(request_data)
         self.request_id = request_id
         self.source_executor_id = source_executor_id
-        self.request_type = request_type
+        self.request_type: type[Any] = type(request_data)
         self.response_type = response_type
 
     def __repr__(self) -> str:
@@ -258,13 +256,20 @@ class RequestInfoEvent(WorkflowEvent):
             if property not in data:
                 raise KeyError(f"Missing '{property}' field in RequestInfoEvent dictionary.")
 
-        return RequestInfoEvent(
+        request_info_event = RequestInfoEvent(
             request_id=data["request_id"],
             source_executor_id=data["source_executor_id"],
-            request_type=deserialize_type(data["request_type"]),
             request_data=decode_checkpoint_value(data["data"]),
             response_type=deserialize_type(data["response_type"]),
         )
+
+        # Verify that the deserialized request_data matches the declared request_type
+        if deserialize_type(data["request_type"]) is not type(request_info_event.data):
+            raise TypeError(
+                "Mismatch between deserialized request_data type and request_type field in RequestInfoEvent dictionary."
+            )
+
+        return request_info_event
 
 
 class WorkflowOutputEvent(WorkflowEvent):
@@ -289,6 +294,36 @@ class WorkflowOutputEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
 
 
+class SuperStepEvent(WorkflowEvent):
+    """Event triggered when a superstep starts or ends."""
+
+    def __init__(self, iteration: int, data: Any | None = None):
+        """Initialize the superstep event.
+
+        Args:
+            iteration: The number of the superstep (1-based index).
+            data: Optional data associated with the superstep event.
+        """
+        super().__init__(data)
+        self.iteration = iteration
+
+    def __repr__(self) -> str:
+        """Return a string representation of the superstep event."""
+        return f"{self.__class__.__name__}(iteration={self.iteration}, data={self.data})"
+
+
+class SuperStepStartedEvent(SuperStepEvent):
+    """Event triggered when a superstep starts."""
+
+    ...
+
+
+class SuperStepCompletedEvent(SuperStepEvent):
+    """Event triggered when a superstep ends."""
+
+    ...
+
+
 class ExecutorEvent(WorkflowEvent):
     """Base class for executor events."""
 
@@ -305,17 +340,13 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokedEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler invoke event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler complete event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorFailedEvent(ExecutorEvent):

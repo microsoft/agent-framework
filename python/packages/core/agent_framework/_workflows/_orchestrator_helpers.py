@@ -63,11 +63,12 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
 
         # Has tool content - only keep if it also has text
         if msg.text and msg.text.strip():
-            # Create fresh text-only message
+            # Create fresh text-only message while preserving additional_properties
             msg_copy = ChatMessage(
                 role=msg.role,
                 text=msg.text,
                 author_name=msg.author_name,
+                additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
             )
             cleaned.append(msg_copy)
 

@@ -194,8 +194,10 @@ public partial class ChatClientAgentTests
     /// <summary>
     /// Verify that RunAsync sets AuthorName on all response messages.
     /// </summary>
-    [Fact]
-    public async Task RunAsyncSetsAuthorNameOnAllResponseMessagesAsync()
+    [Theory]
+    [InlineData("TestAgent")]
+    [InlineData(null)]
+    public async Task RunAsyncSetsAuthorNameOnAllResponseMessagesAsync(string? authorName)
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -210,13 +212,13 @@ public partial class ChatClientAgentTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(responseMessages));
 
-        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions", Name = "TestAgent" });
+        ChatClientAgent agent = new(mockService.Object, options: new() { Instructions = "test instructions", Name = authorName });
 
         // Act
         var result = await agent.RunAsync([new(ChatRole.User, "test")]);
 
         // Assert
-        Assert.All(result.Messages, msg => Assert.Equal("TestAgent", msg.AuthorName));
+        Assert.All(result.Messages, msg => Assert.Equal(authorName, msg.AuthorName));
     }
 
     /// <summary>

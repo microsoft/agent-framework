@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from agent_framework import AgentProtocol
+from agent_framework._workflows._events import RequestInfoEvent
 
 from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
@@ -50,6 +51,11 @@ class AgentFrameworkExecutor:
         # Use provided conversation store or default to in-memory
         self.conversation_store = conversation_store or InMemoryConversationStore()
 
+        # Create checkpoint manager (wraps conversation store)
+        from ._conversations import CheckpointConversationManager
+
+        self.checkpoint_manager = CheckpointConversationManager(self.conversation_store)
+
     def _setup_tracing_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
         try:
@@ -79,10 +85,20 @@ class AgentFrameworkExecutor:
         # Configure Agent Framework tracing only if ENABLE_OTEL is set
         if os.environ.get("ENABLE_OTEL"):
             try:
-                from agent_framework.observability import setup_observability
+                from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
 
-                setup_observability(enable_sensitive_data=True)
-                logger.info("Enabled Agent Framework observability")
+                # Only configure if not already executed
+                if not OBSERVABILITY_SETTINGS._executed_setup:
+                    # Get OTLP endpoint from either custom or standard env var
+                    # This handles the case where env vars are set after ObservabilitySettings was imported
+                    otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+                    # Pass the endpoint explicitly to setup_observability
+                    # This ensures OTLP exporters are created even if env vars were set late
+                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                    logger.info("Enabled Agent Framework observability")
+                else:
+                    logger.debug("Agent Framework observability already configured")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
@@ -173,7 +189,7 @@ class AgentFrameworkExecutor:
             entity_info = self.get_entity_info(entity_id)
 
             # Trigger lazy loading (will return from cache if already loaded)
-            entity_obj = await self.entity_discovery.load_entity(entity_id)
+            entity_obj = await self.entity_discovery.load_entity(entity_id, checkpoint_manager=self.checkpoint_manager)
 
             if not entity_obj:
                 raise EntityNotFoundError(f"Entity object for '{entity_id}' not found")
@@ -190,6 +206,15 @@ class AgentFrameworkExecutor:
                         yield event
                 elif entity_info.type == "workflow":
                     async for event in self._execute_workflow(entity_obj, request, trace_collector):
+                        # Log RequestInfoEvent for debugging HIL flow
+                        event_class = event.__class__.__name__ if hasattr(event, "__class__") else type(event).__name__
+                        if event_class == "RequestInfoEvent":
+                            logger.info("🔔 [EXECUTOR] RequestInfoEvent detected from workflow!")
+                            logger.info(f"   request_id: {getattr(event, 'request_id', 'N/A')}")
+                            logger.info(f"   source_executor_id: {getattr(event, 'source_executor_id', 'N/A')}")
+                            logger.info(f"   request_type: {getattr(event, 'request_type', 'N/A')}")
+                            data = getattr(event, "data", None)
+                            logger.info(f"   data type: {type(data).__name__ if data else 'None'}")
                         yield event
                 else:
                     raise ValueError(f"Unsupported entity type: {entity_info.type}")
@@ -289,7 +314,7 @@ class AgentFrameworkExecutor:
     async def _execute_workflow(
         self, workflow: Any, request: AgentFrameworkRequest, trace_collector: Any
     ) -> AsyncGenerator[Any, None]:
-        """Execute Agent Framework workflow with trace collection.
+        """Execute Agent Framework workflow with checkpoint support via conversation items.
 
         Args:
             workflow: Workflow object to execute
@@ -300,23 +325,199 @@ class AgentFrameworkExecutor:
             Workflow events and trace events
         """
         try:
-            # Get input data directly from request.input field
-            input_data = request.input
-            logger.debug(f"Using input field: {type(input_data)}")
+            entity_id = request.get_entity_id() or "unknown"
 
-            # Parse input based on workflow's expected input type
-            parsed_input = await self._parse_workflow_input(workflow, input_data)
+            # Get or create session conversation for checkpoint storage
+            conversation_id = request.get_conversation_id()
+            if not conversation_id:
+                # Create default session if not provided
+                import time
+                import uuid
 
-            logger.debug(f"Executing workflow with parsed input type: {type(parsed_input)}")
+                conversation_id = f"session_{entity_id}_{uuid.uuid4().hex[:8]}"
+                logger.info(f"Created new workflow session: {conversation_id}")
 
-            # Use Agent Framework workflow's native streaming
-            async for event in workflow.run_stream(parsed_input):
-                # Yield any pending trace events first
-                for trace_event in trace_collector.get_pending_events():
-                    yield trace_event
+                # Create conversation in store
+                self.conversation_store.create_conversation(
+                    metadata={
+                        "entity_id": entity_id,
+                        "type": "workflow_session",
+                        "created_at": str(int(time.time())),
+                    },
+                    conversation_id=conversation_id,
+                )
+            else:
+                # Validate conversation exists, create if missing (handles deleted conversations)
+                import time
 
-                # Then yield the workflow event
-                yield event
+                existing = self.conversation_store.get_conversation(conversation_id)
+                if not existing:
+                    logger.warning(f"Conversation {conversation_id} not found (may have been deleted), recreating")
+                    self.conversation_store.create_conversation(
+                        metadata={
+                            "entity_id": entity_id,
+                            "type": "workflow_session",
+                            "created_at": str(int(time.time())),
+                        },
+                        conversation_id=conversation_id,
+                    )
+
+            # Get session-scoped checkpoint storage (InMemoryCheckpointStorage from conv_data)
+            # Each conversation has its own storage instance, providing automatic session isolation.
+            # This storage is passed to workflow.run_stream() which sets it as runtime override,
+            # ensuring all checkpoint operations (save/load) use THIS conversation's storage.
+            # The framework guarantees runtime storage takes precedence over build-time storage.
+            checkpoint_storage = self.checkpoint_manager.get_checkpoint_storage(conversation_id)
+
+            # Check for HIL responses first
+            hil_responses = self._extract_workflow_hil_responses(request.input)
+
+            # Determine checkpoint_id (explicit or auto-latest for HIL responses)
+            checkpoint_id = None
+            if request.extra_body and "checkpoint_id" in request.extra_body:
+                checkpoint_id = request.extra_body["checkpoint_id"]
+                logger.debug(f"Using explicit checkpoint_id from request: {checkpoint_id}")
+            elif hil_responses:
+                # Only auto-resume from latest checkpoint when we have HIL responses
+                # Regular "Run" clicks should start fresh, not resume from checkpoints
+                checkpoints = await checkpoint_storage.list_checkpoints()  # No workflow_id filter needed!
+                if checkpoints:
+                    latest = max(checkpoints, key=lambda cp: cp.timestamp)
+                    checkpoint_id = latest.checkpoint_id
+                    logger.info(f"Auto-resuming from latest checkpoint in session {conversation_id}: {checkpoint_id}")
+                else:
+                    logger.warning(f"HIL responses received but no checkpoints in session {conversation_id}")
+
+            if hil_responses:
+                # HIL continuation mode requires checkpointing
+                if not checkpoint_id:
+                    error_msg = (
+                        "Cannot process HIL responses without a checkpoint. "
+                        "Workflows using HIL must be configured with .with_checkpointing() "
+                        "and a checkpoint must exist before sending responses."
+                    )
+                    logger.error(error_msg)
+                    yield {"type": "error", "message": error_msg}
+                    return
+
+                logger.info(f"Resuming workflow with HIL responses for {len(hil_responses)} request(s)")
+
+                # Unwrap primitive responses if they're wrapped in {response: value} format
+                from ._utils import parse_input_for_type
+
+                unwrapped_responses = {}
+                for request_id, response_value in hil_responses.items():
+                    if isinstance(response_value, dict) and "response" in response_value:
+                        response_value = response_value["response"]
+                    unwrapped_responses[request_id] = response_value
+
+                hil_responses = unwrapped_responses
+
+                # NOTE: Two-step approach for stateless HTTP (framework limitation):
+                # 1. Restore checkpoint to load pending requests into workflow's in-memory state
+                # 2. Then send responses using send_responses_streaming
+                # Future: Framework should support run_stream(checkpoint_id, responses) in single call
+                # (checkpoint_id is guaranteed to exist due to earlier validation)
+                logger.debug(f"Restoring checkpoint {checkpoint_id} then sending HIL responses")
+
+                try:
+                    # Step 1: Restore checkpoint to populate workflow's in-memory pending requests
+                    restored = False
+                    async for _event in workflow.run_stream(
+                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    ):
+                        restored = True
+                        break  # Stop immediately after restoration, don't process events
+
+                    if not restored:
+                        raise RuntimeError("Checkpoint restoration did not yield any events")
+
+                    # Reset running flags so we can call send_responses_streaming
+                    if hasattr(workflow, "_is_running"):
+                        workflow._is_running = False
+                    if hasattr(workflow, "_runner") and hasattr(workflow._runner, "_running"):
+                        workflow._runner._running = False
+
+                    # Extract response types from restored workflow and convert responses to proper types
+                    try:
+                        if hasattr(workflow, "_runner") and hasattr(workflow._runner, "context"):
+                            runner_context = workflow._runner.context
+                            pending_requests_dict = await runner_context.get_pending_request_info_events()
+
+                            converted_responses = {}
+                            for request_id, response_value in hil_responses.items():
+                                if request_id in pending_requests_dict:
+                                    pending_request = pending_requests_dict[request_id]
+                                    if hasattr(pending_request, "response_type"):
+                                        response_type = pending_request.response_type
+                                        try:
+                                            response_value = parse_input_for_type(response_value, response_type)
+                                            logger.debug(
+                                                f"Converted HIL response for {request_id} to {type(response_value)}"
+                                            )
+                                        except Exception as e:
+                                            logger.warning(f"Failed to convert HIL response for {request_id}: {e}")
+
+                                converted_responses[request_id] = response_value
+
+                            hil_responses = converted_responses
+                    except Exception as e:
+                        logger.warning(f"Could not convert HIL responses to proper types: {e}")
+
+                    # Step 2: Now send responses to the in-memory workflow
+                    async for event in workflow.send_responses_streaming(hil_responses):
+                        for trace_event in trace_collector.get_pending_events():
+                            yield trace_event
+                        yield event
+
+                except (AttributeError, ValueError, RuntimeError) as e:
+                    error_msg = f"Failed to send HIL responses: {e}"
+                    logger.error(error_msg)
+                    yield {"type": "error", "message": error_msg}
+
+            elif checkpoint_id:
+                # Resume from checkpoint (explicit or auto-latest) using unified API
+                logger.info(f"Resuming workflow from checkpoint {checkpoint_id} in session {conversation_id}")
+
+                try:
+                    async for event in workflow.run_stream(
+                        checkpoint_id=checkpoint_id, checkpoint_storage=checkpoint_storage
+                    ):
+                        if isinstance(event, RequestInfoEvent):
+                            self._enrich_request_info_event_with_response_schema(event, workflow)
+
+                        for trace_event in trace_collector.get_pending_events():
+                            yield trace_event
+
+                        yield event
+
+                        # Note: Removed break on RequestInfoEvent - continue yielding all events
+                        # The workflow is already paused by ctx.request_info() in the framework
+                        # DevUI should continue yielding events even during HIL pause
+
+                except ValueError as e:
+                    error_msg = f"Cannot resume from checkpoint: {e}"
+                    logger.error(error_msg)
+                    yield {"type": "error", "message": error_msg}
+
+            else:
+                # First run - pass DevUI's checkpoint storage to enable checkpointing
+                logger.info(f"Starting fresh workflow in session {conversation_id}")
+
+                parsed_input = await self._parse_workflow_input(workflow, request.input)
+
+                async for event in workflow.run_stream(parsed_input, checkpoint_storage=checkpoint_storage):
+                    if isinstance(event, RequestInfoEvent):
+                        self._enrich_request_info_event_with_response_schema(event, workflow)
+
+                    for trace_event in trace_collector.get_pending_events():
+                        yield trace_event
+
+                    yield event
+
+                    # Note: Removed break on RequestInfoEvent - continue yielding all events
+                    # The workflow is already paused by ctx.request_info() in the framework
+                    # DevUI should continue yielding events even during HIL pause
 
         except Exception as e:
             logger.error(f"Error in workflow execution: {e}")
@@ -569,6 +770,80 @@ class AgentFrameworkExecutor:
 
         return start_executor, message_types
 
+    def _extract_workflow_hil_responses(self, input_data: Any) -> dict[str, Any] | None:
+        """Extract workflow HIL responses from OpenAI input format.
+
+        Looks for special content type: workflow_hil_response
+
+        Args:
+            input_data: OpenAI ResponseInputParam
+
+        Returns:
+            Dict of {request_id: response_value} if found, None otherwise
+        """
+        # Handle case where input_data might be a JSON string (from streamWorkflowExecutionOpenAI)
+        # The input field type is: str | list[Any] | dict[str, Any]
+        if isinstance(input_data, str):
+            try:
+                parsed = json.loads(input_data)
+                # Only use parsed value if it's a list (ResponseInputParam format expected for HIL)
+                if isinstance(parsed, list):
+                    input_data = parsed
+                else:
+                    # Parsed to dict, string, or primitive - not HIL response format
+                    return None
+            except (json.JSONDecodeError, TypeError):
+                # Plain text string, not valid JSON - not HIL format
+                return None
+
+        # At this point, input_data should be a list or dict
+        # HIL responses are always in list format (ResponseInputParam)
+        if isinstance(input_data, dict):
+            # This is structured workflow input (dict), not HIL responses
+            return None
+
+        if not isinstance(input_data, list):
+            return None
+
+        for item in input_data:
+            if isinstance(item, dict) and item.get("type") == "message":
+                message_content = item.get("content", [])
+
+                if isinstance(message_content, list):
+                    for content_item in message_content:
+                        if isinstance(content_item, dict):
+                            content_type = content_item.get("type")
+
+                            if content_type == "workflow_hil_response":
+                                # Extract responses dict
+                                # dict.get() returns Any, so we explicitly type it
+                                responses: dict[str, Any] = content_item.get("responses", {})  # type: ignore[assignment]
+                                logger.info(f"Found workflow HIL responses: {list(responses.keys())}")
+                                return responses
+
+        return None
+
+    def _get_or_create_conversation(self, conversation_id: str, entity_id: str) -> Any:
+        """Get existing conversation or create a new one.
+
+        Args:
+            conversation_id: Conversation ID from frontend
+            entity_id: Entity ID (e.g., "spam_workflow") for metadata filtering
+
+        Returns:
+            Conversation object
+        """
+        conversation = self.conversation_store.get_conversation(conversation_id)
+        if not conversation:
+            # Create conversation with frontend's ID
+            # Use agent_id in metadata so it can be filtered by list_conversations(agent_id=...)
+            conversation = self.conversation_store.create_conversation(
+                metadata={"agent_id": entity_id}, conversation_id=conversation_id
+            )
+            logger.info(f"Created conversation {conversation_id} for entity {entity_id}")
+
+        return conversation
+
     def _parse_structured_workflow_input(self, workflow: Any, input_data: dict[str, Any]) -> Any:
         """Parse structured input data for workflow execution.
 
@@ -644,3 +919,53 @@ class AgentFrameworkExecutor:
         except Exception as e:
             logger.debug(f"Error parsing workflow input: {e}")
             return raw_input
+
+    def _enrich_request_info_event_with_response_schema(self, event: Any, workflow: Any) -> None:
+        """Extract response type from workflow executor and attach response schema to RequestInfoEvent.
+
+        Args:
+            event: RequestInfoEvent to enrich
+            workflow: Workflow object containing executors
+        """
+        try:
+            from agent_framework_devui._utils import extract_response_type_from_executor, generate_input_schema
+
+            # Get source executor ID and request type from event
+            source_executor_id = getattr(event, "source_executor_id", None)
+            request_type = getattr(event, "request_type", None)
+
+            if not source_executor_id or not request_type:
+                logger.debug("RequestInfoEvent missing source_executor_id or request_type")
+                return
+
+            # Find the source executor in the workflow
+            if not hasattr(workflow, "executors") or not isinstance(workflow.executors, dict):
+                logger.debug("Workflow doesn't have executors dict")
+                return
+
+            source_executor = workflow.executors.get(source_executor_id)
+            if not source_executor:
+                logger.debug(f"Could not find executor '{source_executor_id}' in workflow")
+                return
+
+            # Extract response type from the executor's handler signature
+            response_type = extract_response_type_from_executor(source_executor, request_type)
+
+            if response_type:
+                # Generate JSON schema for response type
+                response_schema = generate_input_schema(response_type)
+
+                # Attach response_schema to event for mapper to include in output
+                event._response_schema = response_schema
+
+                logger.debug(f"Extracted response schema for {request_type.__name__}: {response_schema}")
+            else:
+                # Even if extraction fails, provide a reasonable default to avoid warnings
+                logger.debug(
+                    f"Could not extract response type for {request_type.__name__}, using default string schema"
+                )
+                response_schema = {"type": "string"}
+                event._response_schema = response_schema
+
+        except Exception as e:
+            logger.warning(f"Failed to enrich RequestInfoEvent with response schema: {e}")

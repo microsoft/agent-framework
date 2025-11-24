@@ -1,59 +1,53 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import asyncio
+import os
 
-from agent_framework import ChatAgent, HostedWebSearchTool
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
 """
-The following sample demonstrates how to create an Azure AI agent that
-uses Bing Grounding search to find real-time information from the web.
+Azure AI Agent with Bing Grounding Example
+
+This sample demonstrates usage of AzureAIClient with Bing Grounding
+to search the web for current information and provide grounded responses.
 
 Prerequisites:
-1. A connected Grounding with Bing Search resource in your Azure AI project
-2. Set either BING_CONNECTION_NAME or BING_CONNECTION_ID environment variable
-   Example: BING_CONNECTION_NAME="bing-grounding-connection"
-   Example: BING_CONNECTION_ID="your-bing-connection-id"
+1. Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME environment variables.
+2. Ensure you have a Bing connection configured in your Azure AI project
+   and set BING_PROJECT_CONNECTION_ID environment variable.
 
-To set up Bing Grounding:
-1. Go to Azure AI Foundry portal (https://ai.azure.com)
-2. Navigate to your project's "Connected resources" section
-3. Add a new connection for "Grounding with Bing Search"
-4. Copy either the connection name or ID and set the appropriate environment variable
+To get your Bing connection ID:
+- Go to Azure AI Foundry portal (https://ai.azure.com)
+- Navigate to your project's "Connected resources" section
+- Add a new connection for "Grounding with Bing Search"
+- Copy the connection ID and set it as the BING_PROJECT_CONNECTION_ID environment variable
 """
 
 
 async def main() -> None:
-    """Main function demonstrating Azure AI agent with Bing Grounding search."""
-    # 1. Create Bing Grounding search tool using HostedWebSearchTool
-    # The connection_name or ID will be automatically picked up from environment variable
-    bing_search_tool = HostedWebSearchTool(
-        name="Bing Grounding Search",
-        description="Search the web for current information using Bing",
-    )
-
-    # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
     async with (
-        AzureAIAgentClient(async_credential=AzureCliCredential()) as client,
-        ChatAgent(
-            chat_client=client,
-            name="BingSearchAgent",
-            instructions=(
-                "You are a helpful assistant that can search the web for current information. "
-                "Use the Bing search tool to find up-to-date information and provide accurate, "
-                "well-sourced answers. Always cite your sources when possible."
-            ),
-            tools=bing_search_tool,
+        AzureCliCredential() as credential,
+        AzureAIClient(async_credential=credential).create_agent(
+            name="MyBingGroundingAgent",
+            instructions="""You are a helpful assistant that can search the web for current information.
+            Use the Bing search tool to find up-to-date information and provide accurate, well-sourced answers.
+            Always cite your sources when possible.""",
+            tools={
+                "type": "bing_grounding",
+                "bing_grounding": {
+                    "search_configurations": [
+                        {
+                            "project_connection_id": os.environ["BING_PROJECT_CONNECTION_ID"],
+                        }
+                    ]
+                },
+            },
         ) as agent,
     ):
-        # 4. Demonstrate agent capabilities with web search
-        print("=== Azure AI Agent with Bing Grounding Search ===\n")
-
-        user_input = "What is the most popular programming language?"
-        print(f"User: {user_input}")
-        response = await agent.run(user_input)
-        print(f"Agent: {response.text}\n")
+        query = "What is today's date and weather in Seattle?"
+        print(f"User: {query}")
+        result = await agent.run(query)
+        print(f"Result: {result}\n")
 
 
 if __name__ == "__main__":
