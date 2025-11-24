@@ -48,7 +48,7 @@ from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, sanitize_identifier
 from ._request_info_mixin import response_handler
 from ._workflow import Workflow
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -1307,6 +1307,11 @@ class HandoffBuilder:
         self._return_to_previous = enabled
         return self
 
+    def as_connection(self, prefix: str | None = None) -> WorkflowConnection:
+        """Expose the handoff wiring as a reusable connection."""
+        builder = self._build_workflow_builder()
+        return builder.as_connection(prefix=prefix)
+
     def build(self) -> Workflow:
         """Construct the final Workflow instance from the configured builder.
 
@@ -1362,6 +1367,11 @@ class HandoffBuilder:
             After calling build(), the builder instance should not be reused. Create a
             new builder if you need to construct another workflow with different configuration.
         """
+        builder = self._build_workflow_builder()
+        return builder.build()
+
+    def _build_workflow_builder(self) -> WorkflowBuilder:
+        """Internal helper to construct the workflow builder for this handoff workflow."""
         if not self._executors:
             raise ValueError("No participants provided. Call participants([...]) first.")
         if self._starting_agent_id is None:
@@ -1446,7 +1456,6 @@ class HandoffBuilder:
             participant_aliases=self._aliases,
             participant_executors=self._executors,
         )
-
         result = assemble_group_chat_workflow(
             wiring=wiring,
             participant_factory=_default_participant_factory,
@@ -1463,9 +1472,7 @@ class HandoffBuilder:
         builder = builder.set_start_executor(input_node)
         builder = builder.add_edge(input_node, starting_executor)
         builder = builder.add_edge(coordinator, user_gateway)
-        builder = builder.add_edge(user_gateway, coordinator)
-
-        return builder.build()
+        return builder.add_edge(user_gateway, coordinator)
 
     def _resolve_to_id(self, candidate: str | AgentProtocol | Executor) -> str:
         """Resolve a participant reference into a concrete executor identifier."""

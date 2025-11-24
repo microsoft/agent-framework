@@ -96,7 +96,7 @@ from ._validation import (
 )
 from ._viz import WorkflowViz
 from ._workflow import Workflow, WorkflowRunResult
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import ConnectionHandle, WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 
@@ -112,6 +112,7 @@ __all__ = [
     "Case",
     "CheckpointStorage",
     "ConcurrentBuilder",
+    "ConnectionHandle",
     "Default",
     "Edge",
     "EdgeDuplicationError",
@@ -166,6 +167,7 @@ __all__ = [
     "WorkflowBuilder",
     "WorkflowCheckpoint",
     "WorkflowCheckpointSummary",
+    "WorkflowConnection",
     "WorkflowContext",
     "WorkflowErrorDetails",
     "WorkflowEvent",

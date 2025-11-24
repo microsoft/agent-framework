@@ -39,7 +39,7 @@ from ._conversation_history import ensure_author, latest_user_message
 from ._executor import Executor, handler
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, wrap_participant
 from ._workflow import Workflow
-from ._workflow_builder import WorkflowBuilder
+from ._workflow_builder import WorkflowBuilder, WorkflowConnection
 from ._workflow_context import WorkflowContext
 
 logger = logging.getLogger(__name__)
@@ -1152,6 +1152,11 @@ class GroupChatBuilder:
             )
         return specs
 
+    def as_connection(self, prefix: str | None = None) -> WorkflowConnection:
+        """Expose the group chat wiring as a reusable connection."""
+        builder = self._build_workflow_builder()
+        return builder.as_connection(prefix=prefix)
+
     def build(self) -> Workflow:
         """Build and validate the group chat workflow.
 
@@ -1191,6 +1196,11 @@ class GroupChatBuilder:
             async for message in workflow.run("Solve this problem collaboratively"):
                 print(message.text)
         """
+        builder = self._build_workflow_builder()
+        return builder.build()
+
+    def _build_workflow_builder(self) -> WorkflowBuilder:
+        """Internal helper to construct the workflow builder for this group chat workflow."""
         # Manager is only required when using the default orchestrator factory
         # Custom factories (e.g., MagenticBuilder) provide their own orchestrator with embedded manager
         if self._manager is None and self._orchestrator_factory == _default_orchestrator_factory:
@@ -1215,10 +1225,12 @@ class GroupChatBuilder:
             orchestrator_factory=self._orchestrator_factory,
             interceptors=self._interceptors,
             checkpoint_storage=self._checkpoint_storage,
+            return_builder=True,
         )
-        if not isinstance(result, Workflow):
-            raise TypeError("Expected Workflow from assemble_group_chat_workflow")
-        return result
+        if not (isinstance(result, tuple) and len(result) == 2):
+            raise TypeError("Expected (WorkflowBuilder, orchestrator) from assemble_group_chat_workflow")
+        builder, _ = result
+        return builder
 
 
 # endregion

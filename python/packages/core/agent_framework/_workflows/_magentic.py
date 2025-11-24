@@ -42,6 +42,7 @@ from ._model_utils import DictConvertible, encode_value
 from ._participant_utils import GroupChatParticipantSpec, participant_description
 from ._request_info_mixin import response_handler
 from ._workflow import Workflow, WorkflowRunResult
+from ._workflow_builder import WorkflowConnection
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 11):
@@ -2157,6 +2158,16 @@ class MagenticBuilder:
 
     def build(self) -> Workflow:
         """Build a Magentic workflow with the orchestrator and all agent executors."""
+        group_builder = self._build_group_chat_builder()
+        return group_builder.build()
+
+    def as_connection(self, prefix: str | None = None) -> WorkflowConnection:
+        """Expose the Magentic wiring as a reusable connection."""
+        group_builder = self._build_group_chat_builder()
+        return group_builder.as_connection(prefix=prefix)
+
+    def _build_group_chat_builder(self) -> GroupChatBuilder:
+        """Internal helper to construct the underlying group chat builder."""
         if not self._participants:
             raise ValueError("No participants added to Magentic workflow")
 
@@ -2204,7 +2215,7 @@ class MagenticBuilder:
         if self._checkpoint_storage is not None:
             group_builder = group_builder.with_checkpointing(self._checkpoint_storage)
 
-        return group_builder.build()
+        return group_builder
 
     def start_with_string(self, task: str) -> "MagenticWorkflow":
         """Build a Magentic workflow and return a wrapper with convenience methods for string tasks.
