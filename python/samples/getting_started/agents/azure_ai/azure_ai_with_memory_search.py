@@ -36,6 +36,7 @@ async def main() -> None:
                 await project_client.memory_stores.delete(memory_store_name)
                 print(f"Memory store `{memory_store_name}` deleted")
             except ResourceNotFoundError:
+                # Memory store does not exist, so nothing to delete. Safe to ignore.
                 pass
 
             # Create a memory store using proper model classes
