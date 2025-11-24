@@ -19,9 +19,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 /// </summary>
 public abstract class IntegrationTest : IDisposable
 {
-    private IConfigurationRoot? _configuration;
-
-    protected IConfigurationRoot Configuration => this._configuration ??= InitializeConfig();
+    protected IConfigurationRoot Configuration => field ??= InitializeConfig();
 
     public Uri TestEndpoint { get; }
 
@@ -32,7 +30,7 @@ public abstract class IntegrationTest : IDisposable
         this.Output = new TestOutputAdapter(output);
         this.TestEndpoint =
             new Uri(
-                this.Configuration[AgentProvider.Settings.FoundryEndpoint] ??
+                this.Configuration?[AgentProvider.Settings.FoundryEndpoint] ??
                 throw new InvalidOperationException($"Undefined configuration setting: {AgentProvider.Settings.FoundryEndpoint}"));
         Console.SetOut(this.Output);
         SetProduct();

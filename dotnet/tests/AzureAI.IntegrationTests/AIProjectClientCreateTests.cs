@@ -28,7 +28,7 @@ public class AIProjectClientCreateTests
     public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
     {
         // Arrange.
-        const string AgentName = "IntegrationTestAgent";
+        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("IntegrationTestAgent");
         const string AgentDescription = "An agent created during integration tests";
         const string AgentInstructions = "You are an integration test agent";
 
@@ -86,7 +86,7 @@ public class AIProjectClientCreateTests
     public async Task CreateAgent_CreatesAgentWithVectorStoresAsync(string createMechanism)
     {
         // Arrange.
-        const string AgentName = "VectorStoreAgent";
+        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("VectorStoreAgent");
         const string AgentInstructions = """
             You are a helpful agent that can help fetch data from files you know about.
             Use the File Search Tool to look up codes for words.
@@ -159,7 +159,7 @@ public class AIProjectClientCreateTests
     public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
     {
         // Arrange.
-        const string AgentName = "CodeInterpreterAgent";
+        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("CodeInterpreterAgent");
         const string AgentInstructions = """
             You are a helpful coding agent. A Python file is provided. Use the Code Interpreter Tool to run the file
             and report the SECRET_NUMBER value it prints. Respond only with the number.
@@ -229,7 +229,7 @@ public class AIProjectClientCreateTests
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
     {
         // Arrange.
-        const string AgentName = "WeatherAgent";
+        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("WeatherAgent");
         const string AgentInstructions = "You are a helpful weather assistant. Always call the GetWeather function to answer questions about weather.";
 
         static string GetWeather(string location) => $"The weather in {location} is sunny with a high of 23C.";

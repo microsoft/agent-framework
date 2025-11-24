@@ -214,6 +214,7 @@ def _merge_chat_options(
     *,
     base_chat_options: ChatOptions | Any | None,
     model_id: str | None = None,
+    allow_multiple_tool_calls: bool | None = None,
     frequency_penalty: float | None = None,
     logit_bias: dict[str | int, float] | None = None,
     max_tokens: int | None = None,
@@ -239,6 +240,7 @@ def _merge_chat_options(
     Keyword Args:
         base_chat_options: Optional base ChatOptions to merge with direct parameters.
         model_id: The model_id to use for the agent.
+        allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
         frequency_penalty: The frequency penalty to use.
         logit_bias: The logit bias to use.
         max_tokens: The maximum number of tokens to generate.
@@ -270,6 +272,7 @@ def _merge_chat_options(
 
     return base_chat_options & ChatOptions(
         model_id=model_id,
+        allow_multiple_tool_calls=allow_multiple_tool_calls,
         frequency_penalty=frequency_penalty,
         logit_bias=logit_bias,
         max_tokens=max_tokens,
@@ -485,6 +488,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -517,6 +521,7 @@ class BaseChatClient(SerializationMixin, ABC):
             messages: The message or messages to send to the model.
 
         Keyword Args:
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -545,6 +550,7 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -580,6 +586,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -612,6 +619,7 @@ class BaseChatClient(SerializationMixin, ABC):
             messages: The message or messages to send to the model.
 
         Keyword Args:
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -640,6 +648,7 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,

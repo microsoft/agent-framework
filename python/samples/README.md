@@ -118,6 +118,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/openai/openai_chat_client_with_local_mcp.py`](./getting_started/agents/openai/openai_chat_client_with_local_mcp.py) | OpenAI Chat Client with Local MCP Example |
 | [`getting_started/agents/openai/openai_chat_client_with_thread.py`](./getting_started/agents/openai/openai_chat_client_with_thread.py) | OpenAI Chat Client with Thread Management Example |
 | [`getting_started/agents/openai/openai_chat_client_with_web_search.py`](./getting_started/agents/openai/openai_chat_client_with_web_search.py) | OpenAI Chat Client with Web Search Example |
+| [`getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py`](./getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py) | OpenAI Chat Client with runtime JSON Schema for structured output without a Pydantic model |
 | [`getting_started/agents/openai/openai_responses_client_basic.py`](./getting_started/agents/openai/openai_responses_client_basic.py) | OpenAI Responses Client Basic Example |
 | [`getting_started/agents/openai/openai_responses_client_image_analysis.py`](./getting_started/agents/openai/openai_responses_client_image_analysis.py) | OpenAI Responses Client Image Analysis Example |
 | [`getting_started/agents/openai/openai_responses_client_image_generation.py`](./getting_started/agents/openai/openai_responses_client_image_generation.py) | OpenAI Responses Client Image Generation Example |
@@ -184,7 +185,9 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py`](./getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
+| [`getting_started/evaluation/red_teaming/red_team_agent_sample.py`](./getting_started/evaluation/red_teaming/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
+| [`getting_started/evaluation/self_reflection/self_reflection.py`](./getting_started/evaluation/self_reflection/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
+| [`demos/workflow_evaluation/run_evaluation.py`](./demos/workflow_evaluation/run_evaluation.py) | Multi-agent workflow evaluation demo with travel planning agents evaluated using Azure AI Foundry evaluators |
 
 ## MCP (Model Context Protocol)
 
@@ -205,6 +208,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/middleware/function_based_middleware.py`](./getting_started/middleware/function_based_middleware.py) | Function-based middleware example |
 | [`getting_started/middleware/middleware_termination.py`](./getting_started/middleware/middleware_termination.py) | Middleware termination example |
 | [`getting_started/middleware/override_result_with_middleware.py`](./getting_started/middleware/override_result_with_middleware.py) | Override result with middleware example |
+| [`getting_started/middleware/runtime_context_delegation.py`](./getting_started/middleware/runtime_context_delegation.py) | Runtime context delegation example demonstrating how to pass API tokens, session data, and other context through hierarchical agent delegation |
 | [`getting_started/middleware/shared_state_middleware.py`](./getting_started/middleware/shared_state_middleware.py) | Shared state middleware example |
 | [`getting_started/middleware/thread_behavior_middleware.py`](./getting_started/middleware/thread_behavior_middleware.py) | Thread behavior middleware example demonstrating how to track conversation state across multiple agent runs |
 
@@ -317,12 +321,6 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 |------|-------------|
 | [`getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py`](./getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py) | Sample: Human in the loop guessing game |
 | [`getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py`](./getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py) | Sample: Agents with Approval Requests in Workflows |
-
-### Observability
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/observability/tracing_basics.py`](./getting_started/workflows/observability/tracing_basics.py) | Basic tracing workflow sample |
 
 ### Orchestration
 

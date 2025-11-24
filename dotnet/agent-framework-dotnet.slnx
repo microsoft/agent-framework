@@ -101,6 +101,7 @@
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step01_BasicTextRAG/AgentWithRAG_Step01_BasicTextRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/FoundryAgents/">
     <File Path="samples/GettingStarted/FoundryAgents/README.md" />
@@ -191,7 +192,7 @@
     <Project Path="samples/GettingStarted/Workflows/Observability/WorkflowAsAnAgent/WorkflowAsAnAgentObservability.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Visualization/">
-    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" Id="99bf0bc6-2440-428e-b3e7-d880e4b7a5fd" />
+    <Project Path="samples/GettingStarted/Workflows/Visualization/Visualization.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/_Foundational/">
     <Project Path="samples/GettingStarted/Workflows/_Foundational/01_ExecutorsAndEdges/01_ExecutorsAndEdges.csproj" />
@@ -376,6 +377,7 @@
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DurableTask.UnitTests/Microsoft.Agents.AI.DurableTask.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
