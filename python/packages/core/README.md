@@ -231,4 +231,4 @@ if __name__ == "__main__":
 - [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
 - [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
 - [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
-- Learn docs are under development.
+- [Learn Documentation](https://learn.microsoft.com/en-us/agent-framework/user-guide/workflows/orchestrations/overview)
