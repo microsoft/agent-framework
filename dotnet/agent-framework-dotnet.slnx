@@ -350,6 +350,7 @@
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.AzureAI/Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.OpenAI/Microsoft.Agents.AI.Workflows.Declarative.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
