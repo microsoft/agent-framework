@@ -276,18 +276,15 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
 internal sealed class FakeChatClientAgent : AIAgent
 {
-    private readonly string _agentId;
-    private readonly string _description;
-
     public FakeChatClientAgent()
     {
-        this._agentId = "fake-agent";
-        this._description = "A fake agent for testing";
+        this.Id = "fake-agent";
+        this.Description = "A fake agent for testing";
     }
 
-    public override string Id => this._agentId;
+    public override string Id { get; }
 
-    public override string? Description => this._description;
+    public override string? Description { get; }
 
     public override AgentThread GetNewThread()
     {
@@ -353,18 +350,15 @@ internal sealed class FakeChatClientAgent : AIAgent
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
 internal sealed class FakeMultiMessageAgent : AIAgent
 {
-    private readonly string _agentId;
-    private readonly string _description;
-
     public FakeMultiMessageAgent()
     {
-        this._agentId = "fake-multi-message-agent";
-        this._description = "A fake agent that sends multiple messages for testing";
+        this.Id = "fake-multi-message-agent";
+        this.Description = "A fake agent that sends multiple messages for testing";
     }
 
-    public override string Id => this._agentId;
+    public override string Id { get; }
 
-    public override string? Description => this._description;
+    public override string? Description { get; }
 
     public override AgentThread GetNewThread()
     {

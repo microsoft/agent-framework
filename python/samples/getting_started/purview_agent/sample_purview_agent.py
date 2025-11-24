@@ -20,7 +20,6 @@ Environment variables:
 - PURVIEW_CERT_PASSWORD (optional)
 - PURVIEW_DEFAULT_USER_ID (optional, user ID for Purview evaluation)
 """
-from __future__ import annotations
 
 import asyncio
 import os
@@ -28,16 +27,15 @@ from typing import Any
 
 from agent_framework import AgentRunResponse, ChatAgent, ChatMessage, Role
 from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.microsoft import (
+    PurviewChatPolicyMiddleware,
+    PurviewPolicyMiddleware,
+    PurviewSettings,
+)
 from azure.identity import (
     AzureCliCredential,
     CertificateCredential,
     InteractiveBrowserCredential,
-)
-
-from agent_framework.microsoft import (
-    PurviewPolicyMiddleware,
-    PurviewChatPolicyMiddleware,
-    PurviewSettings,
 )
 
 JOKER_NAME = "Joker"
@@ -94,7 +92,6 @@ class SimpleDictCacheProvider:
             del self._cache[key]
             self._access_count.pop(key, None)
             print(f"[CustomCache] Removed key: {key[:50]}...")
-
 
 
 def _get_env(name: str, *, required: bool = True, default: str | None = None) -> str:
@@ -176,7 +173,7 @@ async def run_with_chat_middleware() -> None:
 
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
-    
+
     chat_client = AzureOpenAIChatClient(
         deployment_name=deployment,
         endpoint=endpoint,
@@ -216,6 +213,7 @@ async def run_with_chat_middleware() -> None:
     )
     print("Second response (chat middleware):\n", second)
 
+
 async def run_with_custom_cache_provider() -> None:
     """Demonstrate implementing and using a custom cache provider."""
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
@@ -246,7 +244,7 @@ async def run_with_custom_cache_provider() -> None:
 
     print("-- Custom Cache Provider Path --")
     print("Using SimpleDictCacheProvider")
-    
+
     first: AgentRunResponse = await agent.run(
         ChatMessage(role=Role.USER, text="Tell me a joke about a programmer.", additional_properties={"user_id": user_id})
     )
@@ -256,7 +254,7 @@ async def run_with_custom_cache_provider() -> None:
         ChatMessage(role=Role.USER, text="That's hilarious! One more?", additional_properties={"user_id": user_id})
     )
     print("Second response (custom provider):\n", second)
-    
+
     """Demonstrate using the default built-in cache."""
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     if not endpoint:
@@ -286,7 +284,7 @@ async def run_with_custom_cache_provider() -> None:
 
     print("-- Default Cache Path --")
     print("Using default InMemoryCacheProvider with settings-based configuration")
-    
+
     first: AgentRunResponse = await agent.run(
         ChatMessage(role=Role.USER, text="Tell me a joke about AI.", additional_properties={"user_id": user_id})
     )
@@ -300,7 +298,7 @@ async def run_with_custom_cache_provider() -> None:
 
 async def main() -> None:
     print("== Purview Agent Sample (Middleware with Automatic Caching) ==")
-    
+
     try:
         await run_with_agent_middleware()
     except Exception as ex:  # pragma: no cover - demo resilience

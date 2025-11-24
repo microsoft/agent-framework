@@ -421,7 +421,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                             // State snapshot event
                             yield return new StateSnapshotEvent
                             {
-#if NET472 || NETSTANDARD2_0
+#if !NET
                                 Snapshot = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.ToArray(),
                                 jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
@@ -438,7 +438,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                             // but its not up to us to validate that here.
                             yield return new StateDeltaEvent
                             {
-#if NET472 || NETSTANDARD2_0
+#if !NET
                                 Delta = (JsonElement?)JsonSerializer.Deserialize(
                                 dataContent.Data.ToArray(),
                                 jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))
@@ -455,7 +455,7 @@ internal static class ChatResponseUpdateAGUIExtensions
                             yield return new TextMessageContentEvent
                             {
                                 MessageId = chatResponse.MessageId!,
-#if NET472 || NETSTANDARD2_0
+#if !NET
                                 Delta = Encoding.UTF8.GetString(dataContent.Data.ToArray())
 #else
                                 Delta = Encoding.UTF8.GetString(dataContent.Data.Span)

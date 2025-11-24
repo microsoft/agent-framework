@@ -2736,7 +2736,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             {
                 if (this._headers.TryGetValue(name, out var value))
                 {
-                    values = new[] { value };
+                    values = [value];
                     return true;
                 }
 
