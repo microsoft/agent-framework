@@ -49,7 +49,7 @@ public class AgentRunOptions
     /// can be polled for completion by obtaining the token from the <see cref="AgentRunResponse.ContinuationToken"/> property
     /// and passing it via this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
-    public object? ContinuationToken { get; set; }
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the background responses are allowed.

@@ -61,10 +61,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
@@ -120,10 +120,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
@@ -179,10 +179,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
@@ -234,10 +234,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
@@ -290,10 +290,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    },
+                    ],
                     ExecutionMode = ExecutionMode.EvaluateInline
                 }
             }
@@ -347,10 +347,10 @@ public sealed class ScopedContentProcessorTests
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-456")
-                    }
+                    ]
                 }
             }
         };

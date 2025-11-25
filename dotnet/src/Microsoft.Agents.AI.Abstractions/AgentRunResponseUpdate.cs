@@ -38,9 +38,6 @@ public class AgentRunResponseUpdate
     /// <summary>The response update content items.</summary>
     private IList<AIContent>? _contents;
 
-    /// <summary>The name of the author of the update.</summary>
-    private string? _authorName;
-
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
     [JsonConstructor]
     public AgentRunResponseUpdate()
@@ -84,8 +81,8 @@ public class AgentRunResponseUpdate
     /// <summary>Gets or sets the name of the author of the response update.</summary>
     public string? AuthorName
     {
-        get => this._authorName;
-        set => this._authorName = string.IsNullOrWhiteSpace(value) ? null : value;
+        get => field;
+        set => field = string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     /// <summary>Gets or sets the role of the author of the response update.</summary>
@@ -162,7 +159,7 @@ public class AgentRunResponseUpdate
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>
-    public object? ContinuationToken { get; set; }
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;

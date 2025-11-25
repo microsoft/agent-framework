@@ -21,7 +21,7 @@ internal abstract class ProcessContentMetadataBase : GraphDataTypeBase
     /// <param name="identifier">The unique identifier for the content.</param>
     /// <param name="isTruncated">Indicates if the content is truncated.</param>
     /// <param name="name">The name of the content.</param>
-    public ProcessContentMetadataBase(ContentBase content, string identifier, bool isTruncated, string name) : base(ProcessConversationMetadataDataType)
+    protected ProcessContentMetadataBase(ContentBase content, string identifier, bool isTruncated, string name) : base(ProcessConversationMetadataDataType)
     {
         this.Identifier = identifier;
         this.IsTruncated = isTruncated;
