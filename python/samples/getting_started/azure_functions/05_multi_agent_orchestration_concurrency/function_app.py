@@ -10,8 +10,9 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
+from agent_framework import AgentRunResponse
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
@@ -51,15 +52,7 @@ app.add_agent(agents[1])
 # 4. Durable Functions orchestration that runs both agents in parallel.
 @app.orchestration_trigger(context_name="context")
 def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
-    """Fan out to two domain-specific agents and aggregate their responses.
-
-    Note: The generator protocol lets us extract the Durable Task objects so we
-    can pass them to task_all for true parallelism. If you only use `yield
-    from` on each run call, the agents execute sequentially.
-    For sequential execution, you can simply use:
-        physicist_result = yield from physicist.run(messages=prompt, thread=physicist_thread)
-        chemist_result = yield from chemist.run(messages=prompt, thread=chemist_thread)
-    """
+    """Fan out to two domain-specific agents and aggregate their responses."""
 
     prompt = context.get_input()
     if not prompt or not str(prompt).strip():
@@ -75,30 +68,10 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     physicist_gen = physicist.run(messages=str(prompt), thread=physicist_thread)
     chemist_gen = chemist.run(messages=str(prompt), thread=chemist_thread)
 
-    # Advance each generator to extract the underlying Durable Task objects
-    physicist_task = next(physicist_gen)
-    chemist_task = next(chemist_gen)
+    task_results = yield context.task_all([physicist_gen, chemist_gen])
 
-    # Execute both tasks concurrently using task_all
-    task_results = yield context.task_all([physicist_task, chemist_task])
-
-    # Complete the generator protocol by sending results back
-    # Each generator returns its final value via StopIteration.value
-    physicist_result = None
-    chemist_result = None
-
-    try:
-        physicist_gen.send(task_results[0])
-    except StopIteration as e:
-        physicist_result = e.value
-    
-    try:
-        chemist_gen.send(task_results[1])
-    except StopIteration as e:
-        chemist_result = e.value
-
-    if physicist_result is None or chemist_result is None:
-        raise ValueError("Failed to get results from one or both agents")
+    physicist_result = cast(AgentRunResponse, task_results[0])
+    chemist_result = cast(AgentRunResponse, task_results[1])
 
     return {
         "physicist": physicist_result.text,

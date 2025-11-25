@@ -96,7 +96,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         f"Content: {payload.email_content}"
     )
 
-    spam_result_raw = yield from spam_agent.run(
+    spam_result_raw = yield spam_agent.run(
         messages=spam_prompt,
         thread=spam_thread,
         response_format=SpamDetectionResult,
@@ -117,7 +117,7 @@ def spam_detection_orchestration(context: DurableOrchestrationContext):
         f"Content: {payload.email_content}"
     )
 
-    email_result_raw = yield from email_agent.run(
+    email_result_raw = yield email_agent.run(
         messages=email_prompt,
         thread=email_thread,
         response_format=EmailResponse,

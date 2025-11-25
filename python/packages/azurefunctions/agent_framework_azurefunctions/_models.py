@@ -213,7 +213,7 @@ class DurableAgentThread(AgentThread):
         return thread
 
 
-def _serialize_response_format(response_format: type[BaseModel] | None) -> Any:
+def serialize_response_format(response_format: type[BaseModel] | None) -> Any:
     """Serialize response format for transport across durable function boundaries."""
     if response_format is None:
         return None
@@ -339,7 +339,7 @@ class RunRequest:
             "request_response_format": self.request_response_format,
         }
         if self.response_format:
-            result["response_format"] = _serialize_response_format(self.response_format)
+            result["response_format"] = serialize_response_format(self.response_format)
         if self.thread_id:
             result["thread_id"] = self.thread_id
         if self.correlation_id:

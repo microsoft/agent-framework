@@ -50,7 +50,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
     writer = app.get_agent(context, WRITER_AGENT_NAME)
     writer_thread = writer.get_new_thread()
 
-    initial = yield from writer.run(
+    initial = yield writer.run(
         messages="Write a concise inspirational sentence about learning.",
         thread=writer_thread,
     )
@@ -60,7 +60,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
         f"{initial.text}"
     )
 
-    refined = yield from writer.run(
+    refined = yield writer.run(
         messages=improved_prompt,
         thread=writer_thread,
     )

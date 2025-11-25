@@ -95,7 +95,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
 
     context.set_custom_status(f"Starting content generation for topic: {payload.topic}")
 
-    initial_raw = yield from writer.run(
+    initial_raw = yield writer.run(
         messages=f"Write a short article about '{payload.topic}'.",
         thread=writer_thread,
         response_format=GeneratedContent,
@@ -142,7 +142,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
                 "The content was rejected by a human reviewer. Please rewrite the article incorporating their feedback.\n\n"
                 f"Human Feedback: {approval_payload.feedback or 'No feedback provided.'}"
             )
-            rewritten_raw = yield from writer.run(
+            rewritten_raw = yield writer.run(
                 messages=rewrite_prompt,
                 thread=writer_thread,
                 response_format=GeneratedContent,
