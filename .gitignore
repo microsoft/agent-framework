@@ -230,3 +230,10 @@ local.settings.json
 # Package development docs (internal use only)
 **/GAP_ANALYSIS.md
 **/PR*_CHECKLIST.md
+**/IMPLEMENTATION_NOTES.md
+
+# Development/local testing files
+**/test_local.py
+**/test_simple.py
+**/test_streaming.py
+**/test_sdk_functions.py
