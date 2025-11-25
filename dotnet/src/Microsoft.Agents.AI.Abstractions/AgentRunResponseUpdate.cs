@@ -159,7 +159,7 @@ public class AgentRunResponseUpdate
     /// to resume streaming from the point of interruption.
     /// </para>
     /// </remarks>
-    public object? ContinuationToken { get; set; }
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;
