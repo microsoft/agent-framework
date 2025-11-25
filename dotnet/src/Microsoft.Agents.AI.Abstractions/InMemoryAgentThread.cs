@@ -4,8 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
@@ -115,10 +113,6 @@ public abstract class InMemoryAgentThread : AgentThread
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
         base.GetService(serviceType, serviceKey) ?? this.MessageStore?.GetService(serviceType, serviceKey);
-
-    /// <inheritdoc />
-    protected internal override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
 
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay => $"Count = {this.MessageStore.Count}";
