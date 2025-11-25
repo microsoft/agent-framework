@@ -561,6 +561,56 @@ async def test_azure_ai_client_agent_creation_with_response_format(
     assert "description" in schema["properties"]
 
 
+async def test_azure_ai_client_agent_creation_with_mapping_response_format(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation when response_format is provided as a mapping."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    runtime_schema = {
+        "title": "WeatherDigest",
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"},
+            "conditions": {"type": "string"},
+            "temperature_c": {"type": "number"},
+            "advisory": {"type": "string"},
+        },
+        "required": ["location", "conditions", "temperature_c", "advisory"],
+        "additionalProperties": False,
+    }
+
+    run_options = {
+        "model": "test-model",
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": runtime_schema["title"],
+                "strict": True,
+                "schema": runtime_schema,
+            },
+        },
+    }
+
+    await client._get_agent_reference_or_create(run_options, None)  # type: ignore
+
+    call_args = mock_project_client.agents.create_version.call_args
+    created_definition = call_args[1]["definition"]
+
+    assert hasattr(created_definition, "text")
+    assert created_definition.text is not None
+    format_config = created_definition.text.format
+    assert isinstance(format_config, ResponseTextFormatConfigurationJsonSchema)
+    assert format_config.name == runtime_schema["title"]
+    assert format_config.schema == runtime_schema
+    assert format_config.strict is True
+
+
 async def test_azure_ai_client_prepare_options_excludes_response_format(
     mock_project_client: MagicMock,
 ) -> None:
