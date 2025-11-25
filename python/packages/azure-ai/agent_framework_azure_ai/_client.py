@@ -308,11 +308,14 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return result, instructions
 
     async def prepare_options(
-        self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
         prepared_messages, instructions = self._prepare_input(messages)
-        run_options = await super().prepare_options(prepared_messages, chat_options)
+        run_options = await super().prepare_options(prepared_messages, chat_options, **kwargs)
         agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
 
         run_options["extra_body"] = {"agent": agent_reference}

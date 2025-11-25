@@ -90,7 +90,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         client = await self.ensure_client()
-        run_options = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options, **kwargs)
         response_format = run_options.pop("response_format", None)
         text_config = run_options.pop("text", None)
         text_format, text_config = self._prepare_text_config(response_format=response_format, text_config=text_config)
@@ -135,7 +135,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         client = await self.ensure_client()
-        run_options = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options, **kwargs)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         response_format = run_options.pop("response_format", None)
         text_config = run_options.pop("text", None)
@@ -386,9 +386,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         return mcp
 
     async def prepare_options(
-        self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
+        conversation_id = kwargs.pop("conversation_id", None)
+
+        if conversation_id:
+            chat_options.conversation_id = conversation_id
+
         run_options: dict[str, Any] = chat_options.to_dict(
             exclude={
                 "type",
