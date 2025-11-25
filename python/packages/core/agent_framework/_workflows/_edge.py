@@ -2,13 +2,14 @@
 
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from .._serialization import SerializationMixin
 from ._const import INTERNAL_SOURCE_ID
 from ._executor import Executor
-from ._model_utils import DictConvertible, encode_value
+from ._model_utils import encode_value
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ def _missing_callable(name: str) -> Callable[..., Any]:
 
 
 @dataclass(init=False)
-class Edge(DictConvertible):
+class Edge(SerializationMixin):
     """Model a directed, optionally-conditional hand-off between two executors.
 
     Each `Edge` captures the minimal metadata required to move a message from
@@ -164,7 +165,7 @@ class Edge(DictConvertible):
             return True
         return self._condition(data)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Produce a JSON-serialisable view of the edge metadata.
 
         The representation includes the source and target executor identifiers
@@ -184,7 +185,7 @@ class Edge(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Edge":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "Edge":
         """Reconstruct an `Edge` from its serialised dictionary form.
 
         The deserialised edge will lack the executable predicate because we do
@@ -259,7 +260,7 @@ class Default:
 
 
 @dataclass(init=False)
-class EdgeGroup(DictConvertible):
+class EdgeGroup(SerializationMixin):
     """Bundle edges that share a common routing semantics under a single id.
 
     The workflow runtime manipulates `EdgeGroup` instances rather than raw
@@ -342,7 +343,7 @@ class EdgeGroup(DictConvertible):
         """
         return list(dict.fromkeys(edge.target_id for edge in self.edges))
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialise the group metadata and contained edges into primitives.
 
         The payload captures each edge through its own `to_dict` call, enabling
@@ -385,7 +386,7 @@ class EdgeGroup(DictConvertible):
         return subclass
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EdgeGroup":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "EdgeGroup":
         """Hydrate the correct `EdgeGroup` subclass from serialised state.
 
         The method inspects the `type` field, allocates the corresponding class
@@ -556,7 +557,7 @@ class FanOutEdgeGroup(EdgeGroup):
         """
         return self._selection_func
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialise the fan-out group while preserving selection metadata.
 
         In addition to the base `EdgeGroup` payload we embed the human-friendly
@@ -569,7 +570,7 @@ class FanOutEdgeGroup(EdgeGroup):
                 snapshot = group.to_dict()
                 assert snapshot["selection_func_name"] == "<lambda>"
         """
-        payload = super().to_dict()
+        payload = super().to_dict(**kwargs)
         payload["selection_func_name"] = self.selection_func_name
         return payload
 
@@ -610,7 +611,7 @@ class FanInEdgeGroup(EdgeGroup):
 
 
 @dataclass(init=False)
-class SwitchCaseEdgeGroupCase(DictConvertible):
+class SwitchCaseEdgeGroupCase(SerializationMixin):
     """Persistable description of a single conditional branch in a switch-case.
 
     Unlike the runtime `Case` object this serialisable variant stores only the
@@ -684,7 +685,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
         """
         return self._condition
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialise the case metadata without the executable predicate.
 
         Examples:
@@ -699,7 +700,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupCase":
+    def from_dict(cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any) -> "SwitchCaseEdgeGroupCase":
         """Instantiate a case from its serialised dictionary payload.
 
         Examples:
@@ -717,7 +718,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
 
 
 @dataclass(init=False)
-class SwitchCaseEdgeGroupDefault(DictConvertible):
+class SwitchCaseEdgeGroupDefault(SerializationMixin):
     """Persistable descriptor for the fallback branch of a switch-case group.
 
     The default branch is guaranteed to exist and is invoked when every other
@@ -741,7 +742,7 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
         self.target_id = target_id
         self.type = "Default"
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialise the default branch metadata for persistence or logging.
 
         Examples:
@@ -753,7 +754,9 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
         return {"target_id": self.target_id, "type": self.type}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupDefault":
+    def from_dict(
+        cls, data: dict[str, Any] | MutableMapping[str, Any], /, **kwargs: Any
+    ) -> "SwitchCaseEdgeGroupDefault":
         """Recreate the default branch from its persisted form.
 
         Examples:
@@ -844,7 +847,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
         self.selection_func_name = None  # type: ignore[attr-defined]
         self.cases = list(cases)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, **kwargs: Any) -> dict[str, Any]:
         """Serialise the switch-case group, capturing all case descriptors.
 
         Each case is converted using `encode_value` to respect dataclass
@@ -863,7 +866,7 @@ class SwitchCaseEdgeGroup(FanOutEdgeGroup):
                 snapshot = group.to_dict()
                 assert len(snapshot["cases"]) == 2
         """
-        payload = super().to_dict()
+        payload = super().to_dict(**kwargs)
         payload["cases"] = [encode_value(case) for case in self.cases]
         return payload
 
