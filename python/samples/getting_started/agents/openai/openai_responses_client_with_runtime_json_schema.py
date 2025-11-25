@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIResponsesClient
 
 """
 OpenAI Chat Client Runtime JSON Schema Example
@@ -32,7 +32,7 @@ runtime_schema = {
 async def non_streaming_example() -> None:
     print("=== Non-streaming runtime JSON schema example ===")
 
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIResponsesClient().create_agent(
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )
@@ -65,7 +65,7 @@ async def non_streaming_example() -> None:
 async def streaming_example() -> None:
     print("=== Streaming runtime JSON schema example ===")
 
-    agent = OpenAIChatClient().create_agent(
+    agent = OpenAIResponsesClient().create_agent(
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )
