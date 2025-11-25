@@ -640,7 +640,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
         {
             TypeInfoResolver = new DefaultJsonTypeInfoResolver()
         };
-        using var deserializedStore = new CosmosChatMessageStore(cosmosClient, serializedState, s_testDatabaseId, HierarchicalTestContainerId, serializerOptions);
+        using var deserializedStore = CosmosChatMessageStore.CreateFromSerializedState(cosmosClient, serializedState, s_testDatabaseId, HierarchicalTestContainerId, serializerOptions);
 
         // Wait a moment for eventual consistency
         await Task.Delay(100);

@@ -253,48 +253,37 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="CosmosChatMessageStore"/> class from previously serialized state.
+    /// Creates a new instance of the <see cref="CosmosChatMessageStore"/> class from previously serialized state.
     /// </summary>
     /// <param name="cosmosClient">The <see cref="CosmosClient"/> instance to use for Cosmos DB operations.</param>
     /// <param name="serializedStoreState">A <see cref="JsonElement"/> representing the serialized state of the message store.</param>
     /// <param name="databaseId">The identifier of the Cosmos DB database.</param>
     /// <param name="containerId">The identifier of the Cosmos DB container.</param>
     /// <param name="jsonSerializerOptions">Optional settings for customizing the JSON deserialization process.</param>
+    /// <returns>A new instance of <see cref="CosmosChatMessageStore"/> initialized from the serialized state.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="cosmosClient"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when the serialized state cannot be deserialized.</exception>
-    public CosmosChatMessageStore(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
+    public static CosmosChatMessageStore CreateFromSerializedState(CosmosClient cosmosClient, JsonElement serializedStoreState, string databaseId, string containerId, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        this._cosmosClient = cosmosClient ?? throw new ArgumentNullException(nameof(cosmosClient));
-        this.DatabaseId = Throw.IfNullOrWhitespace(databaseId);
-        this.ContainerId = Throw.IfNullOrWhitespace(containerId);
-        this._container = this._cosmosClient.GetContainer(databaseId, containerId);
-        this._ownsClient = false;
+        Throw.IfNull(cosmosClient);
+        Throw.IfNullOrWhitespace(databaseId);
+        Throw.IfNullOrWhitespace(containerId);
 
-        if (serializedStoreState.ValueKind is JsonValueKind.Object)
+        if (serializedStoreState.ValueKind is not JsonValueKind.Object)
         {
-            var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
-            if (state?.ConversationIdentifier is { } conversationId)
-            {
-                this.ConversationId = conversationId;
-
-                // Initialize hierarchical partitioning if available in state
-                this._tenantId = state.TenantId;
-                this._userId = state.UserId;
-                this._useHierarchicalPartitioning = state.UseHierarchicalPartitioning;
-
-                this._partitionKey = (this._useHierarchicalPartitioning && this._tenantId != null && this._userId != null)
-                    ? new PartitionKeyBuilder()
-                        .Add(this._tenantId)
-                        .Add(this._userId)
-                        .Add(conversationId)
-                        .Build()
-                    : new PartitionKey(conversationId);
-
-                return;
-            }
+            throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
         }
 
-        throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
+        var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
+        if (state?.ConversationIdentifier is not { } conversationId)
+        {
+            throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
+        }
+
+        // Use the internal constructor with all parameters to ensure partition key logic is centralized
+        return state.UseHierarchicalPartitioning && state.TenantId != null && state.UserId != null
+            ? new CosmosChatMessageStore(cosmosClient, databaseId, containerId, conversationId, ownsClient: false, state.TenantId, state.UserId)
+            : new CosmosChatMessageStore(cosmosClient, databaseId, containerId, conversationId, ownsClient: false);
     }
 
     /// <inheritdoc />
@@ -320,7 +309,6 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         });
 
         var messages = new List<ChatMessage>();
-        int messageCount = 0;
 
         while (iterator.HasMoreResults)
         {
@@ -328,7 +316,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
             foreach (var document in response)
             {
-                if (this.MaxMessagesToRetrieve.HasValue && messageCount >= this.MaxMessagesToRetrieve.Value)
+                if (this.MaxMessagesToRetrieve.HasValue && messages.Count >= this.MaxMessagesToRetrieve.Value)
                 {
                     break;
                 }
@@ -339,12 +327,11 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
                     if (message != null)
                     {
                         messages.Add(message);
-                        messageCount++;
                     }
                 }
             }
 
-            if (this.MaxMessagesToRetrieve.HasValue && messageCount >= this.MaxMessagesToRetrieve.Value)
+            if (this.MaxMessagesToRetrieve.HasValue && messages.Count >= this.MaxMessagesToRetrieve.Value)
             {
                 break;
             }
@@ -412,18 +399,44 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// </summary>
     private async Task ExecuteBatchOperationAsync(List<ChatMessage> messages, long timestamp, CancellationToken cancellationToken)
     {
-        // Validate all messages will use the same partition key (required for transactional batch)
-        // In practice, this is guaranteed by conversationId, but validate defensively
-        if (messages.Count > 0 && !messages.All(m => true)) // All messages in this store share the same partition key by design
-        {
-            throw new InvalidOperationException("All messages in a transactional batch must share the same partition key (conversationId).");
-        }
-
-        var batch = this._container.CreateTransactionalBatch(this._partitionKey);
-
+        // Create all documents upfront for validation and batch operation
+        var documents = new List<CosmosMessageDocument>(messages.Count);
         foreach (var message in messages)
         {
-            var document = this.CreateMessageDocument(message, timestamp);
+            documents.Add(this.CreateMessageDocument(message, timestamp));
+        }
+
+        // Defensive check: Verify all messages share the same partition key values
+        // In hierarchical partitioning, this means same tenantId, userId, and sessionId
+        // In simple partitioning, this means same conversationId
+        if (documents.Count > 0)
+        {
+            if (this._useHierarchicalPartitioning)
+            {
+                // Verify all documents have matching hierarchical partition key components
+                var firstDoc = documents[0];
+                if (!documents.All(d => d.TenantId == firstDoc.TenantId && d.UserId == firstDoc.UserId && d.SessionId == firstDoc.SessionId))
+                {
+                    throw new InvalidOperationException("All messages in a batch must share the same partition key values (tenantId, userId, sessionId).");
+                }
+            }
+            else
+            {
+                // Verify all documents have matching conversationId
+                var firstConversationId = documents[0].ConversationId;
+                if (!documents.All(d => d.ConversationId == firstConversationId))
+                {
+                    throw new InvalidOperationException("All messages in a batch must share the same partition key value (conversationId).");
+                }
+            }
+        }
+
+        // All messages in this store share the same partition key by design
+        // Transactional batches require all items to share the same partition key
+        var batch = this._container.CreateTransactionalBatch(this._partitionKey);
+
+        foreach (var document in documents)
+        {
             batch.CreateItem(document);
         }
 
@@ -572,17 +585,16 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
 
         var iterator = this._container.GetItemQueryIterator<string>(query, requestOptions: new QueryRequestOptions
         {
-            PartitionKey = new PartitionKey(this.ConversationId),
+            PartitionKey = this._partitionKey,
             MaxItemCount = this.MaxItemCount
         });
 
         var deletedCount = 0;
-        var partitionKey = new PartitionKey(this.ConversationId);
 
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            var batch = this._container.CreateTransactionalBatch(partitionKey);
+            var batch = this._container.CreateTransactionalBatch(this._partitionKey);
             var batchItemCount = 0;
 
             foreach (var itemId in response)
