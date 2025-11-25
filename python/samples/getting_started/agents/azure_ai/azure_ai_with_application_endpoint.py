@@ -21,7 +21,7 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         # Endpoint here should be application endpoint with format:
-        # /api/projects/<project-name>/applications/<applicaton-name>/protocols
+        # /api/projects/<project-name>/applications/<application-name>/protocols
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
         ChatAgent(
             chat_client=AzureAIClient(
