@@ -81,7 +81,7 @@ You can interact with the agent workflow using:
 - The `run-requests.http` file in this directory to test and prompt the agent
 - Any OpenAI Responses compatible client by sending requests to `http://localhost:8080/`
 
-Try providing text in English to see it translated through the workflow chain (English ? French ? Spanish ? English).
+Try providing text in English to see it translated through the workflow chain (English → French → Spanish → English).
 
 ### Deploying the Agent to Microsoft Foundry
 
