@@ -157,9 +157,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         self.conversation_id = conversation_id
 
         # Track whether the application endpoint is used
-        self._is_application_endpoint = (
-            azure_ai_settings.project_endpoint is not None and "/applications/" in azure_ai_settings.project_endpoint
-        )
+        self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
         # Track whether we should close client connection
         self._should_close_client = should_close_client
 
