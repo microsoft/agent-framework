@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import MutableSequence
+from collections.abc import Mapping, MutableSequence
 from typing import Any, ClassVar, TypeVar
 
 from agent_framework import (
@@ -14,7 +14,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from agent_framework.observability import use_observability
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
@@ -22,7 +22,9 @@ from azure.ai.projects.models import (
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
+    ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
+    ResponseTextFormatConfigurationText,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -188,6 +190,40 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Close the project_client."""
         await self._close_client_if_needed()
 
+    def _create_text_format_config(
+        self, response_format: Any
+    ) -> (
+        ResponseTextFormatConfigurationJsonSchema
+        | ResponseTextFormatConfigurationJsonObject
+        | ResponseTextFormatConfigurationText
+    ):
+        """Convert response_format into Azure text format configuration."""
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return ResponseTextFormatConfigurationJsonSchema(
+                name=response_format.__name__,
+                schema=response_format.model_json_schema(),
+            )
+
+        if isinstance(response_format, Mapping):
+            format_config = self._convert_response_format(response_format)
+            format_type = format_config.get("type")
+            if format_type == "json_schema":
+                config_kwargs: dict[str, Any] = {
+                    "name": format_config.get("name") or "response",
+                    "schema": format_config["schema"],
+                }
+                if "strict" in format_config:
+                    config_kwargs["strict"] = format_config["strict"]
+                if "description" in format_config:
+                    config_kwargs["description"] = format_config["description"]
+                return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
+            if format_type == "json_object":
+                return ResponseTextFormatConfigurationJsonObject()
+            if format_type == "text":
+                return ResponseTextFormatConfigurationText()
+
+        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+
     async def _get_agent_reference_or_create(
         self, run_options: dict[str, Any], messages_instructions: str | None
     ) -> dict[str, str]:
@@ -228,12 +264,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
             if "response_format" in run_options:
                 response_format = run_options["response_format"]
-                args["text"] = PromptAgentDefinitionText(
-                    format=ResponseTextFormatConfigurationJsonSchema(
-                        name=response_format.__name__,
-                        schema=response_format.model_json_schema(),
-                    )
-                )
+                args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             combined_instructions = [

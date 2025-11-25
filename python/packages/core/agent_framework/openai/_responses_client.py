@@ -91,18 +91,21 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     ) -> ChatResponse:
         client = await self.ensure_client()
         run_options = await self.prepare_options(messages, chat_options)
+        response_format = run_options.pop("response_format", None)
+        text_config = run_options.pop("text", None)
+        text_format, text_config = self._prepare_text_config(response_format=response_format, text_config=text_config)
+        if text_config:
+            run_options["text"] = text_config
         try:
-            response_format = run_options.pop("response_format", None)
-            if not response_format:
+            if not text_format:
                 response = await client.responses.create(
                     stream=False,
                     **run_options,
                 )
                 chat_options.conversation_id = self.get_conversation_id(response, chat_options.store)
                 return self._create_response_content(response, chat_options=chat_options)
-            # create call does not support response_format, so we need to handle it via parse call
             parsed_response: ParsedResponse[BaseModel] = await client.responses.parse(
-                text_format=response_format,
+                text_format=text_format,
                 stream=False,
                 **run_options,
             )
@@ -134,9 +137,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         client = await self.ensure_client()
         run_options = await self.prepare_options(messages, chat_options)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
+        response_format = run_options.pop("response_format", None)
+        text_config = run_options.pop("text", None)
+        text_format, text_config = self._prepare_text_config(response_format=response_format, text_config=text_config)
+        if text_config:
+            run_options["text"] = text_config
         try:
-            response_format = run_options.pop("response_format", None)
-            if not response_format:
+            if not text_format:
                 response = await client.responses.create(
                     stream=True,
                     **run_options,
@@ -147,9 +154,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     )
                     yield update
                 return
-            # create call does not support response_format, so we need to handle it via stream call
             async with client.responses.stream(
-                text_format=response_format,
+                text_format=text_format,
                 **run_options,
             ) as response:
                 async for chunk in response:
@@ -172,6 +178,71 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 f"{type(self)} service failed to complete the prompt: {ex}",
                 inner_exception=ex,
             ) from ex
+
+    def _prepare_text_config(
+        self,
+        *,
+        response_format: Any,
+        text_config: MutableMapping[str, Any] | None,
+    ) -> tuple[type[BaseModel] | None, dict[str, Any] | None]:
+        """Normalize response_format into Responses text configuration and parse target."""
+        prepared_text = dict(text_config) if isinstance(text_config, MutableMapping) else None
+        if text_config is not None and not isinstance(text_config, MutableMapping):
+            raise ServiceInvalidRequestError("text must be a mapping when provided.")
+
+        if response_format is None:
+            return None, prepared_text
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if prepared_text and "format" in prepared_text:
+                raise ServiceInvalidRequestError("response_format cannot be combined with explicit text.format.")
+            return response_format, prepared_text
+
+        if isinstance(response_format, Mapping):
+            format_config = self._convert_response_format(response_format)
+            if prepared_text is None:
+                prepared_text = {}
+            elif "format" in prepared_text and prepared_text["format"] != format_config:
+                raise ServiceInvalidRequestError("Conflicting response_format definitions detected.")
+            prepared_text["format"] = format_config
+            return None, prepared_text
+
+        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+
+    def _convert_response_format(self, response_format: Mapping[str, Any]) -> dict[str, Any]:
+        """Convert Chat style response_format into Responses text format config."""
+        if "format" in response_format and isinstance(response_format["format"], Mapping):
+            return dict(response_format["format"])
+
+        format_type = response_format.get("type")
+        if format_type == "json_schema":
+            schema_section = response_format.get("json_schema", response_format)
+            if not isinstance(schema_section, Mapping):
+                raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+            schema = schema_section.get("schema")
+            if schema is None:
+                raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+            name = (
+                schema_section.get("name")
+                or schema_section.get("title")
+                or (schema.get("title") if isinstance(schema, Mapping) else None)
+                or "response"
+            )
+            format_config: dict[str, Any] = {
+                "type": "json_schema",
+                "name": name,
+                "schema": schema,
+            }
+            if "strict" in schema_section:
+                format_config["strict"] = schema_section["strict"]
+            if "description" in schema_section and schema_section["description"] is not None:
+                format_config["description"] = schema_section["description"]
+            return format_config
+
+        if format_type in {"json_object", "text"}:
+            return {"type": format_type}
+
+        raise ServiceInvalidRequestError("Unsupported response_format provided for Responses client.")
 
     def get_conversation_id(
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
