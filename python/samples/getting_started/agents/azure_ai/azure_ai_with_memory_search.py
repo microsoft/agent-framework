@@ -1,11 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
 import os
+import uuid
 
 from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import MemoryStoreDefaultDefinition, MemoryStoreDefaultOptions
-from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import AzureCliCredential
 
 """
@@ -26,19 +26,12 @@ Prerequisites:
 
 async def main() -> None:
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    memory_store_name = "agent_framework_memory_store"
+    # Generate a unique memory store name to avoid conflicts
+    memory_store_name = f"agent_framework_memory_store_{uuid.uuid4().hex[:8]}"
 
     async with AzureCliCredential() as credential:
-        # First, create the memory store using Azure AI Projects client
+        # Create the memory store using Azure AI Projects client
         async with AIProjectClient(endpoint=endpoint, credential=credential) as project_client:
-            # Delete memory store if it already exists
-            try:
-                await project_client.memory_stores.delete(memory_store_name)
-                print(f"Memory store `{memory_store_name}` deleted")
-            except ResourceNotFoundError:
-                # Memory store does not exist, so nothing to delete. Safe to ignore.
-                pass
-
             # Create a memory store using proper model classes
             memory_store_definition = MemoryStoreDefaultDefinition(
                 chat_model=os.environ["AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME"],
