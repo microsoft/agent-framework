@@ -46,7 +46,7 @@ Before running this sample, ensure you have:
 1. An Azure OpenAI endpoint configured
 2. A deployment of a chat model (e.g., `gpt-4o-mini`)
 3. Azure CLI installed and authenticated (`az login`)
-4. .NET 9.0 SDK or later installed
+4. .NET 10 SDK or later installed
 
 ### Environment Variables
 
