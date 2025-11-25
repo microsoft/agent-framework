@@ -43,12 +43,8 @@ class TestAgentResponseHelpers:
 
     @staticmethod
     def _create_agent_task() -> AgentTask:
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance"
-        mock_context.new_uuid = Mock(return_value="helper-guid")
-        agent = DurableAIAgent(mock_context, "HelperAgent")
         entity_task = _create_entity_task()
-        return AgentTask(entity_task, None, agent, "correlation-id")
+        return AgentTask(entity_task, None, "correlation-id")
 
     def test_load_agent_response_from_instance(self) -> None:
         task = self._create_agent_task()
@@ -76,6 +72,118 @@ class TestAgentResponseHelpers:
 
         with pytest.raises(ValueError):
             task._load_agent_response(None)
+
+    def test_load_agent_response_rejects_unsupported_type(self) -> None:
+        task = self._create_agent_task()
+
+        with pytest.raises(TypeError, match="Unsupported type"):
+            task._load_agent_response(["invalid", "list"])  # type: ignore[arg-type]
+
+    def test_try_set_value_success(self) -> None:
+        """Test try_set_value correctly processes successful task completion."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate successful entity task completion
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task completed successfully with AgentRunResponse
+        assert task.state == TaskState.SUCCEEDED
+        assert isinstance(task.result, AgentRunResponse)
+        assert task.result.text == "Test response"
+
+    def test_try_set_value_failure(self) -> None:
+        """Test try_set_value correctly handles failed task completion."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate failed entity task
+        entity_task.state = TaskState.FAILED
+        entity_task.result = Exception("Entity call failed")
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task failed with the error
+        assert task.state == TaskState.FAILED
+        assert isinstance(task.result, Exception)
+        assert str(task.result) == "Entity call failed"
+
+    def test_try_set_value_with_response_format(self) -> None:
+        """Test try_set_value parses structured output when response_format is provided."""
+        from pydantic import BaseModel
+
+        class TestSchema(BaseModel):
+            answer: str
+
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, TestSchema, "correlation-id")
+
+        # Simulate successful entity task with JSON response
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = AgentRunResponse(
+            messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]
+        ).to_dict()
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task completed and value was parsed
+        assert task.state == TaskState.SUCCEEDED
+        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result.value, TestSchema)
+        assert task.result.value.answer == "42"
+
+    def test_ensure_response_format_parses_value(self) -> None:
+        """Test _ensure_response_format correctly parses response value."""
+        from pydantic import BaseModel
+
+        class SampleSchema(BaseModel):
+            name: str
+
+        task = self._create_agent_task()
+        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"name": "test"}')])
+
+        # Value should be None initially
+        assert response.value is None
+
+        # Parse the value
+        task._ensure_response_format(SampleSchema, "test-correlation", response)
+
+        # Value should now be parsed
+        assert isinstance(response.value, SampleSchema)
+        assert response.value.name == "test"
+
+    def test_ensure_response_format_skips_if_already_parsed(self) -> None:
+        """Test _ensure_response_format does not re-parse if value already matches format."""
+        from pydantic import BaseModel
+
+        class SampleSchema(BaseModel):
+            name: str
+
+        task = self._create_agent_task()
+        existing_value = SampleSchema(name="existing")
+        response = AgentRunResponse(
+            messages=[ChatMessage(role="assistant", text='{"name": "new"}')],
+            value=existing_value,
+        )
+
+        # Call _ensure_response_format
+        task._ensure_response_format(SampleSchema, "test-correlation", response)
+
+        # Value should remain unchanged (not re-parsed)
+        assert response.value is existing_value
+        assert response.value.name == "existing"
 
 
 class TestDurableAIAgent:

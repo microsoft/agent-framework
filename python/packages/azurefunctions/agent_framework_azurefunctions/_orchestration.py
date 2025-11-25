@@ -54,7 +54,6 @@ class AgentTask(_TypedCompoundTask):
         self,
         entity_task: TaskBase,
         response_format: type[BaseModel] | None,
-        agent: "DurableAIAgent",
         correlation_id: str,
     ):
         """Initialize the AgentTask.
@@ -62,12 +61,10 @@ class AgentTask(_TypedCompoundTask):
         Args:
             entity_task: The underlying entity call task
             response_format: Optional Pydantic model for response parsing
-            agent: Reference to the DurableAIAgent for response conversion
             correlation_id: Correlation ID for logging
         """
         super().__init__([entity_task])
         self._response_format = response_format
-        self._agent = agent
         self._correlation_id = correlation_id
 
         # Override action_repr to expose the inner task's action directly
@@ -77,7 +74,7 @@ class AgentTask(_TypedCompoundTask):
         # Also copy the task ID to match the entity task's identity
         self.id = entity_task.id
 
-    def try_set_value(self, child: TaskBase):
+    def try_set_value(self, child: TaskBase) -> None:
         """Intercept task completion and convert raw result to typed AgentRunResponse.
 
         This method delegates to the parent WhenAllTask behavior but intercepts
@@ -294,7 +291,6 @@ class DurableAIAgent(AgentProtocol):
         agent_task = AgentTask(
             entity_task=entity_task,
             response_format=response_format,
-            agent=self,
             correlation_id=correlation_id,
         )
 
