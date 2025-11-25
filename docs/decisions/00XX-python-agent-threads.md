@@ -39,10 +39,14 @@ This all means that at various moments a thread can be different things and have
 ### 2. Separate classes for `ServiceThread`/`RemoteThread` and `LocalAgentThread`/`LocalThread`, each with their own behaviors and methods.
 This approach would mean:
 - Creating two subclasses of AgentThread, one for service threads and one for local threads, both with `context providers` as attributes, but with different other attributes and methods.
-- We would then add a flag on ChatClients, to indicate which type of thread they support, and it can be both, so two flags are likely needed, although local thread might always be possible.
-- And finally, all Agents would get two methods, `get_service_thread()`/`get_remote_thread` and `get_local_thread()`, both of which might raise an error if the chat client does not support that type of thread.
-- the `run` methods would take both types of threads, but would raise an error if the thread type is not supported by the chat client. And it would also check with the `store` parameter to make sure it is used correctly, or set it correctly.
-- One open question is how to handle when there is a mismatch between the thread type and the `store` parameter, for example passing a `LocalAgentThread` with `store=True`, or a `ServiceAgentThread` with `store=False`. Options are to either raise an error, or to ignore the `store` parameter and always do the right thing based on the thread type. Or to transform the thread into the right type, but that seems more complex and might not always be possible. Although starting with a local thread (which would be a list of chat messages in a ChatMessageStore) and then setting store=True might make sense, the return would be a service thread then, but that adds complexity, this might be useful for workflows that combine different agent types.
+- We would then add a flag on `ChatClients`, to indicate if they support `remote/service` threads, and we assume that we always support `local` threads.
+- And finally, all Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(chat_message_store: ...)`, both of which might raise an error if the chat client does not support that type of thread.
+- the `run` methods would take both types of threads, but would raise an error if the thread type is not supported by the chat client.
+- One open question is how to handle when there is a mismatch between the thread type and the `store` parameter, for example passing a `LocalAgentThread` with `store=True`, or a `ServiceAgentThread` with `store=False`. Options are:
+    - Raise an error
+    - The `store` and `conversation_id` parameters have precedence, so that if you pass in a `local` thread and `store=True` and `conversation_id!=None`, the messages from the thread are passed in, but the thread is not updated and overwritten with a remote thread after the call.
+    - The `Thread` has precedence over chat options. In other words, because the `thread` is defined at the agent level, while the `store` and `conversation_id` parameters are defined at the chat client level, the `thread` has precedence, so that if you pass a `RemoteThread`, it will set `store=True` regardless of what is passed in otherwise, and `conversation_id` will be set to the id in the `thread`, while if you pass a `LocalThread`, it will set `store=False` and `conversation_id=None` regardless of what is passed in otherwise.
+    - I believe the last option makes the most sense.
 - Naming is another open question, options are:
     - for the remote threads:
         - `ServiceThread`
