@@ -175,7 +175,7 @@ public class AgentRunResponse
     /// to poll for completion.
     /// </para>
     /// </remarks>
-    public object? ContinuationToken { get; set; }
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>
     /// Gets or sets the timestamp indicating when this response was created.
