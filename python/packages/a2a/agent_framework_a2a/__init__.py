@@ -2,8 +2,7 @@
 
 import importlib.metadata
 
-from ._a2a_event_adapter import A2aEventAdapter, BaseA2aEventAdapter
-from ._a2a_executor import A2aExecutor
+from ._a2a_executor import A2AExecutor
 from ._agent import A2AAgent
 
 try:
@@ -13,8 +12,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "A2AAgent",
-    "A2aEventAdapter",
-    "A2aExecutor",
-    "BaseA2aEventAdapter",
+    "A2AExecutor",
     "__version__",
 ]

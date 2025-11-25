@@ -12,7 +12,7 @@ from a2a.types import (
     AgentSkill,
 )
 
-from agent_framework.a2a import A2aExecutor
+from agent_framework.a2a import A2AExecutor
 from agent_framework.openai import OpenAIResponsesClient
 
 if __name__ == '__main__':
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     )
 
     request_handler = DefaultRequestHandler(
-        agent_executor= A2aExecutor(agent),
+        agent_executor= A2AExecutor(agent),
         task_store= InMemoryTaskStore(),
     )
 
