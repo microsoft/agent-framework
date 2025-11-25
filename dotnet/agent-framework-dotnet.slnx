@@ -45,6 +45,7 @@
   <Folder Name="/Samples/GettingStarted/AgentProviders/">
     <File Path="samples/GettingStarted/AgentProviders/README.md" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_A2A/Agent_With_A2A.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Anthropic/Agent_With_Anthropic.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIAgentsPersistent/Agent_With_AzureAIAgentsPersistent.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureAIProject/Agent_With_AzureAIProject.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureFoundryModel/Agent_With_AzureFoundryModel.csproj" />
@@ -81,6 +82,12 @@
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
     <Project Path="samples/GettingStarted/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AgentWithAnthropic/">
+    <File Path="samples/GettingStarted/AgentWithAnthropic/README.md" />
+    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step01_Running/Agent_Anthropic_Step01_Running.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step02_Reasoning/Agent_Anthropic_Step02_Reasoning.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithAnthropic/Agent_Anthropic_Step03_UsingFunctionTools/Agent_Anthropic_Step03_UsingFunctionTools.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/AgentWithMemory/">
     <File Path="samples/GettingStarted/AgentWithMemory/README.md" />
@@ -312,6 +319,7 @@
     <File Path="src/Shared/Demos/SampleEnvironment.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/IntegrationTests/">
+    <File Path="src/Shared/IntegrationTests/AnthropicConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/AzureAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/Mem0Configuration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
@@ -336,6 +344,7 @@
     <Project Path="src/Microsoft.Agents.AI.A2A/Microsoft.Agents.AI.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Abstractions/Microsoft.Agents.AI.Abstractions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AGUI/Microsoft.Agents.AI.AGUI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Anthropic/Microsoft.Agents.AI.Anthropic.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
@@ -358,6 +367,7 @@
   <Folder Name="/Tests/" />
   <Folder Name="/Tests/IntegrationTests/">
     <Project Path="tests/AgentConformance.IntegrationTests/AgentConformance.IntegrationTests.csproj" />
+    <Project Path="tests/AnthropicChatCompletion.IntegrationTests/AnthropicChatCompletion.IntegrationTests.csproj" />
     <Project Path="tests/AzureAI.IntegrationTests/AzureAI.IntegrationTests.csproj" />
     <Project Path="tests/AzureAIAgentsPersistent.IntegrationTests/AzureAIAgentsPersistent.IntegrationTests.csproj" />
     <Project Path="tests/CopilotStudio.IntegrationTests/CopilotStudio.IntegrationTests.csproj" />
@@ -374,6 +384,7 @@
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AGUI.UnitTests/Microsoft.Agents.AI.AGUI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />

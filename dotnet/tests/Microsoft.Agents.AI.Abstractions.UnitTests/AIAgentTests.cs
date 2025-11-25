@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
-using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -222,21 +221,6 @@ public class AIAgentTests
         Assert.Equal(id, agent.Id);
     }
 
-    [Fact]
-    public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
-    {
-        var cancellationToken = default(CancellationToken);
-
-        var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
-
-        var threadMock = new Mock<TestAgentThread> { CallBase = true };
-        threadMock.SetupAllProperties();
-
-        await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
-
-        threadMock.Protected().Verify("MessagesReceivedAsync", Times.Once(), messages, cancellationToken);
-    }
-
     #region GetService Method Tests
 
     /// <summary>
@@ -360,9 +344,6 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken) =>
-            AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
-
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();
 
