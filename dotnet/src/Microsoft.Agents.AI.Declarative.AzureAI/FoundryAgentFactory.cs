@@ -3,7 +3,6 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Agents;
-using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.Configuration;

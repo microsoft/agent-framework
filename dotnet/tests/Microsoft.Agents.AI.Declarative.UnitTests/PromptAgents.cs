@@ -139,7 +139,7 @@ internal static class PromptAgents
             endpoint: https://my-azure-openai-endpoint.openai.azure.com/
         """;
 
-    internal const string AgentWithEnvironmentVariables =
+    internal const string AgentWithVariableReferences =
         """
         kind: Prompt
         name: AgentName
@@ -147,6 +147,9 @@ internal static class PromptAgents
         instructions: You are a helpful assistant.
         model:
           id: gpt-4o
+          options:
+            temperature: =Env.Temperature
+            topP: =Env.TopP
           connection:
             kind: apiKey
             endpoint: =Env.OpenAIEndpoint
