@@ -134,7 +134,7 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
             Assert.Contains($"agents/{agentName}/run", httpMeta.RawBindings[0]);
 
             // We expect 2 mcp tool triggers only for agentB and agentC
-            if (agentName == "agentB" || agentName == "agentC")
+            if (agentName is "agentB" or "agentC")
             {
                 DefaultFunctionMetadata? mcpToolMeta =
                     Assert.Single(metadataList, m => m.Name == $"mcptool-{agentName}") as DefaultFunctionMetadata;

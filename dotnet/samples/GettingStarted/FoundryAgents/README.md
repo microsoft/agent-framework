@@ -10,7 +10,7 @@ versioning, multi-turn conversations, and advanced features like code interpreta
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure Foundry service endpoint and project configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 

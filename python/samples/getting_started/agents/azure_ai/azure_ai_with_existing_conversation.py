@@ -32,7 +32,7 @@ async def example_with_client() -> None:
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
     ):
         # Create a conversation using OpenAI client
-        openai_client = await project_client.get_openai_client()
+        openai_client = project_client.get_openai_client()
         conversation = await openai_client.conversations.create()
         conversation_id = conversation.id
         print(f"Conversation ID: {conversation_id}")
@@ -70,7 +70,7 @@ async def example_with_thread() -> None:
         ) as agent,
     ):
         # Create a conversation using OpenAI client
-        openai_client = await project_client.get_openai_client()
+        openai_client = project_client.get_openai_client()
         conversation = await openai_client.conversations.create()
         conversation_id = conversation.id
         print(f"Conversation ID: {conversation_id}")
