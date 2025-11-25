@@ -177,7 +177,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
     ) -> str | None:
         """Get the conversation ID from the response if store is True."""
-        return response.id if store else None
+        return None if store is False else response.id
 
     # region Prep methods
 
@@ -366,8 +366,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     run_options[key] = value
-        if "store" not in run_options:
-            run_options["store"] = False
         if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
             run_options["tool_choice"] = tool_choice["mode"]
         return run_options
@@ -744,8 +742,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             "additional_properties": metadata,
             "raw_representation": response,
         }
-        if chat_options.store:
-            args["conversation_id"] = self.get_conversation_id(response, chat_options.store)
+
+        conversation_id = self.get_conversation_id(response, chat_options.store)
+
+        if conversation_id:
+            args["conversation_id"] = conversation_id
         if response.usage and (usage_details := self._usage_details_from_openai(response.usage)):
             args["usage_details"] = usage_details
         if structured_response:

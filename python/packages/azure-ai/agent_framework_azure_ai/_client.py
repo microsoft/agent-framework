@@ -280,7 +280,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
-        chat_options.store = bool(chat_options.store or chat_options.store is None)
         prepared_messages, instructions = self._prepare_input(messages)
         run_options = await super().prepare_options(prepared_messages, chat_options)
         agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
@@ -347,12 +346,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
     ) -> str | None:
         """Get the conversation ID from the response if store is True."""
-        if store:
-            # If conversation ID exists, it means that we operate with conversation
-            # so we use conversation ID as input and output.
-            if response.conversation and response.conversation.id:
-                return response.conversation.id
-            # If conversation ID doesn't exist, we operate with responses
-            # so we use response ID as input and output.
-            return response.id
-        return None
+        if store is False:
+            return None
+        # If conversation ID exists, it means that we operate with conversation
+        # so we use conversation ID as input and output.
+        if response.conversation and response.conversation.id:
+            return response.conversation.id
+        # If conversation ID doesn't exist, we operate with responses
+        # so we use response ID as input and output.
+        return response.id
