@@ -67,7 +67,7 @@ from agent_framework.observability import setup_observability
 setup_observability()
 ```
 
-We also have an opinionated logging format, which you can setup using:
+Agent Framework also has an opinionated logging format, which you can setup using:
 ```python
 from agent_framework import setup_logging
 
@@ -96,7 +96,7 @@ setup_observability(exporters=[exporter])
 > Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
 #### Logging
-We have a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
+Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
 
 ```python
 from agent_framework import setup_logging
