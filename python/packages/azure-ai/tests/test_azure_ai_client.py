@@ -87,6 +87,7 @@ def create_test_azure_ai_client(
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
+    client._is_application_endpoint = False  # type: ignore
     client._should_close_client = should_close_client  # type: ignore
     client.additional_properties = {}
     client.middleware = None
