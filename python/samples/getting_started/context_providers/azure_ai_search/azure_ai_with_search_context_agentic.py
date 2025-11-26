@@ -4,8 +4,7 @@ import asyncio
 import os
 
 from agent_framework import ChatAgent
-from agent_framework_aisearch import AzureAISearchContextProvider
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
