@@ -43,7 +43,7 @@ dependencies = [
 all = [
     "agent-framework-a2a",
     "agent-framework-ag-ui",
-    "agent-framework-aisearch",
+    "agent-framework-azure-ai-search",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",

@@ -1,15 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Azure AI Search Context Provider for Agent Framework.
-
-This module provides context providers for Azure AI Search integration with two modes:
-- Agentic: Recommended for most scenarios. Uses Knowledge Bases for query planning and
-  multi-hop reasoning. Slightly slower with more token consumption, but more accurate.
-- Semantic: Fast hybrid search (vector + keyword) with semantic ranker. Best for simple
-  queries where speed is critical.
-
-See: https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720
-"""
 
 import sys
 from collections.abc import Awaitable, Callable, MutableSequence
@@ -110,6 +100,18 @@ if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+"""Azure AI Search Context Provider for Agent Framework.
+
+This module provides context providers for Azure AI Search integration with two modes:
+- Agentic: Recommended for most scenarios. Uses Knowledge Bases for query planning and
+  multi-hop reasoning. Slightly slower with more token consumption, but more accurate.
+- Semantic: Fast hybrid search (vector + keyword) with semantic ranker. Best for simple
+  queries where speed is critical.
+
+See: https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720
+"""
+
 
 # Module-level constants
 logger = get_logger("agent_framework.azure")

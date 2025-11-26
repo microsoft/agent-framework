@@ -67,19 +67,19 @@ async def example_with_thread_persistence_in_memory() -> None:
     # First conversation
     query1 = "What's the weather like in Tokyo?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, thread=thread)
+    result1 = await agent.run(query1, thread=thread, store=False)
     print(f"Agent: {result1.text}")
 
     # Second conversation using the same thread - maintains context
     query2 = "How about London?"
     print(f"\nUser: {query2}")
-    result2 = await agent.run(query2, thread=thread)
+    result2 = await agent.run(query2, thread=thread, store=False)
     print(f"Agent: {result2.text}")
 
     # Third conversation - agent should remember both previous cities
     query3 = "Which of the cities I asked about has better weather?"
     print(f"\nUser: {query3}")
-    result3 = await agent.run(query3, thread=thread)
+    result3 = await agent.run(query3, thread=thread, store=False)
     print(f"Agent: {result3.text}")
     print("Note: The agent remembers context from previous messages in the same thread.\n")
 
@@ -105,8 +105,7 @@ async def example_with_existing_thread_id() -> None:
 
     query1 = "What's the weather in Paris?"
     print(f"User: {query1}")
-    # Enable OpenAI conversation state by setting `store` parameter to True
-    result1 = await agent.run(query1, thread=thread, store=True)
+    result1 = await agent.run(query1, thread=thread)
     print(f"Agent: {result1.text}")
 
     # The thread ID is set after the first response
@@ -127,7 +126,7 @@ async def example_with_existing_thread_id() -> None:
 
         query2 = "What was the last city I asked about?"
         print(f"User: {query2}")
-        result2 = await agent.run(query2, thread=thread, store=True)
+        result2 = await agent.run(query2, thread=thread)
         print(f"Agent: {result2.text}")
         print("Note: The agent continues the conversation from the previous thread by using thread ID.\n")
 
