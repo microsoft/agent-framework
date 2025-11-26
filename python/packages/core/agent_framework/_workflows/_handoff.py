@@ -1424,6 +1424,7 @@ class HandoffBuilder:
             prompt=self._request_prompt,
             id="handoff-user-input",
         )
+        builder = WorkflowBuilder(name=self._name, description=self._description).set_start_executor(input_node)
 
         specialist_aliases = {alias: exec_id for alias, exec_id in self._aliases.items() if exec_id in specialists}
 
@@ -1440,6 +1441,7 @@ class HandoffBuilder:
 
         wiring = _GroupChatConfig(
             manager=None,
+            manager_participant=None,
             manager_name=self._starting_agent_id,
             participants=participant_specs,
             max_rounds=None,
@@ -1453,14 +1455,13 @@ class HandoffBuilder:
             orchestrator_factory=_handoff_orchestrator_factory,
             interceptors=(),
             checkpoint_storage=self._checkpoint_storage,
-            builder=WorkflowBuilder(name=self._name, description=self._description),
+            builder=builder,
             return_builder=True,
         )
         if not isinstance(result, tuple):
             raise TypeError("Expected tuple from assemble_group_chat_workflow with return_builder=True")
         builder, coordinator = result
 
-        builder = builder.set_start_executor(input_node)
         builder = builder.add_edge(input_node, starting_executor)
         builder = builder.add_edge(coordinator, user_gateway)
         builder = builder.add_edge(user_gateway, coordinator)
