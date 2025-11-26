@@ -30,7 +30,9 @@ CompoundActionConstructor: TypeAlias = Callable[[list[Any]], Any] | None
 if TYPE_CHECKING:
     from azure.durable_functions import DurableOrchestrationContext
 
-    class _TypedCompoundTask(CompoundTask):
+    class _TypedCompoundTask(CompoundTask):  # type: ignore[misc]
+        _first_error: Any
+
         def __init__(
             self,
             tasks: list[TaskBase],
