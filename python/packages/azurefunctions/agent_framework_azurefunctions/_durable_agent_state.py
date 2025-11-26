@@ -53,9 +53,20 @@ from agent_framework import (
 )
 from dateutil import parser as date_parser
 
+from ._constants import ApiResponseFields, ContentTypes, Defaults, Fields
 from ._models import RunRequest, serialize_response_format
 
 logger = get_logger("agent_framework.azurefunctions.durable_agent_state")
+
+
+class DurableAgentStateEntryJsonType(str, Enum):
+    """Enum for conversation history entry types.
+
+    Discriminator values for the $type field in DurableAgentStateEntry objects.
+    """
+
+    REQUEST = "request"
+    RESPONSE = "response"
 
 
 def _parse_created_at(value: Any) -> datetime:
@@ -84,7 +95,7 @@ def _parse_messages(data: dict[str, Any]) -> list[DurableAgentStateMessage]:
         List of DurableAgentStateMessage objects
     """
     messages: list[DurableAgentStateMessage] = []
-    raw_messages: list[Any] = data.get("messages", [])
+    raw_messages: list[Any] = data.get(Fields.MESSAGES, [])
     for raw_msg in raw_messages:
         if isinstance(raw_msg, dict):
             messages.append(DurableAgentStateMessage.from_dict(cast(dict[str, Any], raw_msg)))
@@ -102,12 +113,12 @@ def _parse_history_entries(data_dict: dict[str, Any]) -> list[DurableAgentStateE
     Returns:
         List of DurableAgentStateEntry objects (requests and responses)
     """
-    history_data: list[Any] = data_dict.get("conversationHistory", [])
+    history_data: list[Any] = data_dict.get(Fields.CONVERSATION_HISTORY, [])
     deserialized_history: list[DurableAgentStateEntry] = []
     for raw_entry in history_data:
         if isinstance(raw_entry, dict):
             entry_dict = cast(dict[str, Any], raw_entry)
-            entry_type = entry_dict.get("$type") or entry_dict.get("json_type")
+            entry_type = entry_dict.get(Fields.TYPE) or entry_dict.get(Fields.JSON_TYPE_LEGACY)
             if entry_type == DurableAgentStateEntryJsonType.RESPONSE:
                 deserialized_history.append(DurableAgentStateResponse.from_dict(entry_dict))
             elif entry_type == DurableAgentStateEntryJsonType.REQUEST:
@@ -129,70 +140,70 @@ def _parse_contents(data: dict[str, Any]) -> list[DurableAgentStateContent]:
         List of DurableAgentStateContent objects
     """
     contents: list[DurableAgentStateContent] = []
-    raw_contents: list[Any] = data.get("contents", [])
+    raw_contents: list[Any] = data.get(Fields.CONTENTS, [])
     for raw_content in raw_contents:
         if isinstance(raw_content, dict):
             content_dict = cast(dict[str, Any], raw_content)
-            content_type: str | None = content_dict.get("$type")
-            if content_type == DurableAgentStateTextContent.type:
-                contents.append(DurableAgentStateTextContent(text=content_dict.get("text")))
-            elif content_type == DurableAgentStateDataContent.type:
+            content_type: str | None = content_dict.get(Fields.TYPE)
+            if content_type == ContentTypes.TEXT:
+                contents.append(DurableAgentStateTextContent(text=content_dict.get(Fields.TEXT)))
+            elif content_type == ContentTypes.DATA:
                 contents.append(
                     DurableAgentStateDataContent(
-                        uri=str(content_dict.get("uri", "")),
-                        media_type=content_dict.get("mediaType"),
+                        uri=str(content_dict.get(Fields.URI, "")),
+                        media_type=content_dict.get(Fields.MEDIA_TYPE),
                     )
                 )
-            elif content_type == DurableAgentStateErrorContent.type:
+            elif content_type == ContentTypes.ERROR:
                 contents.append(
                     DurableAgentStateErrorContent(
-                        message=content_dict.get("message"),
-                        error_code=content_dict.get("errorCode"),
-                        details=content_dict.get("details"),
+                        message=content_dict.get(Fields.MESSAGE),
+                        error_code=content_dict.get(Fields.ERROR_CODE),
+                        details=content_dict.get(Fields.DETAILS),
                     )
                 )
-            elif content_type == DurableAgentStateFunctionCallContent.type:
+            elif content_type == ContentTypes.FUNCTION_CALL:
                 contents.append(
                     DurableAgentStateFunctionCallContent(
-                        call_id=str(content_dict.get("callId", "")),
-                        name=str(content_dict.get("name", "")),
-                        arguments=content_dict.get("arguments", {}),
+                        call_id=str(content_dict.get(Fields.CALL_ID, "")),
+                        name=str(content_dict.get(Fields.NAME, "")),
+                        arguments=content_dict.get(Fields.ARGUMENTS, {}),
                     )
                 )
-            elif content_type == DurableAgentStateFunctionResultContent.type:
+            elif content_type == ContentTypes.FUNCTION_RESULT:
                 contents.append(
                     DurableAgentStateFunctionResultContent(
-                        call_id=str(content_dict.get("callId", "")),
-                        result=content_dict.get("result"),
+                        call_id=str(content_dict.get(Fields.CALL_ID, "")),
+                        result=content_dict.get(Fields.RESULT),
                     )
                 )
-            elif content_type == DurableAgentStateHostedFileContent.type:
-                contents.append(DurableAgentStateHostedFileContent(file_id=str(content_dict.get("fileId", ""))))
-            elif content_type == DurableAgentStateHostedVectorStoreContent.type:
+            elif content_type == ContentTypes.HOSTED_FILE:
+                contents.append(DurableAgentStateHostedFileContent(file_id=str(content_dict.get(Fields.FILE_ID, ""))))
+            elif content_type == ContentTypes.HOSTED_VECTOR_STORE:
                 contents.append(
                     DurableAgentStateHostedVectorStoreContent(
-                        vector_store_id=str(content_dict.get("vectorStoreId", ""))
+                        vector_store_id=str(content_dict.get(Fields.VECTOR_STORE_ID, ""))
                     )
                 )
-            elif content_type == DurableAgentStateTextReasoningContent.type:
-                contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get("text")))
-            elif content_type == DurableAgentStateUriContent.type:
+            elif content_type == ContentTypes.REASONING:
+                contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get(Fields.TEXT)))
+            elif content_type == ContentTypes.URI:
                 contents.append(
                     DurableAgentStateUriContent(
-                        uri=str(content_dict.get("uri", "")),
-                        media_type=str(content_dict.get("mediaType", "")),
+                        uri=str(content_dict.get(Fields.URI, "")),
+                        media_type=str(content_dict.get(Fields.MEDIA_TYPE, "")),
                     )
                 )
-            elif content_type == DurableAgentStateUsageContent.type:
-                usage_data = content_dict.get("usage")
+            elif content_type == ContentTypes.USAGE:
+                usage_data = content_dict.get(Fields.USAGE)
                 if usage_data and isinstance(usage_data, dict):
                     contents.append(
                         DurableAgentStateUsageContent(
                             usage=DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_data))
                         )
                     )
-            elif content_type == DurableAgentStateUnknownContent.type:
-                contents.append(DurableAgentStateUnknownContent(content=content_dict.get("content", {})))
+            elif content_type == ContentTypes.UNKNOWN:
+                contents.append(DurableAgentStateUnknownContent(content=content_dict.get(Fields.CONTENT, {})))
         elif isinstance(raw_content, DurableAgentStateContent):
             contents.append(raw_content)
     return contents
@@ -313,17 +324,17 @@ class DurableAgentStateData:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "conversationHistory": [entry.to_dict() for entry in self.conversation_history],
+            Fields.CONVERSATION_HISTORY: [entry.to_dict() for entry in self.conversation_history],
         }
         if self.extension_data is not None:
-            result["extensionData"] = self.extension_data
+            result[Fields.EXTENSION_DATA] = self.extension_data
         return result
 
     @classmethod
     def from_dict(cls, data_dict: dict[str, Any]) -> DurableAgentStateData:
         return cls(
             conversation_history=_parse_history_entries(data_dict),
-            extension_data=data_dict.get("extensionData"),
+            extension_data=data_dict.get(Fields.EXTENSION_DATA),
         )
 
 
@@ -374,8 +385,8 @@ class DurableAgentState:
     def to_dict(self) -> dict[str, Any]:
 
         return {
-            "schemaVersion": self.schema_version,
-            "data": self.data.to_dict(),
+            Fields.SCHEMA_VERSION: self.schema_version,
+            Fields.DATA: self.data.to_dict(),
         }
 
     def to_json(self) -> str:
@@ -388,13 +399,13 @@ class DurableAgentState:
         Args:
             state: Dictionary containing schemaVersion and data (full state structure)
         """
-        schema_version = state.get("schemaVersion")
+        schema_version = state.get(Fields.SCHEMA_VERSION)
         if schema_version is None:
             logger.warning("Resetting state as it is incompatible with the current schema, all history will be lost")
             return cls()
 
-        instance = cls(schema_version=state.get("schemaVersion", "1.0.0"))
-        instance.data = DurableAgentStateData.from_dict(state.get("data", {}))
+        instance = cls(schema_version=state.get(Fields.SCHEMA_VERSION, Defaults.SCHEMA_VERSION_FALLBACK))
+        instance.data = DurableAgentStateData.from_dict(state.get(Fields.DATA, {}))
 
         return instance
 
@@ -437,18 +448,12 @@ class DurableAgentState:
                 # Get the text content from assistant messages only
                 content = "\n".join(message.text for message in entry.messages if message.text)
 
-                return {"content": content, "message_count": self.message_count, "correlationId": correlation_id}
+                return {
+                    ApiResponseFields.CONTENT: content,
+                    ApiResponseFields.MESSAGE_COUNT: self.message_count,
+                    ApiResponseFields.CORRELATION_ID: correlation_id,
+                }
         return None
-
-
-class DurableAgentStateEntryJsonType(str, Enum):
-    """Enum for conversation history entry types.
-
-    Discriminator values for the $type field in DurableAgentStateEntry objects.
-    """
-
-    REQUEST = "request"
-    RESPONSE = "response"
 
 
 class DurableAgentStateEntry:
@@ -499,23 +504,23 @@ class DurableAgentStateEntry:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "$type": self.json_type,
-            "correlationId": self.correlation_id,
-            "createdAt": self.created_at.isoformat(),
-            "messages": [m.to_dict() for m in self.messages],
+            Fields.TYPE: self.json_type,
+            Fields.CORRELATION_ID: self.correlation_id,
+            Fields.CREATED_AT: self.created_at.isoformat(),
+            Fields.MESSAGES: [m.to_dict() for m in self.messages],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateEntry:
-        created_at = _parse_created_at(data.get("created_at"))
+        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
         messages = _parse_messages(data)
 
         return cls(
-            json_type=DurableAgentStateEntryJsonType(data.get("$type", "entry")),
-            correlation_id=data.get("correlationId", ""),
+            json_type=DurableAgentStateEntryJsonType(data.get(Fields.TYPE, Defaults.ENTRY_TYPE_FALLBACK)),
+            correlation_id=data.get(Fields.CORRELATION_ID, ""),
             created_at=created_at,
             messages=messages,
-            extension_data=data.get("extensionData"),
+            extension_data=data.get(Fields.EXTENSION_DATA),
         )
 
 
@@ -564,26 +569,26 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
         if self.orchestration_id is not None:
-            data["orchestrationId"] = self.orchestration_id
+            data[Fields.ORCHESTRATION_ID] = self.orchestration_id
         if self.response_type is not None:
-            data["responseType"] = self.response_type
+            data[Fields.RESPONSE_TYPE] = self.response_type
         if self.response_schema is not None:
-            data["responseSchema"] = self.response_schema
+            data[Fields.RESPONSE_SCHEMA] = self.response_schema
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateRequest:
-        created_at = _parse_created_at(data.get("created_at"))
+        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
         messages = _parse_messages(data)
 
         return cls(
-            correlation_id=data.get("correlationId", ""),
+            correlation_id=data.get(Fields.CORRELATION_ID, ""),
             created_at=created_at,
             messages=messages,
-            extension_data=data.get("extensionData"),
-            response_type=data.get("responseType"),
-            response_schema=data.get("responseSchema"),
-            orchestration_id=data.get("orchestrationId"),
+            extension_data=data.get(Fields.EXTENSION_DATA),
+            response_type=data.get(Fields.RESPONSE_TYPE),
+            response_schema=data.get(Fields.RESPONSE_SCHEMA),
+            orchestration_id=data.get(Fields.ORCHESTRATION_ID),
         )
 
     @staticmethod
@@ -640,24 +645,24 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
         if self.usage is not None:
-            data["usage"] = self.usage.to_dict()
+            data[Fields.USAGE] = self.usage.to_dict()
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateResponse:
-        created_at = _parse_created_at(data.get("created_at"))
+        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
         messages = _parse_messages(data)
 
-        usage_dict = data.get("usage")
+        usage_dict = data.get(Fields.USAGE)
         usage: DurableAgentStateUsage | None = None
         if usage_dict and isinstance(usage_dict, dict):
             usage = DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_dict))
 
         return cls(
-            correlation_id=data.get("correlationId", ""),
+            correlation_id=data.get(Fields.CORRELATION_ID, ""),
             created_at=created_at,
             messages=messages,
-            extension_data=data.get("extensionData"),
+            extension_data=data.get(Fields.EXTENSION_DATA),
             usage=usage,
         )
 
@@ -717,27 +722,30 @@ class DurableAgentStateMessage:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "role": self.role,
-            "contents": [
-                {"$type": c.to_dict().get("type", "text"), **{k: v for k, v in c.to_dict().items() if k != "type"}}
+            Fields.ROLE: self.role,
+            Fields.CONTENTS: [
+                {
+                    Fields.TYPE: c.to_dict().get(Fields.TYPE_INTERNAL, ContentTypes.TEXT),
+                    **{k: v for k, v in c.to_dict().items() if k != Fields.TYPE_INTERNAL},
+                }
                 for c in self.contents
             ],
         }
         # Only include optional fields if they have values
         if self.created_at is not None:
-            result["createdAt"] = self.created_at.isoformat()
+            result[Fields.CREATED_AT] = self.created_at.isoformat()
         if self.author_name is not None:
-            result["authorName"] = self.author_name
+            result[Fields.AUTHOR_NAME] = self.author_name
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateMessage:
         return cls(
-            role=data.get("role", ""),
+            role=data.get(Fields.ROLE, ""),
             contents=_parse_contents(data),
-            author_name=data.get("authorName"),
-            created_at=_parse_created_at(data.get("createdAt")),
-            extension_data=data.get("extensionData"),
+            author_name=data.get(Fields.AUTHOR_NAME),
+            created_at=_parse_created_at(data.get(Fields.CREATED_AT)),
+            extension_data=data.get(Fields.EXTENSION_DATA),
         )
 
     @property
@@ -823,14 +831,14 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
 
     uri: str = ""
     media_type: str | None = None
-    type: str = "data"
+    type: str = ContentTypes.DATA
 
     def __init__(self, uri: str, media_type: str | None = None) -> None:
         self.uri = uri
         self.media_type = media_type
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "uri": self.uri, "mediaType": self.media_type}
+        return {Fields.TYPE: self.type, Fields.URI: self.uri, Fields.MEDIA_TYPE: self.media_type}
 
     @staticmethod
     def from_data_content(content: DataContent) -> DurableAgentStateDataContent:
@@ -856,7 +864,7 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
     error_code: str | None = None
     details: str | None = None
 
-    type: str = "error"
+    type: str = ContentTypes.ERROR
 
     def __init__(self, message: str | None = None, error_code: str | None = None, details: str | None = None) -> None:
         self.message = message
@@ -864,7 +872,12 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
         self.details = details
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "message": self.message, "errorCode": self.error_code, "details": self.details}
+        return {
+            Fields.TYPE: self.type,
+            Fields.MESSAGE: self.message,
+            Fields.ERROR_CODE: self.error_code,
+            Fields.DETAILS: self.details,
+        }
 
     @staticmethod
     def from_error_content(content: ErrorContent) -> DurableAgentStateErrorContent:
@@ -893,7 +906,7 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
     name: str
     arguments: dict[str, Any]
 
-    type: str = "functionCall"
+    type: str = ContentTypes.FUNCTION_CALL
 
     def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
         self.call_id = call_id
@@ -901,7 +914,12 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
         self.arguments = arguments
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "callId": self.call_id, "name": self.name, "arguments": self.arguments}
+        return {
+            Fields.TYPE: self.type,
+            Fields.CALL_ID: self.call_id,
+            Fields.NAME: self.name,
+            Fields.ARGUMENTS: self.arguments,
+        }
 
     @staticmethod
     def from_function_call_content(content: FunctionCallContent) -> DurableAgentStateFunctionCallContent:
@@ -938,14 +956,14 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
     call_id: str
     result: object | None = None
 
-    type: str = "functionResult"
+    type: str = ContentTypes.FUNCTION_RESULT
 
     def __init__(self, call_id: str, result: Any | None = None) -> None:
         self.call_id = call_id
         self.result = result
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "callId": self.call_id, "result": self.result}
+        return {Fields.TYPE: self.type, Fields.CALL_ID: self.call_id, Fields.RESULT: self.result}
 
     @staticmethod
     def from_function_result_content(content: FunctionResultContent) -> DurableAgentStateFunctionResultContent:
@@ -967,13 +985,13 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 
     file_id: str
 
-    type: str = "hostedFile"
+    type: str = ContentTypes.HOSTED_FILE
 
     def __init__(self, file_id: str) -> None:
         self.file_id = file_id
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "fileId": self.file_id}
+        return {Fields.TYPE: self.type, Fields.FILE_ID: self.file_id}
 
     @staticmethod
     def from_hosted_file_content(content: HostedFileContent) -> DurableAgentStateHostedFileContent:
@@ -996,13 +1014,13 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
 
     vector_store_id: str
 
-    type: str = "hostedVectorStore"
+    type: str = ContentTypes.HOSTED_VECTOR_STORE
 
     def __init__(self, vector_store_id: str) -> None:
         self.vector_store_id = vector_store_id
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "vectorStoreId": self.vector_store_id}
+        return {Fields.TYPE: self.type, Fields.VECTOR_STORE_ID: self.vector_store_id}
 
     @staticmethod
     def from_hosted_vector_store_content(
@@ -1024,13 +1042,13 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
         text: The text content of the message
     """
 
-    type: str = "text"
+    type: str = ContentTypes.TEXT
 
     def __init__(self, text: str | None) -> None:
         self.text = text
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "text": self.text}
+        return {Fields.TYPE: self.type, Fields.TEXT: self.text}
 
     @staticmethod
     def from_text_content(content: TextContent) -> DurableAgentStateTextContent:
@@ -1050,13 +1068,13 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
         text: The reasoning or thought process text
     """
 
-    type: str = "reasoning"
+    type: str = ContentTypes.REASONING
 
     def __init__(self, text: str | None) -> None:
         self.text = text
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "text": self.text}
+        return {Fields.TYPE: self.type, Fields.TEXT: self.text}
 
     @staticmethod
     def from_text_reasoning_content(content: TextReasoningContent) -> DurableAgentStateTextReasoningContent:
@@ -1080,14 +1098,14 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
     uri: str
     media_type: str
 
-    type: str = "uri"
+    type: str = ContentTypes.URI
 
     def __init__(self, uri: str, media_type: str) -> None:
         self.uri = uri
         self.media_type = media_type
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "uri": self.uri, "mediaType": self.media_type}
+        return {Fields.TYPE: self.type, Fields.URI: self.uri, Fields.MEDIA_TYPE: self.media_type}
 
     @staticmethod
     def from_uri_content(content: UriContent) -> DurableAgentStateUriContent:
@@ -1130,21 +1148,21 @@ class DurableAgentStateUsage:
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
-            "inputTokenCount": self.input_token_count,
-            "outputTokenCount": self.output_token_count,
-            "totalTokenCount": self.total_token_count,
+            Fields.INPUT_TOKEN_COUNT: self.input_token_count,
+            Fields.OUTPUT_TOKEN_COUNT: self.output_token_count,
+            Fields.TOTAL_TOKEN_COUNT: self.total_token_count,
         }
         if self.extensionData is not None:
-            result["extensionData"] = self.extensionData
+            result[Fields.EXTENSION_DATA] = self.extensionData
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateUsage:
         return cls(
-            input_token_count=data.get("inputTokenCount"),
-            output_token_count=data.get("outputTokenCount"),
-            total_token_count=data.get("totalTokenCount"),
-            extensionData=data.get("extensionData"),
+            input_token_count=data.get(Fields.INPUT_TOKEN_COUNT),
+            output_token_count=data.get(Fields.OUTPUT_TOKEN_COUNT),
+            total_token_count=data.get(Fields.TOTAL_TOKEN_COUNT),
+            extensionData=data.get(Fields.EXTENSION_DATA),
         )
 
     @staticmethod
@@ -1179,17 +1197,20 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
 
     usage: DurableAgentStateUsage = DurableAgentStateUsage()
 
-    type: str = "usage"
+    type: str = ContentTypes.USAGE
 
-    def __init__(self, usage: DurableAgentStateUsage) -> None:
-        self.usage = usage
+    def __init__(self, usage: DurableAgentStateUsage | None) -> None:
+        self.usage = usage if usage is not None else DurableAgentStateUsage()
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "usage": self.usage.to_dict() if hasattr(self.usage, "to_dict") else self.usage}
+        return {
+            Fields.TYPE: self.type,
+            Fields.USAGE: self.usage.to_dict(),
+        }
 
     @staticmethod
     def from_usage_content(content: UsageContent) -> DurableAgentStateUsageContent:
-        return DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_usage(content.details))  # type: ignore
+        return DurableAgentStateUsageContent(usage=DurableAgentStateUsage.from_usage(content.details))
 
     def to_ai_content(self) -> UsageContent:
         return UsageContent(details=self.usage.to_usage_details())
@@ -1208,13 +1229,13 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
 
     content: Any
 
-    type: str = "unknown"
+    type: str = ContentTypes.UNKNOWN
 
     def __init__(self, content: Any) -> None:
         self.content = content
 
     def to_dict(self) -> dict[str, Any]:
-        return {"$type": self.type, "content": self.content}
+        return {Fields.TYPE: self.type, Fields.CONTENT: self.content}
 
     @staticmethod
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
