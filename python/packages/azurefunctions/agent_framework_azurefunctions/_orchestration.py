@@ -132,12 +132,14 @@ class DurableAIAgent(AgentProtocol):
         correlation_id = str(self.context.new_uuid())
 
         # Prepare the request using RunRequest model
+        # Include the orchestration's instance_id so it can be stored in the agent's entity state
         run_request = RunRequest(
             message=message_str,
             enable_tool_calls=enable_tool_calls,
             correlation_id=correlation_id,
             thread_id=session_id.key,
             response_format=response_format,
+            orchestration_id=self.context.instance_id,
         )
 
         logger.debug(f"[DurableAIAgent] Calling entity {entity_id} with message: {message_str[:100]}...")

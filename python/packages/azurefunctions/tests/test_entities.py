@@ -79,7 +79,7 @@ class TestAgentEntityInit:
         assert entity.agent == mock_agent
         assert len(entity.state.data.conversation_history) == 0
         assert entity.state.data.extension_data is None
-        assert entity.state.schema_version == "1.0.0"
+        assert entity.state.schema_version == "1.1.0"
 
     def test_init_stores_agent_reference(self) -> None:
         """Test that the agent reference is stored correctly."""
@@ -927,6 +927,99 @@ class TestRunRequestSupport:
         result = mock_context.set_result.call_args[0][0]
         assert result["status"] == "success"
         assert result["message"] == "Test message"
+
+
+class TestDurableAgentStateRequestOrchestrationId:
+    """Test suite for DurableAgentStateRequest orchestration_id field."""
+
+    def test_request_with_orchestration_id(self) -> None:
+        """Test creating a request with an orchestration_id."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+            orchestration_id="orch-456",
+        )
+
+        assert request.orchestration_id == "orch-456"
+
+    def test_request_to_dict_includes_orchestration_id(self) -> None:
+        """Test that to_dict includes orchestrationId when set."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+            orchestration_id="orch-789",
+        )
+
+        data = request.to_dict()
+
+        assert "orchestrationId" in data
+        assert data["orchestrationId"] == "orch-789"
+
+    def test_request_to_dict_excludes_orchestration_id_when_none(self) -> None:
+        """Test that to_dict excludes orchestrationId when not set."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+        )
+
+        data = request.to_dict()
+
+        assert "orchestrationId" not in data
+
+    def test_request_from_dict_with_orchestration_id(self) -> None:
+        """Test from_dict correctly parses orchestrationId."""
+        data = {
+            "$type": "request",
+            "correlationId": "corr-123",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "messages": [{"role": "user", "contents": [{"$type": "text", "text": "test"}]}],
+            "orchestrationId": "orch-from-dict",
+        }
+
+        request = DurableAgentStateRequest.from_dict(data)
+
+        assert request.orchestration_id == "orch-from-dict"
+
+    def test_request_from_run_request_with_orchestration_id(self) -> None:
+        """Test from_run_request correctly transfers orchestration_id."""
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+            orchestration_id="orch-from-run-request",
+        )
+
+        durable_request = DurableAgentStateRequest.from_run_request(run_request)
+
+        assert durable_request.orchestration_id == "orch-from-run-request"
+
+    def test_request_from_run_request_without_orchestration_id(self) -> None:
+        """Test from_run_request correctly handles missing orchestration_id."""
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+        )
+
+        durable_request = DurableAgentStateRequest.from_run_request(run_request)
+
+        assert durable_request.orchestration_id is None
 
 
 if __name__ == "__main__":

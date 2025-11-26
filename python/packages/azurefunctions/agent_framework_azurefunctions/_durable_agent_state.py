@@ -227,7 +227,7 @@ class DurableAgentState:
     in Azure Durable Entities. It maintains the conversation history as a sequence of request
     and response entries, each with their messages, timestamps, and metadata.
 
-    The state follows a versioned schema (currently 1.0.0) that defines the structure for:
+    The state follows a versioned schema (currently 1.1.0) that defines the structure for:
     - Request entries: User/system messages with optional response format specifications
     - Response entries: Assistant messages with token usage information
     - Messages: Individual chat messages with role, content items, and timestamps
@@ -235,7 +235,7 @@ class DurableAgentState:
 
     State is serialized to JSON with this structure:
     {
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.1.0",
         "data": {
             "conversationHistory": [
                 {"$type": "request", "correlationId": "...", "createdAt": "...", "messages": [...]},
@@ -246,17 +246,17 @@ class DurableAgentState:
 
     Attributes:
         data: Container for conversation history and optional extension data
-        schema_version: Schema version string (defaults to "1.0.0")
+        schema_version: Schema version string (defaults to "1.1.0")
     """
 
     data: DurableAgentStateData
-    schema_version: str = "1.0.0"
+    schema_version: str = "1.1.0"
 
-    def __init__(self, schema_version: str = "1.0.0"):
+    def __init__(self, schema_version: str = "1.1.0"):
         """Initialize a new durable agent state.
 
         Args:
-            schema_version: Schema version to use (defaults to "1.0.0")
+            schema_version: Schema version to use (defaults to "1.1.0")
         """
         self.data = DurableAgentStateData()
         self.schema_version = schema_version
@@ -430,6 +430,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
     Attributes:
         response_type: Expected response type ("text" or "json")
         response_schema: JSON schema for structured responses (when response_type is "json")
+        orchestration_id: ID of the orchestration that initiated this request (if any)
         correlationId: Unique identifier linking this request to its response
         created_at: Timestamp when the request was created
         messages: List of messages included in this request
@@ -438,6 +439,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
     response_type: str | None = None
     response_schema: dict[str, Any] | None = None
+    orchestration_id: str | None = None
 
     def __init__(
         self,
@@ -447,6 +449,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
         extension_data: dict[str, Any] | None = None,
         response_type: str | None = None,
         response_schema: dict[str, Any] | None = None,
+        orchestration_id: str | None = None,
     ) -> None:
         super().__init__(
             json_type=DurableAgentStateEntryJsonType.REQUEST,
@@ -457,9 +460,12 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
         )
         self.response_type = response_type
         self.response_schema = response_schema
+        self.orchestration_id = orchestration_id
 
     def to_dict(self) -> dict[str, Any]:
         data = super().to_dict()
+        if self.orchestration_id is not None:
+            data["orchestrationId"] = self.orchestration_id
         if self.response_type is not None:
             data["responseType"] = self.response_type
         if self.response_schema is not None:
@@ -484,6 +490,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             extension_data=data.get("extensionData"),
             response_type=data.get("responseType"),
             response_schema=data.get("responseSchema"),
+            orchestration_id=data.get("orchestrationId"),
         )
 
     @staticmethod
@@ -495,6 +502,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             created_at=datetime.now(tz=timezone.utc),
             response_type=request.request_response_format,
             response_schema=_serialize_response_format(request.response_format),
+            orchestration_id=request.orchestration_id,
         )
 
 
