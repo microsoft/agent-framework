@@ -22,7 +22,7 @@ This all means that at various moments a thread can be different things and have
 - There is a proposal to add a `AgentThreadStore` abstraction and a in-memory implementation, which would further complicate the current `AgentThread` class, this adds a id and save and load methods.
 - Currently the thread is updated by the agent, based on the outcome of the whole run, so if the underlying chat client does function calling, we won't get the intermediate messages in the thread until the end of the run, this has raised a question as well, as users would like to have the thread updated during the run, so that they can see the intermediate messages, however this runs the risk of ending up with a thread that is not usable anymore, for instance because it is missing chunks (when streaming) or does not have function call results matching the function calls.
 
-Current state for a AgentThread with a ChatMessageStore:
+Current (simplified) state for a AgentThread with a ChatMessageStore:
 ```mermaid
 sequenceDiagram
         participant User
@@ -36,7 +36,6 @@ sequenceDiagram
     end
     box LLM Layer
         participant ChatClient
-        participant FunctionCalling
     end
         participant LLM
 
@@ -45,9 +44,6 @@ sequenceDiagram
     AgentThread<<-->>ChatMessageStore: list_messages()
     AgentThread<<-->>ContextProvider: invoking()
     Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient->>FunctionCalling: call tool(s)
-    FunctionCalling-->>ChatClient: tool result(s)
     ChatClient<<->>LLM: get_response(messages)
     ChatClient-->>Agent: response
     Agent->>AgentThread: update_thread(conversation_id | None)
@@ -69,7 +65,6 @@ sequenceDiagram
     end
     box LLM Layer
         participant ChatClient
-        participant FunctionCalling
     end
         participant LLM
 
@@ -77,9 +72,6 @@ sequenceDiagram
     Agent->>AgentThread: prepare(message)
     AgentThread<<-->>ContextProvider: invoking()
     Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient->>FunctionCalling: call tool(s)
-    FunctionCalling-->>ChatClient: tool result(s)
     ChatClient<<->>LLM: get_response(messages)
     ChatClient-->>Agent: response
     Agent->>AgentThread: update_thread(conversation_id | None)
@@ -155,7 +147,6 @@ sequenceDiagram
     end
     box LLM Layer
         participant ChatClient
-        participant FunctionCalling
     end
         participant LLM
 
@@ -163,9 +154,6 @@ sequenceDiagram
     Agent<<->>LocalThread: get_messages()
     Agent<<->>ContextProvider: invoking()
     Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient->>FunctionCalling: call tool(s)
-    FunctionCalling-->>ChatClient: tool result(s)
     ChatClient<<->>LLM: get_response(messages)
     ChatClient-->>Agent: response
     Agent->>LocalThread: add_messages(response)
@@ -187,7 +175,6 @@ sequenceDiagram
     end
     box LLM Layer
         participant ChatClient
-        participant FunctionCalling
     end
         participant LLM
 
@@ -195,9 +182,6 @@ sequenceDiagram
     Agent<<->>RemoteThread: overwrite store and conversation_id
     Agent<<->>ContextProvider: invoking()
     Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient->>FunctionCalling: call tool(s)
-    FunctionCalling-->>ChatClient: tool result(s)
     ChatClient<<->>LLM: get_response(messages)
     ChatClient-->>Agent: response
     Agent->>RemoteThread: update_thread_id(response)
