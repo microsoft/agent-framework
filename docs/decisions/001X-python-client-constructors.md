@@ -16,6 +16,52 @@ We have a preference of creating clients inside of our code because then we can 
 
 There is likely not a single best solution, the goal here is consistency across clients, and with that ease of use for users of Agent Framework.
 
+### Background on current provider setups:
+
+| Provider | Backend | Parameter Name | Parameter Type | Env Var | Default |
+|---|---|---|---|---|---|
+| OpenAI | OpenAI | api_key | `str \| Callable[[], Awaitable[str]] \| None` | OPENAI_API_KEY | |
+| | | organization | `str \| None` | OPENAI_ORG_ID | |
+| | | project | `str \| None` | OPENAI_PROJECT_ID | |
+| | | webhook_secret | `str \| None` | OPENAI_WEBHOOK_SECRET | |
+| | | base_url | `str \| Url \| None` | | |
+| | | websocket_base_url | `str \| Url \| None` | | |
+| | | | | | |
+| OpenAI | Azure | api_version | `str \| None` | OPENAI_API_VERSION | |
+| | | endpoint | `str \| None` | | |
+| | | deployment | `str \| None` | | |
+| | | api_key | `str \| Callable[[], Awaitable[str]] \| None` | AZURE_OPENAI_API_KEY | |
+| | | ad_token | `str \| None` | AZURE_OPENAI_AD_TOKEN | |
+| | | ad_token_provider | `AsyncAzureADTokenProvider \| None` | | |
+| | | organization | `str \| None` | OPENAI_ORG_ID | |
+| | | project | `str \| None` | OPENAI_PROJECT_ID | |
+| | | webhook_secret | `str \| None` | OPENAI_WEBHOOK_SECRET | |
+| | | websocket_base_url | `str \| Url \| None` | | |
+| | | base_url | `str \| Url \| None` | | |
+| | | | | | |
+| Anthropic | Anthropic | api_key | `str \| None` | ANTHROPIC_API_KEY | |
+| | | auth_token | `str \| None` | ANTHROPIC_AUTH_TOKEN | |
+| | | base_url | `str \| Url \| None` | ANTHROPIC_BASE_URL | |
+| | | | | | |
+| Anthropic | Foundry | resource | `str \| None` | ANTHROPIC_FOUNDRY_RESOURCE | |
+| | | api_key | `str \| None` | ANTHROPIC_FOUNDRY_API_KEY | |
+| | | ad_token_provider | `AzureADTokenProvider \| None` | | |
+| | | base_url | `str \| None` | ANTHROPIC_FOUNDRY_BASE_URL | |
+| | | | | | |
+| Anthropic | Vertex | region | `str \| None` | CLOUD_ML_REGION | |
+| | | project_id | `str \| None` | | |
+| | | access_token | `str \| None` | | |
+| | | credentials | `google.auth.credentials.Credentials \| None` | | |
+| | | base_url | `str \| None` | ANTHROPIC_VERTEX_BASE_URL | `https://aiplatform.googleapis.com/v1` or `https://us-aiplatform.googleapis.com/v1` (based on region) |
+| | | | | | |
+| Anthropic | Bedrock | aws_secret_key | `str \| None` | | |
+| | | aws_access_key | `str \| None` | | |
+| | | aws_region | `str \| None` | | |
+| | | aws_profile | `str \| None` | | |
+| | | aws_session_token | `str \| None` | | |
+| | | base_url | `str \| None` | ANTHROPIC_BEDROCK_BASE_URL | |
+
+
 ## Decision Drivers
 
 - Reduce client sprawl and different clients that only have one or more different parameters.
@@ -51,8 +97,8 @@ Example code:
 from agent_framework.openai import OpenAIClient # using a fictional OpenAIClient, to illustrate the point
 from agent_framework.azure import AzureOpenAIClient
 
-openai_client = OpenAIClient(api_key="...")
-azure_client = AzureOpenAIClient(deployment_name="...", ad_token_provider=...)
+openai_client = OpenAIClient(model_id="...", api_key="...")
+azure_client = AzureOpenAIClient(api_key="...", deployment_name="...", ad_token_provider="...", credential=AzureCliCredential())
 ```
 
 ### 2. Separate parameter set per backend with a single client, such as OpenAIClient with parameters, for endpoint/base_url, api_key, and entra auth.
@@ -76,12 +122,18 @@ from agent_framework.openai import OpenAIClient
 openai_client = OpenAIClient(
     model_id="...",
     api_key="...",
+    base_url="...",
 )
 azure_client = OpenAIClient(
-    deployment_name="...", # or model_id, depending on the decision
+    api_key=str | Callable[[], Awaitable[str] | str] | None = None,
+    deployment_name="...",
+    endpoint="...",
+    # base_url="...",
     ad_token_provider=...,
 )
 ```
+
+
 
 ### 3. Single client with a explicit parameter for the backend to use, such as OpenAIClient(backend="azure") or AnthropicClient(backend="vertex").
 This option would entail a single client that can be used with different backends, but requires the user to pass in the right backend as a parameter.
@@ -164,4 +216,259 @@ anthropic_bedrock_client = AnthropicBedrockClient(
 
 ## Decision Outcome
 
-TBD
+We will move to a single client per provider, where the supplied backends are handled through parameters. This means that for OpenAI we will have a single `OpenAIClient` that can be used with both OpenAI and Azure OpenAI, while for Anthropic we will have a single `AnthropicClient` that can be used with Anthropic, AnthropicFoundry, AnthropicBedrock and AnthropicVertex. This allows us to always add user_agents, and give a single way of creating clients per provider, while still allowing for customization through parameters.
+
+The following mapping will be done, between clients, parameters and environment variables:
+
+| AF Client | Backend | Parameter | Env Var | Precedence |
+|---|---|---|---|---|
+| OpenAIChatClient | OpenAI | api_key | OPENAI_API_KEY | 1 |
+| | | organization | OPENAI_ORG_ID | |
+| | | project | OPENAI_PROJECT_ID | |
+| | | base_url | OPENAI_BASE_URL | |
+| | | model_id | OPENAI_CHAT_MODEL_ID | | |
+| | | | | |
+| OpenAIChatClient | Azure | api_key | AZURE_OPENAI_API_KEY | 2 |
+| | | ad_token | AZURE_OPENAI_AD_TOKEN | 2 |
+| | | ad_token_provider | | 2 |
+| | | endpoint | AZURE_OPENAI_ENDPOINT | |
+| | | base_url | AZURE_OPENAI_BASE_URL | |
+| | | deployment_name | AZURE_OPENAI_CHAT_DEPLOYMENT_NAME | |
+| | | api_version | OPENAI_API_VERSION | |
+| | | | | |
+| OpenAIResponsesClient | OpenAI | api_key | OPENAI_API_KEY | 1 |
+| | | organization | OPENAI_ORG_ID | |
+| | | project | OPENAI_PROJECT_ID | |
+| | | base_url | OPENAI_BASE_URL | |
+| | | model_id | OPENAI_RESPONSES_MODEL_ID | |
+| | | | | |
+| OpenAIResponsesClient | Azure | api_key | AZURE_OPENAI_API_KEY | 2 |
+| | | ad_token | AZURE_OPENAI_AD_TOKEN | 2 |
+| | | ad_token_provider | | 2 |
+| | | endpoint | AZURE_OPENAI_ENDPOINT | |
+| | | base_url | AZURE_OPENAI_BASE_URL | |
+| | | deployment_name | AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME | |
+| | | api_version | OPENAI_API_VERSION | |
+| | | | | |
+| OpenAIAssistantsClient | OpenAI | api_key | OPENAI_API_KEY | 1 |
+| | | organization | OPENAI_ORG_ID | |
+| | | project | OPENAI_PROJECT_ID | |
+| | | base_url | OPENAI_BASE_URL | |
+| | | model_id | OPENAI_CHAT_MODEL_ID | |
+| | | | | |
+| OpenAIAssistantsClient | Azure | api_key | AZURE_OPENAI_API_KEY | 2 |
+| | | ad_token | AZURE_OPENAI_AD_TOKEN | 2 |
+| | | ad_token_provider | | 2 |
+| | | endpoint | AZURE_OPENAI_ENDPOINT | |
+| | | base_url | AZURE_OPENAI_BASE_URL | |
+| | | deployment_name | AZURE_OPENAI_CHAT_DEPLOYMENT_NAME | |
+| | | api_version | OPENAI_API_VERSION | |
+| | | | | |
+| AnthropicChatClient | Anthropic | api_key | ANTHROPIC_API_KEY | 1 |
+| | | base_url | ANTHROPIC_BASE_URL | |
+| | | | | |
+| AnthropicChatClient | Foundry | api_key | ANTHROPIC_FOUNDRY_API_KEY | 2 |
+| | | ad_token_provider | | 2 |
+| | | resource | ANTHROPIC_FOUNDRY_RESOURCE | |
+| | | base_url | ANTHROPIC_FOUNDRY_BASE_URL | |
+| | | | | |
+| AnthropicChatClient | Vertex | access_token | ANTHROPIC_VERTEX_ACCESS_TOKEN | 3 |
+| | | google_credentials | | 3 |
+| | | region | CLOUD_ML_REGION | |
+| | | project_id | ANTHROPIC_VERTEX_PROJECT_ID | |
+| | | base_url | ANTHROPIC_VERTEX_BASE_URL | |
+| | | | | |
+| AnthropicChatClient | Bedrock | aws_access_key | ANTHROPIC_AWS_ACCESS_KEY_ID | 4 |
+| | | aws_secret_key | ANTHROPIC_AWS_SECRET_ACCESS_KEY | |
+| | | aws_session_token | ANTHROPIC_AWS_SESSION_TOKEN | |
+| | | aws_profile | ANTHROPIC_AWS_PROFILE | 4 |
+| | | aws_region | ANTHROPIC_AWS_REGION | |
+| | | base_url | ANTHROPIC_BEDROCK_BASE_URL | |
+
+The Precedence column indicates the order of precedence when multiple environment variables are set, for example if both `OPENAI_API_KEY` and `AZURE_OPENAI_API_KEY` are set, the `OPENAI_API_KEY` will be used and we assume a OpenAI Backend is wanted. If a `api_key` is passed as a parameter in that case, then we will look at the rest of the environment variables to determine the backend, so if `chat_deployment_name` is set and `chat_model_id` is not, we assume Azure OpenAI is wanted, otherwise OpenAI.
+
+Example init code:
+```python
+
+class OpenAIChatClient(ChatClient):
+    @overload
+    def __init__(
+        self,
+        *,
+        api_key: str | Callable[[], Awaitable[str]],
+        organization: str | None = None,
+        project: str | None = None,
+        base_url: str | Url | None = None,
+        model_id: str | None = None,
+        # Common parameters
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        base_url: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """OpenAI backend."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        api_key: str | Callable[[], Awaitable[str]] | None = None,
+        deployment_name: str | None = None,
+        endpoint: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        api_version: str | None = None,
+        base_url: str | Url | None = None,
+        # Common parameters
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        base_url: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """Azure OpenAI backend."""
+        ...
+
+    def __init__(
+        self,
+        *,
+        api_key: str | Callable[[], Awaitable[str]] | None = None,
+        organization: str | None = None,
+        project: str | None = None,
+        base_url: str | Url | None = None,
+        model_id: str | None = None,
+        # Azure specific parameters
+        deployment_name: str | None = None,
+        endpoint: str | None = None,
+        ad_token: str | None = None,
+        ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        api_version: str | None = None,
+        # Common parameters
+        default_headers: Mapping[str, str] | None = None,
+        client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        base_url: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        ...
+```
+
+And for Anthropic:
+```python
+
+class AnthropicChatClient(ChatClient):
+    @overload
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        api_key: str,
+        base_url: str | Url | None = None,
+        # Common parameters
+        client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """Anthropic backend."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        api_key: str | None = None,
+        ad_token_provider: AzureADTokenProvider | None = None,
+        resource: str | None = None,
+        base_url: str | Url | None = None,
+        # Common parameters
+        client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """Azure AI Foundry backend."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        access_token: str | None = None,
+        google_credentials: google.auth.credentials.Credentials | None = None,
+        region: str | None = None,
+        project_id: str | None = None,
+        base_url: str | Url | None = None,
+        # Common parameters
+        client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """Google Vertex backend."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        aws_session_token: str | None = None,
+        aws_profile: str | None = None,
+        aws_region: str | None = None,
+        base_url: str | Url | None = None,
+        # Common parameters
+        client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        """AWS Bedrock backend."""
+        ...
+
+    def __init__(
+        self,
+        *,
+        model_id: str | None = None,
+        # Anthropic backend parameters
+        api_key: str | None = None,
+        # Azure AI Foundry backend parameters
+        ad_token_provider: AzureADTokenProvider | None = None,
+        resource: str | None = None,
+        # Google Vertex backend parameters
+        access_token: str | None = None,
+        google_credentials: google.auth.credentials.Credentials | None = None,
+        region: str | None = None,
+        project_id: str | None = None,
+        # AWS Bedrock backend parameters
+        aws_access_key: str | None = None,
+        aws_secret_key: str | None = None,
+        aws_session_token: str | None = None,
+        aws_profile: str | None = None,
+        aws_region: str | None = None,
+        # Common parameters
+        base_url: str | Url | None = None,
+        client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ):
+        ...
+```
