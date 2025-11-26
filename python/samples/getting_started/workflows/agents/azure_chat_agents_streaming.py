@@ -26,35 +26,37 @@ Prerequisites:
 """
 
 
-async def main():
-    """Build and run a simple two node agent workflow: Writer then Reviewer."""
-    # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Define two domain specific chat agents.
-    writer_agent = chat_client.create_agent(
+def create_writer_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
-        name="writer_agent",
+        name="writer",
     )
 
-    reviewer_agent = chat_client.create_agent(
+
+def create_reviewer_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."
             "Provide the feedback in the most concise manner possible."
         ),
-        name="reviewer_agent",
+        name="reviewer",
     )
 
+
+async def main():
+    """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
     # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(writer_agent)
-        .add_edge(writer_agent, reviewer_agent)
+        .register_agent(create_writer_agent, name="writer")
+        .register_agent(create_reviewer_agent, name="reviewer", output_response=True)
+        .set_start_executor("writer")
+        .add_edge("writer", "reviewer")
         .build()
     )
 
