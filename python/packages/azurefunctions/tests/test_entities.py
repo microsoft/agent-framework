@@ -79,7 +79,7 @@ class TestAgentEntityInit:
         assert entity.agent == mock_agent
         assert len(entity.state.data.conversation_history) == 0
         assert entity.state.data.extension_data is None
-        assert entity.state.schema_version == "1.1.0"
+        assert entity.state.schema_version == DurableAgentState.SCHEMA_VERSION
 
     def test_init_stores_agent_reference(self) -> None:
         """Test that the agent reference is stored correctly."""
@@ -124,8 +124,7 @@ class TestAgentEntityRunAgent:
         # Verify agent.run was called
         mock_agent.run.assert_called_once()
         _, kwargs = mock_agent.run.call_args
-        sent_messages = kwargs.get("messages")
-        assert isinstance(sent_messages, list)
+        sent_messages: list[Any] = kwargs.get("messages")
         assert len(sent_messages) == 1
         sent_message = sent_messages[0]
         assert isinstance(sent_message, ChatMessage)
