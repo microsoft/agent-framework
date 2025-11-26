@@ -285,7 +285,7 @@ The following mapping will be done, between clients, parameters and environment 
 | | | aws_region | ANTHROPIC_AWS_REGION | |
 | | | base_url | ANTHROPIC_BEDROCK_BASE_URL | |
 
-The Precedence column indicates the order of precedence when multiple environment variables are set, for example if both `OPENAI_API_KEY` and `AZURE_OPENAI_API_KEY` are set, the `OPENAI_API_KEY` will be used and we assume a OpenAI Backend is wanted. If a `api_key` is passed as a parameter in that case, then we will look at the rest of the environment variables to determine the backend, so if `chat_deployment_name` is set and `chat_model_id` is not, we assume Azure OpenAI is wanted, otherwise OpenAI.
+The Precedence column indicates the order of precedence when multiple environment variables are set, for example if both `OPENAI_API_KEY` and `AZURE_OPENAI_API_KEY` are set, the `OPENAI_API_KEY` will be used and we assume a OpenAI Backend is wanted. If a `api_key` is passed as a parameter in that case, then we will look at the rest of the environment variables to determine the backend, so if `chat_deployment_name` is set and `chat_model_id` is not, we assume Azure OpenAI is wanted, otherwise OpenAI. As part of this change we will also remove the Pydantic Settings usage, in favor of self-built environment variable resolution, as that gives us more control over the precedence and mapping of environment variables to parameters. Including the notion of precedence between environment variables for different backends.
 
 Example init code:
 ```python
