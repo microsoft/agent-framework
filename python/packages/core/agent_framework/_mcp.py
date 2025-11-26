@@ -69,8 +69,52 @@ def _mcp_prompt_message_to_chat_message(
 def _mcp_call_tool_result_to_ai_contents(
     mcp_type: types.CallToolResult,
 ) -> list[Contents]:
-    """Convert a MCP container type to a Agent Framework type."""
-    return [_mcp_type_to_ai_content(item) for item in mcp_type.content]
+    """Convert a MCP container type to a Agent Framework type.
+
+    This function extracts the complete _meta field from CallToolResult objects
+    and merges all metadata into the additional_properties field of converted
+    content items.
+
+    Note: The _meta field from CallToolResult is applied to ALL content items
+    in the result, as the Agent Framework's content model doesn't have a
+    result-level metadata container. This ensures metadata is preserved but
+    means it will be duplicated across multiple content items if present.
+
+    Args:
+        mcp_type: The MCP CallToolResult object to convert.
+
+    Returns:
+        A list of Agent Framework content items with metadata merged into
+        additional_properties.
+    """
+    # Extract _meta field using getattr for compatibility
+    meta_data = getattr(mcp_type, "_meta", None)
+
+    # Prepare merged metadata once if present
+    merged_meta_props = None
+    if meta_data:
+        merged_meta_props = {}
+        if hasattr(meta_data, "__dict__"):
+            merged_meta_props.update(meta_data.__dict__)
+        elif isinstance(meta_data, dict):
+            merged_meta_props.update(meta_data)
+        else:
+            merged_meta_props["_meta"] = meta_data
+
+    # Convert each content item and merge metadata
+    result_contents = []
+    for item in mcp_type.content:
+        content = _mcp_type_to_ai_content(item)
+
+        if merged_meta_props:
+            existing_props = getattr(content, "additional_properties", None) or {}
+            # Merge with content-specific properties, letting content-specific props override
+            final_props = merged_meta_props.copy()
+            final_props.update(existing_props)
+            content.additional_properties = final_props
+        result_contents.append(content)
+
+    return result_contents
 
 
 def _mcp_type_to_ai_content(
@@ -234,18 +278,30 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         python_type = resolve_type(prop_details)
         description = prop_details.get("description", "")
 
+        # Build field kwargs (description, array items schema, etc.)
+        field_kwargs: dict[str, Any] = {}
+        if description:
+            field_kwargs["description"] = description
+
+        # Preserve array items schema if present
+        if prop_details.get("type") == "array" and "items" in prop_details:
+            items_schema = prop_details["items"]
+            if items_schema and items_schema != {}:
+                field_kwargs["json_schema_extra"] = {"items": items_schema}
+
         # Create field definition for create_model
         if prop_name in required:
-            field_definitions[prop_name] = (
-                (python_type, Field(description=description)) if description else (python_type, ...)
-            )
+            if field_kwargs:
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, ...)
         else:
             default_value = prop_details.get("default", None)
-            field_definitions[prop_name] = (
-                (python_type, Field(default=default_value, description=description))
-                if description
-                else (python_type, default_value)
-            )
+            field_kwargs["default"] = default_value
+            if field_kwargs and any(k != "default" for k in field_kwargs):
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, default_value)
 
     return create_model(f"{tool.name}_input", **field_definitions)
 

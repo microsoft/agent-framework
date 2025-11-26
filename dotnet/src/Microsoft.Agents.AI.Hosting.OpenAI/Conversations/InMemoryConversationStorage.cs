@@ -210,11 +210,10 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
 #if NET9_0_OR_GREATER
         private readonly OrderedDictionary<string, ItemResource> _items = [];
         private readonly object _lock = new();
-        private Conversation _conversation;
 
         public ConversationState(Conversation conversation)
         {
-            this._conversation = conversation;
+            this.Conversation = conversation;
         }
 
         public Conversation Conversation
@@ -223,16 +222,18 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
             {
                 lock (this._lock)
                 {
-                    return this._conversation;
+                    return field;
                 }
             }
+
+            private set;
         }
 
         public void UpdateConversation(Conversation conversation)
         {
             lock (this._lock)
             {
-                this._conversation = conversation;
+                this.Conversation = conversation;
             }
         }
 
@@ -274,11 +275,10 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
 #else
         private readonly List<ItemResource> _items = [];
         private readonly object _lock = new();
-        private Conversation _conversation;
 
         public ConversationState(Conversation conversation)
         {
-            this._conversation = conversation;
+            this.Conversation = conversation;
         }
 
         public Conversation Conversation
@@ -287,16 +287,18 @@ internal sealed class InMemoryConversationStorage : IConversationStorage, IDispo
             {
                 lock (this._lock)
                 {
-                    return this._conversation;
+                    return field;
                 }
             }
+
+            private set;
         }
 
         public void UpdateConversation(Conversation conversation)
         {
             lock (this._lock)
             {
-                this._conversation = conversation;
+                this.Conversation = conversation;
             }
         }
 

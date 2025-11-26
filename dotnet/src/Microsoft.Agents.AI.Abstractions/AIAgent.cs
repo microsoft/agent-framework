@@ -328,28 +328,4 @@ public abstract class AIAgent
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Notifies the specified thread about new messages that have been added to the conversation.
-    /// </summary>
-    /// <param name="thread">The conversation thread to notify about the new messages.</param>
-    /// <param name="messages">The collection of new messages to report to the thread.</param>
-    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A task that represents the asynchronous notification operation.</returns>
-    /// <exception cref="ArgumentNullException"><paramref name="thread"/> or <paramref name="messages"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// <para>
-    /// This method ensures that conversation threads are kept informed about message additions, which
-    /// is important for threads that manage their own state, memory components, or derived context.
-    /// While all agent implementations should notify their threads, the specific actions taken by
-    /// each thread type may vary.
-    /// </para>
-    /// </remarks>
-    protected static async Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
-    {
-        _ = Throw.IfNull(thread);
-        _ = Throw.IfNull(messages);
-
-        await thread.MessagesReceivedAsync(messages, cancellationToken).ConfigureAwait(false);
-    }
 }

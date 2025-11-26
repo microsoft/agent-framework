@@ -14,7 +14,7 @@ This sample demonstrates how to use Model Context Protocol (MCP) client tools wi
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - Node.js and npm installed (for running the GitHub MCP server)

@@ -23,7 +23,22 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+
+
+class _CountingWorkflowBuilder(WorkflowBuilder):
+    created: list["_CountingWorkflowBuilder"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.start_calls = 0
+        _CountingWorkflowBuilder.created.append(self)
+
+    def set_start_executor(self, executor: Any) -> "_CountingWorkflowBuilder":  # type: ignore[override]
+        self.start_calls += 1
+        return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
 
 
 @dataclass
@@ -288,57 +303,6 @@ def test_build_fails_without_participants():
         HandoffBuilder().build()
 
 
-async def test_multiple_runs_dont_leak_conversation():
-    """Verify that running the same workflow multiple times doesn't leak conversation history."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist")
-    specialist = _RecordingAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
-        .build()
-    )
-
-    # First run
-    events = await _drain(workflow.run_stream("First run message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "First run should emit output"
-
-    first_run_conversation = outputs[-1].data
-    assert isinstance(first_run_conversation, list)
-    first_run_conv_list = cast(list[ChatMessage], first_run_conversation)
-    first_run_user_messages = [msg for msg in first_run_conv_list if msg.role == Role.USER]
-    assert len(first_run_user_messages) == 2
-    assert any("First run message" in msg.text for msg in first_run_user_messages if msg.text)
-
-    # Second run - should start fresh, not include first run's messages
-    triage.calls.clear()
-    specialist.calls.clear()
-
-    events = await _drain(workflow.run_stream("Second run different message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Another message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "Second run should emit output"
-
-    second_run_conversation = outputs[-1].data
-    assert isinstance(second_run_conversation, list)
-    second_run_conv_list = cast(list[ChatMessage], second_run_conversation)
-    second_run_user_messages = [msg for msg in second_run_conv_list if msg.role == Role.USER]
-    assert len(second_run_user_messages) == 2, (
-        "Second run should have exactly 2 user messages, not accumulate first run"
-    )
-    assert any("Second run different message" in msg.text for msg in second_run_user_messages if msg.text)
-    assert not any("First run message" in msg.text for msg in second_run_user_messages if msg.text), (
-        "Second run should NOT contain first run's messages"
-    )
-
-
 async def test_handoff_async_termination_condition() -> None:
     """Test that async termination conditions work correctly."""
     termination_call_count = 0
@@ -529,6 +493,27 @@ async def test_return_to_previous_enabled():
     assert len(specialist_a.calls) == 2, "Specialist A should handle follow-up with return_to_previous enabled"
 
 
+def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure HandoffBuilder.build sets the start executor only once when assembling the workflow."""
+    _CountingWorkflowBuilder.created.clear()
+    monkeypatch.setattr(handoff_module, "WorkflowBuilder", _CountingWorkflowBuilder)
+
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len(conv) > 0)
+        .build()
+    )
+
+    assert workflow is not None
+    assert _CountingWorkflowBuilder.created, "Expected CountingWorkflowBuilder to be instantiated"
+    builder = _CountingWorkflowBuilder.created[-1]
+    assert builder.start_calls == 1, "set_start_executor should be invoked exactly once"
+
+
 async def test_tool_choice_preserved_from_agent_config():
     """Verify that agent-level tool_choice configuration is preserved and not overridden."""
     from unittest.mock import AsyncMock
@@ -585,7 +570,7 @@ async def test_return_to_previous_state_serialization():
     coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
 
     # Snapshot the state
-    state = coordinator.snapshot_state()
+    state = await coordinator.on_checkpoint_save()
 
     # Verify pattern metadata includes current_agent_id
     assert "metadata" in state
@@ -603,7 +588,7 @@ async def test_return_to_previous_state_serialization():
     )
 
     # Restore state
-    coordinator2.restore_state(state)
+    await coordinator2.on_checkpoint_restore(state)
 
     # Verify current_agent_id was restored
     assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]

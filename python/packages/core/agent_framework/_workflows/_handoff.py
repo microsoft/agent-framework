@@ -16,6 +16,7 @@ Key properties:
 
 import logging
 import re
+import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,6 +50,12 @@ from ._request_info_mixin import response_handler
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
+
 
 logger = logging.getLogger(__name__)
 
@@ -307,15 +314,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         ctx: WorkflowContext[AgentExecutorRequest | list[ChatMessage], list[ChatMessage] | _ConversationForUserInput],
     ) -> None:
         """Process an agent's response and determine whether to route, request input, or terminate."""
-        # Hydrate coordinator state (and detect new run) using checkpointable executor state
-        state = await ctx.get_executor_state()
-        if not state:
-            self._clear_conversation()
-        elif not self._get_conversation():
-            restored = self._restore_conversation_from_state(state)
-            if restored:
-                self._conversation = list(restored)
-
         source = ctx.get_source_executor_id()
         is_starting_agent = source == self._starting_agent_id
 
@@ -343,7 +341,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             # Update current agent when handoff occurs
             self._current_agent_id = target
             logger.info(f"Handoff detected: {source} -> {target}. Routing control to specialist '{target}'.")
-            await self._persist_state(ctx)
+
             # Clean tool-related content before sending to next agent
             cleaned = clean_conversation_for_handoff(conversation)
             request = AgentExecutorRequest(messages=cleaned, should_respond=True)
@@ -360,7 +358,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             f"Agent '{source}' responded without handoff. "
             f"Requesting user input. Return-to-previous: {self._return_to_previous}"
         )
-        await self._persist_state(ctx)
 
         if await self._check_termination():
             # Clean the output conversation for display
@@ -388,7 +385,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """Receive full conversation with new user input from gateway, update history, trim for agent."""
         # Update authoritative conversation
         self._conversation = list(message.full_conversation)
-        await self._persist_state(ctx)
 
         # Check termination before sending to agent
         if await self._check_termination():
@@ -473,11 +469,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             )
         return list(conversation)
 
-    async def _persist_state(self, ctx: WorkflowContext[Any, Any]) -> None:
-        """Store authoritative conversation snapshot without losing rich metadata."""
-        state_payload = self.snapshot_state()
-        await ctx.set_executor_state(state_payload)
-
+    @override
     def _snapshot_pattern_metadata(self) -> dict[str, Any]:
         """Serialize pattern-specific state.
 
@@ -492,6 +484,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             }
         return {}
 
+    @override
     def _restore_pattern_metadata(self, metadata: dict[str, Any]) -> None:
         """Restore pattern-specific state.
 
@@ -502,17 +495,6 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """
         if self._return_to_previous and "current_agent_id" in metadata:
             self._current_agent_id = metadata["current_agent_id"]
-
-    def _restore_conversation_from_state(self, state: Mapping[str, Any]) -> list[ChatMessage]:
-        """Rehydrate the coordinator's conversation history from checkpointed state.
-
-        DEPRECATED: Use restore_state() instead. Kept for backward compatibility.
-        """
-        from ._orchestration_state import OrchestrationState
-
-        orch_state_dict = {"conversation": state.get("full_conversation", state.get("conversation", []))}
-        temp_state = OrchestrationState.from_dict(orch_state_dict)
-        return list(temp_state.conversation)
 
     def _apply_response_metadata(self, conversation: list[ChatMessage], agent_response: AgentRunResponse) -> None:
         """Merge top-level response metadata into the latest assistant message."""
@@ -1442,6 +1424,7 @@ class HandoffBuilder:
             prompt=self._request_prompt,
             id="handoff-user-input",
         )
+        builder = WorkflowBuilder(name=self._name, description=self._description).set_start_executor(input_node)
 
         specialist_aliases = {alias: exec_id for alias, exec_id in self._aliases.items() if exec_id in specialists}
 
@@ -1458,6 +1441,7 @@ class HandoffBuilder:
 
         wiring = _GroupChatConfig(
             manager=None,
+            manager_participant=None,
             manager_name=self._starting_agent_id,
             participants=participant_specs,
             max_rounds=None,
@@ -1471,14 +1455,13 @@ class HandoffBuilder:
             orchestrator_factory=_handoff_orchestrator_factory,
             interceptors=(),
             checkpoint_storage=self._checkpoint_storage,
-            builder=WorkflowBuilder(name=self._name, description=self._description),
+            builder=builder,
             return_builder=True,
         )
         if not isinstance(result, tuple):
             raise TypeError("Expected tuple from assemble_group_chat_workflow with return_builder=True")
         builder, coordinator = result
 
-        builder = builder.set_start_executor(input_node)
         builder = builder.add_edge(input_node, starting_executor)
         builder = builder.add_edge(coordinator, user_gateway)
         builder = builder.add_edge(user_gateway, coordinator)

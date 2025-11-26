@@ -114,7 +114,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: s_config.DeploymentName, instructions: instructions, tools: aiTools);
     }
 
-    private static string GenerateUniqueAgentName(string baseName) =>
+    public static string GenerateUniqueAgentName(string baseName) =>
         $"{baseName}-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
     public Task DeleteAgentAsync(ChatClientAgent agent) =>

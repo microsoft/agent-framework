@@ -17,11 +17,11 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/anthropic/anthropic_basic.py`](./getting_started/agents/anthropic/anthropic_basic.py) | Agent with Anthropic Client |
 | [`getting_started/agents/anthropic/anthropic_advanced.py`](./getting_started/agents/anthropic/anthropic_advanced.py) | Advanced sample with `thinking` and hosted tools. |
 
-### Azure AI
+### Azure AI (based on `azure-ai-agents` V1 package)
 
 | File | Description |
 |------|-------------|
-| [`getting_started/agents/azure_ai_agent/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_basic.py`](./getting_started/agents/azure_ai_agent/azure_ai_basic.py) | Azure AI Agent Basic Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
@@ -35,6 +35,28 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_multiple_tools.py) | Azure AI Agent with Multiple Tools Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_openapi_tools.py) | Azure AI agent with OpenAPI tools |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
+
+### Azure AI (based on `azure-ai-projects` V2 package)
+
+| File | Description |
+|------|-------------|
+| [`getting_started/agents/azure_ai/azure_ai_basic.py`](./getting_started/agents/azure_ai/azure_ai_basic.py) | Azure AI Agent Basic Example |
+| [`getting_started/agents/azure_ai/azure_ai_use_latest_version.py`](./getting_started/agents/azure_ai/azure_ai_use_latest_version.py) | Azure AI Agent latest version reuse example |
+| [`getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_grounding.py) | Azure AI Agent with Bing Grounding Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py) | Azure AI Agent with Bing Custom Search Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_browser_automation.py`](./getting_started/agents/azure_ai/azure_ai_with_browser_automation.py) | Azure AI Agent with Browser Automation Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py) | Azure AI Agent with Existing Conversation Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_file_search.py`](./getting_started/agents/azure_ai/azure_ai_with_file_search.py) | Azure AI Agent with File Search Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py`](./getting_started/agents/azure_ai/azure_ai_with_hosted_mcp.py) | Azure AI Agent with Hosted MCP Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_response_format.py`](./getting_started/agents/azure_ai/azure_ai_with_response_format.py) | Azure AI Agent with Structured Output Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_thread.py`](./getting_started/agents/azure_ai/azure_ai_with_thread.py) | Azure AI Agent with Thread Management Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_image_generation.py`](./getting_started/agents/azure_ai/azure_ai_with_image_generation.py) | Azure AI Agent with Image Generation Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_microsoft_fabric.py`](./getting_started/agents/azure_ai/azure_ai_with_microsoft_fabric.py) | Azure AI Agent with Microsoft Fabric Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_web_search.py`](./getting_started/agents/azure_ai/azure_ai_with_web_search.py) | Azure AI Agent with Web Search Example |
 
 ### Azure OpenAI
 
@@ -96,6 +118,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/openai/openai_chat_client_with_local_mcp.py`](./getting_started/agents/openai/openai_chat_client_with_local_mcp.py) | OpenAI Chat Client with Local MCP Example |
 | [`getting_started/agents/openai/openai_chat_client_with_thread.py`](./getting_started/agents/openai/openai_chat_client_with_thread.py) | OpenAI Chat Client with Thread Management Example |
 | [`getting_started/agents/openai/openai_chat_client_with_web_search.py`](./getting_started/agents/openai/openai_chat_client_with_web_search.py) | OpenAI Chat Client with Web Search Example |
+| [`getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py`](./getting_started/agents/openai/openai_chat_client_with_runtime_json_schema.py) | OpenAI Chat Client with runtime JSON Schema for structured output without a Pydantic model |
 | [`getting_started/agents/openai/openai_responses_client_basic.py`](./getting_started/agents/openai/openai_responses_client_basic.py) | OpenAI Responses Client Basic Example |
 | [`getting_started/agents/openai/openai_responses_client_image_analysis.py`](./getting_started/agents/openai/openai_responses_client_image_analysis.py) | OpenAI Responses Client Image Analysis Example |
 | [`getting_started/agents/openai/openai_responses_client_image_generation.py`](./getting_started/agents/openai/openai_responses_client_image_generation.py) | OpenAI Responses Client Image Generation Example |
@@ -162,7 +185,9 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | File | Description |
 |------|-------------|
-| [`getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py`](./getting_started/evaluation/azure_ai_foundry/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
+| [`getting_started/evaluation/red_teaming/red_team_agent_sample.py`](./getting_started/evaluation/red_teaming/red_team_agent_sample.py) | Red team agent evaluation sample for Azure AI Foundry |
+| [`getting_started/evaluation/self_reflection/self_reflection.py`](./getting_started/evaluation/self_reflection/self_reflection.py) | LLM self-reflection with AI Foundry graders example |
+| [`demos/workflow_evaluation/run_evaluation.py`](./demos/workflow_evaluation/run_evaluation.py) | Multi-agent workflow evaluation demo with travel planning agents evaluated using Azure AI Foundry evaluators |
 
 ## MCP (Model Context Protocol)
 
@@ -183,6 +208,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/middleware/function_based_middleware.py`](./getting_started/middleware/function_based_middleware.py) | Function-based middleware example |
 | [`getting_started/middleware/middleware_termination.py`](./getting_started/middleware/middleware_termination.py) | Middleware termination example |
 | [`getting_started/middleware/override_result_with_middleware.py`](./getting_started/middleware/override_result_with_middleware.py) | Override result with middleware example |
+| [`getting_started/middleware/runtime_context_delegation.py`](./getting_started/middleware/runtime_context_delegation.py) | Runtime context delegation example demonstrating how to pass API tokens, session data, and other context through hierarchical agent delegation |
 | [`getting_started/middleware/shared_state_middleware.py`](./getting_started/middleware/shared_state_middleware.py) | Shared state middleware example |
 | [`getting_started/middleware/thread_behavior_middleware.py`](./getting_started/middleware/thread_behavior_middleware.py) | Thread behavior middleware example demonstrating how to track conversation state across multiple agent runs |
 
@@ -242,103 +268,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 ## Workflows
 
-### Start Here
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/_start-here/step1_executors_and_edges.py`](./getting_started/workflows/_start-here/step1_executors_and_edges.py) | Step 1: Foundational patterns: Executors and edges |
-| [`getting_started/workflows/_start-here/step2_agents_in_a_workflow.py`](./getting_started/workflows/_start-here/step2_agents_in_a_workflow.py) | Step 2: Agents in a Workflow non-streaming |
-| [`getting_started/workflows/_start-here/step3_streaming.py`](./getting_started/workflows/_start-here/step3_streaming.py) | Step 3: Agents in a workflow with streaming |
-
-### Agents in Workflows
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/agents/azure_ai_agents_streaming.py`](./getting_started/workflows/agents/azure_ai_agents_streaming.py) | Sample: Agents in a workflow with streaming |
-| [`getting_started/workflows/agents/azure_chat_agents_function_bridge.py`](./getting_started/workflows/agents/azure_chat_agents_function_bridge.py) | Sample: Two agents connected by a function executor bridge |
-| [`getting_started/workflows/agents/azure_chat_agents_streaming.py`](./getting_started/workflows/agents/azure_chat_agents_streaming.py) | Sample: Agents in a workflow with streaming |
-| [`getting_started/workflows/agents/azure_chat_agents_tool_calls_with_feedback.py`](./getting_started/workflows/agents/azure_chat_agents_tool_calls_with_feedback.py) | Sample: Tool-enabled agents with human feedback |
-| [`getting_started/workflows/agents/custom_agent_executors.py`](./getting_started/workflows/agents/custom_agent_executors.py) | Step 2: Agents in a Workflow non-streaming |
-| [`getting_started/workflows/agents/workflow_as_agent_human_in_the_loop.py`](./getting_started/workflows/agents/workflow_as_agent_human_in_the_loop.py) | Sample: Workflow Agent with Human-in-the-Loop |
-| [`getting_started/workflows/agents/workflow_as_agent_reflection_pattern.py`](./getting_started/workflows/agents/workflow_as_agent_reflection_pattern.py) | Sample: Workflow as Agent with Reflection and Retry Pattern |
-
-### Checkpoint
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/checkpoint/checkpoint_with_human_in_the_loop.py`](./getting_started/workflows/checkpoint/checkpoint_with_human_in_the_loop.py) | Sample: Checkpoint + human-in-the-loop quickstart |
-| [`getting_started/workflows/checkpoint/checkpoint_with_resume.py`](./getting_started/workflows/checkpoint/checkpoint_with_resume.py) | Sample: Checkpointing and Resuming a Workflow (with an Agent stage) |
-| [`getting_started/workflows/checkpoint/sub_workflow_checkpoint.py`](./getting_started/workflows/checkpoint/sub_workflow_checkpoint.py) | Sample: Checkpointing for workflows that embed sub-workflows |
-
-### Composition
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/composition/sub_workflow_basics.py`](./getting_started/workflows/composition/sub_workflow_basics.py) | Sample: Sub-Workflows (Basics) |
-| [`getting_started/workflows/composition/sub_workflow_parallel_requests.py`](./getting_started/workflows/composition/sub_workflow_parallel_requests.py) | Sample: Sub-workflow with parallel request handling by specialized interceptors |
-| [`getting_started/workflows/composition/sub_workflow_request_interception.py`](./getting_started/workflows/composition/sub_workflow_request_interception.py) | Sample: Sub-Workflows with Request Interception |
-
-### Control Flow
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/control-flow/edge_condition.py`](./getting_started/workflows/control-flow/edge_condition.py) | Sample: Conditional routing with structured outputs |
-| [`getting_started/workflows/control-flow/multi_selection_edge_group.py`](./getting_started/workflows/control-flow/multi_selection_edge_group.py) | Step 06b — Multi-Selection Edge Group sample |
-| [`getting_started/workflows/control-flow/sequential_executors.py`](./getting_started/workflows/control-flow/sequential_executors.py) | Sample: Sequential workflow with streaming |
-| [`getting_started/workflows/control-flow/sequential_streaming.py`](./getting_started/workflows/control-flow/sequential_streaming.py) | Sample: Foundational sequential workflow with streaming using function-style executors |
-| [`getting_started/workflows/control-flow/simple_loop.py`](./getting_started/workflows/control-flow/simple_loop.py) | Sample: Simple Loop (with an Agent Judge) |
-| [`getting_started/workflows/control-flow/switch_case_edge_group.py`](./getting_started/workflows/control-flow/switch_case_edge_group.py) | Sample: Switch-Case Edge Group with an explicit Uncertain branch |
-
-### Human-in-the-Loop
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py`](./getting_started/workflows/human-in-the-loop/guessing_game_with_human_input.py) | Sample: Human in the loop guessing game |
-| [`getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py`](./getting_started/workflows/human-in-the-loop/agents_with_approval_requests.py) | Sample: Agents with Approval Requests in Workflows |
-
-### Observability
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/observability/tracing_basics.py`](./getting_started/workflows/observability/tracing_basics.py) | Basic tracing workflow sample |
-
-### Orchestration
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/orchestration/concurrent_agents.py`](./getting_started/workflows/orchestration/concurrent_agents.py) | Sample: Concurrent fan-out/fan-in (agent-only API) with default aggregator |
-| [`getting_started/workflows/orchestration/concurrent_custom_agent_executors.py`](./getting_started/workflows/orchestration/concurrent_custom_agent_executors.py) | Sample: Concurrent Orchestration with Custom Agent Executors |
-| [`getting_started/workflows/orchestration/concurrent_custom_aggregator.py`](./getting_started/workflows/orchestration/concurrent_custom_aggregator.py) | Sample: Concurrent Orchestration with Custom Aggregator |
-| [`getting_started/workflows/orchestration/group_chat_prompt_based_manager.py`](./getting_started/workflows/orchestration/group_chat_prompt_based_manager.py) | Sample: Group Chat Orchestration with LLM-based manager |
-| [`getting_started/workflows/orchestration/group_chat_simple_selector.py`](./getting_started/workflows/orchestration/group_chat_simple_selector.py) | Sample: Group Chat Orchestration with function-based speaker selector |
-| [`getting_started/workflows/orchestration/handoff_simple.py`](./getting_started/workflows/orchestration/handoff_simple.py) | Sample: Handoff Orchestration with simple agent handoff pattern |
-| [`getting_started/workflows/orchestration/handoff_specialist_to_specialist.py`](./getting_started/workflows/orchestration/handoff_specialist_to_specialist.py) | Sample: Handoff Orchestration with specialist-to-specialist routing |
-| [`getting_started/workflows/orchestration/handoff_return_to_previous`](./getting_started/workflows/orchestration/handoff_return_to_previous.py) | Return-to-previous routing: after user input, routes back to the previous specialist instead of coordinator using `.enable_return_to_previous()` |
-| [`getting_started/workflows/orchestration/magentic.py`](./getting_started/workflows/orchestration/magentic.py) | Sample: Magentic Orchestration (agentic task planning with multi-agent execution) |
-| [`getting_started/workflows/orchestration/magentic_checkpoint.py`](./getting_started/workflows/orchestration/magentic_checkpoint.py) | Sample: Magentic Orchestration with Checkpointing |
-| [`getting_started/workflows/orchestration/magentic_human_plan_update.py`](./getting_started/workflows/orchestration/magentic_human_plan_update.py) | Sample: Magentic Orchestration with Human Plan Review |
-| [`getting_started/workflows/orchestration/sequential_agents.py`](./getting_started/workflows/orchestration/sequential_agents.py) | Sample: Sequential workflow (agent-focused API) with shared conversation context |
-| [`getting_started/workflows/orchestration/sequential_custom_executors.py`](./getting_started/workflows/orchestration/sequential_custom_executors.py) | Sample: Sequential workflow mixing agents and a custom summarizer executor |
-
-### Parallelism
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/parallelism/aggregate_results_of_different_types.py`](./getting_started/workflows/parallelism/aggregate_results_of_different_types.py) | Sample: Concurrent fan out and fan in with two different tasks that output results of different types |
-| [`getting_started/workflows/parallelism/fan_out_fan_in_edges.py`](./getting_started/workflows/parallelism/fan_out_fan_in_edges.py) | Sample: Concurrent fan out and fan in with three domain agents |
-| [`getting_started/workflows/parallelism/map_reduce_and_visualization.py`](./getting_started/workflows/parallelism/map_reduce_and_visualization.py) | Sample: Map reduce word count with fan out and fan in over file backed intermediate results |
-
-### State Management
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/state-management/shared_states_with_agents.py`](./getting_started/workflows/state-management/shared_states_with_agents.py) | Sample: Shared state with agents and conditional routing |
-
-### Visualization
-
-| File | Description |
-|------|-------------|
-| [`getting_started/workflows/visualization/concurrent_with_visualization.py`](./getting_started/workflows/visualization/concurrent_with_visualization.py) | Sample: Concurrent (Fan-out/Fan-in) with Agents + Visualization |
+View the list of Workflows samples [here](./getting_started/workflows/README.md).
 
 ## Sample Guidelines
 
