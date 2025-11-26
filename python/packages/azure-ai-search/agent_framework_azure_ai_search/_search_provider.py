@@ -5,7 +5,7 @@ import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider, Role
 from agent_framework._logging import get_logger
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
@@ -468,6 +468,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 index_name=self.index_name,
                 credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
         # Create index client and retrieval client for agentic mode (Knowledge Base)
@@ -477,6 +478,7 @@ class AzureAISearchContextProvider(ContextProvider):
             self._index_client = SearchIndexClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             # Retrieval client will be created after Knowledge Base initialization
 
@@ -612,7 +614,11 @@ class AzureAISearchContextProvider(ContextProvider):
         try:
             # Use existing index client or create temporary one
             if not self._index_client:
-                self._index_client = SearchIndexClient(endpoint=self.endpoint, credential=self.credential)
+                self._index_client = SearchIndexClient(
+                    endpoint=self.endpoint,
+                    credential=self.credential,
+                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                )
             index_client = self._index_client
 
             # Get index schema
@@ -774,6 +780,7 @@ class AzureAISearchContextProvider(ContextProvider):
                     endpoint=self.endpoint,
                     knowledge_base_name=knowledge_base_name,
                     credential=self.credential,
+                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
                 )
             self._knowledge_base_initialized = True
             return
@@ -850,6 +857,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 knowledge_base_name=knowledge_base_name,
                 credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
     async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:
