@@ -42,12 +42,12 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class _EdgeRegistrations:
+class _EdgeRegistration:
     """A data class representing an edge registration in the workflow builder.
 
     Args:
-        source: The registered name of the source executor factory.
-        target: The registered name of the target executor factory.
+        source: The registered source name.
+        target: The registered target name.
         condition: An optional condition function for the edge.
     """
 
@@ -57,12 +57,12 @@ class _EdgeRegistrations:
 
 
 @dataclass
-class _FanOutEdgeRegistrations:
+class _FanOutEdgeRegistration:
     """A data class representing a fan-out edge registration in the workflow builder.
 
     Args:
-        source: The registered name of the source executor factory.
-        targets: A list of registered names of the target executor factories.
+        source: The registered source name.
+        targets: A list of registered target names.
     """
 
     source: str
@@ -70,12 +70,12 @@ class _FanOutEdgeRegistrations:
 
 
 @dataclass
-class _FanInEdgeRegistrations:
+class _FanInEdgeRegistration:
     """A data class representing a fan-in edge registration in the workflow builder.
 
     Args:
-        sources: A list of registered names of the source executor factories.
-        target: The registered name of the target executor factory.
+        sources: A list of registered source names.
+        target: The registered target name.
     """
 
     sources: list[str]
@@ -83,11 +83,11 @@ class _FanInEdgeRegistrations:
 
 
 @dataclass
-class _SwitchCaseEdgeGroupRegistrations:
+class _SwitchCaseEdgeGroupRegistration:
     """A data class representing a switch-case edge group registration in the workflow builder.
 
     Args:
-        source: The registered name of the source executor factory.
+        source: The registered source name.
         cases: A list of case objects that determine the target executor for each message.
     """
 
@@ -96,12 +96,12 @@ class _SwitchCaseEdgeGroupRegistrations:
 
 
 @dataclass
-class _MultiSelectionEdgeGroupRegistrations:
+class _MultiSelectionEdgeGroupRegistration:
     """A data class representing a multi-selection edge group registration in the workflow builder.
 
     Args:
-        source: The registered name of the source executor factory.
-        targets: A list of registered names of the target executor factories.
+        source: The registered source name.
+        targets: A list of registered target names.
         selection_func: A function that selects target executors for messages.
             Takes (message, list[registered target names]) and returns list[registered target names].
     """
@@ -179,14 +179,14 @@ class WorkflowBuilder:
         self._agent_wrappers: dict[int, Executor] = {}
 
         # Registrations for lazy initialization of executors
-        self._edge_registrations: list[
-            _EdgeRegistrations
-            | _FanOutEdgeRegistrations
-            | _SwitchCaseEdgeGroupRegistrations
-            | _MultiSelectionEdgeGroupRegistrations
-            | _FanInEdgeRegistrations
+        self._edge_registry: list[
+            _EdgeRegistration
+            | _FanOutEdgeRegistration
+            | _SwitchCaseEdgeGroupRegistration
+            | _MultiSelectionEdgeGroupRegistration
+            | _FanInEdgeRegistration
         ] = []
-        self._executor_factories: dict[str, Callable[[], Executor | AgentProtocol]] = {}
+        self._executor_registry: dict[str, Callable[[], Executor | AgentProtocol]] = {}
 
     # Agents auto-wrapped by builder now always stream incremental updates.
 
@@ -323,11 +323,11 @@ class WorkflowBuilder:
         names = [name] if isinstance(name, str) else name
 
         for n in names:
-            if n in self._executor_factories:
+            if n in self._executor_registry:
                 raise ValueError(f"An executor factory with the name '{n}' is already registered.")
 
         for n in names:
-            self._executor_factories[n] = factory_func
+            self._executor_registry[n] = factory_func
 
         return self
 
@@ -373,7 +373,7 @@ class WorkflowBuilder:
                     .build()
                 )
         """
-        if name in self._executor_factories:
+        if name in self._executor_registry:
             raise ValueError(f"An executor factory with the name '{name}' is already registered.")
 
         def wrapped_factory() -> AgentExecutor:
@@ -384,7 +384,7 @@ class WorkflowBuilder:
                 output_response=output_response,
             )
 
-        self._executor_factories[name] = wrapped_factory
+        self._executor_registry[name] = wrapped_factory
 
         return self
 
@@ -519,7 +519,7 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and isinstance(target, str):
             # Both are names; defer resolution to build time
-            self._edge_registrations.append(_EdgeRegistrations(source=source, target=target, condition=condition))
+            self._edge_registry.append(_EdgeRegistration(source=source, target=target, condition=condition))
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -597,7 +597,7 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(t, str) for t in targets):
             # Both are names; defer resolution to build time
-            self._edge_registrations.append(_FanOutEdgeRegistrations(source=source, targets=list(targets)))  # type: ignore
+            self._edge_registry.append(_FanOutEdgeRegistration(source=source, targets=list(targets)))  # type: ignore
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -697,7 +697,7 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(case.target, str) for case in cases):
             # Source is a name; defer resolution to build time
-            self._edge_registrations.append(_SwitchCaseEdgeGroupRegistrations(source=source, cases=list(cases)))  # type: ignore
+            self._edge_registry.append(_SwitchCaseEdgeGroupRegistration(source=source, cases=list(cases)))  # type: ignore
             return self
 
         # Source is an Executor/AgentProtocol instance; wrap and add now
@@ -809,8 +809,8 @@ class WorkflowBuilder:
 
         if isinstance(source, str) and all(isinstance(t, str) for t in targets):
             # Both are names; defer resolution to build time
-            self._edge_registrations.append(
-                _MultiSelectionEdgeGroupRegistrations(
+            self._edge_registry.append(
+                _MultiSelectionEdgeGroupRegistration(
                     source=source,
                     targets=list(targets),  # type: ignore
                     selection_func=selection_func,
@@ -893,7 +893,7 @@ class WorkflowBuilder:
 
         if all(isinstance(s, str) for s in sources) and isinstance(target, str):
             # Both are names; defer resolution to build time
-            self._edge_registrations.append(_FanInEdgeRegistrations(sources=list(sources), target=target))  # type: ignore
+            self._edge_registry.append(_FanInEdgeRegistration(sources=list(sources), target=target))  # type: ignore
             return self
 
         # Both are Executor/AgentProtocol instances; wrap and add now
@@ -1139,7 +1139,7 @@ class WorkflowBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def _resolve_edge_registrations(self) -> tuple[Executor, list[Executor], list[EdgeGroup]]:
+    def _resolve_edge_registry(self) -> tuple[Executor, list[Executor], list[EdgeGroup]]:
         """Resolve deferred edge registrations into executors and edge groups."""
         if not self._start_executor:
             raise ValueError("Starting executor must be set using set_start_executor before building the workflow.")
@@ -1149,12 +1149,15 @@ class WorkflowBuilder:
             start_executor = self._start_executor
 
         executors: dict[str, Executor] = {}
-        for name, exec_factory in self._executor_factories.items():
+        deferred_edge_groups: list[EdgeGroup] = []
+        for name, exec_factory in self._executor_registry.items():
             instance = exec_factory()
             executors[name] = AgentExecutor(instance) if isinstance(instance, AgentProtocol) else instance
 
             if isinstance(self._start_executor, str) and name == self._start_executor:
                 start_executor = executors[name]
+
+            deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
 
         def _get_executor(name: str) -> Executor:
             """Helper to get executor by the registered name. Raises if not found."""
@@ -1162,18 +1165,17 @@ class WorkflowBuilder:
                 raise ValueError(f"Executor with name '{name}' has not been registered.")
             return executors[name]
 
-        deferred_edge_groups: list[EdgeGroup] = []
-        for registration in self._edge_registrations:
+        for registration in self._edge_registry:
             match registration:
-                case _EdgeRegistrations(source, target, condition):
+                case _EdgeRegistration(source, target, condition):
                     source_exec: Executor = _get_executor(source)
                     target_exec: Executor = _get_executor(target)
                     deferred_edge_groups.append(SingleEdgeGroup(source_exec.id, target_exec.id, condition))  # type: ignore[call-arg]
-                case _FanOutEdgeRegistrations(source, targets):
+                case _FanOutEdgeRegistration(source, targets):
                     source_exec = _get_executor(source)
                     target_execs = [_get_executor(t) for t in targets]
                     deferred_edge_groups.append(FanOutEdgeGroup(source_exec.id, [t.id for t in target_execs]))  # type: ignore[call-arg]
-                case _SwitchCaseEdgeGroupRegistrations(source, cases):
+                case _SwitchCaseEdgeGroupRegistration(source, cases):
                     source_exec = _get_executor(source)
                     cases_converted: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
                     for case in cases:
@@ -1187,13 +1189,13 @@ class WorkflowBuilder:
                                 SwitchCaseEdgeGroupCase(condition=case.condition, target_id=target_exec.id)
                             )
                     deferred_edge_groups.append(SwitchCaseEdgeGroup(source_exec.id, cases_converted))  # type: ignore[call-arg]
-                case _MultiSelectionEdgeGroupRegistrations(source, targets, selection_func):
+                case _MultiSelectionEdgeGroupRegistration(source, targets, selection_func):
                     source_exec = _get_executor(source)
                     target_execs = [_get_executor(t) for t in targets]
                     deferred_edge_groups.append(
                         FanOutEdgeGroup(source_exec.id, [t.id for t in target_execs], selection_func)  # type: ignore[call-arg]
                     )
-                case _FanInEdgeRegistrations(sources, target):
+                case _FanInEdgeRegistration(sources, target):
                     source_execs = [_get_executor(s) for s in sources]
                     target_exec = _get_executor(target)
                     deferred_edge_groups.append(FanInEdgeGroup([s.id for s in source_execs], target_exec.id))  # type: ignore[call-arg]
@@ -1255,7 +1257,7 @@ class WorkflowBuilder:
                 span.add_event(OtelAttr.BUILD_STARTED)
 
                 # Resolve lazy edge registrations
-                start_executor, deferred_executors, deferred_edge_groups = self._resolve_edge_registrations()
+                start_executor, deferred_executors, deferred_edge_groups = self._resolve_edge_registry()
                 executors = self._executors | {exe.id: exe for exe in deferred_executors}
                 edge_groups = self._edge_groups + deferred_edge_groups
 
