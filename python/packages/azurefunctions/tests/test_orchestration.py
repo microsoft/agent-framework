@@ -312,9 +312,8 @@ class TestDurableAIAgent:
         mock_context.instance_id = "my-orchestration-123"
         mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
 
-        mock_task = Mock()
-        mock_task._is_scheduled = False
-        mock_context.call_entity = Mock(return_value=mock_task)
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
 
         agent = DurableAIAgent(mock_context, "TestAgent")
         thread = agent.get_new_thread()

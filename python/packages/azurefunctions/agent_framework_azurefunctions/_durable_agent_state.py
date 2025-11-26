@@ -393,7 +393,7 @@ class DurableAgentState:
             logger.warning("Resetting state as it is incompatible with the current schema, all history will be lost")
             return cls()
 
-        instance = cls(schema_version=state.get("schemaVersion", "1.0.0"))
+        instance = cls(schema_version=state.get("schemaVersion", DurableAgentState.SCHEMA_VERSION))
         instance.data = DurableAgentStateData.from_dict(state.get("data", {}))
 
         return instance
