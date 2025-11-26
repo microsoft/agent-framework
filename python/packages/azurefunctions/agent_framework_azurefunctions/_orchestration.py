@@ -75,10 +75,7 @@ class AgentTask(_TypedCompoundTask):
         self.id = entity_task.id
 
     def try_set_value(self, child: TaskBase) -> None:
-        """Intercept task completion and convert raw result to typed AgentRunResponse.
-
-        This method delegates to the parent WhenAllTask behavior but intercepts
-        successful completion to transform the result.
+        """Transition the AgentTask to a terminal state and set its value to `AgentRunResponse`.
 
         Parameters
         ----------
@@ -108,14 +105,13 @@ class AgentTask(_TypedCompoundTask):
                     # Set the typed AgentRunResponse as this task's result
                     self.set_value(is_error=False, value=response)
                 except Exception as e:
-                    logger.error(
-                        "[AgentTask] Failed to convert result for correlation_id %s: %s",
+                    logger.exception(
+                        "[AgentTask] Failed to convert result for correlation_id: %s",
                         self._correlation_id,
-                        e,
                     )
                     self.set_value(is_error=True, value=e)
-        else:  # child.state is TaskState.FAILED
-            # Delegate error handling to parent class
+        else:
+            # If error not handled by the parent, set it explicitly.
             if self._first_error is None:
                 self._first_error = child.result
                 self.set_value(is_error=True, value=self._first_error)
@@ -125,7 +121,7 @@ class AgentTask(_TypedCompoundTask):
         if agent_response is None:
             raise ValueError("agent_response cannot be None")
 
-        logger.debug(f"[load_agent_response] Loading agent response of type: {type(agent_response)}")
+        logger.debug("[load_agent_response] Loading agent response of type: %s", type(agent_response))
 
         if isinstance(agent_response, AgentRunResponse):
             return agent_response
@@ -188,7 +184,7 @@ class DurableAIAgent(AgentProtocol):
         self._name = agent_name
         self._display_name = agent_name
         self._description = f"Durable agent proxy for {agent_name}"
-        logger.debug(f"[DurableAIAgent] Initialized for agent: {agent_name}")
+        logger.debug("[DurableAIAgent] Initialized for agent: %s", agent_name)
 
     @property
     def id(self) -> str:
@@ -258,7 +254,7 @@ class DurableAIAgent(AgentProtocol):
             # This ensures each call gets its own conversation context
             session_key = str(self.context.new_uuid())
             session_id = AgentSessionId(name=self.agent_name, key=session_key)
-            logger.warning(f"[DurableAIAgent] No thread provided, created unique session_id: {session_id}")
+            logger.warning("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
 
         # Create entity ID from session ID
         entity_id = session_id.to_entity_id()
@@ -282,7 +278,7 @@ class DurableAIAgent(AgentProtocol):
             response_format=response_format,
         )
 
-        logger.debug(f"[DurableAIAgent] Calling entity {entity_id} with message: {message_str[:100]}...")
+        logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])
 
         # Call the entity to get the underlying task
         entity_task = self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
@@ -334,7 +330,7 @@ class DurableAIAgent(AgentProtocol):
 
         thread = DurableAgentThread.from_session_id(session_id, **kwargs)
 
-        logger.debug(f"[DurableAIAgent] Created new thread with session_id: {session_id}")
+        logger.debug("[DurableAIAgent] Created new thread with session_id: %s", session_id)
         return thread
 
     def _messages_to_string(self, messages: list[ChatMessage]) -> str:
