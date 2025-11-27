@@ -2,6 +2,10 @@
 
 """Tests for shared state management."""
 
+import sys
+from pathlib import Path
+from typing import Any
+
 import pytest
 from ag_ui.core import StateSnapshotEvent
 from agent_framework import ChatAgent, TextContent
@@ -10,20 +14,16 @@ from agent_framework._types import ChatResponseUpdate
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
+sys.path.insert(0, str(Path(__file__).parent))
+from test_helpers_ag_ui import StreamingChatClientStub, stream_from_updates
+
 
 @pytest.fixture
-def mock_agent():
+def mock_agent() -> ChatAgent:
     """Create a mock agent for testing."""
-
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            yield ChatResponseUpdate(contents=[TextContent(text="Hello!")])
-
-    return ChatAgent(
-        name="test_agent",
-        instructions="Test agent",
-        chat_client=MockChatClient(),
-    )
+    updates = [ChatResponseUpdate(contents=[TextContent(text="Hello!")])]
+    chat_client = StreamingChatClientStub(stream_from_updates(updates))
+    return ChatAgent(name="test_agent", instructions="Test agent", chat_client=chat_client)
 
 
 def test_state_snapshot_event():
@@ -65,9 +65,9 @@ def test_state_delta_event():
     assert event.delta[1]["op"] == "replace"
 
 
-async def test_agent_with_initial_state(mock_agent):
+async def test_agent_with_initial_state(mock_agent: ChatAgent) -> None:
     """Test agent emits state snapshot when initial state provided."""
-    state_schema = {"recipe": {"type": "object", "properties": {"name": {"type": "string"}}}}
+    state_schema: dict[str, Any] = {"recipe": {"type": "object", "properties": {"name": {"type": "string"}}}}
 
     agent = AgentFrameworkAgent(
         agent=mock_agent,
@@ -76,12 +76,12 @@ async def test_agent_with_initial_state(mock_agent):
 
     initial_state = {"recipe": {"name": "Test Recipe"}}
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [{"role": "user", "content": "Hello"}],
         "state": initial_state,
     }
 
-    events = []
+    events: list[Any] = []
     async for event in agent.run_agent(input_data):
         events.append(event)
 
@@ -91,16 +91,16 @@ async def test_agent_with_initial_state(mock_agent):
     assert snapshot_events[0].snapshot == initial_state
 
 
-async def test_agent_without_state_schema(mock_agent):
+async def test_agent_without_state_schema(mock_agent: ChatAgent) -> None:
     """Test agent doesn't emit state events without state schema."""
     agent = AgentFrameworkAgent(agent=mock_agent)
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [{"role": "user", "content": "Hello"}],
         "state": {"some": "state"},
     }
 
-    events = []
+    events: list[Any] = []
     async for event in agent.run_agent(input_data):
         events.append(event)
 
