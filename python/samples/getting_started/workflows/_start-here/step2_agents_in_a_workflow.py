@@ -24,18 +24,17 @@ Prerequisites:
 """
 
 
-async def main():
-    """Build and run a simple two node agent workflow: Writer then Reviewer."""
-    # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    writer_agent = chat_client.create_agent(
+def create_writer_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = chat_client.create_agent(
+
+def create_reviewer_agent():
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."
@@ -44,9 +43,20 @@ async def main():
         name="reviewer",
     )
 
+
+async def main():
+    """Build and run a simple two node agent workflow: Writer then Reviewer."""
+
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer_agent).add_edge(writer_agent, reviewer_agent).build()
+    workflow = (
+        WorkflowBuilder()
+        .register_agent(create_writer_agent, name="writer")
+        .register_agent(create_reviewer_agent, name="reviewer", output_response=True)
+        .set_start_executor("writer")
+        .add_edge("writer", "reviewer")
+        .build()
+    )
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the terminal event.
