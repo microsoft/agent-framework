@@ -58,7 +58,7 @@ public sealed class FunctionStoreTests
     }
 
     [Fact]
-    public async Task SaveAsync_ShouldUpsertFunctions_Async()
+    public async Task SaveAsync_ShouldUpsertFunctionsAsync()
     {
         // Arrange
         var functions = new List<AIFunction>

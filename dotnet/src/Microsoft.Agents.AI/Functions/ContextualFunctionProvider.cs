@@ -151,7 +151,7 @@ public sealed class ContextualFunctionProvider : AIContextProvider
             return await this._options.ContextEmbeddingValueProvider.Invoke(recentMessages, newMessages, cancellationToken).ConfigureAwait(false);
         }
 
-        // Build context from the recent messages that already include the new messages
+        // Build context by concatenating the recent messages and the new messages
         return string.Join(
             Environment.NewLine,
             this._recentMessages

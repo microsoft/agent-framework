@@ -20,7 +20,7 @@ public sealed class ContextualFunctionProviderOptions
     public string? CollectionName { get; set; }
 
     /// <summary>
-    /// Gets or sets the number of recent messages(messages from previous model/agent invocations) the provider uses to form a context.
+    /// Gets or sets the number of recent messages (messages from previous model/agent invocations) the provider uses to form a context.
     /// The provider collects all messages from all model/agent invocations, up to this number,
     /// and prepends them to the new messages of the current model/agent invocation to build a context.
     /// While collecting new messages, the provider will remove the oldest messages
