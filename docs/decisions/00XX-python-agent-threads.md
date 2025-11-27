@@ -22,7 +22,7 @@ This all means that at various moments a thread can be different things and have
 - There is a proposal to add a `AgentThreadStore` abstraction and a in-memory implementation, which would further complicate the current `AgentThread` class, this adds a id and save and load methods.
 - Currently the thread is updated by the agent, based on the outcome of the whole run, so if the underlying chat client does function calling, we won't get the intermediate messages in the thread until the end of the run, this has raised a question as well, as users would like to have the thread updated during the run, so that they can see the intermediate messages, however this runs the risk of ending up with a thread that is not usable anymore, for instance because it is missing chunks (when streaming) or does not have function call results matching the function calls.
 
-Current (simplified) state for a AgentThread with a ChatMessageStore:
+Current (simplified) state for a AgentThread with a ChatMessageStore in Python:
 ```mermaid
 sequenceDiagram
         participant User
@@ -103,9 +103,10 @@ sequenceDiagram
 This approach would mean:
 - Creating two subclasses of AgentThread, one for service threads and one for local threads, both with `context providers` as attributes, but with different other attributes and methods.
 - Removing ChatMessageStore, instead a LocalThread would have a list of ChatMessages as attribute.
-- Moving ContextProvider back into Agent.
+- Moving ContextProvider back into Agent, replacing with a `context_id` or a dict of `context_provider_name/id: context_id` on both thread types, which the agent would then use to get the context from the context providers when running in that thread.
+- The protocol/interface for ContextProviders would need a slight update, one to return a context_id, the logic of which is maintained by the provider (whether it matches a app, user or session), and adding that `context_id` to the invoked and invoking methods.
 - We would then add a flag on `ChatClients`, to indicate if they support `remote/service` threads, and we assume that we always support `local` threads.
-- And finally, all Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(chat_message_store: ...)`, both of which might raise an error if the chat client does not support that type of thread.
+- And finally, all Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(chat_message_store: ...)`, both of which might raise an error if the chat client does not support that type of thread, that action should then call the context_provider(s) to get a context_id as well.
 - the `run` methods would take both types of threads, but would raise an error if the thread type is not supported by the chat client.
 - One open question is how to handle when there is a mismatch between the thread type and the `store` parameter, for example passing a `LocalAgentThread` with `store=True`, or a `ServiceAgentThread` with `store=False`. Options are:
     - Raise an error
@@ -188,6 +189,41 @@ sequenceDiagram
     Agent->>ContextProvider: invoked()
     Agent-->>User: response
 ```
+
+### Hosted app thread flow (local flow shown, same setup would apply to the remote flow)
+
+In a hosted environment, such as Azure Functions or when creating a A2A agent, the app layer would be responsible for loading and saving the thread before and after the run, as illustrated below, having the simpler thread types makes this much simpler as well, and provides complete configurability to the ThreadStore and app layer on how they want to deal with threads. The `af_thread_id` in this diagram is just a placeholder for whatever ID the app layer wants to use to identify the thread.
+
+```mermaid
+sequenceDiagram
+
+        participant User
+    box Hosting
+        participant App
+        participant ThreadStore
+        participant LocalThread
+        participant Agent
+        participant ContextProvider
+        participant ChatClient
+    end
+        participant LLM
+
+    User->>App: run(message, af_thread_id)
+    App->>ThreadStore: get(af_thread_id)
+    ThreadStore-->>App: thread
+    App->>Agent: run(message, thread)
+    Agent<<->>LocalThread: get_messages()
+    Agent<<->>ContextProvider: invoking()
+    Agent->>ChatClient: get_response(messages)
+    ChatClient<<->>LLM: get_response(messages)
+    ChatClient-->>Agent: response
+    Agent->>LocalThread: add_messages(response)
+    Agent->>ContextProvider: invoked()
+    Agent-->>App: response
+    App->>ThreadStore: save(thread)
+    App-->>User: response
+```
+
 
 ## Decision Outcome
 
