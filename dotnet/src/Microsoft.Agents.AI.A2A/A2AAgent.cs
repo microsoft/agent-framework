@@ -223,7 +223,7 @@ internal sealed class A2AAgent : AIAgent
 
         if (thread is not A2AAgentThread typedThread)
         {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
+            throw new InvalidOperationException($"The provided thread type {thread.GetType()} is not compatible with the agent. Only A2A agent created threads are supported.");
         }
 
         return typedThread;

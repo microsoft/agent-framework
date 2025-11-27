@@ -839,16 +839,11 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunAsync_WithInvalidThreadType_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var inputMessages = new List<ChatMessage>
-        {
-            new(ChatRole.User, "Test message")
-        };
-
         // Create a thread from a different agent type
         var invalidThread = new CustomAgentThread();
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, invalidThread));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(invalidThread));
     }
 
     [Fact]
@@ -864,13 +859,7 @@ public sealed class A2AAgentTests : IDisposable
         var invalidThread = new CustomAgentThread();
 
         // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, invalidThread))
-            {
-                // Just iterate through to trigger the exception
-            }
-        });
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await this._agent.RunStreamingAsync(inputMessages, invalidThread).ToListAsync());
     }
 
     public void Dispose()
@@ -882,9 +871,7 @@ public sealed class A2AAgentTests : IDisposable
     /// <summary>
     /// Custom agent thread class for testing invalid thread type scenario.
     /// </summary>
-    private sealed class CustomAgentThread : AgentThread
-    {
-    }
+    private sealed class CustomAgentThread : AgentThread;
 
     internal sealed class A2AClientHttpMessageHandlerStub : HttpMessageHandler
     {
