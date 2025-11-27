@@ -213,7 +213,7 @@ class DurableAgentThread(AgentThread):
         return thread
 
 
-def _serialize_response_format(response_format: type[BaseModel] | None) -> Any:
+def serialize_response_format(response_format: type[BaseModel] | None) -> Any:
     """Serialize response format for transport across durable function boundaries."""
     if response_format is None:
         return None
@@ -339,7 +339,7 @@ class RunRequest:
             "request_response_format": self.request_response_format,
         }
         if self.response_format:
-            result["response_format"] = _serialize_response_format(self.response_format)
+            result["response_format"] = serialize_response_format(self.response_format)
         if self.thread_id:
             result["thread_id"] = self.thread_id
         if self.correlation_id:
@@ -362,50 +362,3 @@ class RunRequest:
             correlation_id=data.get("correlationId"),
             created_at=data.get("created_at"),
         )
-
-
-@dataclass
-class AgentResponse:
-    """Response from agent execution.
-
-    Attributes:
-        response: The agent's text response (or None for structured responses)
-        message: The original message sent to the agent
-        thread_id: The thread identifier
-        status: Status of the execution (success, error, etc.)
-        message_count: Number of messages in the conversation
-        error: Error message if status is error
-        error_type: Type of error if status is error
-        structured_response: Structured response if response_format was provided
-    """
-
-    response: str | None
-    message: str
-    thread_id: str | None
-    status: str
-    message_count: int = 0
-    error: str | None = None
-    error_type: str | None = None
-    structured_response: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        result: dict[str, Any] = {
-            "message": self.message,
-            "thread_id": self.thread_id,
-            "status": self.status,
-            "message_count": self.message_count,
-        }
-
-        # Add response or structured_response based on what's available
-        if self.structured_response is not None:
-            result["structured_response"] = self.structured_response
-        elif self.response is not None:
-            result["response"] = self.response
-
-        if self.error:
-            result["error"] = self.error
-        if self.error_type:
-            result["error_type"] = self.error_type
-
-        return result

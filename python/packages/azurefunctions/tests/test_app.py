@@ -10,7 +10,7 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
@@ -343,10 +343,8 @@ class TestAgentEntityOperations:
             {"message": "Test message", "thread_id": "test-conv-123", "correlationId": "corr-app-entity-1"},
         )
 
-        assert result["status"] == "success"
-        assert result["response"] == "Test response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "test-conv-123"
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Test response"
         assert entity.state.message_count == 2
 
     async def test_entity_stores_conversation_history(self) -> None:
@@ -591,10 +589,12 @@ class TestErrorHandling:
             mock_context, {"message": "Test message", "thread_id": "conv-1", "correlationId": "corr-app-error-1"}
         )
 
-        assert result["status"] == "error"
-        assert "error" in result
-        assert "Agent error" in result["error"]
-        assert result["error_type"] == "Exception"
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert "Agent error" in (content.message or "")
+        assert content.error_code == "Exception"
 
     def test_entity_function_handles_exception(self) -> None:
         """Test that the entity function handles exceptions gracefully."""
