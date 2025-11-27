@@ -208,7 +208,7 @@ sequenceDiagram
     end
         participant LLM
 
-    User->>App: run(message, af_thread_id)
+    User->>App: call(message, af_thread_id)
     App->>ThreadStore: get(af_thread_id)
     ThreadStore-->>App: thread
     App->>Agent: run(message, thread)
