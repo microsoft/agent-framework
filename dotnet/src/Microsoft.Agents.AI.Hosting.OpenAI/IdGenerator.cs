@@ -34,6 +34,7 @@ internal sealed partial class IdGenerator
         this._random = randomSeed.HasValue ? new Random(randomSeed.Value) : null;
         this.ResponseId = responseId ?? NewId("resp", random: this._random);
         this.ConversationId = conversationId ?? NewId("conv", random: this._random);
+        this.IsNewConversation = conversationId is null;
         this._partitionId = GetPartitionIdOrDefault(this.ConversationId) ?? string.Empty;
     }
 
@@ -58,6 +59,11 @@ internal sealed partial class IdGenerator
     /// Gets the conversation ID.
     /// </summary>
     public string ConversationId { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether this is a new conversation.
+    /// </summary>
+    public bool IsNewConversation { get; }
 
     /// <summary>
     /// Generates a new ID.

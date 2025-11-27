@@ -27,6 +27,11 @@ internal sealed class AgentInvocationContext(IdGenerator idGenerator, JsonSerial
     public string ConversationId => this.IdGenerator.ConversationId;
 
     /// <summary>
+    /// Returns true, if conversation is new.
+    /// </summary>
+    public bool IsNewConversation => this.IdGenerator.IsNewConversation;
+
+    /// <summary>
     /// Gets the JSON serializer options.
     /// </summary>
     public JsonSerializerOptions JsonSerializerOptions { get; } = jsonSerializerOptions ?? OpenAIHostingJsonUtilities.DefaultOptions;
