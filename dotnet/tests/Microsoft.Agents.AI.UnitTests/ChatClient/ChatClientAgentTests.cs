@@ -2149,7 +2149,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
-            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null });
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null, ConversationId = "conversation-id" });
 
         AgentRunOptions agentRunOptions;
 
@@ -2174,7 +2174,7 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new();
+        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
 
         // Act
         await agent.RunAsync(thread, options: agentRunOptions);
@@ -2199,7 +2199,7 @@ public partial class ChatClientAgentTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
             .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((m, co, ct) => capturedChatOptions = co)
-            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null });
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]) { ContinuationToken = null, ConversationId = "conversation-id" });
 
         ChatOptions chatOptions = new()
         {
@@ -2213,10 +2213,12 @@ public partial class ChatClientAgentTests
             ContinuationToken = continuationToken2
         };
 
+        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
+
         ChatClientAgent agent = new(mockChatClient.Object);
 
         // Act
-        await agent.RunAsync(options: agentRunOptions);
+        await agent.RunAsync(thread, options: agentRunOptions);
 
         // Assert
         Assert.NotNull(capturedChatOptions);
@@ -2232,8 +2234,8 @@ public partial class ChatClientAgentTests
         // Arrange
         ChatResponseUpdate[] returnUpdates =
         [
-            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
-            new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?"),
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh") { ConversationId = "conversation-id" },
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "at?") { ConversationId = "conversation-id" },
         ];
 
         var continuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
@@ -2270,7 +2272,7 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
-        ChatClientAgentThread thread = new();
+        ChatClientAgentThread thread = new() { ConversationId = "conversation-id" };
 
         // Act
         await foreach (var _ in agent.RunStreamingAsync(thread, options: agentRunOptions))
@@ -2290,7 +2292,7 @@ public partial class ChatClientAgentTests
         // Arrange
         ChatResponseUpdate[] returnUpdates =
         [
-            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh"),
+            new ChatResponseUpdate(role: ChatRole.Assistant, content: "wh") { ConversationId = "conversation-id" },
         ];
 
         var continuationToken1 = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
@@ -2319,8 +2321,10 @@ public partial class ChatClientAgentTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
 
+        var thread = new ChatClientAgentThread() { ConversationId = "conversation-id" };
+
         // Act
-        await foreach (var _ in agent.RunStreamingAsync(options: agentRunOptions))
+        await foreach (var _ in agent.RunStreamingAsync(thread, options: agentRunOptions))
         {
         }
 
@@ -2551,9 +2555,10 @@ public partial class ChatClientAgentTests
         AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
 
         // Act
-        await agent.RunStreamingAsync([], thread, options: runOptions).ToListAsync();
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync());
 
         // Assert
+        Assert.Equal("Using non-agent service store for chat history with streaming resumption is not supported.", exception.Message);
 
         // With continuation token, thread message population should be skipped
         Assert.Empty(capturedMessages);
@@ -2613,6 +2618,128 @@ public partial class ChatClientAgentTests
                 // Should not reach here
             }
         });
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunAsyncThrowsWhenContinuationTokenProvidedForInitialRunAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a new thread with no ConversationId and no MessageStore (initial run state)
+        ChatClientAgentThread thread = new();
+
+        AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync(thread: thread, options: runOptions));
+        Assert.Equal("Continuation tokens are not allowed to be used for initial runs.", exception.Message);
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncThrowsWhenContinuationTokenProvidedForInitialRunAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a new thread with no ConversationId and no MessageStore (initial run state)
+        ChatClientAgentThread thread = new();
+
+        AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
+        Assert.Equal("Continuation tokens are not allowed to be used for initial runs.", exception.Message);
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncThrowsWhenContinuationTokenUsedWithMessageStoreAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a thread with a MessageStore
+        ChatClientAgentThread thread = new()
+        {
+            MessageStore = new InMemoryChatMessageStore()
+        };
+
+        // Create run options with a continuation token
+        AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
+        Assert.Equal("Using non-agent service store for chat history with streaming resumption is not supported.", exception.Message);
+
+        // Verify that the IChatClient was never called due to early validation
+        mockChatClient.Verify(
+            c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsyncThrowsWhenContinuationTokenUsedWithAIContextProviderAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+
+        // Create a mock AIContextProvider
+        var mockContextProvider = new Mock<AIContextProvider>();
+        mockContextProvider
+            .Setup(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AIContext());
+        mockContextProvider
+            .Setup(p => p.InvokedAsync(It.IsAny<AIContextProvider.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Returns(new ValueTask());
+
+        // Create a thread with an AIContextProvider and conversation ID to simulate non-initial run
+        ChatClientAgentThread thread = new()
+        {
+            ConversationId = "existing-conversation-id",
+            AIContextProvider = mockContextProvider.Object
+        };
+
+        AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
+
+        Assert.Equal("Using context provider with streaming resumption is not supported.", exception.Message);
 
         // Verify that the IChatClient was never called due to early validation
         mockChatClient.Verify(
