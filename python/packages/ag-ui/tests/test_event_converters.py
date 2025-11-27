@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Tests for AG-UI event converter."""
 
 from agent_framework import FinishReason, Role
