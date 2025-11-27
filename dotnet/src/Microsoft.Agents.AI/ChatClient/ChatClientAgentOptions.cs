@@ -99,6 +99,19 @@ public class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets additional properties associated with the agent options.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or agent-specific
+    /// information that doesn't fit into the standard agent schema.
+    /// </remarks>
+    public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -111,6 +124,7 @@ public class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatMessageStoreFactory = this.ChatMessageStoreFactory,
             AIContextProviderFactory = this.AIContextProviderFactory,
+            AdditionalProperties = this.AdditionalProperties?.Clone(),
         };
 
     /// <summary>
