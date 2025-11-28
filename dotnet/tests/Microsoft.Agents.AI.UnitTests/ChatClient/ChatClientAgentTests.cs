@@ -2555,7 +2555,7 @@ public partial class ChatClientAgentTests
         AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync());
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () => await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync());
 
         // Assert
         Assert.Equal("Using non-agent service store for chat history with streaming resumption is not supported.", exception.Message);
@@ -2698,7 +2698,7 @@ public partial class ChatClientAgentTests
         AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
         Assert.Equal("Using non-agent service store for chat history with streaming resumption is not supported.", exception.Message);
 
         // Verify that the IChatClient was never called due to early validation
@@ -2737,7 +2737,7 @@ public partial class ChatClientAgentTests
         AgentRunOptions runOptions = new() { ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }) };
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
+        var exception = await Assert.ThrowsAsync<NotSupportedException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
 
         Assert.Equal("Using context provider with streaming resumption is not supported.", exception.Message);
 

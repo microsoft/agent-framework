@@ -750,14 +750,14 @@ public sealed partial class ChatClientAgent : AIAgent
         // to collect updates received in failed runs and pass them to the last successful run so it can store them to the message store.
         if (safeThread.MessageStore is not null)
         {
-            throw new InvalidOperationException("Using non-agent service store for chat history with streaming resumption is not supported.");
+            throw new NotSupportedException("Using non-agent service store for chat history with streaming resumption is not supported.");
         }
 
         // Similarly, streaming resumption is not supported when a context provider is used because, currently, there's no good solution
         // to collect updates received in failed runs and pass them to the last successful run so it can notify the context provider of the updates.
         if (safeThread.AIContextProvider is not null)
         {
-            throw new InvalidOperationException("Using context provider with streaming resumption is not supported.");
+            throw new NotSupportedException("Using context provider with streaming resumption is not supported.");
         }
     }
 
