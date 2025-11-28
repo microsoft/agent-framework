@@ -799,11 +799,79 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(TaskId, a2aThread.TaskId);
     }
 
+    [Fact]
+    public async Task RunAsync_WithAllowBackgroundResponsesAndNoThread_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAllowBackgroundResponsesAndNoThread_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+            {
+                // Just iterate through to trigger the exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunAsync_WithInvalidThreadType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        // Create a thread from a different agent type
+        var invalidThread = new CustomAgentThread();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(invalidThread));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithInvalidThreadType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Create a thread from a different agent type
+        var invalidThread = new CustomAgentThread();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await this._agent.RunStreamingAsync(inputMessages, invalidThread).ToListAsync());
+    }
+
     public void Dispose()
     {
         this._handler.Dispose();
         this._httpClient.Dispose();
     }
+
+    /// <summary>
+    /// Custom agent thread class for testing invalid thread type scenario.
+    /// </summary>
+    private sealed class CustomAgentThread : AgentThread;
 
     internal sealed class A2AClientHttpMessageHandlerStub : HttpMessageHandler
     {

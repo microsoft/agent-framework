@@ -53,7 +53,7 @@ from agent_framework import (
 )
 from dateutil import parser as date_parser
 
-from ._models import RunRequest, _serialize_response_format
+from ._models import RunRequest, serialize_response_format
 
 logger = get_logger("agent_framework.azurefunctions.durable_agent_state")
 
@@ -494,7 +494,7 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
             messages=[DurableAgentStateMessage.from_run_request(request)],
             created_at=datetime.now(tz=timezone.utc),
             response_type=request.request_response_format,
-            response_schema=_serialize_response_format(request.response_format),
+            response_schema=serialize_response_format(request.response_format),
         )
 
 
