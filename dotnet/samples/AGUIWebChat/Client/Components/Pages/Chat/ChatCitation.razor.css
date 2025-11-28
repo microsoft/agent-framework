@@ -1,0 +1,37 @@
+.citation {
+    display: inline-flex;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+    margin-top: 1rem;
+    margin-right: 1rem;
+    border-bottom: 2px solid #a770de;
+    gap: 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    background-color: #ffffff;
+}
+
+    .citation[href]:hover {
+        outline: 1px solid #865cb1;
+    }
+
+    .citation svg {
+        width: 1.5rem;
+        height: 1.5rem;
+    }
+
+    .citation:active {
+        background-color: rgba(0,0,0,0.05);
+    }
+
+.citation-content {
+    display: flex;
+    flex-direction: column;
+}
+
+.citation-file {
+    font-weight: 600;
+}
