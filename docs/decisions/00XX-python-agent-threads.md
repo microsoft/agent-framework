@@ -101,19 +101,15 @@ sequenceDiagram
 
 ### 2. Separate classes for `ServiceThread`/`RemoteThread` and `LocalAgentThread`/`LocalThread`, each with their own behaviors and methods.
 This approach would mean:
-- Creating two subclasses of AgentThread, one for service threads and one for local threads, both with `context providers` as attributes, but with different other attributes and methods.
-- Removing ChatMessageStore, instead a LocalThread would have a list of ChatMessages as attribute.
-- Moving ContextProvider back into Agent, replacing with a `context_id` or a dict of `context_provider_name/id: context_id` on both thread types, which the agent would then use to get the context from the context providers when running in that thread.
-- The protocol/interface for ContextProviders would need a slight update, one to return a context_id, the logic of which is maintained by the provider (whether it matches a app, user or session), and adding that `context_id` to the invoked and invoking methods.
+- Creating two subclasses of AgentThread, one for service threads and one for local threads, both with different attributes and methods.
+- Removing `ChatMessageStore`, instead a LocalThread would have a list of ChatMessages as attribute, and the thread itself can be saved and restored.
+- Moving `ContextProvider` back into Agent, replacing with a field `context_data`/`context_state` or a dict of `context_provider_name/id: context_data/state` on both thread types, which the agent would then use to get the context from the context providers when running in that thread. This makes the thread itself state-only, and the context provider can be stateless and live in the agent.
+- The protocol/interface for ContextProviders would need a slight update, one to return a initial `context_data/state` object, the logic of which is maintained by the provider (whether it matches a app, user or session and what to record in there), and adding that `context_data/state` to the invoked and invoking methods. The `context_data/state` needs to be (de)serializable in a standard way, to make handling the thread easier.
 - We would then add a flag on `ChatClients`, to indicate if they support `remote/service` threads, and we assume that we always support `local` threads.
-- And finally, all Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(chat_message_store: ...)`, both of which might raise an error if the chat client does not support that type of thread, that action should then call the context_provider(s) to get a context_id as well.
+- And finally, all Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(messages: list[ChatMessage] | None = None, ...)`, both of which might raise an error if the chat client does not support that type of thread, after creation the agent then calls the context_provider(s) to get a `context_data/state` assigned as well.
 - the `run` methods would take both types of threads, but would raise an error if the thread type is not supported by the chat client.
-- One open question is how to handle when there is a mismatch between the thread type and the `store` parameter, for example passing a `LocalAgentThread` with `store=True`, or a `ServiceAgentThread` with `store=False`. Options are:
-    - Raise an error
-    - The `store` and `conversation_id` parameters have precedence, so that if you pass in a `local` thread and `store=True` and `conversation_id!=None`, the messages from the thread are passed in, but the thread is not updated and overwritten with a remote thread after the call.
-    - The `Thread` has precedence over chat options. In other words, because the `thread` is defined at the agent level, while the `store` and `conversation_id` parameters are defined at the chat client level, the `thread` has precedence, so that if you pass a `RemoteThread`, it will set `store=True` regardless of what is passed in otherwise, and `conversation_id` will be set to the id in the `thread`, while if you pass a `LocalThread`, it will set `store=False` and `conversation_id=None` regardless of what is passed in otherwise.
-    - I believe the last option makes the most sense.
-- Naming is another open question, options are:
+- If you pass a `LocalThread` to `run`, it would invoke the chat client with `store=False` and `conversation_id=None`, and if you pass a `RemoteThread`, it would invoke the chat client with `store=True` and the `conversation_id` from the thread (if any).
+- Naming is a open question, options are:
     - for the remote threads:
         - `ServiceThread`
         - `RemoteThread`
@@ -130,7 +126,7 @@ So that gives the following:
 - Good, because it is clear which chat clients support which type of thread.
 - Good, because we can make all the logic that deals with threads much clearer, as each class has a single responsibility.
 - Good, because it might also enable a abstracted method to get a list of chat messages from a thread through the chat client.
-- Bad, because it would more fundamentally diverge from dotnet.
+- Good, because the simplified state-only context data make the threads much easier to handle and store.
 
 ## Proposed Agent Thread Invocation Flow
 
