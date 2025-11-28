@@ -37,16 +37,20 @@ public class AIProjectClientCreateTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
                 model: s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
+                options: new ChatClientAgentOptions()
+                {
+                    Name = AgentName,
+                    Description = AgentDescription,
+                    ChatOptions = new() { Instructions = AgentInstructions }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._client.CreateAIAgent(
                 model: s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
+                options: new ChatClientAgentOptions()
+                {
+                    Name = AgentName,
+                    Description = AgentDescription,
+                    ChatOptions = new() { Instructions = AgentInstructions }
+                }),
             "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
                 name: AgentName,
                 creationOptions: new AgentVersionCreationOptions(new PromptAgentDefinition(s_config.DeploymentName) { Instructions = AgentInstructions }) { Description = AgentDescription }),
@@ -239,16 +243,18 @@ public class AIProjectClientCreateTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
                 model: s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    name: AgentName,
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    Name = AgentName,
+                    ChatOptions = new() { Instructions = AgentInstructions, Tools = [weatherFunction] }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._client.CreateAIAgent(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    name: AgentName,
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    Name = AgentName,
+                    ChatOptions = new() { Instructions = AgentInstructions, Tools = [weatherFunction] }
+                }),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
         };
 
