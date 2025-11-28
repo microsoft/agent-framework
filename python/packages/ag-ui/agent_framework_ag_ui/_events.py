@@ -393,6 +393,17 @@ class AgentFrameworkEventBridge:
         result_message_id = generate_event_id()
         if isinstance(content.result, dict):
             result_content = json.dumps(content.result)  # type: ignore[arg-type]
+        elif isinstance(content.result, list):
+            # Handle Contents list (e.g., from MCP tool results)
+            texts = []
+            for item in content.result:
+                if hasattr(item, "text"):  # TextContent
+                    texts.append(item.text)
+                elif hasattr(item, "model_dump"):
+                    texts.append(json.dumps(item.model_dump(mode="json")))
+                else:
+                    texts.append(str(item))
+            result_content = "\n".join(texts) if len(texts) == 1 else json.dumps(texts)
         elif content.result is not None:
             result_content = str(content.result)
         else:
