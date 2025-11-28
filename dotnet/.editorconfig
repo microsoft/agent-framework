@@ -220,6 +220,7 @@ dotnet_diagnostic.VSTHRD111.severity = none # Use .ConfigureAwait(bool) is hidde
 
 dotnet_diagnostic.xUnit1004.severity = none # Test methods should not be skipped. Remove the Skip property to start running the test again.
 dotnet_diagnostic.xUnit1042.severity = none # Untyped data rows
+dotnet_diagnostic.xUnit1051.severity = none
 
 dotnet_diagnostic.RCS1032.severity = none # Remove redundant parentheses.
 dotnet_diagnostic.RCS1074.severity = none # Remove redundant constructor.

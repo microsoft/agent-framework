@@ -1,6 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
     <InjectSharedBuildTestCode>true</InjectSharedBuildTestCode>
   </PropertyGroup>

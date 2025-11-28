@@ -3,6 +3,7 @@
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
