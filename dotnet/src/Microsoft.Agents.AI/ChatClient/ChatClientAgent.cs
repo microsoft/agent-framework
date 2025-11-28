@@ -746,7 +746,7 @@ public sealed partial class ChatClientAgent : AIAgent
             return;
         }
 
-        // Streaming resumption is only supported with threads managed by the agent service because, currently, there's no good solution
+        // Streaming resumption is only supported with chat history managed by the agent service because, currently, there's no good solution
         // to collect updates received in failed runs and pass them to the last successful run so it can store them to the message store.
         if (safeThread.MessageStore is not null)
         {
