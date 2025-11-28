@@ -29,7 +29,20 @@ internal sealed class OpenAIChatCompletionsAgentClient(HttpClient httpClient) : 
         };
 
         var openAiClient = new ChatClient(model: "myModel!", credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
-        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, cancellationToken: cancellationToken))
+
+        var chatOptions = new ChatOptions()
+        {
+            ConversationId = threadId,
+            RawRepresentationFactory = _ => new ChatCompletionOptions()
+            {
+                Metadata =
+                {
+                    { "entity_id", agentName }
+                }
+            },
+        };
+
+        await foreach (var update in openAiClient.GetStreamingResponseAsync(messages, options: chatOptions, cancellationToken: cancellationToken))
         {
             yield return new AgentRunResponseUpdate(update);
         }
