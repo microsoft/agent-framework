@@ -78,6 +78,10 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
+    <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
