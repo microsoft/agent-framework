@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.AI;
+using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Bot.ObjectModel;
@@ -16,8 +17,9 @@ public static class PromptAgentExtensions
     /// Retrieves the 'options' property from a <see cref="GptComponentMetadata"/> as a <see cref="ChatOptions"/> instance.
     /// </summary>
     /// <param name="promptAgent">Instance of <see cref="GptComponentMetadata"/></param>
+    /// <param name="engine">Instance of <see cref="RecalcEngine"/></param>
     /// <param name="functions">Instance of <see cref="IList{AIFunction}"/></param>
-    public static ChatOptions? GetChatOptions(this GptComponentMetadata promptAgent, IList<AIFunction>? functions)
+    public static ChatOptions? GetChatOptions(this GptComponentMetadata promptAgent, RecalcEngine? engine, IList<AIFunction>? functions)
     {
         Throw.IfNull(promptAgent);
 
@@ -34,17 +36,17 @@ public static class PromptAgentExtensions
         return new ChatOptions()
         {
             Instructions = promptAgent.ResponseInstructions?.ToTemplateString(),
-            Temperature = (float?)modelOptions?.Temperature?.LiteralValue,
-            MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.LiteralValue,
-            TopP = (float?)modelOptions?.TopP?.LiteralValue,
-            TopK = (int?)modelOptions?.TopK?.LiteralValue,
-            FrequencyPenalty = (float?)modelOptions?.FrequencyPenalty?.LiteralValue,
-            PresencePenalty = (float?)modelOptions?.PresencePenalty?.LiteralValue,
-            Seed = modelOptions?.Seed?.LiteralValue,
+            Temperature = (float?)modelOptions?.Temperature?.Eval(engine),
+            MaxOutputTokens = (int?)modelOptions?.MaxOutputTokens?.Eval(engine),
+            TopP = (float?)modelOptions?.TopP?.Eval(engine),
+            TopK = (int?)modelOptions?.TopK?.Eval(engine),
+            FrequencyPenalty = (float?)modelOptions?.FrequencyPenalty?.Eval(engine),
+            PresencePenalty = (float?)modelOptions?.PresencePenalty?.Eval(engine),
+            Seed = modelOptions?.Seed?.Eval(engine),
             ResponseFormat = outputSchema?.AsChatResponseFormat(),
             ModelId = promptAgent.Model?.ModelNameHint,
             StopSequences = modelOptions?.StopSequences,
-            AllowMultipleToolCalls = modelOptions?.AllowMultipleToolCalls?.LiteralValue,
+            AllowMultipleToolCalls = modelOptions?.AllowMultipleToolCalls?.Eval(engine),
             ToolMode = modelOptions?.AsChatToolMode(),
             Tools = tools,
             AdditionalProperties = modelOptions?.GetAdditionalProperties(s_chatOptionProperties),
