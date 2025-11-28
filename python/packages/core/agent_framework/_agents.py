@@ -876,7 +876,11 @@ class ChatAgent(BaseAgent):
         )
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
-        response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **filtered_kwargs)
+        response = await self.chat_client.get_response(
+            messages=thread_messages,
+            chat_options=co,
+            **filtered_kwargs,
+        )
 
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -1013,7 +1017,9 @@ class ChatAgent(BaseAgent):
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
-            messages=thread_messages, chat_options=co, **filtered_kwargs
+            messages=thread_messages,
+            chat_options=co,
+            **filtered_kwargs,
         ):
             response_updates.append(update)
 

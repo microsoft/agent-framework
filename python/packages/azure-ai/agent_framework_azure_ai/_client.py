@@ -155,7 +155,11 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         self.credential = async_credential
         self.model_id = azure_ai_settings.model_deployment_name
         self.conversation_id = conversation_id
-        self._should_close_client = should_close_client  # Track whether we should close client connection
+
+        # Track whether the application endpoint is used
+        self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
+        # Track whether we should close client connection
+        self._should_close_client = should_close_client
 
     async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
@@ -316,9 +320,11 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Take ChatOptions and create the specific options for Azure AI."""
         prepared_messages, instructions = self._prepare_input(messages)
         run_options = await super().prepare_options(prepared_messages, chat_options, **kwargs)
-        agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
 
-        run_options["extra_body"] = {"agent": agent_reference}
+        if not self._is_application_endpoint:
+            # Application-scoped response APIs do not support "agent" property.
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+            run_options["extra_body"] = {"agent": agent_reference}
 
         conversation_id = chat_options.conversation_id or self.conversation_id
 
