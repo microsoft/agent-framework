@@ -1,9 +1,9 @@
 kind: Prompt
 name: Assistant
 description: Helpful assistant
-instructions: You are a helpful assistant. You answer questions is the language specified by the user. You return your answers in a JSON format. You must include Assistants as the type in your response.
+instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format. You must include Assistants as the type in your response.
 model:
-    id: =Env.AZURE_OPENAI_DEPLOYMENT_NAME
+    id: gpt-4o-mini
     provider: AzureOpenAI
     apiType: Assistants
     options:
@@ -12,14 +12,14 @@ model:
 outputSchema:
     properties:
         language:
-            kind: string
+            type: string
             required: true
             description: The language of the answer.
         answer:
-            kind: string
+            type: string
             required: true
             description: The answer text.
         type:
-            kind: string
+            type: string
             required: true
             description: The type of the response.
