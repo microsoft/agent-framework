@@ -624,7 +624,7 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
         }
 
-        if (runOptions?.ContinuationToken is not null && typedThread.ConversationId is null && typedThread.MessageStore is null)
+        if (chatOptions?.ContinuationToken is not null && typedThread.ConversationId is null && typedThread.MessageStore is null)
         {
             throw new InvalidOperationException("Continuation tokens are not allowed to be used for initial runs.");
         }
