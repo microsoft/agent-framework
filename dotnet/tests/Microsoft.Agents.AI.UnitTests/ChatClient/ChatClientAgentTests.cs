@@ -2681,7 +2681,7 @@ public partial class ChatClientAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsyncThrowsWhenContinuationTokenUsedWithMessageStoreAsync()
+    public async Task RunStreamingAsyncThrowsWhenContinuationTokenUsedClientSideManagedChatHistoryAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -2691,7 +2691,8 @@ public partial class ChatClientAgentTests
         // Create a thread with a MessageStore
         ChatClientAgentThread thread = new()
         {
-            MessageStore = new InMemoryChatMessageStore()
+            MessageStore = new InMemoryChatMessageStore(), // Setting a message store to skip checking the continuation token in the initial run
+            ConversationId = null, // No conversation ID to simulate client-side managed chat history
         };
 
         // Create run options with a continuation token
