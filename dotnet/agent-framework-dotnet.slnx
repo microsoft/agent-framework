@@ -254,6 +254,7 @@
     <File Path="../docs/decisions/0007-agent-filtering-middleware.md" />
     <File Path="../docs/decisions/0008-python-subpackages.md" />
     <File Path="../docs/decisions/0009-support-long-running-operations.md" />
+    <File Path="../docs/decisions/00NN-feature-collections.md" />
     <File Path="../docs/decisions/adr-short-template.md" />
     <File Path="../docs/decisions/adr-template.md" />
     <File Path="../docs/decisions/README.md" />
