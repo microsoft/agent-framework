@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -32,6 +34,21 @@ public static class AGUIEndpointRouteBuilderExtensions
         this IEndpointRouteBuilder endpoints,
         [StringSyntax("route")] string pattern,
         AIAgent aiAgent)
+    {
+        return endpoints.MapAGUI(pattern, _ => ValueTask.FromResult(aiAgent));
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The URL pattern for the endpoint.</param>
+    /// <param name="aiAgentSelector">A function to select the agent instance based on the HTTP context.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    public static IEndpointConventionBuilder MapAGUI(
+        this IEndpointRouteBuilder endpoints,
+        [StringSyntax("route")] string pattern,
+        Func<HttpContext, ValueTask<AIAgent>> aiAgentSelector)
     {
         return endpoints.MapPost(pattern, async ([FromBody] RunAgentInput? input, HttpContext context, CancellationToken cancellationToken) =>
         {
@@ -62,6 +79,13 @@ public static class AGUIEndpointRouteBuilderExtensions
                     }
                 }
             };
+
+            // Determine the agent to use
+            var aiAgent = await aiAgentSelector(context).ConfigureAwait(false);
+            if (aiAgent is null)
+            {
+                return Results.BadRequest("Agent could not be determined.");
+            }
 
             // Run the agent and convert to AG-UI events
             var events = aiAgent.RunStreamingAsync(
