@@ -32,24 +32,56 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
-    public void BuildHandoffs_InvalidArguments_Throws()
+    public void BuildHandOffs_InvalidArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>("initialAgent", () => AgentWorkflowBuilder.CreateHandoffBuilderWith(null!));
+        Assert.Throws<ArgumentNullException>("initialAgent", () => AgentWorkflowBuilder.CreateHandOffBuilderWith(null!));
 
         var agent = new DoubleEchoAgent("agent");
-        var handoffs = AgentWorkflowBuilder.CreateHandoffBuilderWith(agent);
+        var handoffs = AgentWorkflowBuilder.CreateHandOffBuilderWith(agent);
         Assert.NotNull(handoffs);
 
-        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoff(null!, new DoubleEchoAgent("a2")));
-        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoff(new DoubleEchoAgent("a2"), null!));
+        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandOff(null!, new DoubleEchoAgent("a2")));
+        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandOff(new DoubleEchoAgent("a2"), null!));
 
-        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoffs(null!, new DoubleEchoAgent("a2")));
-        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandoffs([null!], new DoubleEchoAgent("a2")));
-        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoffs(new DoubleEchoAgent("a2"), null!));
-        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandoffs(new DoubleEchoAgent("a2"), [null!]));
+        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandOffs(null!, new DoubleEchoAgent("a2")));
+        Assert.Throws<ArgumentNullException>("from", () => handoffs.WithHandOffs([null!], new DoubleEchoAgent("a2")));
+        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandOffs(new DoubleEchoAgent("a2"), null!));
+        Assert.Throws<ArgumentNullException>("to", () => handoffs.WithHandOffs(new DoubleEchoAgent("a2"), [null!]));
 
         var noDescriptionAgent = new ChatClientAgent(new MockChatClient(delegate { return new(); }));
-        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandoff(agent, noDescriptionAgent));
+        Assert.Throws<ArgumentException>("to", () => handoffs.WithHandOff(agent, noDescriptionAgent));
+    }
+
+    [Fact]
+    public async Task WithHandoffInstructions_SetsCustomInstructions()
+    {
+        // Arrange
+        const string customInstructions = "Custom handoff instructions for testing.";
+        string? capturedInstructions = null;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            capturedInstructions = options?.Instructions;
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent2"))),
+            name: "nextAgent",
+            description: "The second agent");
+
+        // Act
+        var workflow = AgentWorkflowBuilder.CreateHandOffBuilderWith(initialAgent)
+            .WithHandoffInstructions(customInstructions)
+            .WithHandOff(initialAgent, nextAgent)
+            .Build();
+
+        await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.Equal(customInstructions, capturedInstructions);
     }
 
     [Fact]
@@ -191,7 +223,7 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
-    public async Task Handoffs_NoTransfers_ResponseServedByOriginalAgentAsync()
+    public async Task HandOffs_NoTransfers_ResponseServedByOriginalAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
@@ -202,8 +234,8 @@ public class AgentWorkflowBuilderTests
         }));
 
         var workflow =
-            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
-            .WithHandoff(initialAgent, new ChatClientAgent(new MockChatClient(delegate
+            AgentWorkflowBuilder.CreateHandOffBuilderWith(initialAgent)
+            .WithHandOff(initialAgent, new ChatClientAgent(new MockChatClient(delegate
             {
                 Assert.Fail("Should never be invoked.");
                 return new();
@@ -225,7 +257,7 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
-    public async Task Handoffs_OneTransfer_ResponseServedBySecondAgentAsync()
+    public async Task HandOffs_OneTransfer_ResponseServedBySecondAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
@@ -244,8 +276,8 @@ public class AgentWorkflowBuilderTests
             description: "The second agent");
 
         var workflow =
-            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
-            .WithHandoff(initialAgent, nextAgent)
+            AgentWorkflowBuilder.CreateHandOffBuilderWith(initialAgent)
+            .WithHandOff(initialAgent, nextAgent)
             .Build();
 
         (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
@@ -271,7 +303,7 @@ public class AgentWorkflowBuilderTests
     }
 
     [Fact]
-    public async Task Handoffs_TwoTransfers_ResponseServedByThirdAgentAsync()
+    public async Task HandOffs_TwoTransfers_ResponseServedByThirdAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
@@ -300,9 +332,9 @@ public class AgentWorkflowBuilderTests
             description: "The third / final agent");
 
         var workflow =
-            AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
-            .WithHandoff(initialAgent, secondAgent)
-            .WithHandoff(secondAgent, thirdAgent)
+            AgentWorkflowBuilder.CreateHandOffBuilderWith(initialAgent)
+            .WithHandOff(initialAgent, secondAgent)
+            .WithHandOff(secondAgent, thirdAgent)
             .Build();
 
         (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
