@@ -242,6 +242,19 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
                     import json
 
                     content_text = json.dumps(content.result)  # type: ignore
+                elif isinstance(content.result, list):
+                    # Handle Contents list (e.g., from MCP tool results)
+                    import json
+
+                    texts = []
+                    for item in content.result:
+                        if hasattr(item, "text"):  # TextContent
+                            texts.append(item.text)
+                        elif hasattr(item, "model_dump"):
+                            texts.append(json.dumps(item.model_dump(mode="json")))
+                        else:
+                            texts.append(str(item))
+                    content_text = "\n".join(texts) if len(texts) == 1 else json.dumps(texts)
                 elif content.result is not None:
                     content_text = str(content.result)
 
