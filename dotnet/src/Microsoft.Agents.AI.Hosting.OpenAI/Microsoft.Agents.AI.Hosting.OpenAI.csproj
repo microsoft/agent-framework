@@ -26,8 +26,6 @@
 
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
     <PackageReference Include="System.Linq.AsyncEnumerable" />
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
   <ItemGroup>
