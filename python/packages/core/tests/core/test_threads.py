@@ -6,10 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import AgentThread, ChatMessage, ChatMessageStore, Role
-from agent_framework._threads import (
-    AgentThreadState,
-    ChatMessageStoreState,
-)
+from agent_framework._threads import AgentThreadState, ChatMessageStoreState
 from agent_framework.exceptions import AgentThreadException
 
 

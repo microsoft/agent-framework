@@ -7,11 +7,7 @@ from ._serialization import SerializationMixin
 from ._types import ChatMessage
 from .exceptions import AgentThreadException
 
-__all__ = [
-    "AgentThread",
-    "ChatMessageStore",
-    "ChatMessageStoreProtocol",
-]
+__all__ = ["AgentThread", "ChatMessageStore", "ChatMessageStoreProtocol"]
 
 
 class ChatMessageStoreProtocol(Protocol):
