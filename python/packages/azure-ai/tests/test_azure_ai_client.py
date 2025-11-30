@@ -87,6 +87,7 @@ def create_test_azure_ai_client(
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
+    client._is_application_endpoint = False  # type: ignore
     client._should_close_client = should_close_client  # type: ignore
     client.additional_properties = {}
     client.middleware = None
@@ -303,6 +304,84 @@ async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicM
 
         assert "extra_body" in run_options
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+
+
+@pytest.mark.parametrize(
+    "endpoint,expects_agent",
+    [
+        ("https://example.com/api/projects/my-project/applications/my-application/protocols", False),
+        ("https://example.com/api/projects/my-project", True),
+    ],
+)
+async def test_azure_ai_client_prepare_options_with_application_endpoint(
+    mock_azure_credential: MagicMock, endpoint: str, expects_agent: bool
+) -> None:
+    client = AzureAIClient(
+        project_endpoint=endpoint,
+        model_deployment_name="test-model",
+        async_credential=mock_azure_credential,
+        agent_name="test-agent",
+        agent_version="1",
+    )
+
+    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    chat_options = ChatOptions()
+
+    with (
+        patch.object(client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model"}),
+        patch.object(
+            client,
+            "_get_agent_reference_or_create",
+            return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
+        ),
+    ):
+        run_options = await client.prepare_options(messages, chat_options)
+
+    if expects_agent:
+        assert "extra_body" in run_options
+        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+    else:
+        assert "extra_body" not in run_options
+
+
+@pytest.mark.parametrize(
+    "endpoint,expects_agent",
+    [
+        ("https://example.com/api/projects/my-project/applications/my-application/protocols", False),
+        ("https://example.com/api/projects/my-project", True),
+    ],
+)
+async def test_azure_ai_client_prepare_options_with_application_project_client(
+    mock_project_client: MagicMock, endpoint: str, expects_agent: bool
+) -> None:
+    mock_project_client._config = MagicMock()
+    mock_project_client._config.endpoint = endpoint
+
+    client = AzureAIClient(
+        project_client=mock_project_client,
+        model_deployment_name="test-model",
+        agent_name="test-agent",
+        agent_version="1",
+    )
+
+    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
+    chat_options = ChatOptions()
+
+    with (
+        patch.object(client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model"}),
+        patch.object(
+            client,
+            "_get_agent_reference_or_create",
+            return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
+        ),
+    ):
+        run_options = await client.prepare_options(messages, chat_options)
+
+    if expects_agent:
+        assert "extra_body" in run_options
+        assert run_options["extra_body"]["agent"]["name"] == "test-agent"
+    else:
+        assert "extra_body" not in run_options
 
 
 async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock) -> None:
@@ -559,6 +638,56 @@ async def test_azure_ai_client_agent_creation_with_response_format(
     assert "name" in schema["properties"]
     assert "value" in schema["properties"]
     assert "description" in schema["properties"]
+
+
+async def test_azure_ai_client_agent_creation_with_mapping_response_format(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation when response_format is provided as a mapping."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    runtime_schema = {
+        "title": "WeatherDigest",
+        "type": "object",
+        "properties": {
+            "location": {"type": "string"},
+            "conditions": {"type": "string"},
+            "temperature_c": {"type": "number"},
+            "advisory": {"type": "string"},
+        },
+        "required": ["location", "conditions", "temperature_c", "advisory"],
+        "additionalProperties": False,
+    }
+
+    run_options = {
+        "model": "test-model",
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": runtime_schema["title"],
+                "strict": True,
+                "schema": runtime_schema,
+            },
+        },
+    }
+
+    await client._get_agent_reference_or_create(run_options, None)  # type: ignore
+
+    call_args = mock_project_client.agents.create_version.call_args
+    created_definition = call_args[1]["definition"]
+
+    assert hasattr(created_definition, "text")
+    assert created_definition.text is not None
+    format_config = created_definition.text.format
+    assert isinstance(format_config, ResponseTextFormatConfigurationJsonSchema)
+    assert format_config.name == runtime_schema["title"]
+    assert format_config.schema == runtime_schema
+    assert format_config.strict is True
 
 
 async def test_azure_ai_client_prepare_options_excludes_response_format(

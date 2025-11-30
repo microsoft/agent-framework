@@ -26,9 +26,9 @@ members = [
     "agent-framework",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
-    "agent-framework-aisearch",
     "agent-framework-anthropic",
     "agent-framework-azure-ai",
+    "agent-framework-azure-ai-search",
     "agent-framework-azurefunctions",
     "agent-framework-chatkit",
     "agent-framework-copilotstudio",
@@ -195,21 +195,6 @@ requires-dist = [
 provides-extras = ["dev"]
 
 [[package]]
-name = "agent-framework-aisearch"
-version = "1.0.0b251118"
-source = { editable = "packages/aisearch" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework-core", editable = "packages/core" },
-    { name = "azure-search-documents", specifier = "==11.7.0b2" },
-]
-
-[[package]]
 name = "agent-framework-anthropic"
 version = "1.0.0b251120"
 source = { editable = "packages/anthropic" }
@@ -241,6 +226,21 @@ requires-dist = [
     { name = "aiohttp" },
     { name = "azure-ai-agents", specifier = "==1.2.0b5" },
     { name = "azure-ai-projects", specifier = ">=2.0.0b2" },
+]
+
+[[package]]
+name = "agent-framework-azure-ai-search"
+version = "1.0.0b251118"
+source = { editable = "packages/azure-ai-search" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-search-documents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "azure-search-documents", specifier = "==11.7.0b2" },
 ]
 
 [[package]]
@@ -280,7 +280,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "openai-chatkit", specifier = ">=1.1.0,<2.0.0" },
+    { name = "openai-chatkit", specifier = ">=1.4.0,<2.0.0" },
 ]
 
 [[package]]
@@ -320,9 +320,9 @@ dependencies = [
 all = [
     { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-aisearch", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-ai-search", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-chatkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-copilotstudio", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -338,9 +338,9 @@ all = [
 requires-dist = [
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
     { name = "agent-framework-ag-ui", marker = "extra == 'all'", editable = "packages/ag-ui" },
-    { name = "agent-framework-aisearch", marker = "extra == 'all'", editable = "packages/aisearch" },
     { name = "agent-framework-anthropic", marker = "extra == 'all'", editable = "packages/anthropic" },
     { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
+    { name = "agent-framework-azure-ai-search", marker = "extra == 'all'", editable = "packages/azure-ai-search" },
     { name = "agent-framework-azurefunctions", marker = "extra == 'all'", editable = "packages/azurefunctions" },
     { name = "agent-framework-chatkit", marker = "extra == 'all'", editable = "packages/chatkit" },
     { name = "agent-framework-copilotstudio", marker = "extra == 'all'", editable = "packages/copilotstudio" },
