@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from abc import ABC, abstractmethod
 from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
 
@@ -10,10 +9,8 @@ from .exceptions import AgentThreadException
 
 __all__ = [
     "AgentThread",
-    "AgentThreadStorage",
     "ChatMessageStore",
     "ChatMessageStoreProtocol",
-    "InMemoryAgentThreadStorage",
 ]
 
 
@@ -508,117 +505,3 @@ class AgentThread:
             return
         # Create the message store from the default.
         self.message_store = ChatMessageStore(messages=state.chat_message_store_state.messages, **kwargs)
-
-
-class AgentThreadStorage(ABC):
-    """Abstract base class for storing and retrieving AgentThread instances.
-
-    This class defines the interface for persisting and managing AgentThread objects.
-
-    Example:
-        ```python
-        class FileBasedAgentThreadStorage(AgentThreadStorage):
-            async def save_thread(self, thread: AgentThread) -> str:
-                # Implementation to save thread to file
-                pass
-
-            async def load_thread(self, thread_id: str) -> AgentThread | None:
-                # Implementation to load thread from file
-                pass
-        ```
-    """
-
-    @abstractmethod
-    async def save_thread(self, thread_id: str, thread: AgentThread) -> str:
-        """Save an AgentThread instance.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-            thread (AgentThread): The AgentThread instance to be saved.
-
-        Returns:
-            str: The identifier of the saved thread.
-        """
-        pass
-
-    @abstractmethod
-    async def load_thread(self, thread_id: str) -> AgentThread | None:
-        """Load an AgentThread instance by its identifier.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-
-        Returns:
-            AgentThread | None: The loaded AgentThread instance, or None if not found.
-        """
-        pass
-
-    @abstractmethod
-    async def delete_thread(self, thread_id: str) -> bool:
-        """Delete an AgentThread instance by its identifier.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-
-        Returns:
-            bool: True if the thread was successfully deleted, False otherwise.
-        """
-        pass
-
-
-class InMemoryAgentThreadStorage(AgentThreadStorage):
-    """In-memory storage for AgentThread instances, useful for testing and development.
-
-    This implementation stores AgentThread objects in memory using a dictionary.
-    It provides methods to save, load, and delete threads by their identifiers.
-
-    Example:
-        ```python
-        storage = InMemoryAgentThreadStorage()
-        thread = AgentThread(...)
-        await storage.save_thread("thread_123", thread)
-        loaded_thread = await storage.load_thread("thread_123")
-        ```
-    """
-
-    def __init__(self) -> None:
-        """Initialize the in-memory storage."""
-        self._threads: dict[str, AgentThread] = {}
-
-    async def save_thread(self, thread_id: str, thread: AgentThread) -> str:
-        """Save an AgentThread instance.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-            thread (AgentThread): The AgentThread instance to be saved.
-
-        Returns:
-            str: The identifier of the saved thread.
-        """
-        self._threads[thread_id] = thread
-        return thread_id
-
-    async def load_thread(self, thread_id: str) -> AgentThread | None:
-        """Load an AgentThread instance by its identifier.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-
-        Returns:
-            AgentThread | None: The loaded AgentThread instance, or None if not found.
-        """
-        return self._threads.get(thread_id)
-
-    async def delete_thread(self, thread_id: str) -> bool:
-        """Delete an AgentThread instance by its identifier.
-
-        Args:
-            thread_id (str): The unique identifier for the thread.
-
-        Returns:
-            bool: True if the thread was successfully deleted, False otherwise.
-        """
-        if thread_id in self._threads:
-            del self._threads[thread_id]
-            return True
-        return False
