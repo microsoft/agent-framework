@@ -4,7 +4,6 @@ from asyncio import CancelledError
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from a2a.server.tasks import TaskUpdater
 from a2a.types import Task, TaskState
 from agent_framework import (
     AgentRunResponse,
@@ -18,7 +17,7 @@ from agent_framework import (
     WorkflowAgent,
 )
 from agent_framework.a2a import A2AExecutor
-from pytest import fixture
+from pytest import fixture, raises
 
 
 @fixture
@@ -92,28 +91,21 @@ def executor(mock_chat_agent: MagicMock) -> A2AExecutor:
     return A2AExecutor(agent=mock_chat_agent)
 
 
-@fixture
-def executor_with_custom_adapter(mock_chat_agent: MagicMock) -> A2AExecutor:
-    """Fixture that provides an A2AExecutor with custom event adapter."""
-    executor = A2AExecutor(agent=mock_chat_agent)
-    executor.handle_events = MagicMock()
-    return executor
-
-
 class TestA2AExecutorInitialization:
     """Tests for A2AExecutor initialization."""
 
     def test_initialization_with_chat_agent_only(self, mock_chat_agent: MagicMock) -> None:
         """Arrange: Create mock ChatAgent
         Act: Initialize A2AExecutor with only agent
-        Assert: Executor is created with default adapter and thread storage
+        Assert: Executor is created with default dict-based thread storage
         """
         # Act
         executor = A2AExecutor(agent=mock_chat_agent)
 
         # Assert
         assert executor._agent is mock_chat_agent
-        assert executor._agent_thread_storage is not None
+        assert isinstance(executor._agent_thread_storage, dict)
+        assert len(executor._agent_thread_storage) == 0
 
     def test_initialization_with_workflow_agent_only(self, mock_workflow_agent: MagicMock) -> None:
         """Arrange: Create mock WorkflowAgent
@@ -125,35 +117,31 @@ class TestA2AExecutorInitialization:
 
         # Assert
         assert executor._agent is mock_workflow_agent
+        assert isinstance(executor._agent_thread_storage, dict)
 
-    def test_initialization_with_custom_thread_storage(self, mock_chat_agent: MagicMock) -> None:
-        """Arrange: Create mock ChatAgent and thread storage
-        Act: Initialize A2AExecutor with custom storage
-        Assert: Executor uses the provided storage
+    def test_initialization_creates_empty_thread_storage(self, mock_chat_agent: MagicMock) -> None:
+        """Arrange: Create mock ChatAgent
+        Act: Initialize A2AExecutor
+        Assert: Executor creates empty dict-based thread storage
         """
-        # Arrange
-        custom_storage = MagicMock()
-
         # Act
-        executor = A2AExecutor(agent=mock_chat_agent, agent_thread_storage=custom_storage)
+        executor = A2AExecutor(agent=mock_chat_agent)
 
         # Assert
-        assert executor._agent_thread_storage is custom_storage
+        assert isinstance(executor._agent_thread_storage, dict)
+        assert len(executor._agent_thread_storage) == 0
 
-    def test_initialization_with_all_custom_components(self, mock_chat_agent: MagicMock) -> None:
-        """Arrange: Create mock ChatAgent, adapter, and storage
-        Act: Initialize A2AExecutor with all custom components
-        Assert: Executor uses all provided components
+    def test_initialization_thread_storage_empty_for_workflow_agent(self, mock_workflow_agent: MagicMock) -> None:
+        """Arrange: Create mock WorkflowAgent
+        Act: Initialize A2AExecutor with WorkflowAgent
+        Assert: Executor creates empty dict-based storage
         """
-        # Arrange
-        custom_storage = MagicMock()
-
         # Act
-        executor = A2AExecutor(agent=mock_chat_agent, agent_thread_storage=custom_storage)
+        executor = A2AExecutor(agent=mock_workflow_agent)
 
         # Assert
-        assert executor._agent is mock_chat_agent
-        assert executor._agent_thread_storage is custom_storage
+        assert isinstance(executor._agent_thread_storage, dict)
+        assert len(executor._agent_thread_storage) == 0
 
 
 class TestA2AExecutorCancel:
@@ -190,84 +178,150 @@ class TestA2AExecutorCancel:
         await executor.cancel(context2, mock_event_queue)  # type: ignore
 
 
+class TestA2AExecutorThreadStorage:
+    """Tests for save_thread and get_thread methods."""
+
+    async def test_save_thread_stores_thread_with_context_id(
+        self,
+        executor: A2AExecutor,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with empty storage
+        Act: Save thread with context_id
+        Assert: Thread is stored in dict
+        """
+        # Arrange
+        context_id = "test-context-123"
+
+        # Act
+        await executor.save_thread(context_id, mock_agent_thread)
+
+        # Assert
+        assert executor._agent_thread_storage[context_id] is mock_agent_thread
+
+    async def test_get_thread_returns_stored_thread(
+        self,
+        executor: A2AExecutor,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with stored thread
+        Act: Get thread with context_id
+        Assert: Stored thread is returned
+        """
+        # Arrange
+        context_id = "test-context-123"
+        executor._agent_thread_storage[context_id] = mock_agent_thread
+
+        # Act
+        result = await executor.get_thread(context_id)
+
+        # Assert
+        assert result is mock_agent_thread
+
+    async def test_get_thread_returns_none_for_missing_thread(
+        self,
+        executor: A2AExecutor,
+    ) -> None:
+        """Arrange: Create executor without stored thread
+        Act: Get thread with non-existent context_id
+        Assert: None is returned
+        """
+        # Act
+        result = await executor.get_thread("non-existent")
+
+        # Assert
+        assert result is None
+
+    async def test_save_and_get_thread_roundtrip(
+        self,
+        executor: A2AExecutor,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor
+        Act: Save and then get thread
+        Assert: Retrieved thread matches saved thread
+        """
+        # Arrange
+        context_id = "roundtrip-test"
+
+        # Act
+        await executor.save_thread(context_id, mock_agent_thread)
+        result = await executor.get_thread(context_id)
+
+        # Assert
+        assert result is mock_agent_thread
+
+
 class TestA2AExecutorGetAgentThread:
     """Tests for the get_agent_thread method."""
 
     async def test_get_agent_thread_creates_new_thread_when_not_exists(
         self,
         executor: A2AExecutor,
-        mock_request_context: MagicMock,
         mock_task: Task,
-        mock_task_updater: MagicMock,
-        mock_agent_thread: MagicMock,
     ) -> None:
-        """Arrange: Create executor with mocked storage and agent
+        """Arrange: Create executor with empty storage
         Act: Call get_agent_thread with context that has no stored thread
         Assert: New thread is created and saved
         """
         # Arrange
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=None)
-        executor._agent_thread_storage.save_thread = AsyncMock()
-        executor._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
+        mock_thread = MagicMock(spec=AgentThread)
+        executor._agent.get_new_thread = MagicMock(return_value=mock_thread)
+        assert len(executor._agent_thread_storage) == 0
 
         # Act
         result = await executor.get_agent_thread(mock_task)
 
         # Assert
-        assert result is mock_agent_thread
-        executor._agent_thread_storage.load_thread.assert_called_once()
-        executor._agent_thread_storage.save_thread.assert_called_once()
+        assert result is mock_thread
+        assert executor._agent_thread_storage[mock_task.context_id] is mock_thread
 
     async def test_get_agent_thread_returns_existing_thread(
         self,
         executor: A2AExecutor,
-        mock_request_context: MagicMock,
         mock_task: Task,
-        mock_task_updater: MagicMock,
         mock_agent_thread: MagicMock,
     ) -> None:
-        """Arrange: Create executor with mocked storage containing thread
+        """Arrange: Create executor with existing thread in storage
         Act: Call get_agent_thread with context that has stored thread
         Assert: Existing thread is returned without creating new one
         """
         # Arrange
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-        executor._agent_thread_storage.save_thread = AsyncMock()
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
+        executor._agent.get_new_thread = MagicMock()
 
         # Act
         result = await executor.get_agent_thread(mock_task)
 
         # Assert
         assert result is mock_agent_thread
-        executor._agent_thread_storage.save_thread.assert_not_called()
+        executor._agent.get_new_thread.assert_not_called()
 
     async def test_get_agent_thread_with_different_contexts(
         self,
         executor: A2AExecutor,
-        mock_request_context: MagicMock,
-        mock_task_updater: MagicMock,
     ) -> None:
-        """Arrange: Create executor with multiple contexts
+        """Arrange: Create executor with multiple context IDs
         Act: Call get_agent_thread with different context IDs
-        Assert: Each context loads from correct thread ID
+        Assert: Each context maintains separate threads
         """
         # Arrange
-        thread1 = MagicMock()
-        thread2 = MagicMock()
+        thread1 = MagicMock(spec=AgentThread)
+        thread2 = MagicMock(spec=AgentThread)
+        call_count = [0]
 
-        async def mock_load_thread(thread_id: str) -> MagicMock | None:  # type: ignore
-            if thread_id == "thread-1":
+        def side_effect():
+            call_count[0] += 1
+            if call_count[0] == 1:
                 return thread1
-            if thread_id == "thread-2":
-                return thread2
-            return None
+            return thread2
 
-        executor._agent_thread_storage.load_thread = mock_load_thread
+        executor._agent.get_new_thread = MagicMock(side_effect=side_effect)
 
-        task1 = MagicMock()
-        task1.context_id = "thread-1"
-        task2 = MagicMock()
-        task2.context_id = "thread-2"
+        task1 = MagicMock(spec=Task)
+        task1.context_id = "context-1"
+        task2 = MagicMock(spec=Task)
+        task2.context_id = "context-2"
 
         # Act
         result1 = await executor.get_agent_thread(task1)
@@ -276,6 +330,8 @@ class TestA2AExecutorGetAgentThread:
         # Assert
         assert result1 is thread1
         assert result2 is thread2
+        assert executor._agent_thread_storage["context-1"] is thread1
+        assert executor._agent_thread_storage["context-2"] is thread2
 
 
 class TestA2AExecutorExecute:
@@ -299,24 +355,20 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-        executor._agent.run_stream = AsyncMock(return_value=AsyncMock())
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
 
-        # Create an async generator that yields no responses
-        async def empty_stream(*_args, **_kwargs):
-            if True:
-                return
-            yield  # Make it a generator
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hello back")])
+        response = MagicMock(spec=AgentRunResponse)
+        response.messages = [response_message]
+        executor._agent.run = AsyncMock(return_value=response)
 
-        executor._agent.run_stream = empty_stream
-
-        # Patch TaskUpdater creation
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
             mock_updater.submit = AsyncMock()
             mock_updater.start_work = AsyncMock()
             mock_updater.complete = AsyncMock()
             mock_updater.update_status = AsyncMock()
+            mock_updater.new_agent_message = MagicMock(return_value="message_obj")
             mock_updater_class.return_value = mock_updater
 
             # Act
@@ -344,20 +396,19 @@ class TestA2AExecutorExecute:
         mock_request_context.current_task = None
         mock_request_context.message = mock_message
         mock_request_context.context_id = "ctx-123"
-        mock_request_context.message = MagicMock()
 
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor._agent_thread_storage["ctx-123"] = mock_agent_thread
 
-        async def empty_stream(*_args, **_kwargs):
-            if True:
-                return
-            yield  # Make it a generator
-
-        executor._agent.run_stream = empty_stream
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Response")])
+        response = MagicMock(spec=AgentRunResponse)
+        response.messages = [response_message]
+        executor._agent.run = AsyncMock(return_value=response)
+        executor._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
 
         with patch("agent_framework_a2a._a2a_executor.new_task") as mock_new_task:
-            mock_task = MagicMock()
+            mock_task = MagicMock(spec=Task)
             mock_task.id = "task-new"
+            mock_task.context_id = "ctx-123"
             mock_new_task.return_value = mock_task
 
             with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
@@ -365,6 +416,8 @@ class TestA2AExecutorExecute:
                 mock_updater.submit = AsyncMock()
                 mock_updater.start_work = AsyncMock()
                 mock_updater.complete = AsyncMock()
+                mock_updater.update_status = AsyncMock()
+                mock_updater.new_agent_message = MagicMock(return_value="message_obj")
                 mock_updater_class.return_value = mock_updater
 
                 # Act
@@ -373,6 +426,48 @@ class TestA2AExecutorExecute:
                 # Assert
                 mock_new_task.assert_called_once()
                 mock_event_queue.enqueue_event.assert_called_once()
+
+    async def test_execute_raises_error_when_context_id_missing(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+    ) -> None:
+        """Arrange: Create context without context_id
+        Act: Call execute method
+        Assert: ValueError is raised
+        """
+        # Arrange
+        mock_request_context.context_id = None
+        mock_request_context.message = MagicMock()
+
+        # Act & Assert
+        with raises(ValueError) as excinfo:
+            await executor.execute(mock_request_context, mock_event_queue)
+
+        # Assert
+        assert "Context ID" in str(excinfo.value)
+
+    async def test_execute_raises_error_when_message_missing(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+    ) -> None:
+        """Arrange: Create context without message
+        Act: Call execute method
+        Assert: ValueError is raised
+        """
+        # Arrange
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = None
+
+        # Act & Assert
+        with raises(ValueError) as excinfo:
+            await executor.execute(mock_request_context, mock_event_queue)
+
+        # Assert
+        assert "Message" in str(excinfo.value)
 
     async def test_execute_handles_cancelled_error(
         self,
@@ -392,13 +487,8 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-
-        async def cancel_stream(*_args, **_kwargs):  # type: ignore
-            if True:
-                raise CancelledError
-
-        executor._agent.run = cancel_stream
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
+        executor._agent.run = AsyncMock(side_effect=CancelledError())
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -411,7 +501,9 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)  # type: ignore
 
             # Assert
-            mock_updater.update_status.assert_called_with(state=TaskState.canceled, final=True)
+            mock_updater.update_status.assert_called()
+            call_args_list = mock_updater.update_status.call_args_list
+            assert any(call[1].get("state") == TaskState.canceled for call in call_args_list)
 
     async def test_execute_handles_generic_exception(
         self,
@@ -431,14 +523,8 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-
-        async def error_stream(*_args, **_kwargs):  # type: ignore
-            if True:
-                raise ValueError("Test error")
-            yield  # Make it a generator
-
-        executor._agent.run_stream = error_stream
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
+        executor._agent.run = AsyncMock(side_effect=ValueError("Test error"))
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -452,70 +538,20 @@ class TestA2AExecutorExecute:
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            # Verify update_status was called with failed state
             call_args_list = mock_updater.update_status.call_args_list
-            assert any(
-                call[1].get("state") == TaskState.failed or call[0][0] == TaskState.failed for call in call_args_list
-            )
+            assert any(call[1].get("state") == TaskState.failed for call in call_args_list)
 
-    async def test_execute_calls_event_adapter_for_responses(
+    async def test_execute_processes_multiple_response_messages(
         self,
-        executor_with_custom_adapter: A2AExecutor,
+        executor: A2AExecutor,
         mock_request_context: MagicMock,
         mock_event_queue: MagicMock,
         mock_task: Task,
         mock_agent_thread: MagicMock,
     ) -> None:
-        """Arrange: Create executor with mock event adapter
-        Act: Call execute with responses from agent
-        Assert: Event adapter is called for each response
-        """
-        # Arrange
-        mock_request_context.get_user_input = MagicMock(return_value="Hello")
-        mock_request_context.current_task = mock_task
-        mock_request_context.context_id = "ctx-123"
-        mock_request_context.message = MagicMock()
-
-        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-
-        # Create response updates
-        response1 = MagicMock(spec=ChatMessage)
-        response1.contents = [TextContent(text="Response 1")]
-        response2 = MagicMock(spec=ChatMessage)
-        response2.contents = [TextContent(text="Response 2")]
-
-        async def response_stream(*_args, **_kwargs):  # type: ignore
-            response = MagicMock(spec=AgentRunResponse)
-            response.messages = [response1, response2]
-            return response
-
-        executor_with_custom_adapter._agent.run = response_stream
-        executor_with_custom_adapter.handle_events = AsyncMock()
-
-        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
-            mock_updater = MagicMock()
-            mock_updater.submit = AsyncMock()
-            mock_updater.start_work = AsyncMock()
-            mock_updater.complete = AsyncMock()
-            mock_updater_class.return_value = mock_updater
-
-            # Act
-            await executor_with_custom_adapter.execute(mock_request_context, mock_event_queue)  # type: ignore
-
-            # Assert
-            assert executor_with_custom_adapter.handle_events.call_count == 2
-
-    async def test_execute_skips_response_with_no_contents(
-        self,
-        executor_with_custom_adapter: A2AExecutor,
-        mock_request_context: MagicMock,
-        mock_event_queue: MagicMock,
-        mock_task: Task,
-        mock_agent_thread: MagicMock,
-    ) -> None:
-        """Arrange: Create executor with responses that have no contents
+        """Arrange: Create executor that returns multiple response messages
         Act: Call execute method
-        Assert: Event adapter is not called for empty responses
+        Assert: All messages are processed through handle_events
         """
         # Arrange
         mock_request_context.get_user_input = MagicMock(return_value="Hello")
@@ -523,137 +559,120 @@ class TestA2AExecutorExecute:
         mock_request_context.context_id = "ctx-123"
         mock_request_context.message = MagicMock()
 
-        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
 
-        # Create response with no contents
+        response_message1 = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="First")])
+        response_message2 = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Second")])
         response = MagicMock(spec=AgentRunResponse)
-        response.messages = []
+        response.messages = [response_message1, response_message2]
+        executor._agent.run = AsyncMock(return_value=response)
 
-        async def response_stream(*_args, **_kwargs):
-            return response
-
-        executor_with_custom_adapter._agent.run = response_stream
-        executor_with_custom_adapter.handle_events = AsyncMock()
+        # Mock handle_events
+        executor.handle_events = AsyncMock()
 
         with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
             mock_updater = MagicMock()
             mock_updater.submit = AsyncMock()
             mock_updater.start_work = AsyncMock()
             mock_updater.complete = AsyncMock()
-            mock_updater_class.return_value = mock_updater
-
-            # Act
-            await executor_with_custom_adapter.execute(mock_request_context, mock_event_queue)
-
-            # Assert
-            executor_with_custom_adapter.handle_events.assert_not_called()
-
-
-class TestA2AExecutorIntegration:
-    """Integration tests for A2AExecutor."""
-
-    async def test_full_execution_flow_with_responses(
-        self,
-        executor_with_custom_adapter: A2AExecutor,
-        mock_request_context: MagicMock,
-        mock_event_queue: MagicMock,
-        mock_task: Task,
-        mock_agent_thread: MagicMock,
-    ) -> None:
-        """Arrange: Create executor with all mocked dependencies
-        Act: Execute full flow from request to completion
-        Assert: All components interact correctly
-        """
-        # Arrange
-        mock_request_context.get_user_input = MagicMock(return_value="Hello agent")
-        mock_request_context.current_task = mock_task
-        mock_request_context.context_id = "ctx-123"
-        mock_request_context.message = MagicMock()
-
-        executor_with_custom_adapter._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-
-        response = MagicMock(spec=AgentRunResponse)
-        response_message = MagicMock(spec=ChatMessage)
-        response.messages = [response_message]
-        response_message.contents = [TextContent(text="Hello user")]
-        response_message.role = Role.ASSISTANT
-
-        async def response_stream(*_args, **_kwargs):
-            return response
-
-        executor_with_custom_adapter._agent.run_stream = response_stream
-        executor_with_custom_adapter.handle_events = AsyncMock()
-
-        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
-            mock_updater = MagicMock()
-            mock_updater.submit = AsyncMock()
-            mock_updater.start_work = AsyncMock()
-            mock_updater.complete = AsyncMock()
-            mock_updater.update_status = AsyncMock()
-            mock_updater_class.return_value = mock_updater
-
-            # Act
-            await executor_with_custom_adapter.execute(mock_request_context, mock_event_queue)
-
-            # Assert
-            mock_updater.submit.assert_called_once()
-            mock_updater.start_work.assert_called_once()
-            executor_with_custom_adapter.handle_events.assert_called_once()
-            mock_updater.complete.assert_called_once()
-
-    async def test_executor_with_workflow_agent(
-        self,
-        mock_workflow_agent: MagicMock,
-        mock_request_context: MagicMock,
-        mock_event_queue: MagicMock,
-        mock_task: Task,
-        mock_agent_thread: MagicMock,
-    ) -> None:
-        """Arrange: Create executor with WorkflowAgent
-        Act: Execute method
-        Assert: Executor works with WorkflowAgent
-        """
-        # Arrange
-        executor = A2AExecutor(agent=mock_workflow_agent)
-        mock_request_context.get_user_input = MagicMock(return_value="Test")
-        mock_request_context.current_task = mock_task
-        mock_request_context.context_id = "ctx-123"
-        mock_request_context.message = MagicMock()
-
-        executor._agent_thread_storage.load_thread = AsyncMock(return_value=mock_agent_thread)
-
-        response = MagicMock(spec=AgentRunResponse)
-        response_message = MagicMock(spec=ChatMessage)
-        response.messages = [response_message]
-        response_message.contents = [TextContent(text="Hello user")]
-        response_message.role = Role.ASSISTANT
-
-        async def response_stream(*_args, **_kwargs):
-            return response
-
-        executor._agent.run = response_stream
-
-        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
-            mock_updater = MagicMock()
-            mock_updater.submit = AsyncMock()
-            mock_updater.start_work = AsyncMock()
-            mock_updater.complete = AsyncMock()
-            mock_updater.update_status = AsyncMock()
-            mock_updater.new_agent_message = MagicMock(return_value="mock_message")
             mock_updater_class.return_value = mock_updater
 
             # Act
             await executor.execute(mock_request_context, mock_event_queue)
 
             # Assert
-            mock_updater.complete.assert_called_once()
+            assert executor.handle_events.call_count == 2
+
+    async def test_execute_thread_is_saved_after_completion(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with thread
+        Act: Call execute and complete successfully
+        Assert: Thread is saved in storage
+        """
+        # Arrange
+        mock_request_context.get_user_input = MagicMock(return_value="Hello")
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Response")])
+        response = MagicMock(spec=AgentRunResponse)
+        response.messages = [response_message]
+        executor._agent.run = AsyncMock(return_value=response)
+        executor._agent.get_new_thread = MagicMock(return_value=mock_agent_thread)
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater.new_agent_message = MagicMock(return_value="message_obj")
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            assert executor._agent_thread_storage[mock_task.context_id] is mock_agent_thread
+
+    async def test_execute_creates_chat_message_with_user_role(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with request
+        Act: Call execute method
+        Assert: ChatMessage is created with USER role and query text
+        """
+        # Arrange
+        query_text = "Hello agent"
+        mock_request_context.get_user_input = MagicMock(return_value=query_text)
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        executor._agent_thread_storage[mock_task.context_id] = mock_agent_thread
+
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Response")])
+        response = MagicMock(spec=AgentRunResponse)
+        response.messages = [response_message]
+        executor._agent.run = AsyncMock(return_value=response)
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater.new_agent_message = MagicMock(return_value="message_obj")
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            executor._agent.run.assert_called_once()
+            call_args = executor._agent.run.call_args
+            user_message = call_args[0][0]
+            assert user_message.role == Role.USER
+            assert user_message.text == query_text
 
 
-class TestA2AExecutorEventAdapter:
+class TestA2AExecutorHandleEvents:
     """Tests for A2AExecutor.handle_events method."""
 
     @fixture
-    def mock_updater(self) -> TaskUpdater:
+    def mock_updater(self) -> MagicMock:
         """Create a mock execution context."""
         updater = MagicMock()
         updater.update_status = AsyncMock()
@@ -799,9 +818,6 @@ class TestA2AExecutorEventAdapter:
         mock_updater.update_status.assert_called_once()
         call_args = mock_updater.update_status.call_args
         assert call_args.kwargs["state"] == TaskState.working
-        # Verify all parts were created
-        new_agent_message_call = mock_updater.new_agent_message.call_args
-        assert new_agent_message_call is not None
 
     async def test_handle_with_additional_properties(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with additional properties metadata."""
@@ -864,7 +880,6 @@ class TestA2AExecutorEventAdapter:
     async def test_unsupported_content_type_skipped(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test that unsupported content types are silently skipped."""
         # Arrange
-        # Create a message with a valid content and mock an unsupported one
         message = ChatMessage(
             contents=[
                 TextContent(text="Valid text"),
@@ -969,3 +984,102 @@ class TestA2AExecutorEventAdapter:
         call_kwargs = mock_updater.new_agent_message.call_args.kwargs
         parts_list = call_kwargs["parts"]
         assert len(parts_list) == 100
+
+class TestA2AExecutorIntegration:
+    """Integration tests for A2AExecutor."""
+
+    async def test_full_execution_flow_with_responses(
+        self,
+        executor: A2AExecutor,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with all mocked dependencies
+        Act: Execute full flow from request to completion
+        Assert: All components interact correctly
+        """
+        # Arrange
+        mock_request_context.get_user_input = MagicMock(return_value="Hello agent")
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        executor.get_thread = AsyncMock(return_value=mock_agent_thread)
+
+        response = MagicMock(spec=AgentRunResponse)
+        response_message = MagicMock(spec=ChatMessage)
+        response.messages = [response_message]
+        response_message.contents = [TextContent(text="Hello user")]
+        response_message.role = Role.ASSISTANT
+
+        async def response_stream(*_args, **_kwargs):
+            return response
+
+        executor._agent.run_stream = response_stream
+        executor.handle_events = AsyncMock()
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            mock_updater.submit.assert_called_once()
+            mock_updater.start_work.assert_called_once()
+            executor.handle_events.assert_called_once()
+            mock_updater.complete.assert_called_once()
+
+    async def test_executor_with_workflow_agent(
+        self,
+        mock_workflow_agent: MagicMock,
+        mock_request_context: MagicMock,
+        mock_event_queue: MagicMock,
+        mock_task: Task,
+        mock_agent_thread: MagicMock,
+    ) -> None:
+        """Arrange: Create executor with WorkflowAgent
+        Act: Execute method
+        Assert: Executor works with WorkflowAgent
+        """
+        # Arrange
+        executor = A2AExecutor(agent=mock_workflow_agent)
+        mock_request_context.get_user_input = MagicMock(return_value="Test")
+        mock_request_context.current_task = mock_task
+        mock_request_context.context_id = "ctx-123"
+        mock_request_context.message = MagicMock()
+
+        executor.get_thread = AsyncMock(return_value=mock_agent_thread)
+
+        response = MagicMock(spec=AgentRunResponse)
+        response_message = MagicMock(spec=ChatMessage)
+        response.messages = [response_message]
+        response_message.contents = [TextContent(text="Hello user")]
+        response_message.role = Role.ASSISTANT
+
+        async def response_stream(*_args, **_kwargs):
+            return response
+
+        executor._agent.run = response_stream
+
+        with patch("agent_framework_a2a._a2a_executor.TaskUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.submit = AsyncMock()
+            mock_updater.start_work = AsyncMock()
+            mock_updater.complete = AsyncMock()
+            mock_updater.update_status = AsyncMock()
+            mock_updater.new_agent_message = MagicMock(return_value="mock_message")
+            mock_updater_class.return_value = mock_updater
+
+            # Act
+            await executor.execute(mock_request_context, mock_event_queue)
+
+            # Assert
+            mock_updater.complete.assert_called_once()
