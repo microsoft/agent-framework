@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+
 from collections.abc import MutableMapping, Sequence
 from typing import Any, Protocol, TypeVar
 
