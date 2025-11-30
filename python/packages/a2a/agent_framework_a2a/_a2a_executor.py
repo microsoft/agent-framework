@@ -120,6 +120,7 @@ class A2AExecutor(AgentExecutor):
             from agent_framework.a2a import A2AExecutor
             from agent_framework.openai import OpenAIResponsesClient
 
+
             class DatabaseBackedA2AExecutor(A2AExecutor):
                 '''Executor with custom database storage for agent threads.'''
 
@@ -139,10 +140,10 @@ class A2AExecutor(AgentExecutor):
                         return deserialize_thread(serialized)
                     return None
 
+
             # Create executor with custom storage
             agent = OpenAIResponsesClient().create_agent(
-                name="Food Agent",
-                instructions="A simple agent that provides food-related information."
+                name="Food Agent", instructions="A simple agent that provides food-related information."
             )
             executor = DatabaseBackedA2AExecutor(agent=agent, db_connection=my_db)
     """
@@ -199,8 +200,7 @@ class A2AExecutor(AgentExecutor):
 
                 # Create agent and executor
                 agent = OpenAIResponsesClient().create_agent(
-                    name="Food Agent",
-                    instructions="A simple agent that provides food-related information."
+                    name="Food Agent", instructions="A simple agent that provides food-related information."
                 )
                 executor = A2AExecutor(agent=agent)
 
@@ -253,8 +253,7 @@ class A2AExecutor(AgentExecutor):
 
                 # Create agent and executor
                 agent = OpenAIResponsesClient().create_agent(
-                    name="Food Agent",
-                    instructions="A simple agent that provides food-related information."
+                    name="Food Agent", instructions="A simple agent that provides food-related information."
                 )
                 executor = A2AExecutor(agent=agent)
 
@@ -296,8 +295,7 @@ class A2AExecutor(AgentExecutor):
 
                 # Create agent and executor
                 agent = OpenAIResponsesClient().create_agent(
-                    name="Food Agent",
-                    instructions="A simple agent that provides food-related information."
+                    name="Food Agent", instructions="A simple agent that provides food-related information."
                 )
                 executor = A2AExecutor(agent=agent)
 
@@ -346,16 +344,12 @@ class A2AExecutor(AgentExecutor):
 
                 # Create executor
                 agent = OpenAIResponsesClient().create_agent(
-                    name="Food Agent",
-                    instructions="A simple agent that provides food-related information."
+                    name="Food Agent", instructions="A simple agent that provides food-related information."
                 )
                 executor = A2AExecutor(agent=agent)
 
                 # Use with request handler (handles cancellation automatically)
-                request_handler = DefaultRequestHandler(
-                    agent_executor=executor,
-                    task_store=InMemoryTaskStore()
-                )
+                request_handler = DefaultRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore())
         """
         # Cancellation handled at A2A protocol level
         pass
@@ -416,8 +410,7 @@ class A2AExecutor(AgentExecutor):
 
                 # Create the agent
                 agent = OpenAIResponsesClient().create_agent(
-                    name="Food Agent",
-                    instructions="A simple agent that provides food-related information."
+                    name="Food Agent", instructions="A simple agent that provides food-related information."
                 )
 
                 # Create the executor
@@ -473,6 +466,7 @@ class A2AExecutor(AgentExecutor):
                         # Custom event transformation logic
                         await super().handle_events(message, updater)
                         # Add custom processing here
+
 
                 # Use with your custom storage
                 executor = ProductionA2AExecutor(agent=agent)
@@ -552,8 +546,7 @@ class A2AExecutor(AgentExecutor):
                 from a2a.server.tasks import TaskUpdater
 
                 response_message = ChatMessage(
-                    role=Role.ASSISTANT,
-                    contents=[TextContent(text="Food information response here.")]
+                    role=Role.ASSISTANT, contents=[TextContent(text="Food information response here.")]
                 )
                 await executor.handle_events(response_message, updater)
 
@@ -589,10 +582,7 @@ class A2AExecutor(AgentExecutor):
                             custom_metadata = {"custom_field": "custom_value"}
                             await updater.update_status(
                                 state=TaskState.working,
-                                message=updater.new_agent_message(
-                                    parts=parts,
-                                    metadata=custom_metadata
-                                ),
+                                message=updater.new_agent_message(parts=parts, metadata=custom_metadata),
                             )
 
         Note:

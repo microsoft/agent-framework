@@ -985,6 +985,7 @@ class TestA2AExecutorHandleEvents:
         parts_list = call_kwargs["parts"]
         assert len(parts_list) == 100
 
+
 class TestA2AExecutorIntegration:
     """Integration tests for A2AExecutor."""
 
