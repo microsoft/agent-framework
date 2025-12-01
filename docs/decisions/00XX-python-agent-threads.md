@@ -155,7 +155,8 @@ sequenceDiagram
 
 
     User->>Agent: get_local_thread()
-    Agent->>LocalThread: initialize LocalThread
+    Agent->>LocalThread: initialize
+    LocalThread-->>Agent: thread: LocalThread
     Agent<<->>ContextProvider: thread_created(thread)
     Agent-->>User: thread
 ```
@@ -202,7 +203,8 @@ sequenceDiagram
 
 
     User->>Agent: get_remote_thread()
-    Agent->>RemoteThread: initialize RemoteThread
+    Agent->>RemoteThread: initialize
+    RemoteThread-->>Agent: thread: RemoteThread
     Agent<<->>ContextProvider: thread_created(thread)
     Agent-->>User: thread
 ```
