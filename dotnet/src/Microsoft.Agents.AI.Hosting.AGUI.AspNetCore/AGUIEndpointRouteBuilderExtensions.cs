@@ -37,6 +37,21 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="agentBuilder">The hosted agent builder that identifies the agent registration.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    public static IEndpointConventionBuilder MapAGUIServer(
+        this IEndpointRouteBuilder endpoints,
+        IHostedAgentBuilder agentBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(agentBuilder);
+        return endpoints.MapAGUIServer(agentBuilder.Name);
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint using an agent registered in dependency injection via <see cref="IHostedAgentBuilder"/>.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="agentBuilder">The hosted agent builder that identifies the agent registration.</param>
     /// <param name="pattern">The URL pattern for the endpoint.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
     public static IEndpointConventionBuilder MapAGUIServer(
@@ -47,6 +62,23 @@ public static class AGUIEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentBuilder);
         return endpoints.MapAGUIServer(agentBuilder.Name, pattern);
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint using a named agent registered in dependency injection.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="agentName">The name of the keyed agent registration to resolve from dependency injection.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    public static IEndpointConventionBuilder MapAGUIServer(
+        this IEndpointRouteBuilder endpoints,
+        string agentName)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(agentName);
+
+        var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        return endpoints.MapAGUIServer(agent);
     }
 
     /// <summary>
@@ -66,6 +98,24 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentName);
         return endpoints.MapAGUIServer(pattern, agent);
+    }
+
+    /// <summary>
+    /// Maps an AG-UI agent endpoint using a route derived from the agent name.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="aiAgent">The agent instance.</param>
+    /// <returns>An <see cref="IEndpointConventionBuilder"/> for the mapped endpoint.</returns>
+    public static IEndpointConventionBuilder MapAGUIServer(
+        this IEndpointRouteBuilder endpoints,
+        AIAgent aiAgent)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentNullException.ThrowIfNull(aiAgent);
+        ArgumentException.ThrowIfNullOrWhiteSpace(aiAgent.Name, nameof(aiAgent.Name));
+        ValidateAgentName(aiAgent.Name);
+
+        return endpoints.MapAGUIServer($"/{aiAgent.Name}/agui", aiAgent);
     }
 
     /// <summary>
@@ -185,5 +235,14 @@ public static class AGUIEndpointRouteBuilderExtensions
         }
 
         await hostAgent.SaveSessionAsync(threadId, session, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void ValidateAgentName([NotNull] string agentName)
+    {
+        var escaped = Uri.EscapeDataString(agentName);
+        if (!string.Equals(escaped, agentName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Agent name '{agentName}' contains characters invalid for URL routes.", nameof(agentName));
+        }
     }
 }
