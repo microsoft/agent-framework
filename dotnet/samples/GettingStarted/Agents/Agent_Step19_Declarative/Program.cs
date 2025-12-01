@@ -41,7 +41,7 @@ var text =
     """;
 
 // Create the agent from the YAML definition.
-var agentFactory = new ChatClientAgentFactory(chatClient);
+var agentFactory = new ChatClientPromptAgentFactory(chatClient);
 var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Invoke the agent and output the text result.

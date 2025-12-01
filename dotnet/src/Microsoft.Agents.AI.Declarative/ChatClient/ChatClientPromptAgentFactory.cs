@@ -15,12 +15,12 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides an <see cref="PromptAgentFactory"/> which creates instances of <see cref="ChatClientAgent"/>.
 /// </summary>
-public sealed class ChatClientAgentFactory : PromptAgentFactory
+public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
 {
     /// <summary>
-    /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
+    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
-    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
+    public ChatClientPromptAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
     {
         Throw.IfNull(chatClient);
 

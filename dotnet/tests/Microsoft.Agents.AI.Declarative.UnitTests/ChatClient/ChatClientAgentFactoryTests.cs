@@ -7,7 +7,7 @@ using Moq;
 namespace Microsoft.Agents.AI.Declarative.UnitTests.ChatClient;
 
 /// <summary>
-/// Unit tests for <see cref="ChatClientAgentFactory"/>.
+/// Unit tests for <see cref="ChatClientPromptAgentFactory"/>.
 /// </summary>
 public sealed class ChatClientAgentFactoryTests
 {
@@ -23,7 +23,7 @@ public sealed class ChatClientAgentFactoryTests
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
-        ChatClientAgentFactory factory = new(this._mockChatClient.Object);
+        ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
         AIAgent? agent = await factory.TryCreateAsync(promptAgent);
@@ -40,7 +40,7 @@ public sealed class ChatClientAgentFactoryTests
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
-        ChatClientAgentFactory factory = new(this._mockChatClient.Object);
+        ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
         AIAgent? agent = await factory.TryCreateAsync(promptAgent);
@@ -60,7 +60,7 @@ public sealed class ChatClientAgentFactoryTests
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
-        ChatClientAgentFactory factory = new(this._mockChatClient.Object);
+        ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
         AIAgent? agent = await factory.TryCreateAsync(promptAgent);
@@ -91,7 +91,7 @@ public sealed class ChatClientAgentFactoryTests
     {
         // Arrange
         var promptAgent = PromptAgents.CreateTestPromptAgent();
-        ChatClientAgentFactory factory = new(this._mockChatClient.Object);
+        ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object);
 
         // Act
         AIAgent? agent = await factory.TryCreateAsync(promptAgent);

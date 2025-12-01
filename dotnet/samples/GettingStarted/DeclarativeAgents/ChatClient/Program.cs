@@ -48,7 +48,7 @@ static string GetWeather(
     => $"The weather in {location} is cloudy with a high of {(unit.Equals("celsius", StringComparison.Ordinal) ? "15°C" : "59°F")}.";
 
 // Create the agent from the YAML definition.
-var agentFactory = new ChatClientAgentFactory(chatClient, [AIFunctionFactory.Create(GetWeather, "GetWeather")]);
+var agentFactory = new ChatClientPromptAgentFactory(chatClient, [AIFunctionFactory.Create(GetWeather, "GetWeather")]);
 var agent = await agentFactory.CreateFromYamlAsync(text);
 
 // Invoke the agent and output the text result.
