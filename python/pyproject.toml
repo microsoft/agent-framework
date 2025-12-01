@@ -75,6 +75,7 @@ override-dependencies = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
+exclude = [ "packages/cognee" ]  # Excluded due to dependency conflict with agent-framework-lab[lightning]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
@@ -90,6 +91,7 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-lab = { workspace = true }
+# agent-framework-cognee excluded from workspace due to dependency conflict with agent-framework-lab[lightning]
 agent-framework-mem0 = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
