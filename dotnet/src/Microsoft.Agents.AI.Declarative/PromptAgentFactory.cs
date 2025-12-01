@@ -13,15 +13,16 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Represents a factory for creating <see cref="AIAgent"/> instances.
 /// </summary>
-public abstract class AgentFactory
+public abstract class PromptAgentFactory
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentFactory"/> class.
+    /// Initializes a new instance of the <see cref="PromptAgentFactory"/> class.
     /// </summary>
-    /// <param name="configuration">The configuration.</param>
-    protected AgentFactory(IConfiguration? configuration = null)
+    /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
+    /// <param name="configuration">Optional configuration to be added as variables to the <see cref="RecalcEngine"/>.</param>
+    protected PromptAgentFactory(RecalcEngine? engine = null, IConfiguration? configuration = null)
     {
-        this.Engine = new RecalcEngine();
+        this.Engine = engine ?? new RecalcEngine();
 
         if (configuration is not null)
         {

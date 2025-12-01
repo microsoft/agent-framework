@@ -58,7 +58,7 @@ public static class RecordDataTypeExtensions
     /// <summary>
     /// Retrieves the 'schemaName' property from a <see cref="RecordDataType"/>.
     /// </summary>
-    internal static string? GetSchemaName(this RecordDataType recordDataType)
+    private static string? GetSchemaName(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 
@@ -68,7 +68,7 @@ public static class RecordDataTypeExtensions
     /// <summary>
     /// Retrieves the 'schemaDescription' property from a <see cref="RecordDataType"/>.
     /// </summary>
-    internal static string? GetSchemaDescription(this RecordDataType recordDataType)
+    private static string? GetSchemaDescription(this RecordDataType recordDataType)
     {
         Throw.IfNull(recordDataType);
 

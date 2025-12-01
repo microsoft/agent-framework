@@ -7,19 +7,20 @@ using Microsoft.Bot.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.PowerFx;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides an <see cref="AgentFactory"/> which creates instances of <see cref="ChatClientAgent"/>.
+/// Provides an <see cref="PromptAgentFactory"/> which creates instances of <see cref="ChatClientAgent"/>.
 /// </summary>
-public sealed class ChatClientAgentFactory : AgentFactory
+public sealed class ChatClientAgentFactory : PromptAgentFactory
 {
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientAgentFactory"/> class.
     /// </summary>
-    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(configuration)
+    public ChatClientAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
     {
         Throw.IfNull(chatClient);
 

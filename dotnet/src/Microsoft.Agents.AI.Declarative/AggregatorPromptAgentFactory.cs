@@ -8,22 +8,22 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides a <see cref="AgentFactory"/> which aggregates multiple agent factories.
+/// Provides a <see cref="PromptAgentFactory"/> which aggregates multiple agent factories.
 /// </summary>
-public sealed class AggregatorAgentFactory : AgentFactory
+public sealed class AggregatorPromptAgentFactory : PromptAgentFactory
 {
-    private readonly AgentFactory[] _agentFactories;
+    private readonly PromptAgentFactory[] _agentFactories;
 
     /// <summary>Initializes the instance.</summary>
-    /// <param name="agentFactories">Ordered <see cref="AgentFactory"/> instances to aggregate.</param>
+    /// <param name="agentFactories">Ordered <see cref="PromptAgentFactory"/> instances to aggregate.</param>
     /// <remarks>
-    /// Where multiple <see cref="AgentFactory"/> instances are provided, the first factory that supports the <see cref="GptComponentMetadata"/> will be used.
+    /// Where multiple <see cref="PromptAgentFactory"/> instances are provided, the first factory that supports the <see cref="GptComponentMetadata"/> will be used.
     /// </remarks>
-    public AggregatorAgentFactory(params AgentFactory[] agentFactories)
+    public AggregatorPromptAgentFactory(params PromptAgentFactory[] agentFactories)
     {
         Throw.IfNullOrEmpty(agentFactories);
 
-        foreach (AgentFactory agentFactory in agentFactories)
+        foreach (PromptAgentFactory agentFactory in agentFactories)
         {
             Throw.IfNull(agentFactory, nameof(agentFactories));
         }

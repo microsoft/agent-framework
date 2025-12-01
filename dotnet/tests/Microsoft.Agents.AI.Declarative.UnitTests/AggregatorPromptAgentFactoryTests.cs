@@ -11,22 +11,22 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Declarative.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="AggregatorAgentFactory"/>
+/// Unit tests for <see cref="AggregatorPromptAgentFactory"/>
 /// </summary>
-public sealed class AggregatorAgentFactoryTests
+public sealed class AggregatorPromptAgentFactoryTests
 {
     [Fact]
     public void AggregatorAgentFactory_ThrowsForEmptyArray()
     {
         // Arrange & Act & Assert
-        Assert.Throws<ArgumentException>(() => new AggregatorAgentFactory([]));
+        Assert.Throws<ArgumentException>(() => new AggregatorPromptAgentFactory([]));
     }
 
     [Fact]
     public async Task AggregatorAgentFactory_ReturnsNull()
     {
         // Arrange
-        var factory = new AggregatorAgentFactory([new TestAgentFactory(null)]);
+        var factory = new AggregatorPromptAgentFactory([new TestAgentFactory(null)]);
 
         // Act
         var agent = await factory.TryCreateAsync(new GptComponentMetadata("test"));
@@ -40,7 +40,7 @@ public sealed class AggregatorAgentFactoryTests
     {
         // Arrange
         var agentToReturn = new TestAgent();
-        var factory = new AggregatorAgentFactory([new TestAgentFactory(null), new TestAgentFactory(agentToReturn)]);
+        var factory = new AggregatorPromptAgentFactory([new TestAgentFactory(null), new TestAgentFactory(agentToReturn)]);
 
         // Act
         var agent = await factory.TryCreateAsync(new GptComponentMetadata("test"));
@@ -49,7 +49,7 @@ public sealed class AggregatorAgentFactoryTests
         Assert.Equal(agentToReturn, agent);
     }
 
-    private sealed class TestAgentFactory : AgentFactory
+    private sealed class TestAgentFactory : PromptAgentFactory
     {
         private readonly AIAgent? _agentToReturn;
 
