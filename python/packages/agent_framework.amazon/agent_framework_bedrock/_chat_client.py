@@ -1,0 +1,504 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections import deque
+from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar
+from uuid import uuid4
+
+from boto3.session import Session as Boto3Session
+from botocore.client import BaseClient
+from botocore.config import Config as BotoConfig
+from pydantic import SecretStr, ValidationError
+
+from agent_framework import (
+    AIFunction,
+    AGENT_FRAMEWORK_USER_AGENT,
+    BaseChatClient,
+    ChatMessage,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    FinishReason,
+    FunctionCallContent,
+    FunctionResultContent,
+    Role,
+    TextContent,
+    ToolProtocol,
+    UsageContent,
+    UsageDetails,
+    get_logger,
+    use_chat_middleware,
+    use_function_invocation,
+)
+from agent_framework._pydantic import AFBaseSettings
+from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.observability import use_observability
+
+logger = get_logger("agent_framework.bedrock")
+
+DEFAULT_REGION = "us-east-1"
+DEFAULT_MAX_TOKENS = 1024
+
+ROLE_MAP: dict[Role, str] = {
+    Role.USER: "user",
+    Role.ASSISTANT: "assistant",
+    Role.SYSTEM: "user",
+    Role.TOOL: "user",
+}
+
+FINISH_REASON_MAP: dict[str, FinishReason] = {
+    "end_turn": FinishReason.STOP,
+    "stop_sequence": FinishReason.STOP,
+    "max_tokens": FinishReason.LENGTH,
+    "length": FinishReason.LENGTH,
+    "content_filtered": FinishReason.CONTENT_FILTER,
+    "tool_use": FinishReason.TOOL_CALLS,
+}
+
+
+class BedrockSettings(AFBaseSettings):
+    """Bedrock configuration settings pulled from environment variables or .env files."""
+
+    env_prefix: ClassVar[str] = "BEDROCK_"
+
+    region: str = DEFAULT_REGION
+    chat_model_id: str | None = None
+    access_key: SecretStr | None = None
+    secret_key: SecretStr | None = None
+    session_token: SecretStr | None = None
+
+
+@use_function_invocation
+@use_observability
+@use_chat_middleware
+class BedrockChatClient(BaseChatClient):
+    """Async chat client for Amazon Bedrock's Converse API."""
+
+    OTEL_PROVIDER_NAME: ClassVar[str] = "bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+
+    def __init__(
+        self,
+        *,
+        region: str | None = None,
+        model_id: str | None = None,
+        access_key: str | None = None,
+        secret_key: str | None = None,
+        session_token: str | None = None,
+        bedrock_runtime_client: BaseClient | None = None,
+        boto3_session: Boto3Session | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        try:
+            settings = BedrockSettings(
+                region=region,
+                chat_model_id=model_id,
+                access_key=access_key,  # type: ignore[arg-type]
+                secret_key=secret_key,  # type: ignore[arg-type]
+                session_token=session_token,  # type: ignore[arg-type]
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to initialize Bedrock settings.", ex) from ex
+
+        if bedrock_runtime_client is None:
+            session = boto3_session or self._create_session(settings)
+            bedrock_runtime_client = session.client(
+                "bedrock-runtime",
+                region_name=settings.region,
+                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+            )
+
+        super().__init__(**kwargs)
+        self._bedrock_client = bedrock_runtime_client
+        self.model_id = settings.chat_model_id
+        self.region = settings.region
+
+    @staticmethod
+    def _create_session(settings: BedrockSettings) -> Boto3Session:
+        session_kwargs: dict[str, Any] = {"region_name": settings.region or DEFAULT_REGION}
+        if settings.access_key and settings.secret_key:
+            session_kwargs["aws_access_key_id"] = settings.access_key.get_secret_value()
+            session_kwargs["aws_secret_access_key"] = settings.secret_key.get_secret_value()
+        if settings.session_token:
+            session_kwargs["aws_session_token"] = settings.session_token.get_secret_value()
+        return Boto3Session(**session_kwargs)
+
+    async def _inner_get_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        request = self._build_converse_request(messages, chat_options, **kwargs)
+        raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
+        return self._process_converse_response(raw_response)
+
+    async def _inner_get_streaming_response(
+        self,
+        *,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        response = await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
+        contents = list(response.messages[0].contents if response.messages else [])
+        if response.usage_details:
+            contents.append(UsageContent(details=response.usage_details))
+        yield ChatResponseUpdate(
+            response_id=response.response_id,
+            contents=contents,
+            model_id=response.model_id,
+            finish_reason=response.finish_reason,
+            raw_response=response.raw_response,
+        )
+
+    def _build_converse_request(
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        model_id = chat_options.model_id or self.model_id
+        if not model_id:
+            raise ServiceInitializationError(
+                "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
+            )
+
+        system_prompts = self._extract_system_prompts(messages)
+        conversation = self._convert_messages_to_bedrock_format(messages)
+        if not conversation:
+            raise ServiceInitializationError("At least one non-system message is required for Bedrock requests.")
+
+        payload: dict[str, Any] = {
+            "modelId": model_id,
+            "messages": conversation,
+        }
+        if system_prompts:
+            payload["system"] = system_prompts
+
+        inference_config: dict[str, Any] = {}
+        if chat_options.max_tokens is not None:
+            inference_config["maxTokens"] = chat_options.max_tokens
+        else:
+            inference_config["maxTokens"] = DEFAULT_MAX_TOKENS
+        if chat_options.temperature is not None:
+            inference_config["temperature"] = chat_options.temperature
+        if chat_options.top_p is not None:
+            inference_config["topP"] = chat_options.top_p
+        if chat_options.stop is not None:
+            inference_config["stopSequences"] = chat_options.stop
+        if inference_config:
+            payload["inferenceConfig"] = inference_config
+
+        tool_config = self._convert_tools_to_bedrock_config(chat_options.tools)
+        if tool_choice := self._convert_tool_choice(chat_options.tool_choice):
+            if tool_config is None:
+                tool_config = {}
+            tool_config["toolChoice"] = tool_choice
+        if tool_config:
+            payload["toolConfig"] = tool_config
+
+        if chat_options.additional_properties:
+            payload.update(chat_options.additional_properties)
+        if kwargs:
+            payload.update(kwargs)
+        return payload
+
+    def _extract_system_prompts(self, messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
+        prompts: list[dict[str, str]] = []
+        for message in messages:
+            if message.role != Role.SYSTEM:
+                continue
+            text_value = self._gather_text_from_message(message)
+            if text_value:
+                prompts.append({"text": text_value})
+        return prompts
+
+    def _convert_messages_to_bedrock_format(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+        conversation: list[dict[str, Any]] = []
+        pending_tool_use_ids: deque[str] = deque()
+        for message in messages:
+            if message.role == Role.SYSTEM:
+                continue
+            content_blocks = self._convert_message_to_content_blocks(message)
+            if not content_blocks:
+                continue
+            role = ROLE_MAP.get(message.role, "user")
+            if role == "assistant":
+                pending_tool_use_ids = deque(
+                    block["toolUse"]["toolUseId"]
+                    for block in content_blocks
+                    if isinstance(block, MutableMapping) and "toolUse" in block
+                )
+            elif message.role == Role.TOOL:
+                content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
+                pending_tool_use_ids.clear()
+                if not content_blocks:
+                    continue
+            else:
+                pending_tool_use_ids.clear()
+            conversation.append({"role": role, "content": content_blocks})
+        return conversation
+
+    def _align_tool_results_with_pending(
+        self, content_blocks: list[dict[str, Any]], pending_tool_use_ids: deque[str]
+    ) -> list[dict[str, Any]]:
+        if not content_blocks:
+            return content_blocks
+        if not pending_tool_use_ids:
+            # No pending tool calls; drop toolResult blocks to avoid Bedrock validation errors
+            return [block for block in content_blocks if not (isinstance(block, MutableMapping) and "toolResult" in block)]
+
+        aligned_blocks: list[dict[str, Any]] = []
+        pending = deque(pending_tool_use_ids)
+        for block in content_blocks:
+            if not isinstance(block, MutableMapping):
+                aligned_blocks.append(block)
+                continue
+            tool_result = block.get("toolResult")
+            if not tool_result:
+                aligned_blocks.append(block)
+                continue
+            if not pending:
+                logger.debug("Dropping extra tool result block due to missing pending tool uses: %s", block)
+                continue
+            tool_use_id = tool_result.get("toolUseId")
+            if tool_use_id:
+                try:
+                    pending.remove(tool_use_id)
+                except ValueError:
+                    logger.debug("Tool result references unknown toolUseId '%s'. Dropping block.", tool_use_id)
+                    continue
+            else:
+                tool_result["toolUseId"] = pending.popleft()
+            aligned_blocks.append(block)
+
+        return aligned_blocks
+
+    def _convert_message_to_content_blocks(self, message: ChatMessage) -> list[dict[str, Any]]:
+        blocks: list[dict[str, Any]] = []
+        for content in message.contents:
+            block = self._convert_content_to_bedrock_block(content)
+            if block:
+                blocks.append(block)
+        if not blocks:
+            text_value = self._gather_text_from_message(message)
+            if text_value:
+                blocks.append({"text": text_value})
+        return blocks
+
+    def _convert_content_to_bedrock_block(self, content: Any) -> dict[str, Any] | None:
+        if isinstance(content, TextContent) and getattr(content, "text", None):
+            return {"text": content.text}
+        if isinstance(content, FunctionCallContent):
+            arguments = content.parse_arguments() or {}
+            return {
+                "toolUse": {
+                    "toolUseId": content.call_id or self._generate_tool_call_id(),
+                    "name": content.name,
+                    "input": arguments,
+                }
+            }
+        if isinstance(content, FunctionResultContent):
+            tool_result_block = {
+                "toolResult": {
+                    "toolUseId": content.call_id,
+                    "content": self._convert_tool_result_to_blocks(content.result),
+                    "status": "error" if content.exception else "success",
+                }
+            }
+            if content.exception:
+                tool_result_block["toolResult"].setdefault("content", []).append({"text": str(content.exception)})
+            return tool_result_block
+        return None
+
+    def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
+        if isinstance(result, list):
+            blocks: list[dict[str, Any]] = []
+            for item in result:
+                if isinstance(item, list):
+                    blocks.extend(self._convert_tool_result_to_blocks(item))
+                else:
+                    blocks.append(self._normalize_tool_result_value(item))
+            return blocks or [{"text": ""}]
+        return [self._normalize_tool_result_value(result)]
+
+    def _normalize_tool_result_value(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return {"json": value}
+        if isinstance(value, (list, tuple)):
+            return {"json": list(value)}
+        if isinstance(value, str):
+            return {"text": value}
+        if isinstance(value, (int, float, bool)) or value is None:
+            return {"json": value}
+        if isinstance(value, TextContent) and getattr(value, "text", None):
+            return {"text": value.text}
+        if hasattr(value, "to_dict"):
+            try:
+                return {"json": value.to_dict()}  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - defensive
+                return {"text": str(value)}
+        return {"text": str(value)}
+
+    def _convert_tools_to_bedrock_config(
+        self, tools: list[ToolProtocol | MutableMapping[str, Any]] | None
+    ) -> dict[str, Any] | None:
+        if not tools:
+            return None
+        converted: list[dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, MutableMapping):
+                converted.append(dict(tool))
+                continue
+            if isinstance(tool, AIFunction):
+                converted.append({
+                    "toolSpec": {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "inputSchema": {"json": tool.parameters()},
+                    }
+                })
+                continue
+            logger.debug("Ignoring unsupported tool type for Bedrock: %s", type(tool))
+        return {"tools": converted} if converted else None
+
+    def _convert_tool_choice(self, tool_choice: Any) -> dict[str, Any] | None:
+        if not tool_choice:
+            return None
+        mode = tool_choice.mode if hasattr(tool_choice, "mode") else str(tool_choice)
+        required_name = getattr(tool_choice, "required_function_name", None)
+        match mode:
+            case "auto":
+                return {"auto": {}}
+            case "none":
+                return {"none": {}}
+            case "required":
+                if required_name:
+                    return {"tool": {"name": required_name}}
+                return {"any": {}}
+            case _:
+                logger.debug("Unsupported tool choice mode for Bedrock: %s", mode)
+                return None
+
+    @staticmethod
+    def _gather_text_from_message(message: ChatMessage) -> str:
+        text_parts: list[str] = []
+        for content in message.contents:
+            if isinstance(content, TextContent) and getattr(content, "text", None):
+                text_parts.append(content.text)
+        if not text_parts and getattr(message, "text", None):
+            text_parts.append(message.text)
+        return "\n\n".join(part for part in text_parts if part)
+
+    @staticmethod
+    def _generate_tool_call_id() -> str:
+        return f"tool-call-{uuid4().hex}"
+
+    def _process_converse_response(self, response: dict[str, Any]) -> ChatResponse:
+        output = response.get("output", {})
+        message = output.get("message", {})
+        content_blocks = message.get("content", []) or []
+        contents = self._parse_message_contents(content_blocks)
+        chat_message = ChatMessage(role=Role.ASSISTANT, contents=contents, raw_representation=message)
+        usage_details = self._parse_usage(response.get("usage") or output.get("usage"))
+        finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
+        response_id = response.get("responseId") or message.get("id")
+        model_id = response.get("modelId") or output.get("modelId") or self.model_id
+        return ChatResponse(
+            response_id=response_id,
+            messages=[chat_message],
+            usage_details=usage_details,
+            model_id=model_id,
+            finish_reason=finish_reason,
+            raw_response=response,
+        )
+
+    def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
+        if not usage:
+            return None
+        details = UsageDetails()
+        if (input_tokens := usage.get("inputTokens")) is not None:
+            details.input_token_count = input_tokens
+        if (output_tokens := usage.get("outputTokens")) is not None:
+            details.output_token_count = output_tokens
+        if (total_tokens := usage.get("totalTokens")) is not None:
+            details.additional_counts["bedrock.total_tokens"] = total_tokens
+        return details
+
+    def _parse_message_contents(self, content_blocks: Sequence[MutableMapping[str, Any]]) -> list[Any]:
+        contents: list[Any] = []
+        for block in content_blocks:
+            if (text_value := block.get("text")):
+                contents.append(TextContent(text=text_value, raw_representation=block))
+                continue
+            if (json_value := block.get("json")) is not None:
+                contents.append(TextContent(text=json.dumps(json_value), raw_representation=block))
+                continue
+            tool_use = block.get("toolUse")
+            if isinstance(tool_use, MutableMapping):
+                contents.append(
+                    FunctionCallContent(
+                        call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),
+                        name=tool_use.get("name", "tool"),
+                        arguments=tool_use.get("input"),
+                        raw_representation=block,
+                    )
+                )
+                continue
+            tool_result = block.get("toolResult")
+            if isinstance(tool_result, MutableMapping):
+                status = (tool_result.get("status") or "success").lower()
+                exception = None
+                if status not in {"success", "ok"}:
+                    exception = RuntimeError(f"Bedrock tool result status: {status}")
+                result_value = self._convert_bedrock_tool_result_to_value(tool_result.get("content"))
+                contents.append(
+                    FunctionResultContent(
+                        call_id=tool_result.get("toolUseId") or self._generate_tool_call_id(),
+                        result=result_value,
+                        exception=exception,
+                        raw_representation=block,
+                    )
+                )
+                continue
+            logger.debug("Ignoring unsupported Bedrock content block: %s", block)
+        return contents
+
+    def _map_finish_reason(self, reason: str | None) -> FinishReason | None:
+        if not reason:
+            return None
+        return FINISH_REASON_MAP.get(reason.lower())
+
+    def service_url(self) -> str:
+        return f"https://bedrock-runtime.{self.region}.amazonaws.com"
+
+    def _convert_bedrock_tool_result_to_value(self, content: Any) -> Any:
+        if not content:
+            return None
+        if isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
+            values: list[Any] = []
+            for item in content:
+                if isinstance(item, MutableMapping):
+                    if (text_value := item.get("text")) is not None:
+                        values.append(text_value)
+                        continue
+                    if "json" in item:
+                        values.append(item["json"])
+                        continue
+                values.append(item)
+            return values[0] if len(values) == 1 else values
+        if isinstance(content, MutableMapping):
+            if (text_value := content.get("text")) is not None:
+                return text_value
+            if "json" in content:
+                return content["json"]
+        return content
