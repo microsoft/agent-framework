@@ -1,8 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
@@ -34,6 +32,7 @@
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
 
     <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Declarative.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests"/>
   </ItemGroup>
 

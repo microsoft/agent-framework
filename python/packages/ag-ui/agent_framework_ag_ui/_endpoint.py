@@ -2,6 +2,7 @@
 
 """FastAPI endpoint creation for AG-UI agents."""
 
+import copy
 import logging
 from typing import Any
 
@@ -19,9 +20,10 @@ def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: AgentProtocol | AgentFrameworkAgent,
     path: str = "/",
-    state_schema: dict[str, Any] | None = None,
+    state_schema: Any | None = None,
     predict_state_config: dict[str, dict[str, str]] | None = None,
     allow_origins: list[str] | None = None,
+    default_state: dict[str, Any] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -29,10 +31,11 @@ def add_agent_framework_fastapi_endpoint(
         app: The FastAPI application
         agent: The agent to expose (can be raw AgentProtocol or wrapped)
         path: The endpoint path
-        state_schema: Optional state schema for shared state management
+        state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
             Format: {"state_key": {"tool": "tool_name", "tool_argument": "arg_name"}}
         allow_origins: CORS origins (not yet implemented)
+        default_state: Optional initial state to seed when the client does not provide state keys
     """
     if isinstance(agent, AgentProtocol):
         wrapped_agent = AgentFrameworkAgent(
@@ -52,6 +55,11 @@ def add_agent_framework_fastapi_endpoint(
         """
         try:
             input_data = await request.json()
+            if default_state:
+                state = input_data.setdefault("state", {})
+                for key, value in default_state.items():
+                    if key not in state:
+                        state[key] = copy.deepcopy(value)
             logger.debug(
                 f"[{path}] Received request - Run ID: {input_data.get('run_id', 'no-run-id')}, "
                 f"Thread ID: {input_data.get('thread_id', 'no-thread-id')}, "
@@ -91,4 +99,4 @@ def add_agent_framework_fastapi_endpoint(
             )
         except Exception as e:
             logger.error(f"Error in agent endpoint: {e}", exc_info=True)
-            return {"error": str(e)}
+            return {"error": "An internal error has occurred."}

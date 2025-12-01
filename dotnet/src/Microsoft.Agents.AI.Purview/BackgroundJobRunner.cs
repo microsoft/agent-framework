@@ -41,9 +41,7 @@ internal sealed class BackgroundJobRunner
                     {
                         await this.RunJobAsync(job).ConfigureAwait(false);
                     }
-                    catch (Exception e) when (
-                        !(e is OperationCanceledException) &&
-                        !(e is SystemException))
+                    catch (Exception e) when (e is not OperationCanceledException and not SystemException)
                     {
                         this._logger.LogError(e, "Error running background job {BackgroundJobError}.", e.Message);
                     }

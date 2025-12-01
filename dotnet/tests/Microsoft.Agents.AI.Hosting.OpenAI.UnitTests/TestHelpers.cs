@@ -516,7 +516,7 @@ internal static class TestHelpers
             this._functionName = functionName;
             // Parse JSON arguments into dictionary
             using var doc = System.Text.Json.JsonDocument.Parse(argumentsJson);
-            this._arguments = new Dictionary<string, object?>();
+            this._arguments = [];
             foreach (var prop in doc.RootElement.EnumerateObject())
             {
                 this._arguments[prop.Name] = prop.Value.ValueKind switch
