@@ -28,8 +28,6 @@ dependencies = [
 [project.optional-dependencies]
 # GAIA benchmark module dependencies
 gaia = [
-  "pydantic>=2.0.0",
-  "opentelemetry-api>=1.24.0",
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
   "orjson>=3.8.0",
@@ -43,7 +41,6 @@ lightning = [
 
 # TAU2 benchmark module dependencies
 tau2 = [
-  "pydantic>=2.0.0",
   "tiktoken>=0.11.0",
   "loguru>=0.7.3",
   "numpy",
