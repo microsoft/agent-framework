@@ -25,9 +25,6 @@ The second issue is the usage of `ChatMessageStore` as the way to store messages
 ### Issue 3: Thread serialization
 Because we have both a `ChatMessageStore` object and `ContextProvider` objects inside a thread, it is quite a challenge to serialize and deserialize threads, as both the ChatMessageStore and ContextProviders can have configuration that needs to be serialized as well, including potentially hard to serialize things like clients, for which we would need to add dependency injection, and the logic of how to do that is contained in those classes. This makes it hard to create a standard way of serializing and deserializing threads, as each ChatMessageStore and ContextProvider can have different requirements.
 
-### Other notes
-- Currently the thread is updated by the agent, based on the outcome of the whole run, so if the underlying chat client does function calling, we won't get the intermediate messages in the thread until the end of the run, this has raised a question as well, as users would like to have the thread updated during the run, so that they can see the intermediate messages, however this runs the risk of ending up with a thread that is not usable anymore, for instance because it is missing chunks (when streaming) or does not have function call results matching the function calls.
-
 ### Logical flow of threads
 The following diagrams illustrate the logical flow of an agent run with threads in the current implementation.
 
