@@ -17,6 +17,7 @@ from openai.types.evals.create_eval_jsonl_run_data_source_param import (
 
 from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
+from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 
 """
@@ -48,10 +49,8 @@ DEFAULT_JUDGE_MODEL = "gpt-4.1"
 
 
 def create_openai_client():
-    from azure.identity import DefaultAzureCredential
-    from azure.ai.projects import AIProjectClient
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    credential = DefaultAzureCredential()
+    credential = AzureCliCredential()
     project_client = AIProjectClient(endpoint=endpoint, credential=credential)
     return project_client.get_openai_client()
 
@@ -118,9 +117,12 @@ def run_eval(
     eval_run_response = client.evals.runs.retrieve(run_id=eval_run_object.id, eval_id=eval_object.id)
 
     MAX_RETRY = 10
-    for i in range(0, MAX_RETRY):
+    for _ in range(0, MAX_RETRY):
         run = client.evals.runs.retrieve(run_id=eval_run_response.id, eval_id=eval_object.id)
-        if run.status == "completed" or run.status == "failed":
+        if run.status == "failed":
+            print(f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}")
+            continue
+        elif run.status == "completed":
             output_items = list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
             return output_items
         time.sleep(5)
@@ -186,7 +188,8 @@ async def execute_query_with_self_reflection(
             response=agent_response,
             context=context,
         )
-        if eval_run_output_items == None:
+        if eval_run_output_items is None:
+            print(f"  ⚠️ Groundedness evaluation failed (timeout or error) for iteration {i+1}.")
             continue
         score = eval_run_output_items[0].results[0].score
         end_time_eval = time.time()
