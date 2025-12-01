@@ -483,6 +483,36 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
     assert dumped == {"params": {"customer_id": 251}}
 
 
+def test_get_input_model_from_mcp_tool_with_simple_array():
+    """Test array with simple items schema (items schema should be preserved in json_schema_extra)."""
+    tool = types.Tool(
+        name="simple_array_tool",
+        description="Tool with simple array",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "description": "List of tags",
+                    "items": {"type": "string"},  # Simple string array
+                }
+            },
+            "required": ["tags"],
+        },
+    )
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create an instance
+    instance = model(tags=["tag1", "tag2", "tag3"])
+    assert instance.tags == ["tag1", "tag2", "tag3"]
+
+    # Verify JSON schema still preserves items for simple types
+    json_schema = model.model_json_schema()
+    tags_property = json_schema["properties"]["tags"]
+    assert "items" in tags_property
+    assert tags_property["items"]["type"] == "string"
+
+
 def test_get_input_model_from_mcp_prompt():
     """Test creation of input model from MCP prompt."""
     prompt = types.Prompt(

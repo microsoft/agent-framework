@@ -10,8 +10,9 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
+from agent_framework import AgentRunResponse
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
@@ -63,14 +64,19 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()
 
+    # Create tasks from agent.run() calls
     physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
     chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
 
-    results = yield context.task_all([physicist_task, chemist_task])
+    # Execute both tasks concurrently using task_all
+    task_results = yield context.task_all([physicist_task, chemist_task])
+
+    physicist_result = cast(AgentRunResponse, task_results[0])
+    chemist_result = cast(AgentRunResponse, task_results[1])
 
     return {
-        "physicist": results[0].get("response", ""),
-        "chemist": results[1].get("response", ""),
+        "physicist": physicist_result.text,
+        "chemist": chemist_result.text,
     }
 
 

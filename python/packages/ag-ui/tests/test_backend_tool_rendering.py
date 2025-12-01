@@ -2,6 +2,8 @@
 
 """Tests for backend tool rendering."""
 
+from typing import cast
+
 from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageStartEvent,
@@ -119,6 +121,9 @@ async def test_multiple_tool_results():
         assert isinstance(events[end_idx], ToolCallEndEvent)
         assert isinstance(events[result_idx], ToolCallResultEvent)
 
-        assert events[end_idx].tool_call_id == f"tool-{i + 1}"
-        assert events[result_idx].tool_call_id == f"tool-{i + 1}"
-        assert f"Result {i + 1}" in events[result_idx].content
+        end_event = cast(ToolCallEndEvent, events[end_idx])
+        result_event = cast(ToolCallResultEvent, events[result_idx])
+
+        assert end_event.tool_call_id == f"tool-{i + 1}"
+        assert result_event.tool_call_id == f"tool-{i + 1}"
+        assert f"Result {i + 1}" in result_event.content

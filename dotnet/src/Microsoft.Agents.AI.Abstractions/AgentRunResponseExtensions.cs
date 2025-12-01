@@ -42,7 +42,7 @@ public static class AgentRunResponseExtensions
                 RawRepresentation = response,
                 ResponseId = response.ResponseId,
                 Usage = response.Usage,
-                ContinuationToken = response.ContinuationToken as ResponseContinuationToken,
+                ContinuationToken = response.ContinuationToken,
             };
     }
 
@@ -75,7 +75,7 @@ public static class AgentRunResponseExtensions
                 RawRepresentation = responseUpdate,
                 ResponseId = responseUpdate.ResponseId,
                 Role = responseUpdate.Role,
-                ContinuationToken = responseUpdate.ContinuationToken as ResponseContinuationToken,
+                ContinuationToken = responseUpdate.ContinuationToken,
             };
     }
 

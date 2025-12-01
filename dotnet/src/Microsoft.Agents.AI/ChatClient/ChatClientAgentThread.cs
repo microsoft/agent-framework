@@ -1,12 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -180,33 +176,6 @@ public class ChatClientAgentThread : AgentThread
             : base.GetService(serviceType, serviceKey)
             ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
             ?? this.MessageStore?.GetService(serviceType, serviceKey);
-
-    /// <inheritdoc />
-    protected override async Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-    {
-        switch (this)
-        {
-            case { ConversationId: not null }:
-                // If the thread messages are stored in the service
-                // there is nothing to do here, since invoking the
-                // service should already update the thread.
-                break;
-
-            case { MessageStore: null }:
-                // If there is no conversation id, and no store we can createa a default in memory store and add messages to it.
-                this._messageStore = new InMemoryChatMessageStore();
-                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
-                break;
-
-            case { MessageStore: not null }:
-                // If a store has been provided, we need to add the messages to the store.
-                await this._messageStore!.AddMessagesAsync(newMessages, cancellationToken).ConfigureAwait(false);
-                break;
-
-            default:
-                throw new UnreachableException();
-        }
-    }
 
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>

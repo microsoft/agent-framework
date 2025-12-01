@@ -146,6 +146,9 @@ internal sealed partial class IdGenerator
         const string Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         if (random is not null)
         {
+#if NET10_0_OR_GREATER
+            return random.GetString(Chars, stringLength);
+#else
             // Use deterministic random generation when seed is provided
             return string.Create(stringLength, random, static (destination, random) =>
             {
@@ -154,6 +157,7 @@ internal sealed partial class IdGenerator
                     destination[i] = Chars[random.Next(Chars.Length)];
                 }
             });
+#endif
         }
 
         // Use cryptographically secure random generation when no seed is provided
