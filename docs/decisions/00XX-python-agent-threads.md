@@ -136,7 +136,7 @@ So that gives the following:
 - Good, because it makes it easier to serialize and deserialize threads. (solve for issue 3)
 - Bad, because it requires mandating serializable context data/state from context providers, which might be limiting for some use cases.
 
-## Option 2 Agent Thread Invocation Flow
+## Agent Thread Invocation Flow with Option 2
 
 ### Local Thread Flow
 
@@ -156,7 +156,7 @@ sequenceDiagram
 
     User->>Agent: get_local_thread()
     Agent->>LocalThread: initialize LocalThread
-    Agent<<->>ContextProvider: on_new_thread(thread)
+    Agent<<->>ContextProvider: thread_created(thread)
     Agent-->>User: thread
 ```
 
@@ -174,15 +174,15 @@ sequenceDiagram
     end
         participant LLM
 
-    User->>Agent: run(message, thread)
+    User->>Agent: run(messages, thread, options)
     Agent<<->>LocalThread: get_messages()
-    Agent<<->>ContextProvider: invoking()
-    Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient-->>Agent: response
-    Agent->>LocalThread: add_messages(response)
-    Agent->>ContextProvider: invoked()
-    Agent-->>User: response
+    Agent<<->>ContextProvider: invoking(messages, thread)
+    Agent->>ChatClient: get_response(messages, options)
+    ChatClient<<->>LLM: call(messages, options)
+    ChatClient-->>Agent: response: ChatResponse
+    Agent->>LocalThread: add_messages(response.messages)
+    Agent->>ContextProvider: invoked(response, thread)
+    Agent-->>User: response: AgentRunResponse
 ```
 
 ### Remote Thread Flow
@@ -203,7 +203,7 @@ sequenceDiagram
 
     User->>Agent: get_remote_thread()
     Agent->>RemoteThread: initialize RemoteThread
-    Agent<<->>ContextProvider: on_new_thread(thread)
+    Agent<<->>ContextProvider: thread_created(thread)
     Agent-->>User: thread
 ```
 
@@ -222,15 +222,15 @@ sequenceDiagram
     end
         participant LLM
 
-    User->>Agent: run(message, thread)
+    User->>Agent: run(message, thread, options)
     Agent<<->>RemoteThread: overwrite store and conversation_id
-    Agent<<->>ContextProvider: invoking()
-    Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient-->>Agent: response
+    Agent<<->>ContextProvider: invoking(messages, thread)
+    Agent->>ChatClient: get_response(messages, options)
+    ChatClient<<->>LLM: call(messages, options)
+    ChatClient-->>Agent: response: ChatResponse
     Agent->>RemoteThread: update_thread_id(response)
-    Agent->>ContextProvider: invoked()
-    Agent-->>User: response
+    Agent->>ContextProvider: invoked(response, thread)
+    Agent-->>User: response: AgentRunResponse
 ```
 
 ### Hosted app thread flow (local flow shown, same setup would apply to the remote flow)
@@ -251,20 +251,20 @@ sequenceDiagram
     end
         participant LLM
 
-    User->>App: call(message, af_thread_id)
+    User->>App: call(message, af_thread_id, options)
     App->>ThreadStore: get(af_thread_id)
     ThreadStore-->>App: thread
-    App->>Agent: run(message, thread)
+    App->>Agent: run(message, thread, options)
     Agent<<->>LocalThread: get_messages()
-    Agent<<->>ContextProvider: invoking()
-    Agent->>ChatClient: get_response(messages)
-    ChatClient<<->>LLM: get_response(messages)
-    ChatClient-->>Agent: response
-    Agent->>LocalThread: add_messages(response)
-    Agent->>ContextProvider: invoked()
-    Agent-->>App: response
-    App->>ThreadStore: save(thread)
-    App-->>User: response
+    Agent<<->>ContextProvider: invoking(messages, thread)
+    Agent->>ChatClient: get_response(messages, options)
+    ChatClient<<->>LLM: call(messages, options)
+    ChatClient-->>Agent: response: ChatResponse
+    Agent->>LocalThread: add_messages(response.messages)
+    Agent->>ContextProvider: invoked(response, thread)
+    Agent-->>App: response: AgentRunResponse
+    App->>ThreadStore: save(af_thread_id, thread)
+    App-->>User: response in app format
 ```
 
 
