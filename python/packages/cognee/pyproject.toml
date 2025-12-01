@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-cognee"
-description = ""A powerful integration between Microsoft Agent Framework and Cognee providing intelligent knowledge management and retrieval capabilities for AI agents"
+description = "A powerful integration between Microsoft Agent Framework and Cognee providing intelligent knowledge management and retrieval capabilities for AI agents"
 authors = [
     {name = ""}
 ]
