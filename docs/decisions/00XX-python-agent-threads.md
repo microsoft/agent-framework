@@ -132,7 +132,9 @@ So that gives the following:
 - Good, because it is explicit about the type of thread being used. (solve for issue 1)
 - Good, because it is clear which chat clients support which type of thread. (solve for issue 1)
 - Good, because we can make all the logic that deals with threads much clearer, as each class has a single responsibility. (solve for issue 1 and 2)
-- Good, because the simplified state-only context data make the threads much easier to handle and store. (solve for issue 2 and 3)
+- Good, because the simplified state-only context data make the threads much easier to (de)serialize and (re)store. (solve for issue 2 and 3)
+- Good, because it makes it easier to serialize and deserialize threads. (solve for issue 3)
+- Bad, because it requires mandating serializable context data/state from context providers, which might be limiting for some use cases.
 
 ## Option 2 Agent Thread Invocation Flow
 
