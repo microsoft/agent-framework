@@ -137,7 +137,7 @@ class AgentFrameworkEventBridge:
         # Skip empty text chunks to avoid emitting
         # TextMessageContentEvent with an empty `delta` which fails
         # Pydantic validation (AG-UI requires non-empty strings).
-        if not content.text or (isinstance(content.text, str) and content.text == ""):
+        if not content.text:
             logger.info("  SKIPPING TextContent: empty chunk")
             return events
 

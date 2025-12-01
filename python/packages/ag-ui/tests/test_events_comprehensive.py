@@ -55,7 +55,20 @@ async def test_text_message_streaming():
     assert events1[1].message_id == events2[0].message_id
 
 
-async def test_empty_text_message_streaming():
+async def test_skip_text_content_for_structured_outputs():
+    """Test that text content is skipped when skip_text_content=True."""
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread", skip_text_content=True)
+
+    update = AgentRunResponseUpdate(contents=[TextContent(text='{"result": "data"}')])
+    events = await bridge.from_agent_run_update(update)
+
+    # No events should be emitted
+    assert len(events) == 0
+
+
+async def test_skip_text_content_for_empty_text():
     """Test streaming TextContent with empty chunks."""
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
@@ -84,19 +97,6 @@ async def test_empty_text_message_streaming():
 
     # Both content events should have same message_id
     assert events1[1].message_id == events3[0].message_id
-
-
-async def test_skip_text_content_for_structured_outputs():
-    """Test that text content is skipped when skip_text_content=True."""
-    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
-
-    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread", skip_text_content=True)
-
-    update = AgentRunResponseUpdate(contents=[TextContent(text='{"result": "data"}')])
-    events = await bridge.from_agent_run_update(update)
-
-    # No events should be emitted
-    assert len(events) == 0
 
 
 async def test_tool_call_with_name():
