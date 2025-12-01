@@ -1012,7 +1012,7 @@
 
 	private void StartNewConversation()
 	{
-		if (string.IsNullOrEmpty(selectedAgentName))
+        if (IsStartChatDisabled || string.IsNullOrEmpty(selectedAgentName))
 			return;
 
 		var newConversation = new Conversation
