@@ -36,16 +36,15 @@
                     <option value="@agent.Name">@GetAgentDisplayName(agent.Name!) - @agent.Description</option>
                 }
             </select>
-            @if (!string.IsNullOrEmpty(selectedAgentName) && currentConversation is null)
-            {
-                <button class="start-chat-btn" @onclick="StartNewConversation">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    Start Chat
-                </button>
-            }
+                <button class="start-chat-btn @(IsStartChatDisabled ? "start-chat-btn-disabled" : string.Empty)"
+                    @onclick="StartNewConversation"
+                    disabled="@IsStartChatDisabled">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Start Chat
+            </button>
         </div>
     </div>
 
@@ -606,6 +605,14 @@
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
     }
 
+    .start-chat-btn-disabled {
+        background: #e5e7eb !important;
+        color: #9ca3af !important;
+        cursor: not-allowed !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
     .conversations-section {
         margin-bottom: 1.5rem;
     }
@@ -904,6 +911,8 @@
 	private bool isDiscoveringCard = false;
 	private string? discoveredAgentCardJson = null;
 	private string? discoveryError = null;
+
+    private bool IsStartChatDisabled => string.IsNullOrEmpty(selectedAgentName) || currentConversation is not null || isStreaming;
 
 	private enum Protocol
 	{
