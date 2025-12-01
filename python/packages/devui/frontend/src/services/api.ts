@@ -601,7 +601,8 @@ class ApiClient {
               return;
             }
 
-            buffer += decoder.decode(value, { stream: true });
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
 
             // Parse SSE events
             const lines = buffer.split("\n");
@@ -656,12 +657,12 @@ class ApiClient {
                       } as ExtendedResponseStreamEvent;
                       lastSequenceNumber = eventSeq;
                       hasYieldedAnyEvent = true;
-                      
+
                       // Save new event to storage
                       if (conversationId && currentResponseId) {
                         updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                       }
-                      
+
                       yield openAIEvent;
                     }
                     // Skip events we've already seen (resume from last position)
@@ -670,23 +671,23 @@ class ApiClient {
                     } else {
                       lastSequenceNumber = eventSeq;
                       hasYieldedAnyEvent = true;
-                      
+
                       // Save event to storage before yielding
                       if (conversationId && currentResponseId) {
                         updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                       }
-                      
+
                       yield openAIEvent;
                     }
                   } else {
                     // No sequence number - just yield the event
                     hasYieldedAnyEvent = true;
-                    
+
                     // Still save to storage if we have conversation context
                     if (conversationId && currentResponseId) {
                       updateStreamingState(conversationId, openAIEvent, currentResponseId, lastMessageId);
                     }
-                    
+
                     yield openAIEvent;
                   }
                 } catch (e) {

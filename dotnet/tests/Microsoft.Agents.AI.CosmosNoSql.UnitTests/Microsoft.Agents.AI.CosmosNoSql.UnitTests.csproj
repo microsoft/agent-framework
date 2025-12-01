@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net9.0</TargetFrameworks>
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.CosmosNoSql\Microsoft.Agents.AI.CosmosNoSql.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Linq.AsyncEnumerable" />
+    <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Azure.Cosmos" />
+    <PackageReference Include="Xunit.SkippableFact" />
+  </ItemGroup>
+
+</Project>

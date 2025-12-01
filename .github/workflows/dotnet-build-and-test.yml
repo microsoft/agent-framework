@@ -124,6 +124,16 @@ jobs:
           popd
           rm -rf "$TEMP_DIR"
 
+      # Start Cosmos DB Emulator for Cosmos-based unit tests (only on Windows)
+      - name: Start Azure Cosmos DB Emulator
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Launching Azure Cosmos DB Emulator"
+          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
+          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+
       - name: Run Unit Tests
         shell: bash
         run: |
@@ -143,6 +153,10 @@ jobs:
               echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
             fi
           done
+        env:
+          # Cosmos DB Emulator connection settings
+          COSMOSDB_ENDPOINT: https://localhost:8081
+          COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
 
       - name: Log event name and matrix integration-tests
         shell: bash 
@@ -181,6 +195,9 @@ jobs:
             fi
           done
         env:
+          # Cosmos DB Emulator connection settings
+          COSMOSDB_ENDPOINT: https://localhost:8081
+          COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
           # OpenAI Models
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
@@ -200,7 +217,7 @@ jobs:
       # Generate test reports and check coverage
       - name: Generate test reports
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.18
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.0
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"
