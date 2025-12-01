@@ -89,9 +89,9 @@ sequenceDiagram
 
 ## Decision Drivers
 
-- Ease of use: make it easy for users to understand how to use threads -> Zen of Python: "Explicit is better than implicit".
-- Clarity: make it clear what a thread is and what it can do, single purpose classes.
-- Ease of handling: make it easy to work with Threads and store them in a way that makes sense for the user.
+- Ease of use: make it easy for users to understand how to use threads, one class, one purpose.
+- Clarity: create a single way of storing and restoring threads that is clear and unambiguous.
+- Ease of handling: make it easy to work with Threads and store them in a way that is easily serializable.
 
 ## Considered Options
 
