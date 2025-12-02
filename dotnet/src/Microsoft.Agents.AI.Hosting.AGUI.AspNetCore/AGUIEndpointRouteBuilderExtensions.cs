@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
@@ -109,8 +110,8 @@ public static class MicrosoftAgentAIHostingAGUIEndpointRouteBuilderExtensions
                 return Results.BadRequest();
             }
 
-            IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-            System.Text.Json.JsonSerializerOptions jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+            IOptions<Http.Json.JsonOptions> jsonOptions = context.RequestServices.GetRequiredService<IOptions<Http.Json.JsonOptions>>();
+            JsonSerializerOptions jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
             IEnumerable<ChatMessage> messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             List<AITool>? clientTools = input.Tools?.AsAITools().ToList();

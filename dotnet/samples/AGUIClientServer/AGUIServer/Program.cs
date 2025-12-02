@@ -4,7 +4,6 @@ using System.ComponentModel;
 using AGUIServer;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
