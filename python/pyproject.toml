@@ -71,6 +71,11 @@ override-dependencies = [
   "uvicorn==0.38.0",
   # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
   "websockets==15.0.1",
+  # grpcio 1.67.x has no Python 3.14 wheels; grpcio 1.76.0+ supports Python 3.14
+  # litellm constrains grpcio<1.68.0 due to resource exhaustion bug (https://github.com/grpc/grpc/issues/38290)
+  # Use version-specific overrides to satisfy both constraints
+  "grpcio>=1.76.0; python_version >= '3.14'",
+  "grpcio>=1.62.3,<1.68.0; python_version < '3.14'",
 ]
 
 [tool.uv.workspace]
@@ -81,7 +86,7 @@ agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
-agent-framework-aisearch = { workspace = true }
+agent-framework-azure-ai-search = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }

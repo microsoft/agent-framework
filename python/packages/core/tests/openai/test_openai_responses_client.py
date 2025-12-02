@@ -1423,12 +1423,12 @@ async def test_prepare_options_store_parameter_handling() -> None:
 
     chat_options = ChatOptions(store=None, conversation_id=None)
     options = await client.prepare_options(messages, chat_options)
-    assert options["store"] is False
+    assert "store" not in options
     assert "previous_response_id" not in options
 
     chat_options = ChatOptions()
     options = await client.prepare_options(messages, chat_options)
-    assert options["store"] is False
+    assert "store" not in options
     assert "previous_response_id" not in options
 
 

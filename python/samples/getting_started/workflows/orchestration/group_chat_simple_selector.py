@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+from typing import cast
 
-from agent_framework import ChatAgent, GroupChatBuilder, GroupChatStateSnapshot, WorkflowOutputEvent
+from agent_framework import ChatAgent, ChatMessage, GroupChatBuilder, GroupChatStateSnapshot, WorkflowOutputEvent
 from agent_framework.openai import OpenAIChatClient
 
 logging.basicConfig(level=logging.INFO)
@@ -12,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 Sample: Group Chat with Simple Speaker Selector Function
 
 What it does:
-- Demonstrates the select_speakers() API for GroupChat orchestration
+- Demonstrates the set_select_speakers_func() API for GroupChat orchestration
 - Uses a pure Python function to control speaker selection based on conversation state
 - Alternates between researcher and writer agents in a simple round-robin pattern
 - Shows how to access conversation history, round index, and participant metadata
@@ -84,7 +85,7 @@ async def main() -> None:
     # 2. Dict form - explicit names: .participants(researcher=researcher, writer=writer)
     workflow = (
         GroupChatBuilder()
-        .select_speakers(select_next_speaker, display_name="Orchestrator")
+        .set_select_speakers_func(select_next_speaker, display_name="Orchestrator")
         .participants([researcher, writer])  # Uses agent.name for participant names
         .build()
     )
@@ -97,11 +98,14 @@ async def main() -> None:
 
     async for event in workflow.run_stream(task):
         if isinstance(event, WorkflowOutputEvent):
-            final_message = event.data
-            author = getattr(final_message, "author_name", "Unknown")
-            text = getattr(final_message, "text", str(final_message))
-            print(f"\n[{author}]\n{text}\n")
-            print("-" * 80)
+            conversation = cast(list[ChatMessage], event.data)
+            if isinstance(conversation, list):
+                print("\n===== Final Conversation =====\n")
+                for msg in conversation:
+                    author = getattr(msg, "author_name", "Unknown")
+                    text = getattr(msg, "text", str(msg))
+                    print(f"[{author}]\n{text}\n")
+                    print("-" * 80)
 
     print("\nWorkflow completed.")
 

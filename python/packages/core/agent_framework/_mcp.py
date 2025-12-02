@@ -278,18 +278,30 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         python_type = resolve_type(prop_details)
         description = prop_details.get("description", "")
 
+        # Build field kwargs (description, array items schema, etc.)
+        field_kwargs: dict[str, Any] = {}
+        if description:
+            field_kwargs["description"] = description
+
+        # Preserve array items schema if present
+        if prop_details.get("type") == "array" and "items" in prop_details:
+            items_schema = prop_details["items"]
+            if items_schema and items_schema != {}:
+                field_kwargs["json_schema_extra"] = {"items": items_schema}
+
         # Create field definition for create_model
         if prop_name in required:
-            field_definitions[prop_name] = (
-                (python_type, Field(description=description)) if description else (python_type, ...)
-            )
+            if field_kwargs:
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, ...)
         else:
             default_value = prop_details.get("default", None)
-            field_definitions[prop_name] = (
-                (python_type, Field(default=default_value, description=description))
-                if description
-                else (python_type, default_value)
-            )
+            field_kwargs["default"] = default_value
+            if field_kwargs and any(k != "default" for k in field_kwargs):
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, default_value)
 
     return create_model(f"{tool.name}_input", **field_definitions)
 
