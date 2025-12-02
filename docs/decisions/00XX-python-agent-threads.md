@@ -20,7 +20,7 @@ Currently there are three main issues with the current thread setup. We have the
 The first issue with threads is that depending on whether the `service_thread_id` is filled we treat it differently from a thread with `chat_message_store` filled, and when neither is filled it is considered uninitialized. Further, depending on the state, certain methods behave differently, such as `on_new_messages`, which is a no-op for threads with a `service_thread_id`, but calls `add_messages` on the `chat_message_store` for threads with that filled. When calling `agent.get_new_thread` it is also unclear what is referred to, a service side thread, a locally stored thread or neither. Finally, when passing in a thread of one type, but also setting the `store` and `conversation_id` parameters when calling `agent.run` might either raise a error, change something or does not work as expected.
 
 ### Issue 2: ChatMessageStore usage
-The second issue is the usage of `ChatMessageStore` as the way to store messages locally, while it works well, it does not capture a whole thread, nor can it be used as a way to store either messages or a service id, leading to the need for a separate class that can store `AgentThread` objects, meaning we either need two abstractions and implementations, one for `ChatMessageStore` and one for `AgentThreadStore`, or we need to complicate the `AgentThread` class further by adding an id and save/load methods. Or people will forego using the ChatMessageStore altogether and just use a AgentThreadStore and the built-in in-memory ChatMessageStore. Giving us two versions of doing similar things: "storing threads", where one works for all thread (AgentThreadStore) and one only for local threads (ChatMessageStore).
+The second issue is the usage of `ChatMessageStore` as the way to store messages locally, while it works well, it does not capture a whole thread , so it does not include context provider settings, or a service_thread_id, nor can it be used as a way to store either messages or a service id, leading to the need for a separate class that can store `AgentThread` objects, meaning we either need two abstractions and implementations, one for `ChatMessageStore` and one for `AgentThreadStore`, or we need to complicate the `AgentThread` class further by adding an id and save/load methods. Or people will forego using the ChatMessageStore altogether and just use a AgentThreadStore and the built-in in-memory ChatMessageStore. Giving us two versions of doing similar things: "storing threads", where one works for all thread (AgentThreadStore) and one only for local threads (ChatMessageStore).
 
 ### Issue 3: Thread serialization
 Because we have both a `ChatMessageStore` object and a `ContextProvider` object inside a thread, it is quite a challenge to serialize and deserialize threads, as both the ChatMessageStore and ContextProviders can have configuration that needs to be serialized as well, including potentially hard to serialize things like clients, for which we would need to add dependency injection, and the logic of how to do that is contained in those classes. This makes it hard to create a standard way of serializing and deserializing threads, as each ChatMessageStore and ContextProvider can have different requirements.
@@ -113,7 +113,7 @@ This approach would mean:
 - Moving `ContextProvider` back into Agent, replacing with a field `context_data`/`context_state` or a dict of `context_provider_name/id: context_data/state` on both thread types, which the agent would then use to get the context from the context providers when running in that thread. This makes the thread itself state-only, and the context provider can be stateless and live in the agent.
 - The protocol/interface for ContextProviders would need a slight update, one to return a initial `context_data/state` object, the logic of which is maintained by the provider (whether it matches a app, user or session and what to record in there), and adding that `context_data/state` to the invoked and invoking methods. The `context_data/state` needs to be (de)serializable in a standard way, to make handling the thread easier.
 - We would need to add a flag on `ChatClients`, to indicate if they support `remote/service` threads, and we assume that we always support `local` threads.
-- All Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(messages: list[ChatMessage] | None = None, ...)`, both of which might raise an error if the chat client does not support that type of thread, after creation the agent then calls the context_provider(s) to get a `context_data/state` assigned as well.
+- All Agents would get two methods, `get_service_thread(thread_id: str | None = None, ...)`/`get_remote_thread(thread_id: str | None = None, ...)` and `get_local_thread(messages: list[ChatMessage] | None = None, ...)`, the former of which might raise an error if the chat client does not support that type of thread, after creation the agent then calls the context_provider(s) to get a `context_data/state` assigned as well.
 - The `run` methods would take both types of threads, but would raise an error if the thread type is not supported by the chat client.
 - If you pass a `LocalThread` to `run`, it would invoke the chat client with `store=False` and `conversation_id=None`, and if you pass a `RemoteThread`, it would invoke the chat client with `store=True` and the `conversation_id` from the thread (if any). And this also means removing the `store` and `conversation_id` parameters from the `run` method at the agent level, as they would be redundant and potentially conflicting.
 - Naming is a open question, options are:
@@ -121,12 +121,14 @@ This approach would mean:
         - `ServiceThread`
         - `RemoteThread`
         - `ServiceSideThread`
+        - `HostedThread`
     - for the local threads:
         - `LocalAgentThread`
         - `LocalThread`
         - `ClientSideThread`
 
-    `RemoteThread` and `LocalThread` seem the clearest and most concise options and the most pythonic.
+    `HostedThread` and `LocalThread` seem the clearest and most concise options and the most pythonic.
+- Another consideration is if we should continue the `Thread` name or move to something else like `Conversation`, that would be a bigger breaking change initially but would be clearer in the long run. This ADR will keep using `Thread` for now for consistency.
 
 So that gives the following:
 - Good, because it is explicit about the type of thread being used. (solve for issue 1)
@@ -135,6 +137,7 @@ So that gives the following:
 - Good, because the simplified state-only context data make the threads much easier to (de)serialize and (re)store. (solve for issue 2 and 3)
 - Good, because it makes it easier to serialize and deserialize threads. (solve for issue 3)
 - Bad, because it requires mandating serializable context data/state from context providers, which might be limiting for some use cases.
+- Bad, because users will need to switch from one `get_new_thread` method to two different methods `get_remote_thread` and `get_local_thread` and there may be a situation when one of the methods will throw an exception. While `get_new_thread` always returns some instance. We could mitigate this with a deprecated `get_new_thread` method that calls one of the two new methods based on parameters, but that would add complexity and might be confusing and in the long run cause another breaking change when removed.
 
 ## Agent Thread Invocation Flow with Option 2
 
