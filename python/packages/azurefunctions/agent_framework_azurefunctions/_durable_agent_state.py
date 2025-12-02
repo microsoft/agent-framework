@@ -1,38 +1,30 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Durable agent state management conforming to the durable-agent-entity-state.json schema.
+"""Durable agent state management for Azure Durable Functions agents.
 
-This module provides classes for managing conversation state in Azure Durable Functions agents.
-It implements the versioned schema that defines how agent conversations are persisted and restored
-across invocations, enabling stateful, long-running agent sessions.
+Implements the versioned durable-agent-entity-state.json schema using Pydantic models
+for automatic serialization (to_dict) and deserialization (from_dict).
 
-The module includes:
-- DurableAgentState: Root state container with schema version and conversation history
-- DurableAgentStateEntry and subclasses: Request and response entries in conversation history
-- DurableAgentStateMessage: Individual messages with role, content items, and metadata
-- Content type classes: Specialized types for text, function calls, errors, and other content
-- Serialization/deserialization: Conversion between Python objects and JSON schema format
+Key Features:
+- Pydantic-based models with automatic camelCase ↔ snake_case conversion
+- Polymorphic content types via $type discriminators
+- Bidirectional conversion between durable state JSON and agent framework objects
 
-The state structure follows this hierarchy:
-    DurableAgentState
+State Hierarchy:
+    DurableAgentState (root)
     └── DurableAgentStateData
         └── conversationHistory: List[DurableAgentStateEntry]
             ├── DurableAgentStateRequest (user/system messages)
-            └── DurableAgentStateResponse (assistant messages with usage stats)
+            └── DurableAgentStateResponse (assistant messages + usage)
                 └── messages: List[DurableAgentStateMessage]
-                    └── contents: List[DurableAgentStateContent subclasses]
-
-All classes support bidirectional conversion between:
-- Durable state format (JSON with camelCase, $type discriminators)
-- Agent framework objects (Python objects with snake_case)
+                    └── contents: List[DurableAgentStateContent]
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, cast
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from agent_framework import (
     AgentRunResponse,
@@ -52,217 +44,72 @@ from agent_framework import (
     get_logger,
 )
 from dateutil import parser as date_parser
+from pydantic import BaseModel, ConfigDict, Field, Tag, field_validator
+from pydantic.alias_generators import to_camel
 
-from ._constants import ApiResponseFields, ContentTypes, Defaults, Fields
+from ._constants import ApiResponseFields
 from ._models import RunRequest, serialize_response_format
 
 logger = get_logger("agent_framework.azurefunctions.durable_agent_state")
 
 
-class DurableAgentStateEntryJsonType(str, Enum):
-    """Enum for conversation history entry types.
-
-    Discriminator values for the $type field in DurableAgentStateEntry objects.
-    """
-
-    REQUEST = "request"
-    RESPONSE = "response"
-
-
 def _parse_created_at(value: Any) -> datetime:
     """Normalize created_at values coming from persisted durable state."""
     if isinstance(value, datetime):
-        return value
+        return value.astimezone(timezone.utc)
 
     if isinstance(value, str):
         try:
             parsed = date_parser.parse(value)
             if isinstance(parsed, datetime):
-                return parsed
+                return parsed.astimezone(timezone.utc)
         except (ValueError, TypeError):
             pass
 
     return datetime.now(tz=timezone.utc)
 
 
-def _parse_messages(data: dict[str, Any]) -> list[DurableAgentStateMessage]:
-    """Parse messages from a dictionary, converting dicts to DurableAgentStateMessage objects.
+class DurableAgentStateModel(BaseModel):
+    """Base Pydantic model for durable agent state classes.
 
-    Args:
-        data: Dictionary containing a 'messages' key with a list of message data
-
-    Returns:
-        List of DurableAgentStateMessage objects
-    """
-    messages: list[DurableAgentStateMessage] = []
-    raw_messages: list[Any] = data.get(Fields.MESSAGES, [])
-    for raw_msg in raw_messages:
-        if isinstance(raw_msg, dict):
-            messages.append(DurableAgentStateMessage.from_dict(cast(dict[str, Any], raw_msg)))
-        elif isinstance(raw_msg, DurableAgentStateMessage):
-            messages.append(raw_msg)
-    return messages
-
-
-def _parse_history_entries(data_dict: dict[str, Any]) -> list[DurableAgentStateEntry]:
-    """Parse conversation history entries from a dictionary.
-
-    Args:
-        data_dict: Dictionary containing a 'conversationHistory' key with a list of entry data
-
-    Returns:
-        List of DurableAgentStateEntry objects (requests and responses)
-    """
-    history_data: list[Any] = data_dict.get(Fields.CONVERSATION_HISTORY, [])
-    deserialized_history: list[DurableAgentStateEntry] = []
-    for raw_entry in history_data:
-        if isinstance(raw_entry, dict):
-            entry_dict = cast(dict[str, Any], raw_entry)
-            entry_type = entry_dict.get(Fields.TYPE) or entry_dict.get(Fields.JSON_TYPE_LEGACY)
-            if entry_type == DurableAgentStateEntryJsonType.RESPONSE:
-                deserialized_history.append(DurableAgentStateResponse.from_dict(entry_dict))
-            elif entry_type == DurableAgentStateEntryJsonType.REQUEST:
-                deserialized_history.append(DurableAgentStateRequest.from_dict(entry_dict))
-            else:
-                deserialized_history.append(DurableAgentStateEntry.from_dict(entry_dict))
-        elif isinstance(raw_entry, DurableAgentStateEntry):
-            deserialized_history.append(raw_entry)
-    return deserialized_history
-
-
-def _parse_contents(data: dict[str, Any]) -> list[DurableAgentStateContent]:
-    """Parse content items from a dictionary.
-
-    Args:
-        data: Dictionary containing a 'contents' key with a list of content data
-
-    Returns:
-        List of DurableAgentStateContent objects
-    """
-    contents: list[DurableAgentStateContent] = []
-    raw_contents: list[Any] = data.get(Fields.CONTENTS, [])
-    for raw_content in raw_contents:
-        if isinstance(raw_content, dict):
-            content_dict = cast(dict[str, Any], raw_content)
-            content_type: str | None = content_dict.get(Fields.TYPE)
-            if content_type == ContentTypes.TEXT:
-                contents.append(DurableAgentStateTextContent(text=content_dict.get(Fields.TEXT)))
-            elif content_type == ContentTypes.DATA:
-                contents.append(
-                    DurableAgentStateDataContent(
-                        uri=str(content_dict.get(Fields.URI, "")),
-                        media_type=content_dict.get(Fields.MEDIA_TYPE),
-                    )
-                )
-            elif content_type == ContentTypes.ERROR:
-                contents.append(
-                    DurableAgentStateErrorContent(
-                        message=content_dict.get(Fields.MESSAGE),
-                        error_code=content_dict.get(Fields.ERROR_CODE),
-                        details=content_dict.get(Fields.DETAILS),
-                    )
-                )
-            elif content_type == ContentTypes.FUNCTION_CALL:
-                contents.append(
-                    DurableAgentStateFunctionCallContent(
-                        call_id=str(content_dict.get(Fields.CALL_ID, "")),
-                        name=str(content_dict.get(Fields.NAME, "")),
-                        arguments=content_dict.get(Fields.ARGUMENTS, {}),
-                    )
-                )
-            elif content_type == ContentTypes.FUNCTION_RESULT:
-                contents.append(
-                    DurableAgentStateFunctionResultContent(
-                        call_id=str(content_dict.get(Fields.CALL_ID, "")),
-                        result=content_dict.get(Fields.RESULT),
-                    )
-                )
-            elif content_type == ContentTypes.HOSTED_FILE:
-                contents.append(DurableAgentStateHostedFileContent(file_id=str(content_dict.get(Fields.FILE_ID, ""))))
-            elif content_type == ContentTypes.HOSTED_VECTOR_STORE:
-                contents.append(
-                    DurableAgentStateHostedVectorStoreContent(
-                        vector_store_id=str(content_dict.get(Fields.VECTOR_STORE_ID, ""))
-                    )
-                )
-            elif content_type == ContentTypes.REASONING:
-                contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get(Fields.TEXT)))
-            elif content_type == ContentTypes.URI:
-                contents.append(
-                    DurableAgentStateUriContent(
-                        uri=str(content_dict.get(Fields.URI, "")),
-                        media_type=str(content_dict.get(Fields.MEDIA_TYPE, "")),
-                    )
-                )
-            elif content_type == ContentTypes.USAGE:
-                usage_data = content_dict.get(Fields.USAGE)
-                if usage_data and isinstance(usage_data, dict):
-                    contents.append(
-                        DurableAgentStateUsageContent(
-                            usage=DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_data))
-                        )
-                    )
-            elif content_type == ContentTypes.UNKNOWN:
-                contents.append(DurableAgentStateUnknownContent(content=content_dict.get(Fields.CONTENT, {})))
-        elif isinstance(raw_content, DurableAgentStateContent):
-            contents.append(raw_content)
-    return contents
-
-
-class DurableAgentStateContent:
-    """Base class for all content types in durable agent state messages.
-
-    This abstract base class defines the interface for content items that can be
-    stored in conversation history. Content types include text, function calls,
-    function results, errors, and other specialized content types defined by the
-    agent framework.
-
-    Subclasses must implement to_dict() and to_ai_content() to handle conversion
-    between the durable state representation and the agent framework's content objects.
-
-    Attributes:
-        extensionData: Optional additional metadata (not serialized per schema)
+    Provides:
+    - Automatic camelCase ↔ snake_case field conversion
+    - Forward compatibility (ignores unknown fields)
+    - Inherited to_dict/from_dict methods
     """
 
-    extensionData: dict[str, Any] | None = None
-    type: str = ""
+    model_config = ConfigDict(
+        alias_generator=to_camel,  # Auto-convert snake_case fields to camelCase in JSON
+        populate_by_name=True,  # Allow using snake_case names in constructor
+        extra="ignore",  # Ignore unknown fields for forward compatibility
+        use_enum_values=True,  # Serialize enums as their values, not names
+    )
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize this content to a dictionary for JSON storage.
+        """Serialize to dict with camelCase keys, excluding None values."""
+        return self.model_dump(mode="json", by_alias=True, exclude_none=True)
 
-        Returns:
-            Dictionary representation including $type discriminator and content-specific fields
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Deserialize from dict."""
+        return cls.model_validate(data)
 
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        raise NotImplementedError
+
+class DurableAgentStateContent(DurableAgentStateModel):
+    """Base class for message content types.
+
+    Subclasses must override `type` with a Literal value for $type discrimination.
+    """
+
+    type: str = Field(alias="$type")
 
     def to_ai_content(self) -> Any:
-        """Convert this durable state content back to an agent framework content object.
-
-        Returns:
-            An agent framework content object (TextContent, FunctionCallContent, etc.)
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
+        """Convert to agent framework content object. Must be implemented by subclasses."""
         raise NotImplementedError
 
     @staticmethod
     def from_ai_content(content: Any) -> DurableAgentStateContent:
-        """Create a durable state content object from an agent framework content object.
-
-        This factory method maps agent framework content types (TextContent, FunctionCallContent,
-        etc.) to their corresponding durable state representations. Unknown content types are
-        wrapped in DurableAgentStateUnknownContent.
-
-        Args:
-            content: An agent framework content object (TextContent, FunctionCallContent, etc.)
-
-        Returns:
-            The corresponding DurableAgentStateContent subclass instance
-        """
+        """Factory: convert agent framework content to durable state content."""
         # Map AI content type to appropriate DurableAgentStateContent subclass
         if isinstance(content, DataContent):
             return DurableAgentStateDataContent.from_data_content(content)
@@ -287,136 +134,42 @@ class DurableAgentStateContent:
         return DurableAgentStateUnknownContent.from_unknown_content(content)
 
 
-# Core state classes
+class DurableAgentStateData(DurableAgentStateModel):
+    """Container for conversation history and extension data within DurableAgentState."""
+
+    conversation_history: list[
+        Annotated[
+            (
+                Annotated[DurableAgentStateRequest, Tag("request")]
+                | Annotated[DurableAgentStateResponse, Tag("response")]
+            ),
+            Field(discriminator="type"),
+        ]
+    ] = Field(default_factory=list)
+    extension_data: dict[str, Any] | None = None
 
 
-class DurableAgentStateData:
-    """Container for the core data within durable agent state.
+class DurableAgentState(DurableAgentStateModel):
+    """Root container for durable agent state, persisted in Azure Durable Entities.
 
-    This class holds the primary data structures for agent conversation state,
-    including the conversation history (a sequence of request and response entries)
-    and optional extension data for custom metadata.
-
-    The data structure is nested within DurableAgentState under the "data" property,
-    conforming to the durable-agent-entity-state.json schema structure.
-
-    Attributes:
-        conversation_history: Ordered list of conversation entries (requests and responses)
-        extension_data: Optional dictionary for custom metadata (not part of core schema)
+    Serializes to: {"schemaVersion": "...", "data": {"conversationHistory": [...]}}
     """
 
-    conversation_history: list[DurableAgentStateEntry]
-    extension_data: dict[str, Any] | None
+    # Durable Agent Schema version (ClassVar to prevent Pydantic from treating it as a field)
+    SCHEMA_VERSION: ClassVar[str] = "1.1.0"
 
-    def __init__(
-        self,
-        conversation_history: list[DurableAgentStateEntry] | None = None,
-        extension_data: dict[str, Any] | None = None,
-    ) -> None:
-        """Initialize the data container.
-
-        Args:
-            conversation_history: Initial conversation history (defaults to empty list)
-            extension_data: Optional custom metadata
-        """
-        self.conversation_history = conversation_history or []
-        self.extension_data = extension_data
-
-    def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            Fields.CONVERSATION_HISTORY: [entry.to_dict() for entry in self.conversation_history],
-        }
-        if self.extension_data is not None:
-            result[Fields.EXTENSION_DATA] = self.extension_data
-        return result
+    schema_version: str = Field(default=SCHEMA_VERSION)
+    data: DurableAgentStateData = Field(default_factory=DurableAgentStateData)
 
     @classmethod
-    def from_dict(cls, data_dict: dict[str, Any]) -> DurableAgentStateData:
-        return cls(
-            conversation_history=_parse_history_entries(data_dict),
-            extension_data=data_dict.get(Fields.EXTENSION_DATA),
-        )
-
-
-class DurableAgentState:
-    """Manages durable agent state conforming to the durable-agent-entity-state.json schema.
-
-    This class provides the root container for agent conversation state that can be persisted
-    in Azure Durable Entities. It maintains the conversation history as a sequence of request
-    and response entries, each with their messages, timestamps, and metadata.
-
-    The state follows a versioned schema (see SCHEMA_VERSION class constant) that defines the structure for:
-    - Request entries: User/system messages with optional response format specifications
-    - Response entries: Assistant messages with token usage information
-    - Messages: Individual chat messages with role, content items, and timestamps
-    - Content items: Text, function calls, function results, errors, and other content types
-
-    State is serialized to JSON with this structure:
-    {
-        "schemaVersion": "<SCHEMA_VERSION>",
-        "data": {
-            "conversationHistory": [
-                {"$type": "request", "correlationId": "...", "createdAt": "...", "messages": [...]},
-                {"$type": "response", "correlationId": "...", "createdAt": "...", "messages": [...], "usage": {...}}
-            ]
-        }
-    }
-
-    Attributes:
-        data: Container for conversation history and optional extension data
-        schema_version: Schema version string (defaults to SCHEMA_VERSION)
-    """
-
-    # Durable Agent Schema version
-    SCHEMA_VERSION: str = "1.1.0"
-
-    data: DurableAgentStateData
-    schema_version: str = SCHEMA_VERSION
-
-    def __init__(self, schema_version: str = SCHEMA_VERSION):
-        """Initialize a new durable agent state.
-
-        Args:
-            schema_version: Schema version to use (defaults to SCHEMA_VERSION)
-        """
-        self.data = DurableAgentStateData()
-        self.schema_version = schema_version
-
-    def to_dict(self) -> dict[str, Any]:
-
-        return {
-            Fields.SCHEMA_VERSION: self.schema_version,
-            Fields.DATA: self.data.to_dict(),
-        }
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict())
-
-    @classmethod
-    def from_dict(cls, state: dict[str, Any]) -> DurableAgentState:
-        """Restore state from a dictionary.
-
-        Args:
-            state: Dictionary containing schemaVersion and data (full state structure)
-        """
-        schema_version = state.get(Fields.SCHEMA_VERSION)
+    def from_dict(cls, state: dict[str, Any]) -> Self:
+        """Restore state from dict. Returns empty state if schema version is missing."""
+        schema_version = state.get("schemaVersion")
         if schema_version is None:
             logger.warning("Resetting state as it is incompatible with the current schema, all history will be lost")
             return cls()
 
-        instance = cls(schema_version=state.get(Fields.SCHEMA_VERSION, Defaults.SCHEMA_VERSION_FALLBACK))
-        instance.data = DurableAgentStateData.from_dict(state.get(Fields.DATA, {}))
-
-        return instance
-
-    @classmethod
-    def from_json(cls, json_str: str) -> DurableAgentState:
-        try:
-            obj = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ValueError("The durable agent state is not valid JSON.") from e
-
-        return cls.from_dict(obj)
+        return super().from_dict(state)
 
     @property
     def message_count(self) -> int:
@@ -424,23 +177,7 @@ class DurableAgentState:
         return len(self.data.conversation_history)
 
     def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
-        """Try to get an agent response by correlation ID.
-
-        This method searches the conversation history for a response entry matching the given
-        correlation ID and returns a dictionary suitable for HTTP API responses.
-
-        Note: The returned dictionary includes computed properties (message_count) that are
-        NOT part of the persisted state schema. These are derived values included for backward
-        compatibility with the HTTP API response format and should not be considered part of
-        the durable state structure.
-
-        Args:
-            correlation_id: The correlation ID to search for
-
-        Returns:
-            Response data dict with 'content', 'message_count', and 'correlationId' if found,
-            None otherwise
-        """
+        """Find response by correlation_id. Returns API-formatted dict or None."""
         # Search through conversation history for a response with this correlationId
         for entry in self.data.conversation_history:
             if entry.correlation_id == correlation_id and isinstance(entry, DurableAgentStateResponse):
@@ -456,144 +193,33 @@ class DurableAgentState:
         return None
 
 
-class DurableAgentStateEntry:
-    """Base class for conversation history entries (requests and responses).
+class DurableAgentStateEntry(DurableAgentStateModel):
+    """Base class for conversation history entries. Discriminated by $type field."""
 
-    This class represents a single entry in the conversation history. Each entry can be
-    either a request (user/system messages sent to the agent) or a response (assistant
-    messages from the agent). The $type discriminator field determines which type of entry
-    it represents.
+    type: str = Field(alias="$type")
+    correlation_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    messages: list[DurableAgentStateMessage] = Field(default_factory=list)
+    extension_data: dict[str, Any] | None = None
 
-    Entries are linked together using correlation IDs, allowing responses to be matched
-    with their originating requests.
-
-    Common Attributes:
-        json_type: Discriminator for entry type ("request" or "response")
-        correlationId: Unique identifier linking requests and responses
-        created_at: Timestamp when the entry was created
-        messages: List of messages in this entry
-        extensionData: Optional additional metadata (not serialized per schema)
-
-    Request-only Attributes:
-        responseType: Expected response type ("text" or "json") - only for request entries
-        responseSchema: JSON schema for structured responses - only for request entries
-
-    Response-only Attributes:
-        usage: Token usage statistics - only for response entries
-    """
-
-    json_type: DurableAgentStateEntryJsonType
-    correlation_id: str | None
-    created_at: datetime
-    messages: list[DurableAgentStateMessage]
-    extension_data: dict[str, Any] | None
-
-    def __init__(
-        self,
-        json_type: DurableAgentStateEntryJsonType,
-        correlation_id: str | None,
-        created_at: datetime,
-        messages: list[DurableAgentStateMessage],
-        extension_data: dict[str, Any] | None = None,
-    ) -> None:
-        self.json_type = json_type
-        self.correlation_id = correlation_id
-        self.created_at = created_at
-        self.messages = messages
-        self.extension_data = extension_data
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            Fields.TYPE: self.json_type,
-            Fields.CORRELATION_ID: self.correlation_id,
-            Fields.CREATED_AT: self.created_at.isoformat(),
-            Fields.MESSAGES: [m.to_dict() for m in self.messages],
-        }
-
+    @field_validator("created_at", mode="before")
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateEntry:
-        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
-        messages = _parse_messages(data)
-
-        return cls(
-            json_type=DurableAgentStateEntryJsonType(data.get(Fields.TYPE, Defaults.ENTRY_TYPE_FALLBACK)),
-            correlation_id=data.get(Fields.CORRELATION_ID, ""),
-            created_at=created_at,
-            messages=messages,
-            extension_data=data.get(Fields.EXTENSION_DATA),
-        )
+    def parse_datetime(cls, v: Any) -> datetime:
+        """Parse datetime from string or return existing datetime."""
+        return _parse_created_at(v)
 
 
 class DurableAgentStateRequest(DurableAgentStateEntry):
-    """Represents a request entry in the durable agent conversation history.
+    """Request entry: user/system messages with optional response format specs."""
 
-    A request entry captures a user or system message sent to the agent, along with
-    optional response format specifications. Each request is stored as a separate
-    entry in the conversation history with a unique correlation ID.
-
-    Attributes:
-        response_type: Expected response type ("text" or "json")
-        response_schema: JSON schema for structured responses (when response_type is "json")
-        orchestration_id: ID of the orchestration that initiated this request (if any)
-        correlationId: Unique identifier linking this request to its response
-        created_at: Timestamp when the request was created
-        messages: List of messages included in this request
-        json_type: Always "request" for this class
-    """
-
+    type: Literal["request"] = Field(default="request", alias="$type")
     response_type: str | None = None
     response_schema: dict[str, Any] | None = None
     orchestration_id: str | None = None
 
-    def __init__(
-        self,
-        correlation_id: str | None,
-        created_at: datetime,
-        messages: list[DurableAgentStateMessage],
-        extension_data: dict[str, Any] | None = None,
-        response_type: str | None = None,
-        response_schema: dict[str, Any] | None = None,
-        orchestration_id: str | None = None,
-    ) -> None:
-        super().__init__(
-            json_type=DurableAgentStateEntryJsonType.REQUEST,
-            correlation_id=correlation_id,
-            created_at=created_at,
-            messages=messages,
-            extension_data=extension_data,
-        )
-        self.response_type = response_type
-        self.response_schema = response_schema
-        self.orchestration_id = orchestration_id
-
-    def to_dict(self) -> dict[str, Any]:
-        data = super().to_dict()
-        if self.orchestration_id is not None:
-            data[Fields.ORCHESTRATION_ID] = self.orchestration_id
-        if self.response_type is not None:
-            data[Fields.RESPONSE_TYPE] = self.response_type
-        if self.response_schema is not None:
-            data[Fields.RESPONSE_SCHEMA] = self.response_schema
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateRequest:
-        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
-        messages = _parse_messages(data)
-
-        return cls(
-            correlation_id=data.get(Fields.CORRELATION_ID, ""),
-            created_at=created_at,
-            messages=messages,
-            extension_data=data.get(Fields.EXTENSION_DATA),
-            response_type=data.get(Fields.RESPONSE_TYPE),
-            response_schema=data.get(Fields.RESPONSE_SCHEMA),
-            orchestration_id=data.get(Fields.ORCHESTRATION_ID),
-        )
-
     @staticmethod
     def from_run_request(request: RunRequest) -> DurableAgentStateRequest:
-        # Determine response_type based on response_format
+        """Create a DurableAgentStateRequest from a RunRequest."""
         return DurableAgentStateRequest(
             correlation_id=request.correlation_id,
             messages=[DurableAgentStateMessage.from_run_request(request)],
@@ -605,70 +231,16 @@ class DurableAgentStateRequest(DurableAgentStateEntry):
 
 
 class DurableAgentStateResponse(DurableAgentStateEntry):
-    """Represents a response entry in the durable agent conversation history.
+    """Response entry: assistant messages with token usage statistics."""
 
-    A response entry captures the agent's reply to a user request, including any
-    assistant messages, tool calls, and token usage information. Each response is
-    linked to its originating request via a correlation ID.
-
-    Attributes:
-        usage: Token usage statistics for this response (input, output, and total tokens)
-        is_error: Flag indicating if this response represents an error (not persisted in schema)
-        correlation_id: Unique identifier linking this response to its request
-        created_at: Timestamp when the response was created
-        messages: List of assistant messages in this response
-        json_type: Always "response" for this class
-    """
-
+    type: Literal["response"] = Field(default="response", alias="$type")
     usage: DurableAgentStateUsage | None = None
     is_error: bool = False
 
-    def __init__(
-        self,
-        correlation_id: str,
-        created_at: datetime,
-        messages: list[DurableAgentStateMessage],
-        extension_data: dict[str, Any] | None = None,
-        usage: DurableAgentStateUsage | None = None,
-        is_error: bool = False,
-    ) -> None:
-        super().__init__(
-            json_type=DurableAgentStateEntryJsonType.RESPONSE,
-            correlation_id=correlation_id,
-            created_at=created_at,
-            messages=messages,
-            extension_data=extension_data,
-        )
-        self.usage = usage
-        self.is_error = is_error
-
-    def to_dict(self) -> dict[str, Any]:
-        data = super().to_dict()
-        if self.usage is not None:
-            data[Fields.USAGE] = self.usage.to_dict()
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateResponse:
-        created_at = _parse_created_at(data.get(Fields.CREATED_AT))
-        messages = _parse_messages(data)
-
-        usage_dict = data.get(Fields.USAGE)
-        usage: DurableAgentStateUsage | None = None
-        if usage_dict and isinstance(usage_dict, dict):
-            usage = DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_dict))
-
-        return cls(
-            correlation_id=data.get(Fields.CORRELATION_ID, ""),
-            created_at=created_at,
-            messages=messages,
-            extension_data=data.get(Fields.EXTENSION_DATA),
-            usage=usage,
-        )
-
     @staticmethod
     def from_run_response(correlation_id: str, response: AgentRunResponse) -> DurableAgentStateResponse:
-        """Creates a DurableAgentStateResponse from an AgentRunResponse."""
+        """Create a DurableAgentStateResponse from an AgentRunResponse."""
+        logger.warning("Received Agent Run Response response: %s", json.dumps(response.to_dict(), indent=2))
         return DurableAgentStateResponse(
             correlation_id=correlation_id,
             created_at=_parse_created_at(response.created_at),
@@ -677,7 +249,7 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
     def to_run_response(self) -> Any:
-        """Converts this DurableAgentStateResponse back to an AgentRunResponse."""
+        """Convert this DurableAgentStateResponse back to an AgentRunResponse."""
         return AgentRunResponse(
             created_at=self.created_at.isoformat() if self.created_at else None,
             messages=[m.to_chat_message() for m in self.messages],
@@ -685,68 +257,28 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
         )
 
 
-class DurableAgentStateMessage:
-    """Represents a message within a conversation history entry.
-
-    A message contains the role (user, assistant, system), content items (text, function calls,
-    tool results, etc.), and optional metadata. Messages are the building blocks of both
-    request and response entries in the conversation history.
-
-    Attributes:
-        role: The sender role ("user", "assistant", or "system")
-        contents: List of content items (text, function calls, errors, etc.)
-        author_name: Optional name of the message author (typically set for assistant messages)
-        created_at: Optional timestamp when the message was created
-        extension_data: Optional additional metadata (not serialized per schema)
-    """
+class DurableAgentStateMessage(DurableAgentStateModel):
+    """A message with role, content items, and optional metadata."""
 
     role: str
-    contents: list[DurableAgentStateContent]
+    contents: list[
+        (
+            DurableAgentStateTextContent
+            | DurableAgentStateDataContent
+            | DurableAgentStateErrorContent
+            | DurableAgentStateFunctionCallContent
+            | DurableAgentStateFunctionResultContent
+            | DurableAgentStateHostedFileContent
+            | DurableAgentStateHostedVectorStoreContent
+            | DurableAgentStateTextReasoningContent
+            | DurableAgentStateUriContent
+            | DurableAgentStateUsageContent
+            | DurableAgentStateUnknownContent
+        )
+    ]
     author_name: str | None = None
     created_at: datetime | None = None
     extension_data: dict[str, Any] | None = None
-
-    def __init__(
-        self,
-        role: str,
-        contents: list[DurableAgentStateContent],
-        author_name: str | None = None,
-        created_at: datetime | None = None,
-        extension_data: dict[str, Any] | None = None,
-    ) -> None:
-        self.role = role
-        self.contents = contents
-        self.author_name = author_name
-        self.created_at = created_at
-        self.extension_data = extension_data
-
-    def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            Fields.ROLE: self.role,
-            Fields.CONTENTS: [
-                {
-                    Fields.TYPE: c.to_dict().get(Fields.TYPE_INTERNAL, ContentTypes.TEXT),
-                    **{k: v for k, v in c.to_dict().items() if k != Fields.TYPE_INTERNAL},
-                }
-                for c in self.contents
-            ],
-        }
-        # Only include optional fields if they have values
-        if self.created_at is not None:
-            result[Fields.CREATED_AT] = self.created_at.isoformat()
-        if self.author_name is not None:
-            result[Fields.AUTHOR_NAME] = self.author_name
-        return result
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateMessage:
-        return cls(
-            role=data.get(Fields.ROLE, ""),
-            contents=_parse_contents(data),
-            author_name=data.get(Fields.AUTHOR_NAME),
-            created_at=_parse_created_at(data.get(Fields.CREATED_AT)),
-            extension_data=data.get(Fields.EXTENSION_DATA),
-        )
 
     @property
     def text(self) -> str:
@@ -759,13 +291,7 @@ class DurableAgentStateMessage:
 
     @staticmethod
     def from_run_request(request: RunRequest) -> DurableAgentStateMessage:
-        """Converts a RunRequest from the agent framework to a DurableAgentStateMessage.
-
-        Args:
-            request: RunRequest object with role, message/contents, and metadata
-        Returns:
-            DurableAgentStateMessage with converted content items and metadata
-        """
+        """Convert RunRequest to DurableAgentStateMessage."""
         return DurableAgentStateMessage(
             role=request.role.value,
             contents=[DurableAgentStateTextContent(text=request.message)],
@@ -774,14 +300,7 @@ class DurableAgentStateMessage:
 
     @staticmethod
     def from_chat_message(chat_message: ChatMessage) -> DurableAgentStateMessage:
-        """Converts an Agent Framework chat message to a durable state message.
-
-        Args:
-            chat_message: ChatMessage object with role, contents, and metadata to convert
-
-        Returns:
-            DurableAgentStateMessage with converted content items and metadata
-        """
+        """Convert ChatMessage to DurableAgentStateMessage."""
         contents_list: list[DurableAgentStateContent] = [
             DurableAgentStateContent.from_ai_content(c) for c in chat_message.contents
         ]
@@ -794,11 +313,7 @@ class DurableAgentStateMessage:
         )
 
     def to_chat_message(self) -> Any:
-        """Converts this DurableAgentStateMessage back to an agent framework ChatMessage.
-
-        Returns:
-            ChatMessage object with role, contents, and metadata converted back to agent framework types
-        """
+        """Convert to agent framework ChatMessage."""
         # Convert DurableAgentStateContent objects back to agent_framework content objects
         ai_contents = [c.to_ai_content() for c in self.contents]
 
@@ -818,27 +333,11 @@ class DurableAgentStateMessage:
 
 
 class DurableAgentStateDataContent(DurableAgentStateContent):
-    """Represents data content with a URI reference.
+    """Data content referencing a URI with optional media type."""
 
-    This content type is used to reference data stored at a specific URI location,
-    optionally with a media type specification. Common use cases include referencing
-    files, documents, or other data resources.
-
-    Attributes:
-        uri: URI pointing to the data resource
-        media_type: Optional MIME type of the data (e.g., "application/json", "text/plain")
-    """
-
+    type: Literal["data"] = Field(default="data", alias="$type")
     uri: str = ""
     media_type: str | None = None
-    type: str = ContentTypes.DATA
-
-    def __init__(self, uri: str, media_type: str | None = None) -> None:
-        self.uri = uri
-        self.media_type = media_type
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.URI: self.uri, Fields.MEDIA_TYPE: self.media_type}
 
     @staticmethod
     def from_data_content(content: DataContent) -> DurableAgentStateDataContent:
@@ -849,35 +348,12 @@ class DurableAgentStateDataContent(DurableAgentStateContent):
 
 
 class DurableAgentStateErrorContent(DurableAgentStateContent):
-    """Represents error content in agent responses.
+    """Error content with message, code, and details."""
 
-    This content type is used to communicate errors that occurred during agent execution,
-    including error messages, error codes, and additional details for debugging.
-
-    Attributes:
-        message: Human-readable error message
-        error_code: Machine-readable error code or exception type
-        details: Additional error details or stack trace information
-    """
-
+    type: Literal["error"] = Field(default="error", alias="$type")
     message: str | None = None
     error_code: str | None = None
     details: str | None = None
-
-    type: str = ContentTypes.ERROR
-
-    def __init__(self, message: str | None = None, error_code: str | None = None, details: str | None = None) -> None:
-        self.message = message
-        self.error_code = error_code
-        self.details = details
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            Fields.TYPE: self.type,
-            Fields.MESSAGE: self.message,
-            Fields.ERROR_CODE: self.error_code,
-            Fields.DETAILS: self.details,
-        }
 
     @staticmethod
     def from_error_content(content: ErrorContent) -> DurableAgentStateErrorContent:
@@ -890,36 +366,12 @@ class DurableAgentStateErrorContent(DurableAgentStateContent):
 
 
 class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
-    """Represents a function/tool call request from the agent.
+    """Function/tool call with call_id, name, and arguments."""
 
-    This content type is used when the agent requests execution of a function or tool,
-    including the function name, arguments, and a unique call identifier for tracking
-    the call-result pair.
-
-    Attributes:
-        call_id: Unique identifier for this function call (used to match with results)
-        name: Name of the function/tool to execute
-        arguments: Dictionary of argument names to values for the function call
-    """
-
+    type: Literal["functionCall"] = Field(default="functionCall", alias="$type")
     call_id: str
     name: str
     arguments: dict[str, Any]
-
-    type: str = ContentTypes.FUNCTION_CALL
-
-    def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
-        self.call_id = call_id
-        self.name = name
-        self.arguments = arguments
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            Fields.TYPE: self.type,
-            Fields.CALL_ID: self.call_id,
-            Fields.NAME: self.name,
-            Fields.ARGUMENTS: self.arguments,
-        }
 
     @staticmethod
     def from_function_call_content(content: FunctionCallContent) -> DurableAgentStateFunctionCallContent:
@@ -942,28 +394,11 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
 
 
 class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
-    """Represents the result of a function/tool call execution.
+    """Function/tool result linked to original call via call_id."""
 
-    This content type is used to communicate the result of executing a function or tool
-    that was previously requested by the agent. The call_id links this result back to
-    the original function call request.
-
-    Attributes:
-        call_id: Unique identifier matching the original function call
-        result: The return value from the function execution (can be any serializable type)
-    """
-
+    type: Literal["functionResult"] = Field(default="functionResult", alias="$type")
     call_id: str
     result: object | None = None
-
-    type: str = ContentTypes.FUNCTION_RESULT
-
-    def __init__(self, call_id: str, result: Any | None = None) -> None:
-        self.call_id = call_id
-        self.result = result
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.CALL_ID: self.call_id, Fields.RESULT: self.result}
 
     @staticmethod
     def from_function_result_content(content: FunctionResultContent) -> DurableAgentStateFunctionResultContent:
@@ -974,24 +409,10 @@ class DurableAgentStateFunctionResultContent(DurableAgentStateContent):
 
 
 class DurableAgentStateHostedFileContent(DurableAgentStateContent):
-    """Represents a reference to a hosted file resource.
+    """Reference to a hosted file by file_id."""
 
-    This content type is used to reference files that are hosted by the agent platform
-    or a file storage service, identified by a unique file ID.
-
-    Attributes:
-        file_id: Unique identifier for the hosted file
-    """
-
+    type: Literal["hostedFile"] = Field(default="hostedFile", alias="$type")
     file_id: str
-
-    type: str = ContentTypes.HOSTED_FILE
-
-    def __init__(self, file_id: str) -> None:
-        self.file_id = file_id
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.FILE_ID: self.file_id}
 
     @staticmethod
     def from_hosted_file_content(content: HostedFileContent) -> DurableAgentStateHostedFileContent:
@@ -1002,25 +423,10 @@ class DurableAgentStateHostedFileContent(DurableAgentStateContent):
 
 
 class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
-    """Represents a reference to a hosted vector store resource.
+    """Reference to a hosted vector store by vector_store_id."""
 
-    This content type is used to reference vector stores (used for semantic search
-    and retrieval-augmented generation) that are hosted by the agent platform,
-    identified by a unique vector store ID.
-
-    Attributes:
-        vector_store_id: Unique identifier for the hosted vector store
-    """
-
+    type: Literal["hostedVectorStore"] = Field(default="hostedVectorStore", alias="$type")
     vector_store_id: str
-
-    type: str = ContentTypes.HOSTED_VECTOR_STORE
-
-    def __init__(self, vector_store_id: str) -> None:
-        self.vector_store_id = vector_store_id
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.VECTOR_STORE_ID: self.vector_store_id}
 
     @staticmethod
     def from_hosted_vector_store_content(
@@ -1033,22 +439,10 @@ class DurableAgentStateHostedVectorStoreContent(DurableAgentStateContent):
 
 
 class DurableAgentStateTextContent(DurableAgentStateContent):
-    """Represents plain text content in messages.
+    """Plain text content."""
 
-    This is the most common content type, used for regular text messages from users
-    and text responses from the agent.
-
-    Attributes:
-        text: The text content of the message
-    """
-
-    type: str = ContentTypes.TEXT
-
-    def __init__(self, text: str | None) -> None:
-        self.text = text
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.TEXT: self.text}
+    type: Literal["text"] = Field(default="text", alias="$type")
+    text: str | None = None
 
     @staticmethod
     def from_text_content(content: TextContent) -> DurableAgentStateTextContent:
@@ -1059,22 +453,10 @@ class DurableAgentStateTextContent(DurableAgentStateContent):
 
 
 class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
-    """Represents reasoning or thought process text from the agent.
+    """Agent reasoning/chain-of-thought text, separate from final response."""
 
-    This content type is used to capture the agent's internal reasoning, chain of thought,
-    or explanation of its decision-making process, separate from the final response text.
-
-    Attributes:
-        text: The reasoning or thought process text
-    """
-
-    type: str = ContentTypes.REASONING
-
-    def __init__(self, text: str | None) -> None:
-        self.text = text
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.TEXT: self.text}
+    type: Literal["reasoning"] = Field(default="reasoning", alias="$type")
+    text: str | None = None
 
     @staticmethod
     def from_text_reasoning_content(content: TextReasoningContent) -> DurableAgentStateTextReasoningContent:
@@ -1085,27 +467,11 @@ class DurableAgentStateTextReasoningContent(DurableAgentStateContent):
 
 
 class DurableAgentStateUriContent(DurableAgentStateContent):
-    """Represents content referenced by a URI with media type.
+    """URI content with required media type."""
 
-    This content type is used to reference external content via a URI, with an associated
-    media type to indicate how the content should be interpreted.
-
-    Attributes:
-        uri: URI pointing to the content resource
-        media_type: MIME type of the content (e.g., "image/png", "application/pdf")
-    """
-
+    type: Literal["uri"] = Field(default="uri", alias="$type")
     uri: str
     media_type: str
-
-    type: str = ContentTypes.URI
-
-    def __init__(self, uri: str, media_type: str) -> None:
-        self.uri = uri
-        self.media_type = media_type
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.URI: self.uri, Fields.MEDIA_TYPE: self.media_type}
 
     @staticmethod
     def from_uri_content(content: UriContent) -> DurableAgentStateUriContent:
@@ -1115,55 +481,13 @@ class DurableAgentStateUriContent(DurableAgentStateContent):
         return UriContent(uri=self.uri, media_type=self.media_type)
 
 
-class DurableAgentStateUsage:
-    """Represents token usage statistics for agent responses.
-
-    This class tracks the number of tokens consumed during agent execution,
-    including input tokens (from the request), output tokens (in the response),
-    and the total token count.
-
-    Attributes:
-        input_token_count: Number of tokens in the input/request
-        output_token_count: Number of tokens in the output/response
-        total_token_count: Total number of tokens consumed (input + output)
-        extensionData: Optional additional metadata
-    """
+class DurableAgentStateUsage(DurableAgentStateModel):
+    """Token usage statistics: input, output, and total counts."""
 
     input_token_count: int | None = None
     output_token_count: int | None = None
     total_token_count: int | None = None
-    extensionData: dict[str, Any] | None = None
-
-    def __init__(
-        self,
-        input_token_count: int | None = None,
-        output_token_count: int | None = None,
-        total_token_count: int | None = None,
-        extensionData: dict[str, Any] | None = None,
-    ) -> None:
-        self.input_token_count = input_token_count
-        self.output_token_count = output_token_count
-        self.total_token_count = total_token_count
-        self.extensionData = extensionData
-
-    def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            Fields.INPUT_TOKEN_COUNT: self.input_token_count,
-            Fields.OUTPUT_TOKEN_COUNT: self.output_token_count,
-            Fields.TOTAL_TOKEN_COUNT: self.total_token_count,
-        }
-        if self.extensionData is not None:
-            result[Fields.EXTENSION_DATA] = self.extensionData
-        return result
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> DurableAgentStateUsage:
-        return cls(
-            input_token_count=data.get(Fields.INPUT_TOKEN_COUNT),
-            output_token_count=data.get(Fields.OUTPUT_TOKEN_COUNT),
-            total_token_count=data.get(Fields.TOTAL_TOKEN_COUNT),
-            extensionData=data.get(Fields.EXTENSION_DATA),
-        )
+    extension_data: dict[str, Any] | None = None
 
     @staticmethod
     def from_usage(usage: UsageDetails | None) -> DurableAgentStateUsage | None:
@@ -1185,28 +509,10 @@ class DurableAgentStateUsage:
 
 
 class DurableAgentStateUsageContent(DurableAgentStateContent):
-    """Represents token usage information as message content.
+    """Token usage as message content."""
 
-    This content type is used to communicate token usage statistics as part of
-    message content, allowing usage information to be tracked alongside other
-    content types in the conversation history.
-
-    Attributes:
-        usage: DurableAgentStateUsage object containing token counts
-    """
-
+    type: Literal["usage"] = Field(default="usage", alias="$type")
     usage: DurableAgentStateUsage = DurableAgentStateUsage()
-
-    type: str = ContentTypes.USAGE
-
-    def __init__(self, usage: DurableAgentStateUsage | None) -> None:
-        self.usage = usage if usage is not None else DurableAgentStateUsage()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            Fields.TYPE: self.type,
-            Fields.USAGE: self.usage.to_dict(),
-        }
 
     @staticmethod
     def from_usage_content(content: UsageContent) -> DurableAgentStateUsageContent:
@@ -1217,25 +523,10 @@ class DurableAgentStateUsageContent(DurableAgentStateContent):
 
 
 class DurableAgentStateUnknownContent(DurableAgentStateContent):
-    """Represents unknown or unrecognized content types.
+    """Fallback for unrecognized content types. Preserves original content."""
 
-    This content type serves as a fallback for content that doesn't match any of the
-    known content type classes. It preserves the original content object for later
-    inspection or processing.
-
-    Attributes:
-        content: The unknown content object
-    """
-
+    type: Literal["unknown"] = Field(default="unknown", alias="$type")
     content: Any
-
-    type: str = ContentTypes.UNKNOWN
-
-    def __init__(self, content: Any) -> None:
-        self.content = content
-
-    def to_dict(self) -> dict[str, Any]:
-        return {Fields.TYPE: self.type, Fields.CONTENT: self.content}
 
     @staticmethod
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
