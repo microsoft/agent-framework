@@ -621,7 +621,12 @@ class AzureAISearchContextProvider(ContextProvider):
                 )
             index_client = self._index_client
 
-            # Get index schema
+            # Get index schema (index_name is guaranteed to be set for semantic mode)
+            if not self.index_name:
+                logger.warning("Cannot auto-discover vector field: index_name is not set.")
+                self._auto_discovered_vector_field = True
+                return
+
             index = await index_client.get_index(self.index_name)
 
             # Step 1: Find all vector fields
@@ -738,7 +743,10 @@ class AzureAISearchContextProvider(ContextProvider):
             search_params["semantic_configuration_name"] = self.semantic_configuration_name
             search_params["query_caption"] = QueryCaptionType.EXTRACTIVE
 
-        # Execute search
+        # Execute search (search client is guaranteed to exist for semantic mode)
+        if not self._search_client:
+            raise RuntimeError("Search client is not initialized. This should not happen in semantic mode.")
+
         results = await self._search_client.search(**search_params)  # type: ignore[reportUnknownVariableType]
 
         # Format results with citations
@@ -793,6 +801,8 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("azure_openai_resource_url is required when creating Knowledge Base from index")
         if not self.azure_openai_deployment_name:
             raise ValueError("model_deployment_name is required when creating Knowledge Base from index")
+        if not self.index_name:
+            raise ValueError("index_name is required when creating Knowledge Base from index")
 
         # Step 1: Create or get knowledge source from index
         knowledge_source_name = f"{self.index_name}-source"
