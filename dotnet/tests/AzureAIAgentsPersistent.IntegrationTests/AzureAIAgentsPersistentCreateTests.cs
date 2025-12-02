@@ -280,9 +280,9 @@ public class AzureAIAgentsPersistentCreateTests
         while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
         {
             PersistentAgentsVectorStore vectorStore = await client.VectorStores.GetVectorStoreAsync(vectorStoreId);
-            string status = vectorStore.Status.ToString();
+            VectorStoreStatus status = vectorStore.Status;
 
-            if (status.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+            if (status == VectorStoreStatus.Completed)
             {
                 // Check if any files failed during indexing
                 if (vectorStore.FileCounts.Failed > 0)
@@ -293,7 +293,7 @@ public class AzureAIAgentsPersistentCreateTests
                 return;  // ✅ Ready!
             }
 
-            if (status.Equals("Expired", StringComparison.OrdinalIgnoreCase))
+            if (status == VectorStoreStatus.Expired)
             {
                 throw new InvalidOperationException("Vector store has expired");
             }
