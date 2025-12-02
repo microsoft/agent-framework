@@ -556,6 +556,43 @@ def test_chat_message_with_chatrole_instance():
     assert m.text == "hi"
 
 
+# region ChatMessage __str__ and __repr__
+
+
+def test_chat_message_str_with_text():
+    """Test __str__ returns text when TextContent is present."""
+    msg = ChatMessage(role=Role.ASSISTANT, text="Hello world")
+    assert str(msg) == "Hello world"
+
+
+def test_chat_message_str_with_tool_call_only():
+    """Test __str__ returns meaningful output for tool-call-only messages, not repr."""
+    msg = ChatMessage(
+        role=Role.ASSISTANT,
+        contents=[FunctionCallContent(call_id="call_123", name="search_database", arguments='{"query": "test"}')],
+    )
+    result = str(msg)
+    assert "object at" not in result
+    assert "search_database" in result
+
+
+def test_chat_message_str_empty():
+    """Test __str__ returns empty string for empty message."""
+    msg = ChatMessage(role=Role.ASSISTANT, contents=[])
+    assert str(msg) == ""
+
+
+def test_chat_message_repr():
+    """Test __repr__ returns debug-friendly representation."""
+    msg = ChatMessage(role=Role.ASSISTANT, text="Hello")
+    result = repr(msg)
+    assert "ChatMessage(" in result
+    assert "Hello" in result
+
+
+# endregion ChatMessage __str__ and __repr__
+
+
 # region ChatResponse
 
 

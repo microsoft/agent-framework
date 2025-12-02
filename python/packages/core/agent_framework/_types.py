@@ -2122,6 +2122,77 @@ class ChatMessage(SerializationMixin):
         """
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
+    def __str__(self) -> str:
+        """Return a human-readable string representation.
+
+        This method ensures that str(ChatMessage) never returns the default
+        Python repr, which is meaningless to users and causes display bugs.
+
+        When the message contains text content, returns the text.
+        When the message contains only tool calls, returns a formatted summary.
+        Otherwise returns an empty string.
+
+        Returns:
+            A human-readable string representation of the message content.
+        """
+        # First, try the standard text property (TextContent only)
+        # Use strip() to handle edge case of whitespace-only TextContent
+        if self.text.strip():
+            return self.text
+
+        # If no text, format tool calls for readability
+        if self.contents:
+            parts: list[str] = []
+            for content in self.contents:
+                if isinstance(content, TextContent) and content.text:
+                    parts.append(content.text)
+                elif isinstance(content, FunctionCallContent):
+                    # Format: [Calling function_name(...)]
+                    args_preview = ""
+                    if content.arguments:
+                        if isinstance(content.arguments, str):
+                            args_preview = content.arguments[:50]
+                            if len(content.arguments) > 50:
+                                args_preview += "..."
+                        elif isinstance(content.arguments, dict):
+                            args_str = str(content.arguments)
+                            args_preview = args_str[:50]
+                            if len(args_str) > 50:
+                                args_preview += "..."
+                    parts.append(f"[Calling {content.name}({args_preview})]")
+                elif isinstance(content, FunctionResultContent):
+                    # Format: [Result: preview...]
+                    result_str = str(content.result) if content.result is not None else ""
+                    result_preview = result_str[:100]
+                    if len(result_str) > 100:
+                        result_preview += "..."
+                    parts.append(f"[Result: {result_preview}]")
+
+            if parts:
+                return " ".join(parts)
+
+        # Fallback: empty string (NEVER repr)
+        return ""
+
+    def __repr__(self) -> str:
+        """Return a detailed representation for debugging.
+
+        Returns:
+            A string with class name, role, text preview, content count, and author.
+        """
+        text_preview = ""
+        if self.text:
+            text_preview = self.text[:50]
+            if len(self.text) > 50:
+                text_preview += "..."
+
+        return (
+            f"ChatMessage(role={self.role!r}, "
+            f"text={text_preview!r}, "
+            f"contents=[{len(self.contents)} items], "
+            f"author_name={self.author_name!r})"
+        )
+
 
 def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
