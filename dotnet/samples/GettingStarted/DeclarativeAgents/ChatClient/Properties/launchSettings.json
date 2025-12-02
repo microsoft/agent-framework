@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "GetWeather": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\chatclient\\GetWeather.yaml \"What is the weather in Cambridge, MA in °C?\""
+    },
+    "Assistant": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\..\\..\\..\\..\\..\\agent-samples\\chatclient\\Assistant.yaml \"Tell me a joke about a pirate in Italian.\""
+    }
+  }
+}

@@ -3,9 +3,13 @@ name: Assistant
 description: Helpful assistant
 instructions: You are a helpful assistant. You answer questions in the language specified by the user. You return your answers in a JSON format.
 model:
+    id: gpt-4.1-mini
     options:
         temperature: 0.9
         topP: 0.95
+    connection:
+        kind: Remote
+        endpoint: =Env.AZURE_FOUNDRY_PROJECT_ENDPOINT
 outputSchema:
     properties:
         language:
