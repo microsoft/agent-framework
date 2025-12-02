@@ -1274,7 +1274,7 @@ class MessageMapper:
                             "trace_type": "magentic_orchestrator",
                             "orchestrator_id": orchestrator_id,
                             "kind": kind,
-                            "text": text or str(message),
+                            "text": text or "",
                             "timestamp": datetime.now().isoformat(),
                         },
                         span_id=f"magentic_orch_{uuid4().hex[:8]}",
