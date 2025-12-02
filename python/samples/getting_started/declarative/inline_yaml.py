@@ -4,9 +4,21 @@ import asyncio
 from agent_framework.declarative import AgentFactory
 from azure.identity.aio import AzureCliCredential
 
+"""
+This sample shows how to create an agent using an inline YAML string rather than a file.
+
+It uses a Azure AI Client so it needs the credential to be passed into the AgentFactory.
+
+Prerequisites:
+- `pip install agent-framework-azure-ai agent-framework-declarative --pre`
+- Set the following environment variables in a .env file or your environment:
+    - AZURE_AI_PROJECT_ENDPOINT
+    - AZURE_OPENAI_MODEL
+"""
+
 
 async def main():
-    """Create an agent from a declarative yaml specification and run it."""
+    """Create an agent from a declarative YAML specification and run it."""
     yaml_definition = """kind: Prompt
 name: DiagnosticAgent
 displayName: Diagnostic Assistant

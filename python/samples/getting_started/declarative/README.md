@@ -47,7 +47,7 @@ Shows how to create an agent that can search and retrieve information from Micro
 
 **Key concepts**: Azure AI Foundry integration, MCP server usage, async patterns, resource management
 
-### 3. **Inline Yaml Agent** ([`inline_yaml.py`](./inline_yaml.py))
+### 3. **Inline YAML Agent** ([`inline_yaml.py`](./inline_yaml.py))
 
 Shows how to create an agent using an inline YAML string rather than a file.
 
@@ -55,7 +55,7 @@ Shows how to create an agent using an inline YAML string rather than a file.
 
 **Requirements**: `pip install agent-framework-azure-ai --pre`
 
-**Key concepts**: Inline yaml definition.
+**Key concepts**: Inline YAML definition.
 
 ### 4. **Azure OpenAI Responses Agent** ([`azure_openai_responses_agent.py`](./azure_openai_responses_agent.py))
 
