@@ -149,9 +149,9 @@ class WorkflowGraphValidator:
         # check only when there is at least one edge group defined.
         if self._edges:  # Only evaluate when the workflow defines edges
             edge_executor_ids: set[str] = set()
-            for _e in self._edges:
-                edge_executor_ids.add(_e.source_id)
-                edge_executor_ids.add(_e.target_id)
+            for e in self._edges:
+                edge_executor_ids.add(e.source_id)
+                edge_executor_ids.add(e.target_id)
             if start_executor_id not in edge_executor_ids:
                 raise GraphConnectivityError(
                     f"Start executor '{start_executor_id}' is not present in the workflow graph"

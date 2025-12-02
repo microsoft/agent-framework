@@ -52,6 +52,7 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
