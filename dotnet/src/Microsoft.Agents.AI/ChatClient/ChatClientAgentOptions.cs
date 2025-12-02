@@ -128,6 +128,11 @@ public class ChatClientAgentOptions
         /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
         /// </summary>
         public JsonSerializerOptions? JsonSerializerOptions { get; set; }
+
+        /// <summary>
+        /// Gets or sets the collection of features provided by the caller and middleware.
+        /// </summary>
+        public IAgentFeatureCollection? Features { get; set; }
     }
 
     /// <summary>
@@ -145,5 +150,10 @@ public class ChatClientAgentOptions
         /// Gets or sets the JSON serialization options to use when deserializing the <see cref="SerializedState"/>.
         /// </summary>
         public JsonSerializerOptions? JsonSerializerOptions { get; set; }
+
+        /// <summary>
+        /// Gets or sets the collection of features provided by the caller and middleware.
+        /// </summary>
+        public IAgentFeatureCollection? Features { get; set; }
     }
 }
