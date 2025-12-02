@@ -19,15 +19,15 @@ public sealed class AGUIAgentTests
     public async Task RunAsync_AggregatesStreamingUpdates_ReturnsCompleteMessagesAsync()
     {
         // Arrange
-        using HttpClient httpClient = this.CreateMockHttpClient(new BaseEvent[]
-        {
+        using HttpClient httpClient = this.CreateMockHttpClient(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new TextMessageStartEvent { MessageId = "msg1", Role = AGUIRoles.Assistant },
             new TextMessageContentEvent { MessageId = "msg1", Delta = "Hello" },
             new TextMessageContentEvent { MessageId = "msg1", Delta = " World" },
             new TextMessageEndEvent { MessageId = "msg1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        });
+        ]);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
         AIAgent agent = chatClient.CreateAIAgent(instructions: null, name: "agent1", description: "Test agent", tools: []);
@@ -182,16 +182,16 @@ public sealed class AGUIAgentTests
     {
         // Arrange
         var handler = new TestDelegatingHandler();
-        handler.AddResponseWithCapture(new BaseEvent[]
-        {
+        handler.AddResponseWithCapture(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
-        });
-        handler.AddResponseWithCapture(new BaseEvent[]
-        {
+        ]);
+        handler.AddResponseWithCapture(
+        [
             new RunStartedEvent { ThreadId = "thread1", RunId = "run2" },
             new RunFinishedEvent { ThreadId = "thread1", RunId = "run2" }
-        });
+        ]);
         using HttpClient httpClient = new(handler);
 
         var chatClient = new AGUIChatClient(httpClient, "http://localhost/agent", null, AGUIJsonSerializerContext.Default.Options);
@@ -1584,7 +1584,7 @@ public sealed class AGUIAgentTests
         Assert.Equal("application/json", dataContent.MediaType);
 
         string jsonText = System.Text.Encoding.UTF8.GetString(dataContent.Data.ToArray());
-        JsonElement deserializedState = JsonSerializer.Deserialize<JsonElement>(jsonText);
+        JsonElement deserializedState = JsonElement.Parse(jsonText);
         Assert.Equal("abc123", deserializedState.GetProperty("sessionId").GetString());
         Assert.Equal(5, deserializedState.GetProperty("step").GetInt32());
     }
@@ -1593,7 +1593,7 @@ public sealed class AGUIAgentTests
 internal sealed class TestDelegatingHandler : DelegatingHandler
 {
     private readonly Queue<Func<HttpRequestMessage, Task<HttpResponseMessage>>> _responseFactories = new();
-    private readonly List<string> _capturedRunIds = new();
+    private readonly List<string> _capturedRunIds = [];
 
     public IReadOnlyList<string> CapturedRunIds => this._capturedRunIds;
 
@@ -1701,7 +1701,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
         this.RequestWasMade = true;
 
         // Capture the state and message count from the request
-#if NET472 || NETSTANDARD2_0
+#if !NET
         string requestBody = await request.Content!.ReadAsStringAsync().ConfigureAwait(false);
 #else
         string requestBody = await request.Content!.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -1709,7 +1709,7 @@ internal sealed class StateCapturingTestDelegatingHandler : DelegatingHandler
         RunAgentInput? input = JsonSerializer.Deserialize(requestBody, AGUIJsonSerializerContext.Default.RunAgentInput);
         if (input != null)
         {
-            if (input.State.ValueKind != JsonValueKind.Undefined && input.State.ValueKind != JsonValueKind.Null)
+            if (input.State.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             {
                 this.CapturedState = input.State;
             }

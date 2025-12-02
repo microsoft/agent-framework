@@ -220,10 +220,10 @@ public sealed class PurviewClientTests : IDisposable
         var request = new ProtectionScopesRequest("test-user-id", "test-tenant-id")
         {
             Activities = ProtectionScopeActivities.UploadText,
-            Locations = new List<PolicyLocation>
-            {
+            Locations =
+            [
                 new("microsoft.graph.policyLocationApplication", "app-123")
-            }
+            ]
         };
 
         var expectedResponse = new ProtectionScopesResponse
@@ -233,10 +233,10 @@ public sealed class PurviewClientTests : IDisposable
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
-                    Locations = new List<PolicyLocation>
-                    {
+                    Locations =
+                    [
                         new ("microsoft.graph.policyLocationApplication", "app-123")
-                    }
+                    ]
                 }
             }
         };
@@ -502,7 +502,7 @@ public sealed class PurviewClientTests : IDisposable
         };
 
         return new ContentToProcess(
-            new List<ProcessContentMetadataBase> { metadata },
+            [metadata],
             activityMetadata,
             deviceMetadata,
             integratedAppMetadata,
@@ -554,9 +554,10 @@ public sealed class PurviewClientTests : IDisposable
                 throw new HttpRequestException("Simulated network error");
             }
 
-            var response = new HttpResponseMessage(this.StatusCodeToReturn);
-
-            response.Content = new StringContent(this.ResponseToReturn ?? string.Empty, Encoding.UTF8, "application/json");
+            var response = new HttpResponseMessage(this.StatusCodeToReturn)
+            {
+                Content = new StringContent(this.ResponseToReturn ?? string.Empty, Encoding.UTF8, "application/json")
+            };
 
             if (!string.IsNullOrEmpty(this.ETagToReturn))
             {

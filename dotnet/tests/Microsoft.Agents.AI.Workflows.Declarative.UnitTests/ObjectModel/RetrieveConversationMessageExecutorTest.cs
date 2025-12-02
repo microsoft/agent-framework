@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -41,7 +42,8 @@ public sealed class RetrieveConversationMessageExecutorTest(ITestOutputHelper ou
         await this.ExecuteAsync(action);
 
         // Assert
-        ChatMessage testMessage = mockAgentProvider.TestChatMessage ?? new ChatMessage();
+        ChatMessage? testMessage = mockAgentProvider.TestMessages?.FirstOrDefault();
+        Assert.NotNull(testMessage);
         VerifyModel(model, action);
         this.VerifyState(variableName, testMessage.ToRecord());
     }

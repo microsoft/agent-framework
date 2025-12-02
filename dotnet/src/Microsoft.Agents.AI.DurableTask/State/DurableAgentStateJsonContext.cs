@@ -37,6 +37,4 @@ namespace Microsoft.Agents.AI.DurableTask.State;
 [JsonSerializable(typeof(TimeSpan))]
 [JsonSerializable(typeof(DateTime))]
 [JsonSerializable(typeof(DateTimeOffset))]
-internal sealed partial class DurableAgentStateJsonContext : JsonSerializerContext
-{
-}
+internal sealed partial class DurableAgentStateJsonContext : JsonSerializerContext;
