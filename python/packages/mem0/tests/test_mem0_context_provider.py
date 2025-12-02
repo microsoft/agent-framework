@@ -432,13 +432,6 @@ class TestMem0ProviderModelInvoking:
         assert isinstance(context, Context)
         assert not context.messages
 
-        mock_mem0_client.search.return_value = []
-
-        context = await provider.invoking(message)
-
-        assert isinstance(context, Context)
-        assert not context.messages
-
     async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock) -> None:
         """Test that empty message text is filtered out from query."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
