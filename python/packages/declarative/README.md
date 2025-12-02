@@ -1120,6 +1120,7 @@ model:
     endpoint: https://myendpoint.com
 """
 
+# factory is assumed to be defined as shown in a previous example
 agent = factory.create_agent_from_yaml(yaml_content)
 ```
 
