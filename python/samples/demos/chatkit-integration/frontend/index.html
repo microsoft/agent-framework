@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ChatKit + Agent Framework Demo</title>
+    <!--
+      IMPORTANT: The ChatKit UI library is loaded from OpenAI's CDN and cannot be self-hosted.
+      This requires internet connectivity and is not suitable for air-gapped environments.
+      See: https://github.com/openai/chatkit-js/issues/57
+    -->
     <script src="https://cdn.platform.openai.com/deployments/chatkit/chatkit.js"></script>
     <style>
       * {
