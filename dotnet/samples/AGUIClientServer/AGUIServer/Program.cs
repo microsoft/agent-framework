@@ -45,6 +45,6 @@ var agent = new AzureOpenAIClient(
         ]);
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/", agent);
+app.MapAGUI(agent, "/");
 
 await app.RunAsync();
