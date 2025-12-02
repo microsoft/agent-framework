@@ -517,7 +517,9 @@ approvalMode:
 | `kind: never` | `approval_mode="never_require"` |
 | `kind: always` | `approval_mode="always_require"` |
 | `kind: toolSpecify` | `approval_mode={"always_require_approval": [...], "never_require_approval": [...]}` |
+| `kind: onFirstUse` | *Not yet implemented / not supported* |
 
+> **Note:** `kind: onFirstUse` is mentioned as a possible value, but is not currently implemented in the Python backend. Using this value will result in an error or be ignored.
 **Example 1: Microsoft Learn**
 ```yaml
 tools:
