@@ -32,7 +32,7 @@ internal sealed class RunAgentInput
     [JsonPropertyName("context")]
     public AGUIContextItem[] Context { get; set; } = [];
 
-    [JsonPropertyName("forwardedProperties")]
+    [JsonPropertyName("forwardedProps")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public JsonElement ForwardedProperties { get; set; }
 }
