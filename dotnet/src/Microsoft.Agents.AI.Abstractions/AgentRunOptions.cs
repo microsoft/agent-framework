@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -32,6 +33,7 @@ public class AgentRunOptions
         _ = Throw.IfNull(options);
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
+        this.AdditionalProperties = options.AdditionalProperties?.Clone();
     }
 
     /// <summary>
@@ -47,7 +49,7 @@ public class AgentRunOptions
     /// can be polled for completion by obtaining the token from the <see cref="AgentRunResponse.ContinuationToken"/> property
     /// and passing it via this property on subsequent calls to <see cref="AIAgent.RunAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>.
     /// </remarks>
-    public object? ContinuationToken { get; set; }
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether the background responses are allowed.
@@ -74,4 +76,18 @@ public class AgentRunOptions
     /// </para>
     /// </remarks>
     public bool? AllowBackgroundResponses { get; set; }
+
+    /// <summary>
+    /// Gets or sets additional properties associated with these options.
+    /// </summary>
+    /// <value>
+    /// An <see cref="AdditionalPropertiesDictionary"/> containing custom properties,
+    /// or <see langword="null"/> if no additional properties are present.
+    /// </value>
+    /// <remarks>
+    /// Additional properties provide a way to include custom metadata or provider-specific
+    /// information that doesn't fit into the standard options schema. This is useful for
+    /// preserving implementation-specific details or extending the options with custom data.
+    /// </remarks>
+    public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }

@@ -15,7 +15,7 @@ trigger:
     - kind: SetVariable
       id: set_user_name
       variable: Global.UserName
-      value: =Env.USERNAME
+      value: TestAgent
 
     # Respond with input
     - kind: SendActivity

@@ -1,0 +1,32 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "msg_68fb9abf14a08195b16bb05eab82cf9d04cbf45151194822",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the weather like today?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "id": "msg_68fb9abf14d08195af5037cc3048b1c704cbf45151194822",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Tell me a joke!"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "first_id": "msg_68fb9abf14a08195b16bb05eab82cf9d04cbf45151194822",
+  "has_more": false,
+  "last_id": "msg_68fb9abf14d08195af5037cc3048b1c704cbf45151194822"
+}

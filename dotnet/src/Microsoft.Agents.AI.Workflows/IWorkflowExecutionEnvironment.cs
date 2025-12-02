@@ -12,14 +12,15 @@ namespace Microsoft.Agents.AI.Workflows;
 public interface IWorkflowExecutionEnvironment
 {
     /// <summary>
-    /// Initiates a streaming run of the specified workflow without sending any initial input.
+    /// Initiates a streaming run of the specified workflow without sending any initial input. Note that the starting
+    /// <see cref="Executor"/> will not be invoked until an input message is received.
     /// </summary>
     /// <param name="workflow">The workflow to execute. Cannot be null.</param>
     /// <param name="runId">An optional identifier for the run. If null, a new run identifier will be generated.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the streaming operation.</param>
     /// <returns>A ValueTask that represents the asynchronous operation. The result contains a StreamingRun object for accessing
     /// the streamed workflow output.</returns>
-    ValueTask<StreamingRun> StreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default);
+    ValueTask<StreamingRun> OpenStreamAsync(Workflow workflow, string? runId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Initiates an asynchronous streaming execution using the specified input.

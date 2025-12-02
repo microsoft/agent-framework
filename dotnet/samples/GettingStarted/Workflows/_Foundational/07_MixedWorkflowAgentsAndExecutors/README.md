@@ -138,7 +138,7 @@ I cannot process this request as it appears to contain unsafe content.
 
 ## What You'll Learn
 
-1. **How to mix executors and agents** - Understanding that both are treated as `ExecutorIsh` internally
+1. **How to mix executors and agents** - Understanding that both are treated as `ExecutorBinding` internally
 2. **When to use executors vs agents** - Executors for deterministic logic, agents for AI-powered decisions
 3. **How to process agent outputs** - Using executors to sync, format, or aggregate agent responses
 4. **Building complex pipelines** - Chaining multiple heterogeneous components together

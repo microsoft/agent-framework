@@ -63,11 +63,12 @@ def clean_conversation_for_handoff(conversation: list[ChatMessage]) -> list[Chat
 
         # Has tool content - only keep if it also has text
         if msg.text and msg.text.strip():
-            # Create fresh text-only message
+            # Create fresh text-only message while preserving additional_properties
             msg_copy = ChatMessage(
                 role=msg.role,
                 text=msg.text,
                 author_name=msg.author_name,
+                additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
             )
             cleaned.append(msg_copy)
 
@@ -184,6 +185,10 @@ class ParticipantRegistry:
     def is_registered(self, name: str) -> bool:
         """Check if a participant is registered."""
         return name in self._participant_entry_ids
+
+    def is_participant_registered(self, name: str) -> bool:
+        """Check if a participant is registered (alias for is_registered for compatibility)."""
+        return self.is_registered(name)
 
     def all_participants(self) -> set[str]:
         """Get all registered participant names."""

@@ -22,6 +22,51 @@ public partial class WorkflowBuilderSmokeTests
     }
 
     [Fact]
+    public void Test_Validation_FailsWhenUnboundExecutors()
+    {
+        Func<Workflow> act = () =>
+        {
+            return new WorkflowBuilder("start")
+                       .AddEdge(new NoOpExecutor("start"), "unbound")
+                       .Build();
+        };
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Test_Validation_FailsWhenUnreachableExecutors()
+    {
+        Func<Workflow> act = () =>
+        {
+            return new WorkflowBuilder("start")
+                       .BindExecutor(new NoOpExecutor("start"))
+                       .AddEdge(new NoOpExecutor("unreachable"), new NoOpExecutor("also-unreachable"))
+                       .Build();
+        };
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void Test_Validation_AddEdgesOutOfOrderDoesNotImpactReachability()
+    {
+        Workflow workflow = new WorkflowBuilder("start")
+                                .BindExecutor(new NoOpExecutor("start"))
+                                .AddEdge(new NoOpExecutor("not-unreachable"), new NoOpExecutor("also-not-unreachable"))
+                                .AddEdge("start", "not-unreachable")
+                                .Build();
+
+        workflow.StartExecutorId.Should().Be("start");
+
+        workflow.ExecutorBindings.Should().HaveCount(3);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings.Should().ContainKey("not-unreachable");
+        workflow.ExecutorBindings.Should().ContainKey("also-not-unreachable");
+
+        workflow.ExecutorBindings.Values.Should().AllSatisfy(binding => binding.ExecutorType.Should().Be<NoOpExecutor>());
+    }
+
+    [Fact]
     public void Test_LateBinding_Executor()
     {
         Workflow workflow = new WorkflowBuilder("start")
@@ -30,9 +75,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -45,9 +90,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
@@ -77,9 +122,9 @@ public partial class WorkflowBuilderSmokeTests
 
         workflow.StartExecutorId.Should().Be("start");
 
-        workflow.Registrations.Should().HaveCount(1);
-        workflow.Registrations.Should().ContainKey("start");
-        workflow.Registrations["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        workflow.ExecutorBindings.Should().HaveCount(1);
+        workflow.ExecutorBindings.Should().ContainKey("start");
+        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
     }
 
     [Fact]
