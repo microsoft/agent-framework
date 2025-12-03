@@ -28,6 +28,7 @@ export interface ExecutorNodeData extends Record<string, unknown> {
   isEndNode?: boolean;
   layoutDirection?: "LR" | "TB";
   onNodeClick?: (executorId: string, data: ExecutorNodeData) => void;
+  isStreaming?: boolean;
 }
 
 const getExecutorStateConfig = (state: ExecutorState) => {
@@ -72,6 +73,7 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
 
   const hasData = nodeData.inputData || nodeData.outputData || nodeData.error;
   const isRunning = nodeData.state === "running";
+  const shouldAnimate = isRunning && (nodeData.isStreaming ?? true); // Default to true for backwards compatibility
 
   // Determine handle positions based on layout direction
   const isVertical = nodeData.layoutDirection === "TB";
@@ -205,7 +207,7 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
                 {nodeData.name || nodeData.executorId}
               </h3>
               {isRunning && (
-                <Loader2 className="w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] animate-spin flex-shrink-0" />
+                <Loader2 className={`w-4 h-4 text-[#643FB2] dark:text-[#8B5CF6] ${shouldAnimate ? 'animate-spin' : ''} flex-shrink-0`} />
               )}
             </div>
             {nodeData.executorType && (

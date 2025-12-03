@@ -406,6 +406,32 @@ class TestMem0ProviderModelInvoking:
         assert isinstance(context, Context)
         assert not context.messages
 
+    async def test_model_invoking_function_approval_response_returns_none_instructions(
+        self, mock_mem0_client: AsyncMock
+    ) -> None:
+        """Test invoking with function approval response content messages returns context with None instructions."""
+        from agent_framework import FunctionApprovalResponseContent, FunctionCallContent
+
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+        function_call = FunctionCallContent(call_id="1", name="test_func", arguments='{"arg1": "value1"}')
+        message = ChatMessage(
+            role=Role.USER,
+            contents=[
+                FunctionApprovalResponseContent(
+                    id="approval_1",
+                    function_call=function_call,
+                    approved=True,
+                )
+            ],
+        )
+
+        mock_mem0_client.search.return_value = []
+
+        context = await provider.invoking(message)
+
+        assert isinstance(context, Context)
+        assert not context.messages
+
     async def test_model_invoking_filters_empty_message_text(self, mock_mem0_client: AsyncMock) -> None:
         """Test that empty message text is filtered out from query."""
         provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
