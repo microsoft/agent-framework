@@ -28,10 +28,6 @@ dependencies = [
     "botocore>=1.35.0,<2.0.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.3.0",
-]
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -90,5 +86,5 @@ mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_bedrock"
 test = "pytest --cov=agent_framework_bedrock --cov-report=term-missing:skip-covered tests"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
-build-backend = "flit_core.buildapi"
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 import asyncio
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from agent_framework import (
     AgentRunResponse,
@@ -14,7 +12,8 @@ from agent_framework import (
     ToolMode,
     ai_function,
 )
-from agent_framework_bedrock import BedrockChatClient
+
+from agent_framework.amazon import BedrockChatClient
 
 
 @ai_function

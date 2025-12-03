@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 import asyncio
 import json
 from collections import deque
@@ -9,14 +7,9 @@ from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequ
 from typing import Any, ClassVar
 from uuid import uuid4
 
-from boto3.session import Session as Boto3Session
-from botocore.client import BaseClient
-from botocore.config import Config as BotoConfig
-from pydantic import SecretStr, ValidationError
-
 from agent_framework import (
-    AIFunction,
     AGENT_FRAMEWORK_USER_AGENT,
+    AIFunction,
     BaseChatClient,
     ChatMessage,
     ChatOptions,
@@ -37,6 +30,10 @@ from agent_framework import (
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_observability
+from boto3.session import Session as Boto3Session
+from botocore.client import BaseClient
+from botocore.config import Config as BotoConfig
+from pydantic import SecretStr, ValidationError
 
 logger = get_logger("agent_framework.bedrock")
 
@@ -88,7 +85,7 @@ class BedrockChatClient(BaseChatClient):
         access_key: str | None = None,
         secret_key: str | None = None,
         session_token: str | None = None,
-        bedrock_runtime_client: BaseClient | None = None,
+        client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -107,16 +104,16 @@ class BedrockChatClient(BaseChatClient):
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to initialize Bedrock settings.", ex) from ex
 
-        if bedrock_runtime_client is None:
+        if client is None:
             session = boto3_session or self._create_session(settings)
-            bedrock_runtime_client = session.client(
+            client = session.client(
                 "bedrock-runtime",
                 region_name=settings.region,
                 config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
             )
 
         super().__init__(**kwargs)
-        self._bedrock_client = bedrock_runtime_client
+        self._bedrock_client = client
         self.model_id = settings.chat_model_id
         self.region = settings.region
 
@@ -172,8 +169,7 @@ class BedrockChatClient(BaseChatClient):
                 "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
             )
 
-        system_prompts = self._extract_system_prompts(messages)
-        conversation = self._convert_messages_to_bedrock_format(messages)
+        system_prompts, conversation = self._prepare_bedrock_messages(messages)
         if not conversation:
             raise ServiceInitializationError("At least one non-system message is required for Bedrock requests.")
 
@@ -185,10 +181,9 @@ class BedrockChatClient(BaseChatClient):
             payload["system"] = system_prompts
 
         inference_config: dict[str, Any] = {}
-        if chat_options.max_tokens is not None:
-            inference_config["maxTokens"] = chat_options.max_tokens
-        else:
-            inference_config["maxTokens"] = DEFAULT_MAX_TOKENS
+        inference_config["maxTokens"] = (
+            chat_options.max_tokens if chat_options.max_tokens is not None else DEFAULT_MAX_TOKENS
+        )
         if chat_options.temperature is not None:
             inference_config["temperature"] = chat_options.temperature
         if chat_options.top_p is not None:
@@ -212,25 +207,23 @@ class BedrockChatClient(BaseChatClient):
             payload.update(kwargs)
         return payload
 
-    def _extract_system_prompts(self, messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
+    def _prepare_bedrock_messages(
+        self, messages: Sequence[ChatMessage]
+    ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
         prompts: list[dict[str, str]] = []
-        for message in messages:
-            if message.role != Role.SYSTEM:
-                continue
-            text_value = self._gather_text_from_message(message)
-            if text_value:
-                prompts.append({"text": text_value})
-        return prompts
-
-    def _convert_messages_to_bedrock_format(self, messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
             if message.role == Role.SYSTEM:
+                text_value = self._gather_text_from_message(message)
+                if text_value:
+                    prompts.append({"text": text_value})
                 continue
+
             content_blocks = self._convert_message_to_content_blocks(message)
             if not content_blocks:
                 continue
+
             role = ROLE_MAP.get(message.role, "user")
             if role == "assistant":
                 pending_tool_use_ids = deque(
@@ -245,8 +238,10 @@ class BedrockChatClient(BaseChatClient):
                     continue
             else:
                 pending_tool_use_ids.clear()
+
             conversation.append({"role": role, "content": content_blocks})
-        return conversation
+
+        return prompts, conversation
 
     def _align_tool_results_with_pending(
         self, content_blocks: list[dict[str, Any]], pending_tool_use_ids: deque[str]
@@ -255,7 +250,9 @@ class BedrockChatClient(BaseChatClient):
             return content_blocks
         if not pending_tool_use_ids:
             # No pending tool calls; drop toolResult blocks to avoid Bedrock validation errors
-            return [block for block in content_blocks if not (isinstance(block, MutableMapping) and "toolResult" in block)]
+            return [
+                block for block in content_blocks if not (isinstance(block, MutableMapping) and "toolResult" in block)
+            ]
 
         aligned_blocks: list[dict[str, Any]] = []
         pending = deque(pending_tool_use_ids)
@@ -437,7 +434,7 @@ class BedrockChatClient(BaseChatClient):
     def _parse_message_contents(self, content_blocks: Sequence[MutableMapping[str, Any]]) -> list[Any]:
         contents: list[Any] = []
         for block in content_blocks:
-            if (text_value := block.get("text")):
+            if text_value := block.get("text"):
                 contents.append(TextContent(text=text_value, raw_representation=block))
                 continue
             if (json_value := block.get("json")) is not None:

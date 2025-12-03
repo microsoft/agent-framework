@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -25,7 +27,7 @@ class _WeatherArgs(BaseModel):
 def _build_client() -> BedrockChatClient:
     fake_runtime = MagicMock()
     fake_runtime.converse.return_value = {}
-    return BedrockChatClient(model_id="test-model", bedrock_runtime_client=fake_runtime)
+    return BedrockChatClient(model_id="test-model", client=fake_runtime)
 
 
 def _dummy_weather(location: str) -> str:  # pragma: no cover - helper

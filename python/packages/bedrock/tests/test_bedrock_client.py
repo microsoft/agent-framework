@@ -1,12 +1,14 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
 import pytest
-
 from agent_framework import ChatMessage, ChatOptions, Role, TextContent
 from agent_framework.exceptions import ServiceInitializationError
+
 from agent_framework_bedrock import BedrockChatClient
 
 
@@ -36,7 +38,7 @@ def test_get_response_invokes_bedrock_runtime() -> None:
     client = BedrockChatClient(
         model_id="amazon.titan-text",
         region="us-west-2",
-        bedrock_runtime_client=stub,
+        client=stub,
     )
 
     messages = [
@@ -58,7 +60,7 @@ def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
         model_id="amazon.titan-text",
         region="us-west-2",
-        bedrock_runtime_client=_StubBedrockRuntime(),
+        client=_StubBedrockRuntime(),
     )
 
     messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="Only system text")])]
