@@ -112,28 +112,30 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     {
         Throw.IfNull(context);
 
-        // Only add messages to the recent messages queue if the invocation succeeded
-        if (context.InvokeException is null)
+        // Don't add messages to the recent messages queue if the invocation failed
+        if (context.InvokeException is not null)
         {
-            // Add the request and response messages to the recent messages queue
-            foreach (var message in context.RequestMessages)
+            return default;
+        }
+
+        // Add the request and response messages to the recent messages queue
+        foreach (var message in context.RequestMessages)
+        {
+            this._recentMessages.Enqueue(message);
+        }
+
+        if (context.ResponseMessages is not null)
+        {
+            foreach (var message in context.ResponseMessages)
             {
                 this._recentMessages.Enqueue(message);
             }
+        }
 
-            if (context.ResponseMessages is not null)
-            {
-                foreach (var message in context.ResponseMessages)
-                {
-                    this._recentMessages.Enqueue(message);
-                }
-            }
-
-            // If there are more messages than the configured limit, remove the oldest ones
-            while (this._recentMessages.Count > this._options.NumberOfRecentMessagesInContext)
-            {
-                this._recentMessages.TryDequeue(out _);
-            }
+        // If there are more messages than the configured limit, remove the oldest ones
+        while (this._recentMessages.Count > this._options.NumberOfRecentMessagesInContext)
+        {
+            this._recentMessages.TryDequeue(out _);
         }
 
         return default;
