@@ -59,13 +59,13 @@ public sealed partial class ChatClientAgent : AIAgent
               chatClient,
               new ChatClientAgentOptions
               {
-                  Name = name,
-                  Description = description,
-                  Instructions = instructions,
-                  ChatOptions = tools is null ? null : new ChatOptions
+                  ChatOptions = (tools is null && string.IsNullOrWhiteSpace(instructions)) ? null : new ChatOptions
                   {
                       Tools = tools,
-                  }
+                      Instructions = instructions
+                  },
+                  Name = name,
+                  Description = description
               },
               loggerFactory,
               services)
@@ -141,7 +141,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// These instructions are typically provided to the AI model as system messages to establish
     /// the context and expected behavior for the agent's responses.
     /// </remarks>
-    public string? Instructions => this._agentOptions?.Instructions;
+    public string? Instructions => this._agentOptions?.ChatOptions?.Instructions;
 
     /// <summary>
     /// Gets of the default <see cref="ChatOptions"/> used by the agent.
@@ -492,7 +492,6 @@ public sealed partial class ChatClientAgent : AIAgent
         requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
         requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
         requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
-        requestChatOptions.Instructions ??= this._agentOptions.ChatOptions.Instructions;
         requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
@@ -502,6 +501,13 @@ public sealed partial class ChatClientAgent : AIAgent
         requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
         requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
         requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+
+        // Merge instructions by concatenating them if both are present.
+        requestChatOptions.Instructions = !string.IsNullOrWhiteSpace(requestChatOptions.Instructions) && !string.IsNullOrWhiteSpace(this.Instructions)
+            ? $"{this.Instructions}\n{requestChatOptions.Instructions}"
+            : (!string.IsNullOrWhiteSpace(requestChatOptions.Instructions)
+            ? requestChatOptions.Instructions
+            : this.Instructions);
 
         // Merge only the additional properties from the agent if they are not already set in the request options.
         if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
@@ -683,12 +689,6 @@ public sealed partial class ChatClientAgent : AIAgent
                 The {nameof(chatOptions.ConversationId)} provided via {nameof(this.ChatOptions)} is different to the id of the provided {nameof(AgentThread)}.
                 Only one id can be used for a run.
                 """);
-        }
-
-        if (!string.IsNullOrWhiteSpace(this.Instructions))
-        {
-            chatOptions ??= new();
-            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? this.Instructions : $"{this.Instructions}\n{chatOptions.Instructions}";
         }
 
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.

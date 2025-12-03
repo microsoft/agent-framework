@@ -5,13 +5,20 @@ import os
 import time
 import argparse
 import pandas as pd
+import openai
 from typing import Any
 from dotenv import load_dotenv
+from openai.types.eval_create_params import DataSourceConfigCustom
+from openai.types.evals.create_eval_jsonl_run_data_source_param import (
+    CreateEvalJSONLRunDataSourceParam,
+    SourceFileContent,
+    SourceFileContentContent,
+)
 
 from agent_framework import ChatAgent, ChatMessage
 from agent_framework.azure import AzureOpenAIChatClient
+from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
-from azure.ai.evaluation import GroundednessEvaluator, AzureOpenAIModelConfiguration
 
 """
 Self-Reflection LLM Runner
@@ -41,30 +48,96 @@ DEFAULT_AGENT_MODEL = "gpt-4.1"
 DEFAULT_JUDGE_MODEL = "gpt-4.1"
 
 
-def create_groundedness_evaluator(judge_model: str) -> GroundednessEvaluator:
-    """
-    Create a groundedness evaluator.
+def create_openai_client():
+    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    credential = AzureCliCredential()
+    project_client = AIProjectClient(endpoint=endpoint, credential=credential)
+    return project_client.get_openai_client()
 
-    Args:
-        judge_model: Model deployment name for evaluation
-    Returns:
-        Configured GroundednessEvaluator
-    """
-    judge_model_config = AzureOpenAIModelConfiguration(
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        api_version="2024-12-01-preview",
-        azure_deployment=judge_model,
+
+def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCreateResponse:
+    print("Creating Eval")
+    data_source_config = DataSourceConfigCustom({
+        "type": "custom",
+        "item_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "response": {"type": "string"},
+                "context": {"type": "string"},
+            },
+            "required": [],
+        },
+        "include_sample_schema": True,
+    })
+
+    testing_criteria = [{
+        "type": "azure_ai_evaluator",
+        "name": "groundedness",
+        "evaluator_name": "builtin.groundedness",
+        "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}", "context": "{{item.context}}"},
+        "initialization_parameters": {"deployment_name": f"{judge_model}"},
+    }]
+
+    return client.evals.create(
+        name="Eval",
+        data_source_config=data_source_config,
+        testing_criteria=testing_criteria,  # type: ignore
     )
-    return GroundednessEvaluator(model_config=judge_model_config)
+
+
+def run_eval(
+        client: openai.OpenAI,
+        eval_object: openai.types.EvalCreateResponse,
+        query: str,
+        response: str,
+        context: str,
+):
+    eval_run_object = client.evals.runs.create(
+        eval_id=eval_object.id,
+        name="inline_data_run",
+        metadata={"team": "eval-exp", "scenario": "inline-data-v1"},
+        data_source=CreateEvalJSONLRunDataSourceParam(
+            type="jsonl",
+            source=SourceFileContent(
+                type="file_content",
+                content=[
+                    SourceFileContentContent(
+                        item={
+                            "query": query,
+                            "context": context,
+                            "response": response,
+                        }
+                    ),
+                ],
+            ),
+        ),
+    )
+
+    eval_run_response = client.evals.runs.retrieve(run_id=eval_run_object.id, eval_id=eval_object.id)
+
+    MAX_RETRY = 10
+    for _ in range(0, MAX_RETRY):
+        run = client.evals.runs.retrieve(run_id=eval_run_response.id, eval_id=eval_object.id)
+        if run.status == "failed":
+            print(f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}")
+            continue
+        elif run.status == "completed":
+            output_items = list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
+            return output_items
+        time.sleep(5)
+
+    print("Eval result retrieval timeout.")
+    return None
 
 
 async def execute_query_with_self_reflection(
     *,
+    client: openai.OpenAI,
     agent: ChatAgent,
+    eval_object: openai.types.EvalCreateResponse,
     full_user_query: str,
     context: str,
-    evaluator: GroundednessEvaluator,
     max_self_reflections: int = 3,
 ) -> dict[str, Any]:
     """
@@ -108,16 +181,19 @@ async def execute_query_with_self_reflection(
 
         # Evaluate groundedness
         start_time_eval = time.time()
-        groundedness_res = evaluator(
+        eval_run_output_items = run_eval(
+            client=client,
+            eval_object=eval_object,
             query=full_user_query,
             response=agent_response,
-            context=context
+            context=context,
         )
+        if eval_run_output_items is None:
+            print(f"  ⚠️ Groundedness evaluation failed (timeout or error) for iteration {i+1}.")
+            continue
+        score = eval_run_output_items[0].results[0].score
         end_time_eval = time.time()
         total_groundedness_eval_time += (end_time_eval - start_time_eval)
-
-        feedback = groundedness_res['groundedness_reason']
-        score = int(groundedness_res['groundedness'])
 
         # Store score in structured format
         iteration_scores.append(score)
@@ -144,11 +220,7 @@ async def execute_query_with_self_reflection(
         # Request improvement
         reflection_prompt = (
             f"The groundedness score of your response is {score}/{max_score}. "
-            f"Explanation for score: [{feedback}]. "
             f"Reflect on your answer and improve it to get the maximum score of {max_score} "
-            f"considering the explanation. Now please provide an updated response, taking into "
-            f"account the feedback, but make your answer sound as if it was your first response. "
-            f"Don't refer to the feedback in your answer."
         )
         messages.append(ChatMessage(role="user", text=reflection_prompt))
     
@@ -226,10 +298,11 @@ async def run_self_reflection_batch(
     
     # Configure clients
     print(f"Configuring Azure OpenAI client...")
-    
-    print(f"Creating groundedness evaluator with model: {judge_model}")
-    evaluator = create_groundedness_evaluator(judge_model)
-    
+    client = create_openai_client()
+
+    # Create Eval
+    eval_object = create_eval(client=client, judge_model=judge_model)
+        
     # Process each prompt
     print(f"Max self-reflections: {max_self_reflections}\n")
     
@@ -239,10 +312,11 @@ async def run_self_reflection_batch(
         
         try:
             result = await execute_query_with_self_reflection(
+                client=client,
                 agent=agent,
+                eval_object=eval_object,
                 full_user_query=row['full_prompt'],
                 context=row['context_document'],
-                evaluator=evaluator,
                 max_self_reflections=max_self_reflections,
             )
 

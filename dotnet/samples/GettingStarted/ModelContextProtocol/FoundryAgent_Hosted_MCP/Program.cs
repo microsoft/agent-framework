@@ -34,9 +34,9 @@ AIAgent agent = await persistentAgentsClient.CreateAIAgentAsync(
     options: new()
     {
         Name = "MicrosoftLearnAgent",
-        Instructions = "You answer questions by searching the Microsoft Learn content only.",
         ChatOptions = new()
         {
+            Instructions = "You answer questions by searching the Microsoft Learn content only.",
             Tools = [mcpTool]
         },
     });
@@ -67,9 +67,9 @@ AIAgent agentWithRequiredApproval = await persistentAgentsClient.CreateAIAgentAs
     options: new()
     {
         Name = "MicrosoftLearnAgentWithApproval",
-        Instructions = "You answer questions by searching the Microsoft Learn content only.",
         ChatOptions = new()
         {
+            Instructions = "You answer questions by searching the Microsoft Learn content only.",
             Tools = [mcpToolWithApproval]
         },
     });

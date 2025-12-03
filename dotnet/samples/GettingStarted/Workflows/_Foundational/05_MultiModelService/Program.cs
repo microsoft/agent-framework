@@ -12,19 +12,16 @@ const string Topic = "Goldendoodles make the best pets.";
 IChatClient aws = new AmazonBedrockRuntimeClient(
     Environment.GetEnvironmentVariable("BEDROCK_ACCESSKEY"!),
     Environment.GetEnvironmentVariable("BEDROCK_SECRETACCESSKEY")!,
-    Amazon.RegionEndpoint.USEast1).AsIChatClient("amazon.nova-pro-v1:0");
+    Amazon.RegionEndpoint.USEast1)
+    .AsIChatClient("amazon.nova-pro-v1:0");
 
-IChatClient anthropic = new Anthropic.SDK.AnthropicClient(
-    Environment.GetEnvironmentVariable("ANTHROPIC_APIKEY")!).Messages.AsBuilder()
-    .ConfigureOptions(o =>
-    {
-        o.ModelId ??= "claude-sonnet-4-20250514";
-        o.MaxOutputTokens ??= 10 * 1024;
-    })
-    .Build();
+IChatClient anthropic = new Anthropic.AnthropicClient(
+    new() { APIKey = Environment.GetEnvironmentVariable("ANTHROPIC_APIKEY") })
+    .AsIChatClient("claude-sonnet-4-20250514");
 
 IChatClient openai = new OpenAI.OpenAIClient(
-    Environment.GetEnvironmentVariable("OPENAI_APIKEY")!).GetChatClient("gpt-4o-mini").AsIChatClient();
+    Environment.GetEnvironmentVariable("OPENAI_APIKEY")!).GetChatClient("gpt-4o-mini")
+    .AsIChatClient();
 
 // Define our agents.
 AIAgent researcher = new ChatClientAgent(aws,

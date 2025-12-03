@@ -45,14 +45,20 @@ public static class AnthropicBetaServiceExtensions
     {
         var options = new ChatClientAgentOptions
         {
-            Instructions = instructions,
             Name = name,
             Description = description,
         };
 
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            options.ChatOptions ??= new();
+            options.ChatOptions.Instructions = instructions;
+        }
+
         if (tools is { Count: > 0 })
         {
-            options.ChatOptions = new ChatOptions { Tools = tools };
+            options.ChatOptions ??= new();
+            options.ChatOptions.Tools = tools;
         }
 
         var chatClient = betaService.AsIChatClient(model, defaultMaxTokens ?? DefaultMaxTokens);
