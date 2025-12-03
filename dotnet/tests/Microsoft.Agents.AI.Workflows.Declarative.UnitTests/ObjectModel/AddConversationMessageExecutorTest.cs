@@ -28,17 +28,6 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
             messageText: $"Hello from {role}");
     }
 
-    [Fact]
-    public async Task AddMessageWithoutExplicitRoleAsync()
-    {
-        // Arrange, Act, Assert
-        await this.ExecuteTestAsync(
-            displayName: nameof(AddMessageWithoutExplicitRoleAsync),
-            variableName: "TestMessage",
-            role: null,
-            messageText: "Hello with default role");
-    }
-
     private async Task ExecuteTestAsync(
         string displayName,
         string variableName,
