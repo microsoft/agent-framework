@@ -302,6 +302,28 @@ class TestDurableAIAgent:
         assert request["correlationId"] == "correlation-guid"
         assert "thread_id" in request
         assert request["thread_id"] == "thread-guid"
+        # Verify orchestration ID is set from context.instance_id
+        assert "orchestrationId" in request
+        assert request["orchestrationId"] == "test-instance-001"
+
+    def test_run_sets_orchestration_id(self) -> None:
+        """Test that run() sets the orchestration_id from context.instance_id."""
+        mock_context = Mock()
+        mock_context.instance_id = "my-orchestration-123"
+        mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
+
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
+
+        agent = DurableAIAgent(mock_context, "TestAgent")
+        thread = agent.get_new_thread()
+
+        agent.run(messages="Test", thread=thread)
+
+        call_args = mock_context.call_entity.call_args
+        request = call_args[0][2]
+
+        assert request["orchestrationId"] == "my-orchestration-123"
 
     def test_run_without_thread(self) -> None:
         """Test that run() works without explicit thread (creates unique session key)."""

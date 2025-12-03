@@ -24,10 +24,12 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential(
 // Create ChatClientAgent directly
 ChatClientAgent agent = await aiProjectClient.CreateAIAgentAsync(
     model: deploymentName,
-    new ChatClientAgentOptions(name: AssistantName, instructions: AssistantInstructions)
+    new ChatClientAgentOptions()
     {
+        Name = AssistantName,
         ChatOptions = new()
         {
+            Instructions = AssistantInstructions,
             ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<PersonInfo>()
         }
     });
@@ -44,10 +46,12 @@ Console.WriteLine($"Occupation: {response.Result.Occupation}");
 // Create the ChatClientAgent with the specified name, instructions, and expected structured output the agent should produce.
 ChatClientAgent agentWithPersonInfo = aiProjectClient.CreateAIAgent(
     model: deploymentName,
-    new ChatClientAgentOptions(name: AssistantName, instructions: AssistantInstructions)
+    new ChatClientAgentOptions()
     {
+        Name = AssistantName,
         ChatOptions = new()
         {
+            Instructions = AssistantInstructions,
             ResponseFormat = Microsoft.Extensions.AI.ChatResponseFormat.ForJsonSchema<PersonInfo>()
         }
     });

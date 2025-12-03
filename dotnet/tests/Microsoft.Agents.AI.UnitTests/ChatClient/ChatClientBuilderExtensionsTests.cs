@@ -90,7 +90,7 @@ public sealed class ChatClientBuilderExtensionsTests
         {
             Name = "AgentWithOptions",
             Description = "Desc",
-            Instructions = "Instr",
+            ChatOptions = new() { Instructions = "Instr" },
             UseProvidedChatClientAsIs = true
         };
 
@@ -115,7 +115,7 @@ public sealed class ChatClientBuilderExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "ServiceAgent",
-            Instructions = "Service instructions"
+            ChatOptions = new() { Instructions = "Service instructions" }
         };
 
         // Act
@@ -148,7 +148,7 @@ public sealed class ChatClientBuilderExtensionsTests
         ChatClientBuilder builder = null!;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => builder.BuildAIAgent(options: new() { Instructions = "instructions" }));
+        Assert.Throws<ArgumentNullException>(() => builder.BuildAIAgent(options: new() { ChatOptions = new() { Instructions = "instructions" } }));
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class ChatClientBuilderExtensionsTests
         var agent = builder.BuildAIAgent(
             new ChatClientAgentOptions
             {
-                Instructions = "Middleware test",
+                ChatOptions = new() { Instructions = "Middleware test" },
                 UseProvidedChatClientAsIs = true
             }
         );

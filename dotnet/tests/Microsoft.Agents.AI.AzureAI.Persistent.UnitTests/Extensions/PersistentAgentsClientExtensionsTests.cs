@@ -5,6 +5,7 @@ using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure;
@@ -309,7 +310,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -336,7 +337,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -385,7 +386,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -412,7 +413,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -556,7 +557,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -583,7 +584,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -727,6 +728,159 @@ public sealed class PersistentAgentsClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+        const string Model = "test-model";
+
+        // Act
+        var agent = client.CreateAIAgent(
+            Model,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+        const string Model = "test-model";
+
+        // Act
+        var agent = await client.CreateAIAgentAsync(
+            Model,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+
+        // Act
+        var agent = client.GetAIAgent("agent_abc123", services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+
+        // Act
+        var agent = await client.GetAIAgentAsync("agent_abc123", services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with both clientFactory and services works correctly.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithClientFactoryAndServices_AppliesBothCorrectly()
+    {
+        // Arrange
+        var client = CreateFakePersistentAgentsClient();
+        var serviceProvider = new TestServiceProvider();
+        TestChatClient? testChatClient = null;
+        const string Model = "test-model";
+
+        // Act
+        var agent = client.CreateAIAgent(
+            Model,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient),
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the custom chat client was applied
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+
+        // Verify the IServiceProvider was passed through
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Uses reflection to access the FunctionInvocationServices property which is not public.
+    /// </summary>
+    private static IServiceProvider? GetFunctionInvocationServices(FunctionInvokingChatClient client)
+    {
+        var property = typeof(FunctionInvokingChatClient).GetProperty(
+            "FunctionInvocationServices",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(client) as IServiceProvider;
+    }
+
+    /// <summary>
     /// Test custom chat client that can be used to verify clientFactory functionality.
     /// </summary>
     private sealed class TestChatClient : DelegatingChatClient
@@ -734,6 +888,14 @@ public sealed class PersistentAgentsClientExtensionsTests
         public TestChatClient(IChatClient innerClient) : base(innerClient)
         {
         }
+    }
+
+    /// <summary>
+    /// A simple test IServiceProvider implementation for testing.
+    /// </summary>
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     public sealed class FakePersistentAgentsAdministrationClient : PersistentAgentsAdministrationClient
@@ -761,7 +923,7 @@ public sealed class PersistentAgentsClientExtensionsTests
     {
         var client = new PersistentAgentsClient("https://any.com", DelegatedTokenCredential.Create((_, _) => new AccessToken()));
 
-        ((System.Reflection.TypeInfo)typeof(PersistentAgentsClient)).DeclaredFields.First(f => f.Name == "_client")
+        ((TypeInfo)typeof(PersistentAgentsClient)).DeclaredFields.First(f => f.Name == "_client")
             .SetValue(client, new FakePersistentAgentsAdministrationClient());
         return client;
     }

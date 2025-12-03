@@ -154,7 +154,7 @@ class BedrockChatClient(BaseChatClient):
             contents=contents,
             model_id=response.model_id,
             finish_reason=response.finish_reason,
-            raw_response=response.raw_response,
+            raw_representation=response.raw_representation,
         )
 
     def _build_converse_request(
@@ -313,7 +313,15 @@ class BedrockChatClient(BaseChatClient):
                 }
             }
             if content.exception:
-                tool_result_block["toolResult"].setdefault("content", []).append({"text": str(content.exception)})
+                tool_result = tool_result_block["toolResult"]
+                existing_content = tool_result.get("content")
+                content_list: list[dict[str, Any]]
+                if isinstance(existing_content, list):
+                    content_list = existing_content
+                else:
+                    content_list = []
+                    tool_result["content"] = content_list
+                content_list.append({"text": str(content.exception)})
             return tool_result_block
         return None
 
@@ -416,7 +424,7 @@ class BedrockChatClient(BaseChatClient):
             usage_details=usage_details,
             model_id=model_id,
             finish_reason=finish_reason,
-            raw_response=response,
+            raw_representation=response,
         )
 
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:

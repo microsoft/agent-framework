@@ -336,6 +336,71 @@ class TestRunRequest:
         assert restored.correlation_id == original.correlation_id
         assert restored.thread_id == original.thread_id
 
+    def test_init_with_orchestration_id(self) -> None:
+        """Test RunRequest initialization with orchestration_id."""
+        request = RunRequest(
+            message="Test message",
+            thread_id="thread-orch-init",
+            orchestration_id="orch-123",
+        )
+
+        assert request.message == "Test message"
+        assert request.orchestration_id == "orch-123"
+
+    def test_to_dict_with_orchestration_id(self) -> None:
+        """Test to_dict includes orchestrationId."""
+        request = RunRequest(
+            message="Test",
+            thread_id="thread-orch-to-dict",
+            orchestration_id="orch-456",
+        )
+        data = request.to_dict()
+
+        assert data["message"] == "Test"
+        assert data["orchestrationId"] == "orch-456"
+
+    def test_to_dict_excludes_orchestration_id_when_none(self) -> None:
+        """Test to_dict excludes orchestrationId when not set."""
+        request = RunRequest(
+            message="Test",
+            thread_id="thread-orch-none",
+        )
+        data = request.to_dict()
+
+        assert "orchestrationId" not in data
+
+    def test_from_dict_with_orchestration_id(self) -> None:
+        """Test from_dict with orchestrationId."""
+        data = {
+            "message": "Test",
+            "orchestrationId": "orch-789",
+            "thread_id": "thread-orch-from-dict",
+        }
+        request = RunRequest.from_dict(data)
+
+        assert request.message == "Test"
+        assert request.orchestration_id == "orch-789"
+        assert request.thread_id == "thread-orch-from-dict"
+
+    def test_round_trip_with_orchestration_id(self) -> None:
+        """Test round-trip to_dict and from_dict with orchestration_id."""
+        original = RunRequest(
+            message="Test message",
+            thread_id="thread-123",
+            role=Role.SYSTEM,
+            correlation_id="corr-123",
+            orchestration_id="orch-123",
+        )
+
+        data = original.to_dict()
+        restored = RunRequest.from_dict(data)
+
+        assert restored.message == original.message
+        assert restored.role == original.role
+        assert restored.correlation_id == original.correlation_id
+        assert restored.orchestration_id == original.orchestration_id
+        assert restored.thread_id == original.thread_id
+
 
 class TestModelIntegration:
     """Test suite for integration between models."""

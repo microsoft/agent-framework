@@ -47,9 +47,9 @@ public static class OpenAIChatClientExtensions
             {
                 Name = name,
                 Description = description,
-                Instructions = instructions,
-                ChatOptions = tools is null ? null : new ChatOptions()
+                ChatOptions = tools is null && string.IsNullOrWhiteSpace(instructions) ? null : new ChatOptions()
                 {
+                    Instructions = instructions,
                     Tools = tools,
                 }
             },
