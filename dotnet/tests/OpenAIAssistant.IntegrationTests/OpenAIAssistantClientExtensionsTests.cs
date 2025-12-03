@@ -214,13 +214,12 @@ public class OpenAIAssistantClientExtensionsTests
 
             if (status == VectorStoreStatus.Completed)
             {
-                // Check if any files failed during indexing
                 if (vectorStore.FileCounts.Failed > 0)
                 {
                     throw new InvalidOperationException("Vector store indexing failed for some files");
                 }
 
-                return;  // ✅ Ready!
+                return;
             }
 
             if (status == VectorStoreStatus.Expired)
@@ -228,7 +227,7 @@ public class OpenAIAssistantClientExtensionsTests
                 throw new InvalidOperationException("Vector store has expired");
             }
 
-            await Task.Delay(1000);  // Poll every second
+            await Task.Delay(1000);
         }
 
         throw new TimeoutException($"Vector store did not complete indexing within {maxWaitSeconds}s");
