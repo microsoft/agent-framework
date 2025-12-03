@@ -57,7 +57,7 @@ public sealed class ChatClientExtensionsTests
         {
             Name = "AgentWithOptions",
             Description = "Desc",
-            Instructions = "Instr",
+            ChatOptions = new() { Instructions = "Instr" },
             UseProvidedChatClientAsIs = true
         };
 
@@ -89,6 +89,6 @@ public sealed class ChatClientExtensionsTests
         IChatClient chatClient = null!;
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(options: new() { Instructions = "instructions" }));
+        Assert.Throws<ArgumentNullException>(() => chatClient.CreateAIAgent(options: new() { ChatOptions = new() { Instructions = "instructions" } }));
     }
 }

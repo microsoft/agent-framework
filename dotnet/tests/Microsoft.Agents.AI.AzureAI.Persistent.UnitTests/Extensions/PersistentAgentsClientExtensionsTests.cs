@@ -310,7 +310,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -337,7 +337,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -386,7 +386,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -413,7 +413,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -557,7 +557,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -584,7 +584,7 @@ public sealed class PersistentAgentsClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act

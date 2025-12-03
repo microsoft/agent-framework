@@ -70,7 +70,7 @@ public sealed class ChatClientAgentFactoryTests
         Assert.IsType<ChatClientAgent>(agent);
         var chatClientAgent = agent as ChatClientAgent;
         Assert.NotNull(chatClientAgent?.ChatOptions);
-        Assert.Equal("Provide detailed and accurate responses.", chatClientAgent?.ChatOptions?.Instructions);
+        Assert.Equal("You are a helpful assistant.", chatClientAgent?.ChatOptions?.Instructions);
         Assert.Equal(0.7F, chatClientAgent?.ChatOptions?.Temperature);
         Assert.Equal(0.7F, chatClientAgent?.ChatOptions?.FrequencyPenalty);
         Assert.Equal(1024, chatClientAgent?.ChatOptions?.MaxOutputTokens);
