@@ -208,7 +208,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "Test Agent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act

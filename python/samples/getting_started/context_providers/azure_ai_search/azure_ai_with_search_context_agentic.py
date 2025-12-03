@@ -25,18 +25,22 @@ This sample demonstrates how to use Azure AI Search with agentic mode for RAG
 For simple queries where speed is critical, use semantic mode instead (see azure_ai_with_search_context_semantic.py).
 
 Prerequisites:
-1. An Azure AI Search service with a search index
+1. An Azure AI Search service
 2. An Azure AI Foundry project with a model deployment
-3. An Azure OpenAI resource (for Knowledge Base model calls)
-4. Set the following environment variables:
+3. Either an existing Knowledge Base OR a search index (to auto-create a KB)
+
+Environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
-   - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses DefaultAzureCredential for Entra ID
-   - AZURE_SEARCH_INDEX_NAME: Your search index name
+   - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses DefaultAzureCredential
    - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
+
+For using an existing Knowledge Base (recommended):
    - AZURE_SEARCH_KNOWLEDGE_BASE_NAME: Your Knowledge Base name
-   - AZURE_OPENAI_RESOURCE_URL: Your Azure OpenAI resource URL (e.g., "https://myresource.openai.azure.com")
-     Note: This is different from AZURE_AI_PROJECT_ENDPOINT - Knowledge Base needs the OpenAI endpoint for model calls
+
+For auto-creating a Knowledge Base from an index:
+   - AZURE_SEARCH_INDEX_NAME: Your search index name
+   - AZURE_OPENAI_RESOURCE_URL: Azure OpenAI resource URL (e.g., "https://myresource.openai.azure.com")
 """
 
 # Sample queries to demonstrate agentic RAG
@@ -53,31 +57,52 @@ async def main() -> None:
     # Get configuration from environment
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
-    index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
     project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-    knowledge_base_name = os.environ["AZURE_SEARCH_KNOWLEDGE_BASE_NAME"]
-    azure_openai_resource_url = os.environ["AZURE_OPENAI_RESOURCE_URL"]
+
+    # Agentic mode requires exactly ONE of: knowledge_base_name OR index_name
+    # Option 1: Use existing Knowledge Base (recommended)
+    knowledge_base_name = os.environ.get("AZURE_SEARCH_KNOWLEDGE_BASE_NAME")
+    # Option 2: Auto-create KB from index (requires azure_openai_resource_url)
+    index_name = os.environ.get("AZURE_SEARCH_INDEX_NAME")
+    azure_openai_resource_url = os.environ.get("AZURE_OPENAI_RESOURCE_URL")
 
     # Create Azure AI Search context provider with agentic mode (recommended for accuracy)
     print("Using AGENTIC mode (Knowledge Bases with query planning, recommended)\n")
-    print("ℹ️  This mode is slightly slower but provides more accurate results.\n")
-    search_provider = AzureAISearchContextProvider(
-        endpoint=search_endpoint,
-        index_name=index_name,
-        api_key=search_key,  # Use api_key for API key auth, or credential for managed identity
-        credential=AzureCliCredential() if not search_key else None,
-        mode="agentic",  # Advanced mode for multi-hop reasoning
-        # Agentic mode configuration
-        azure_ai_project_endpoint=project_endpoint,
-        azure_openai_resource_url=azure_openai_resource_url,
-        model_deployment_name=model_deployment,
-        knowledge_base_name=knowledge_base_name,
-        # Optional: Configure retrieval behavior
-        knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-        retrieval_reasoning_effort="minimal",  # or "medium", "low"
-        top_k=3,  # Note: In agentic mode, the server-side Knowledge Base determines final retrieval
-    )
+    print("This mode is slightly slower but provides more accurate results.\n")
+
+    # Configure based on whether using existing KB or auto-creating from index
+    if knowledge_base_name:
+        # Use existing Knowledge Base - simplest approach
+        search_provider = AzureAISearchContextProvider(
+            endpoint=search_endpoint,
+            api_key=search_key,
+            credential=AzureCliCredential() if not search_key else None,
+            mode="agentic",
+            knowledge_base_name=knowledge_base_name,
+            # Optional: Configure retrieval behavior
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
+            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+        )
+    else:
+        # Auto-create Knowledge Base from index
+        if not index_name:
+            raise ValueError("Set AZURE_SEARCH_KNOWLEDGE_BASE_NAME or AZURE_SEARCH_INDEX_NAME")
+        if not azure_openai_resource_url:
+            raise ValueError("AZURE_OPENAI_RESOURCE_URL required when using index_name")
+        search_provider = AzureAISearchContextProvider(
+            endpoint=search_endpoint,
+            index_name=index_name,
+            api_key=search_key,
+            credential=AzureCliCredential() if not search_key else None,
+            mode="agentic",
+            azure_openai_resource_url=azure_openai_resource_url,
+            model_deployment_name=model_deployment,
+            # Optional: Configure retrieval behavior
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
+            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            top_k=3,
+        )
 
     # Create agent with search context provider
     async with (

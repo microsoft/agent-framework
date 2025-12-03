@@ -38,14 +38,24 @@ public class OpenAIAssistantClientExtensionsTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 instructions: AgentInstructions,
@@ -95,14 +105,24 @@ public class OpenAIAssistantClientExtensionsTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [codeInterpreterTool])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [codeInterpreterTool]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [codeInterpreterTool])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [codeInterpreterTool]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 instructions: Instructions,
@@ -163,14 +183,24 @@ public class OpenAIAssistantClientExtensionsTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [fileSearchTool])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [fileSearchTool]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
                 model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [fileSearchTool])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [fileSearchTool]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
                 model: s_config.ChatModelId!,
                 instructions: Instructions,
