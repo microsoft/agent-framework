@@ -815,7 +815,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
-            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
             "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,
