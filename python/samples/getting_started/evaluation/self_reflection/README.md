@@ -6,7 +6,7 @@ This sample demonstrates the self-reflection pattern using Agent Framework and A
 
 **What it demonstrates:**
 - Iterative self-reflection loop that automatically improves responses based on groundedness evaluation
-- Batch processing of prompts from Parquet files with progress tracking
+- Batch processing of prompts from JSONL files with progress tracking
 - Using `AzureOpenAIChatClient` with Azure CLI authentication
 - Comprehensive summary statistics and detailed result tracking
 
@@ -18,14 +18,13 @@ This sample demonstrates the self-reflection pattern using Agent Framework and A
 
 ### Python Environment
 ```bash
-pip install agent-framework-core azure-ai-evaluation pandas --pre
+pip install agent-framework-core azure-ai-projects pandas --pre
 ```
 
 ### Environment Variables
 ```bash
 # .env file
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-api-key  # Optional with Azure CLI
+AZURE_AI_PROJECT_ENDPOINT=https://<your-ai-resource>.services.ai.azure.com/api/projects/<your-ai-project>/
 ```
 
 ## Running the Sample
@@ -35,15 +34,15 @@ AZURE_OPENAI_API_KEY=your-api-key  # Optional with Azure CLI
 python self_reflection.py
 
 # With options
-python self_reflection.py --input my_prompts.parquet \
-                          --output results.parquet \
+python self_reflection.py --input my_prompts.jsonl \
+                          --output results.jsonl \
                           --max-reflections 5 \
                           -n 10
 ```
 
 **CLI Options:**
-- `--input`, `-i`: Input parquet file
-- `--output`, `-o`: Output parquet file
+- `--input`, `-i`: Input JSONL file
+- `--output`, `-o`: Output JSONL file
 - `--agent-model`, `-m`: Agent model name (default: gpt-4.1)
 - `--judge-model`, `-e`: Evaluator model name (default: gpt-4.1)
 - `--max-reflections`: Max iterations (default: 3)

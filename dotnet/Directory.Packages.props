@@ -21,7 +21,7 @@
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.3" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.4" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.7.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
