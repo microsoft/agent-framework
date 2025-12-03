@@ -2,6 +2,7 @@
 
 """Message format conversion between AG-UI and Agent Framework."""
 
+import json
 from typing import Any, cast
 
 from agent_framework import (
@@ -59,10 +60,8 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Cha
             # Distinguish approval payloads from actual tool results
             is_approval = False
             if isinstance(result_content, str) and result_content:
-                import json as _json
-
                 try:
-                    parsed = _json.loads(result_content)
+                    parsed = json.loads(result_content)
                     is_approval = isinstance(parsed, dict) and "accepted" in parsed
                 except Exception:
                     is_approval = False
@@ -190,7 +189,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
     Returns:
         List of AG-UI message dictionaries
     """
-    from ._utils import generate_event_id
+    from ._utils import generate_event_id, serialize_content_result
 
     result: list[dict[str, Any]] = []
     for msg in messages:
@@ -237,26 +236,8 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             elif isinstance(content, FunctionResultContent):
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string
-                if isinstance(content.result, dict):
-                    import json
-
-                    content_text = json.dumps(content.result)  # type: ignore
-                elif isinstance(content.result, list):
-                    # Handle Contents list (e.g., from MCP tool results)
-                    import json
-
-                    texts = []
-                    for item in content.result:
-                        if hasattr(item, "text"):  # TextContent
-                            texts.append(item.text)
-                        elif hasattr(item, "model_dump"):
-                            texts.append(json.dumps(item.model_dump(mode="json")))
-                        else:
-                            texts.append(str(item))
-                    content_text = "\n".join(texts) if len(texts) == 1 else json.dumps(texts)
-                elif content.result is not None:
-                    content_text = str(content.result)
+                # Serialize result to string using shared utility
+                content_text = serialize_content_result(content.result)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

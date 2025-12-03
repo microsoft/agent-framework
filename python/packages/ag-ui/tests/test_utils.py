@@ -5,7 +5,12 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from agent_framework_ag_ui._utils import generate_event_id, make_json_safe, merge_state
+from agent_framework_ag_ui._utils import (
+    generate_event_id,
+    make_json_safe,
+    merge_state,
+    serialize_content_result,
+)
 
 
 def test_generate_event_id():
@@ -303,3 +308,110 @@ def test_convert_tools_to_agui_format_with_multiple_tools():
     assert len(result) == 2
     assert result[0]["name"] == "tool1"
     assert result[1]["name"] == "tool2"
+
+
+# Tests for serialize_content_result
+
+
+def test_serialize_content_result_none():
+    """Test serializing None returns empty string."""
+    result = serialize_content_result(None)
+    assert result == ""
+
+
+def test_serialize_content_result_dict():
+    """Test serializing dict returns JSON string."""
+    result = serialize_content_result({"key": "value", "number": 42})
+    assert result == '{"key": "value", "number": 42}'
+
+
+def test_serialize_content_result_empty_list():
+    """Test serializing empty list returns empty string."""
+    result = serialize_content_result([])
+    assert result == ""
+
+
+def test_serialize_content_result_single_text_content():
+    """Test serializing single TextContent-like object returns plain text."""
+
+    class MockTextContent:
+        def __init__(self, text: str):
+            self.text = text
+
+    result = serialize_content_result([MockTextContent("Hello, world!")])
+    assert result == "Hello, world!"
+
+
+def test_serialize_content_result_multiple_text_contents():
+    """Test serializing multiple TextContent-like objects returns JSON array."""
+
+    class MockTextContent:
+        def __init__(self, text: str):
+            self.text = text
+
+    result = serialize_content_result([MockTextContent("First"), MockTextContent("Second")])
+    assert result == '["First", "Second"]'
+
+
+def test_serialize_content_result_model_dump_object():
+    """Test serializing object with model_dump method."""
+
+    class MockModel:
+        def model_dump(self, mode: str = "python"):
+            return {"type": "model", "value": 123}
+
+    result = serialize_content_result([MockModel()])
+    # Single item should be the JSON string of the model dump
+    assert result == '{"type": "model", "value": 123}'
+
+
+def test_serialize_content_result_multiple_model_dump_objects():
+    """Test serializing multiple objects with model_dump method."""
+
+    class MockModel:
+        def __init__(self, value: int):
+            self._value = value
+
+        def model_dump(self, mode: str = "python"):
+            return {"value": self._value}
+
+    result = serialize_content_result([MockModel(1), MockModel(2)])
+    assert result == '["{\\"value\\": 1}", "{\\"value\\": 2}"]'
+
+
+def test_serialize_content_result_string_fallback():
+    """Test serializing objects without text or model_dump falls back to str()."""
+
+    class PlainObject:
+        def __str__(self):
+            return "plain_object_str"
+
+    result = serialize_content_result([PlainObject()])
+    assert result == "plain_object_str"
+
+
+def test_serialize_content_result_mixed_list():
+    """Test serializing list with mixed content types."""
+
+    class MockTextContent:
+        def __init__(self, text: str):
+            self.text = text
+
+    class PlainObject:
+        def __str__(self):
+            return "plain"
+
+    result = serialize_content_result([MockTextContent("text1"), PlainObject()])
+    assert result == '["text1", "plain"]'
+
+
+def test_serialize_content_result_string():
+    """Test serializing plain string returns the string."""
+    result = serialize_content_result("just a string")
+    assert result == "just a string"
+
+
+def test_serialize_content_result_number():
+    """Test serializing number returns string representation."""
+    result = serialize_content_result(42)
+    assert result == "42"
