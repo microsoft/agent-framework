@@ -650,9 +650,9 @@ async def test_mcp_tool_call_tool_with_meta_integration():
 
             # Create a CallToolResult with _meta field
             tool_result = types.CallToolResult(
-                content=[types.TextContent(type="text", text="Tool executed with metadata")]
+                content=[types.TextContent(type="text", text="Tool executed with metadata")],
+                _meta={"executionTime": 1.5, "cost": {"usd": 0.002}, "isError": False, "toolVersion": "1.2.3"},
             )
-            tool_result.meta = {"executionTime": 1.5, "cost": {"usd": 0.002}, "isError": False, "toolVersion": "1.2.3"}
 
             self.session.call_tool = AsyncMock(return_value=tool_result)
 
