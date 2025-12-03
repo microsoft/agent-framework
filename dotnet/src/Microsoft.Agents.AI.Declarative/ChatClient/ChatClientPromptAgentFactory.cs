@@ -38,7 +38,6 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         {
             Name = promptAgent.Name,
             Description = promptAgent.Description,
-            Instructions = promptAgent.Instructions?.ToTemplateString(),
             ChatOptions = promptAgent.GetChatOptions(this.Engine, this._functions),
         };
 

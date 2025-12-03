@@ -49,8 +49,7 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
-                ChatOptions = new() { ConversationId = "conv_12345" }
+                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_12345" }
             });
 
         // Act
@@ -99,7 +98,7 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
+                ChatOptions = new() { Instructions = "Test instructions" },
             });
 
         // Act
@@ -148,8 +147,7 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
-                ChatOptions = new() { ConversationId = "conv_should_not_use_default" }
+                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_should_not_use_default" }
             });
 
         // Act
@@ -198,7 +196,7 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
+                ChatOptions = new() { Instructions = "Test instructions" },
             });
 
         // Act
