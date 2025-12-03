@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -60,6 +61,30 @@ public sealed class ContextualFunctionProvider : AIContextProvider
         int maxNumberOfFunctions,
         ContextualFunctionProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
+        : this(vectorStore, vectorDimensions, functions, maxNumberOfFunctions, default(JsonElement), options, null, loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ContextualFunctionProvider"/> class.
+    /// </summary>
+    /// <param name="vectorStore">An instance of a vector store.</param>
+    /// <param name="vectorDimensions">The number of dimensions to use for the memory embeddings.</param>
+    /// <param name="functions">The functions to vectorize and store for searching related functions.</param>
+    /// <param name="maxNumberOfFunctions">The maximum number of relevant functions to retrieve from the vector store.</param>
+    /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized provider state.</param>
+    /// <param name="options">Further optional settings for configuring the provider.</param>
+    /// <param name="jsonSerializerOptions">Optional serializer options. If not provided, <see cref="AgentJsonUtilities.DefaultOptions"/> will be used.</param>
+    /// <param name="loggerFactory">The logger factory to use for logging. If not provided, no logging will be performed.</param>
+    public ContextualFunctionProvider(
+        VectorStore vectorStore,
+        int vectorDimensions,
+        IEnumerable<AIFunction> functions,
+        int maxNumberOfFunctions,
+        JsonElement serializedState,
+        ContextualFunctionProviderOptions? options = null,
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(vectorStore);
         Throw.IfLessThan(vectorDimensions, 1, "Vector dimensions must be greater than 0");
@@ -81,6 +106,21 @@ public sealed class ContextualFunctionProvider : AIContextProvider
                 EmbeddingValueProvider = this._options.EmbeddingValueProvider,
             }
          );
+
+        // Restore recent messages from serialized state if provided
+        if (serializedState.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+        {
+            JsonSerializerOptions jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
+            ContextualFunctionProviderState? state = serializedState.Deserialize(jso.GetTypeInfo(typeof(ContextualFunctionProviderState))) as ContextualFunctionProviderState;
+            if (state?.RecentMessages is { Count: > 0 })
+            {
+                // Restore recent messages respecting the limit (may truncate if limit changed afterwards).
+                foreach (ChatMessage message in state.RecentMessages.Take(this._options.NumberOfRecentMessagesInContext))
+                {
+                    this._recentMessages.Enqueue(message);
+                }
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -142,6 +182,22 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     }
 
     /// <summary>
+    /// Serializes the current provider state to a <see cref="JsonElement"/> containing the recent messages.
+    /// </summary>
+    /// <param name="jsonSerializerOptions">Optional serializer options. This parameter is not used; <see cref="AgentJsonUtilities.DefaultOptions"/> is always used for serialization.</param>
+    /// <returns>A <see cref="JsonElement"/> with the recent messages, or default if there are no recent messages.</returns>
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        ContextualFunctionProviderState state = new();
+        if (this._options.NumberOfRecentMessagesInContext > 0 && !this._recentMessages.IsEmpty)
+        {
+            state.RecentMessages = this._recentMessages.Take(this._options.NumberOfRecentMessagesInContext).ToList();
+        }
+
+        return JsonSerializer.SerializeToElement(state, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ContextualFunctionProviderState)));
+    }
+
+    /// <summary>
     /// Builds the context from chat messages.
     /// </summary>
     /// <param name="newMessages">The new messages.</param>
@@ -165,5 +221,10 @@ public sealed class ContextualFunctionProvider : AIContextProvider
                 .Concat(newMessages)
                 .Where(m => !string.IsNullOrWhiteSpace(m?.Text))
                 .Select(m => m.Text));
+    }
+
+    internal sealed class ContextualFunctionProviderState
+    {
+        public List<ChatMessage>? RecentMessages { get; set; }
     }
 }
