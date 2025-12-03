@@ -3,7 +3,7 @@
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, MutableSequence
 from enum import Enum
 from functools import wraps
 from time import perf_counter, time_ns
@@ -259,13 +259,13 @@ FINISH_REASON_MAP = {
 # region Telemetry utils
 
 
-def _get_otlp_exporters(endpoints: list[str]) -> list["LogExporter | SpanExporter | MetricExporter"]:
+def _get_otlp_exporters(endpoints: list[str]) -> MutableSequence["LogExporter | SpanExporter | MetricExporter"]:
     """Create standard OTLP Exporters for the supplied endpoints."""
     from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-    exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    exporters: MutableSequence["LogExporter | SpanExporter | MetricExporter"] = []
 
     for endpoint in endpoints:
         exporters.append(OTLPLogExporter(endpoint=endpoint))
