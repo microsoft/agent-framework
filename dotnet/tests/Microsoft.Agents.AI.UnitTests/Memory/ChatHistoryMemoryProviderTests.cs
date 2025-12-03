@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -214,6 +215,56 @@ public class ChatHistoryMemoryProviderTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(false, false, 0)]
+    [InlineData(true, false, 0)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 1)]
+    public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    {
+        // Arrange
+        var options = new ChatHistoryMemoryProviderOptions
+        {
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+        };
+
+        if (requestThrows)
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("Upsert failed"));
+        }
+        else
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.UpsertAsync(It.IsAny<IEnumerable<Dictionary<string, object?>>>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            new ChatHistoryMemoryProviderScope { UserId = "user1" },
+            options: options,
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var requestMsg = new ChatMessage(ChatRole.User, "request text");
+        var invokedContext = new AIContextProvider.InvokedContext([requestMsg], aiContextProviderMessages: null);
+
+        // Act
+        await provider.InvokedAsync(invokedContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+        }
+    }
+
     #endregion
 
     #region InvokingAsync Tests
@@ -331,6 +382,82 @@ public class ChatHistoryMemoryProviderTests
                 It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false, false, 1)]
+    [InlineData(true, false, 1)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 1)]
+    public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    {
+        // Arrange
+        var options = new ChatHistoryMemoryProviderOptions
+        {
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData
+        };
+
+        var scope = new ChatHistoryMemoryProviderScope
+        {
+            UserId = "user1"
+        };
+
+        if (requestThrows)
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                    It.IsAny<CancellationToken>()))
+                .Throws(new InvalidOperationException("Search failed"));
+        }
+        else
+        {
+            this._vectorStoreCollectionMock
+                .Setup(c => c.SearchAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<int>(),
+                    It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                    It.IsAny<CancellationToken>()))
+                .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+        }
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            storageScope: scope,
+            searchScope: scope,
+            options: options,
+            loggerFactory: this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "requesting relevant history")]);
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
+
+            var inputValue = state.FirstOrDefault(kvp => kvp.Key == "Input").Value;
+            if (inputValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : "<redacted>", inputValue);
+            }
+
+            var messageTextValue = state.FirstOrDefault(kvp => kvp.Key == "MessageText").Value;
+            if (messageTextValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : "<redacted>", messageTextValue);
+            }
+        }
     }
 
     #endregion

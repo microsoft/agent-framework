@@ -22,11 +22,8 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         ArgumentNullException.ThrowIfNull(context);
 
         // Acquire the input binding feature (fail fast if missing rather than null-forgiving operator).
-        IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>();
-        if (functionInputBindingFeature == null)
-        {
+        IFunctionInputBindingFeature? functionInputBindingFeature = context.Features.Get<IFunctionInputBindingFeature>() ??
             throw new InvalidOperationException("Function input binding feature is not available on the current context.");
-        }
 
         FunctionInputBindingResult? inputBindingResults = await functionInputBindingFeature.BindFunctionInputAsync(context);
         if (inputBindingResults is not { Values: { } values })

@@ -25,7 +25,7 @@ internal static class Step10EntryPoint
         foreach (string input in inputs)
         {
             AgentRunResponse response;
-            object? continuationToken = null;
+            ResponseContinuationToken? continuationToken = null;
             do
             {
                 response = await hostAgent.RunAsync(input, thread, new AgentRunOptions { ContinuationToken = continuationToken });

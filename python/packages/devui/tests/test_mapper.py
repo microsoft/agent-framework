@@ -299,9 +299,9 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
     complete_event = AgentCompletedEvent()
     events = await mapper.convert_event(complete_event, test_request)
 
-    assert len(events) == 1
-    assert events[0].type == "response.completed"
-    assert events[0].response.status == "completed"
+    # AgentCompletedEvent no longer emits response.completed to avoid duplicates
+    # The server will emit the final response.completed with usage data
+    assert len(events) == 0
 
     # Test AgentFailedEvent
     error = Exception("Test error")
@@ -347,9 +347,9 @@ async def test_workflow_lifecycle_events(mapper: MessageMapper, test_request: Ag
     complete_event = WorkflowCompletedEvent(workflow_id="test_workflow_123")
     events = await mapper.convert_event(complete_event, test_request)
 
-    assert len(events) == 1
-    assert events[0].type == "response.completed"
-    assert events[0].response.status == "completed"
+    # WorkflowCompletedEvent no longer emits response.completed to avoid duplicates
+    # The server will emit the final response.completed with usage data
+    assert len(events) == 0
 
     # Test WorkflowFailedEvent with error info
     failed_event = WorkflowFailedEvent(workflow_id="test_workflow_123", error_info={"message": "Workflow failed"})

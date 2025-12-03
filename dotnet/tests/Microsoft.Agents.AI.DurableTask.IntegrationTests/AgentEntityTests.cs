@@ -2,6 +2,8 @@
 
 using System.Diagnostics;
 using System.Reflection;
+using Microsoft.Agents.AI.DurableTask.State;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
@@ -67,8 +69,72 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
             cancellationToken: this.TestTimeoutToken);
 
         // Assert: verify the agent state was stored with the correct entity name prefix
-        entity = await client.Entities.GetEntityAsync(expectedEntityId, false, this.TestTimeoutToken);
+        entity = await client.Entities.GetEntityAsync(expectedEntityId, true, this.TestTimeoutToken);
 
         Assert.NotNull(entity);
+        Assert.True(entity.IncludesState);
+
+        DurableAgentState state = entity.State.ReadAs<DurableAgentState>();
+
+        DurableAgentStateRequest request = Assert.Single(state.Data.ConversationHistory.OfType<DurableAgentStateRequest>());
+
+        Assert.Null(request.OrchestrationId);
+    }
+
+    [Fact]
+    public async Task OrchestrationIdSetDuringOrchestrationAsync()
+    {
+        // Arrange
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+            name: "TestAgent",
+            instructions: "You are a helpful assistant that always responds with a friendly greeting."
+        );
+
+        using TestHelper testHelper = TestHelper.Start(
+            [simpleAgent],
+            this._outputHelper,
+            registry => registry.AddOrchestrator<TestOrchestrator>());
+
+        DurableTaskClient client = testHelper.GetClient();
+
+        // Act
+        string orchestrationId = await client.ScheduleNewOrchestrationInstanceAsync(nameof(TestOrchestrator), "What is the capital of Maine?");
+
+        OrchestrationMetadata? status = await client.WaitForInstanceCompletionAsync(
+            orchestrationId,
+            true,
+            this.TestTimeoutToken);
+
+        // Assert
+        EntityInstanceId expectedEntityId = AgentSessionId.Parse(status.ReadOutputAs<string>()!);
+
+        EntityMetadata? entity = await client.Entities.GetEntityAsync(expectedEntityId, true, this.TestTimeoutToken);
+
+        Assert.NotNull(entity);
+        Assert.True(entity.IncludesState);
+
+        DurableAgentState state = entity.State.ReadAs<DurableAgentState>();
+
+        DurableAgentStateRequest request = Assert.Single(state.Data.ConversationHistory.OfType<DurableAgentStateRequest>());
+
+        Assert.Equal(orchestrationId, request.OrchestrationId);
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Constructed via reflection.")]
+    private sealed class TestOrchestrator : TaskOrchestrator<string, string>
+    {
+        public override async Task<string> RunAsync(TaskOrchestrationContext context, string input)
+        {
+            DurableAIAgent writer = context.GetAgent("TestAgent");
+            AgentThread writerThread = writer.GetNewThread();
+
+            await writer.RunAsync(
+                message: context.GetInput<string>()!,
+                thread: writerThread);
+
+            AgentSessionId sessionId = writerThread.GetService<AgentSessionId>();
+
+            return sessionId.ToString();
+        }
     }
 }

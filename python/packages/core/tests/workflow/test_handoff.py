@@ -23,7 +23,22 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+
+
+class _CountingWorkflowBuilder(WorkflowBuilder):
+    created: list["_CountingWorkflowBuilder"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.start_calls = 0
+        _CountingWorkflowBuilder.created.append(self)
+
+    def set_start_executor(self, executor: Any) -> "_CountingWorkflowBuilder":  # type: ignore[override]
+        self.start_calls += 1
+        return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
 
 
 @dataclass
@@ -476,6 +491,27 @@ async def test_return_to_previous_enabled():
     # Triage should only have been called once (initial) - specialist_a handles follow-up
     assert len(triage.calls) == 1, "Triage should only be called once (initial)"
     assert len(specialist_a.calls) == 2, "Specialist A should handle follow-up with return_to_previous enabled"
+
+
+def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure HandoffBuilder.build sets the start executor only once when assembling the workflow."""
+    _CountingWorkflowBuilder.created.clear()
+    monkeypatch.setattr(handoff_module, "WorkflowBuilder", _CountingWorkflowBuilder)
+
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len(conv) > 0)
+        .build()
+    )
+
+    assert workflow is not None
+    assert _CountingWorkflowBuilder.created, "Expected CountingWorkflowBuilder to be instantiated"
+    builder = _CountingWorkflowBuilder.created[-1]
+    assert builder.start_calls == 1, "set_start_executor should be invoked exactly once"
 
 
 async def test_tool_choice_preserved_from_agent_config():

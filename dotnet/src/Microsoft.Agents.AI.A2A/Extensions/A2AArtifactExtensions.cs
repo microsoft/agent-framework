@@ -12,21 +12,15 @@ internal static class A2AArtifactExtensions
 {
     internal static ChatMessage ToChatMessage(this Artifact artifact)
     {
-        List<AIContent>? aiContents = null;
-
-        foreach (var part in artifact.Parts)
-        {
-            var content = part.ToAIContent();
-            if (content is not null)
-            {
-                (aiContents ??= []).Add(content);
-            }
-        }
-
-        return new ChatMessage(ChatRole.Assistant, aiContents)
+        return new ChatMessage(ChatRole.Assistant, artifact.ToAIContents())
         {
             AdditionalProperties = artifact.Metadata.ToAdditionalProperties(),
             RawRepresentation = artifact,
         };
+    }
+
+    internal static List<AIContent> ToAIContents(this Artifact artifact)
+    {
+        return artifact.Parts.ConvertAll(part => part.ToAIContent());
     }
 }

@@ -46,9 +46,10 @@ export interface ResponseCompletedEvent {
   type: "response.completed";
   response: {
     id: string;
-    status: "completed";
+    status?: "completed";
     usage?: any;  // Optional usage information
     model?: string;  // Optional model information
+    [key: string]: any; // Allow any additional fields
   };
   sequence_number?: number;
 }

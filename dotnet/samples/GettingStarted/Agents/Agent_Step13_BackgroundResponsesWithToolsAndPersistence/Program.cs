@@ -44,7 +44,7 @@ while (response.ContinuationToken is not null)
 
     await Task.Delay(TimeSpan.FromSeconds(10));
 
-    RestoreAgentState(agent, out thread, out object? continuationToken);
+    RestoreAgentState(agent, out thread, out ResponseContinuationToken? continuationToken);
 
     options.ContinuationToken = continuationToken;
     response = await agent.RunAsync(thread, options);
@@ -52,19 +52,19 @@ while (response.ContinuationToken is not null)
 
 Console.WriteLine(response.Text);
 
-void PersistAgentState(AgentThread thread, object? continuationToken)
+void PersistAgentState(AgentThread thread, ResponseContinuationToken? continuationToken)
 {
     stateStore["thread"] = thread.Serialize();
     stateStore["continuationToken"] = JsonSerializer.SerializeToElement(continuationToken, AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
-void RestoreAgentState(AIAgent agent, out AgentThread thread, out object? continuationToken)
+void RestoreAgentState(AIAgent agent, out AgentThread thread, out ResponseContinuationToken? continuationToken)
 {
     JsonElement serializedThread = stateStore["thread"] ?? throw new InvalidOperationException("No serialized thread found in state store.");
     JsonElement? serializedToken = stateStore["continuationToken"];
 
     thread = agent.DeserializeThread(serializedThread);
-    continuationToken = serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
+    continuationToken = (ResponseContinuationToken?)serializedToken?.Deserialize(AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken)));
 }
 
 [Description("Researches relevant space facts and scientific information for writing a science fiction novel")]

@@ -1,10 +1,61 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Tests for AGUIChatClient."""
 
 import json
+from collections.abc import AsyncGenerator, AsyncIterable, MutableSequence
+from typing import Any
 
-from agent_framework import ChatMessage, ChatOptions, FunctionCallContent, Role, ai_function
+from agent_framework import (
+    ChatMessage,
+    ChatOptions,
+    ChatResponseUpdate,
+    FunctionCallContent,
+    Role,
+    TextContent,
+    ai_function,
+)
+from agent_framework._types import ChatResponse
+from pytest import MonkeyPatch
 
 from agent_framework_ag_ui._client import AGUIChatClient, ServerFunctionCallContent
+from agent_framework_ag_ui._http_service import AGUIHttpService
+
+
+class TestableAGUIChatClient(AGUIChatClient):
+    """Testable wrapper exposing protected helpers."""
+
+    @property
+    def http_service(self) -> AGUIHttpService:
+        """Expose http service for monkeypatching."""
+        return self._http_service
+
+    def extract_state_from_messages(
+        self, messages: list[ChatMessage]
+    ) -> tuple[list[ChatMessage], dict[str, Any] | None]:
+        """Expose state extraction helper."""
+        return self._extract_state_from_messages(messages)
+
+    def convert_messages_to_agui_format(self, messages: list[ChatMessage]) -> list[dict[str, Any]]:
+        """Expose message conversion helper."""
+        return self._convert_messages_to_agui_format(messages)
+
+    def get_thread_id(self, chat_options: ChatOptions) -> str:
+        """Expose thread id helper."""
+        return self._get_thread_id(chat_options)
+
+    async def inner_get_streaming_response(
+        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+    ) -> AsyncIterable[ChatResponseUpdate]:
+        """Proxy to protected streaming call."""
+        async for update in self._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+            yield update
+
+    async def inner_get_response(
+        self, *, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+    ) -> ChatResponse:
+        """Proxy to protected response call."""
+        return await self._inner_get_response(messages=messages, chat_options=chat_options)
 
 
 class TestAGUIChatClient:
@@ -12,25 +63,25 @@ class TestAGUIChatClient:
 
     async def test_client_initialization(self) -> None:
         """Test client initialization."""
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
 
-        assert client._http_service is not None
-        assert client._http_service.endpoint.startswith("http://localhost:8888")
+        assert client.http_service is not None
+        assert client.http_service.endpoint.startswith("http://localhost:8888")
 
     async def test_client_context_manager(self) -> None:
         """Test client as async context manager."""
-        async with AGUIChatClient(endpoint="http://localhost:8888/") as client:
+        async with TestableAGUIChatClient(endpoint="http://localhost:8888/") as client:
             assert client is not None
 
     async def test_extract_state_from_messages_no_state(self) -> None:
         """Test state extraction when no state is present."""
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
             ChatMessage(role="user", text="Hello"),
             ChatMessage(role="assistant", text="Hi there"),
         ]
 
-        result_messages, state = client._extract_state_from_messages(messages)
+        result_messages, state = client.extract_state_from_messages(messages)
 
         assert result_messages == messages
         assert state is None
@@ -39,7 +90,7 @@ class TestAGUIChatClient:
         """Test state extraction from last message."""
         import base64
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
 
         state_data = {"key": "value", "count": 42}
         state_json = json.dumps(state_data)
@@ -55,7 +106,7 @@ class TestAGUIChatClient:
             ),
         ]
 
-        result_messages, state = client._extract_state_from_messages(messages)
+        result_messages, state = client.extract_state_from_messages(messages)
 
         assert len(result_messages) == 1
         assert result_messages[0].text == "Hello"
@@ -65,7 +116,7 @@ class TestAGUIChatClient:
         """Test state extraction with invalid JSON."""
         import base64
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
 
         invalid_json = "not valid json"
         state_b64 = base64.b64encode(invalid_json.encode("utf-8")).decode("utf-8")
@@ -79,20 +130,20 @@ class TestAGUIChatClient:
             ),
         ]
 
-        result_messages, state = client._extract_state_from_messages(messages)
+        result_messages, state = client.extract_state_from_messages(messages)
 
         assert result_messages == messages
         assert state is None
 
     async def test_convert_messages_to_agui_format(self) -> None:
         """Test message conversion to AG-UI format."""
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         messages = [
             ChatMessage(role=Role.USER, text="What is the weather?"),
             ChatMessage(role=Role.ASSISTANT, text="Let me check.", message_id="msg_123"),
         ]
 
-        agui_messages = client._convert_messages_to_agui_format(messages)
+        agui_messages = client.convert_messages_to_agui_format(messages)
 
         assert len(agui_messages) == 2
         assert agui_messages[0]["role"] == "user"
@@ -103,24 +154,24 @@ class TestAGUIChatClient:
 
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         chat_options = ChatOptions(metadata={"thread_id": "existing_thread_123"})
 
-        thread_id = client._get_thread_id(chat_options)
+        thread_id = client.get_thread_id(chat_options)
 
         assert thread_id == "existing_thread_123"
 
     async def test_get_thread_id_generation(self) -> None:
         """Test automatic thread ID generation."""
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
         chat_options = ChatOptions()
 
-        thread_id = client._get_thread_id(chat_options)
+        thread_id = client.get_thread_id(chat_options)
 
         assert thread_id.startswith("thread_")
         assert len(thread_id) > 7
 
-    async def test_get_streaming_response(self, monkeypatch) -> None:
+    async def test_get_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
         """Test streaming response method."""
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -129,26 +180,32 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             for event in mock_events:
                 yield event
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test message")]
         chat_options = ChatOptions()
 
-        updates = []
-        async for update in client._inner_get_streaming_response(messages=messages, chat_options=chat_options):
+        updates: list[ChatResponseUpdate] = []
+        async for update in client.inner_get_streaming_response(messages=messages, chat_options=chat_options):
             updates.append(update)
 
         assert len(updates) == 4
+        assert updates[0].additional_properties is not None
         assert updates[0].additional_properties["thread_id"] == "thread_1"
-        assert updates[1].contents[0].text == "Hello"
-        assert updates[2].contents[0].text == " world"
 
-    async def test_get_response_non_streaming(self, monkeypatch) -> None:
+        first_content = updates[1].contents[0]
+        second_content = updates[2].contents[0]
+        assert isinstance(first_content, TextContent)
+        assert isinstance(second_content, TextContent)
+        assert first_content.text == "Hello"
+        assert second_content.text == " world"
+
+    async def test_get_response_non_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test non-streaming response method."""
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -156,23 +213,23 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             for event in mock_events:
                 yield event
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test message")]
         chat_options = ChatOptions()
 
-        response = await client._inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
 
         assert response is not None
         assert len(response.messages) > 0
         assert "Complete response" in response.text
 
-    async def test_tool_handling(self, monkeypatch) -> None:
+    async def test_tool_handling(self, monkeypatch: MonkeyPatch) -> None:
         """Test that client tool metadata is sent to server.
 
         Client tool metadata (name, description, schema) is sent to server for planning.
@@ -191,28 +248,29 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             # Client tool metadata should be sent to server
-            tools = kwargs.get("tools")
+            tools: list[dict[str, Any]] | None = kwargs.get("tools")
             assert tools is not None
             assert len(tools) == 1
-            assert tools[0]["name"] == "test_tool"
-            assert tools[0]["description"] == "Test tool."
-            assert "parameters" in tools[0]
+            tool_entry = tools[0]
+            assert tool_entry["name"] == "test_tool"
+            assert tool_entry["description"] == "Test tool."
+            assert "parameters" in tool_entry
             for event in mock_events:
                 yield event
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test with tools")]
         chat_options = ChatOptions(tools=[test_tool])
 
-        response = await client._inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
 
         assert response is not None
 
-    async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch) -> None:
+    async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch: MonkeyPatch) -> None:
         """Ensure server-side tool calls are exposed as FunctionCallContent after processing."""
 
         mock_events = [
@@ -222,17 +280,17 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             for event in mock_events:
                 yield event
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
         chat_options = ChatOptions()
 
-        updates = []
+        updates: list[ChatResponseUpdate] = []
         async for update in client.get_streaming_response(messages, chat_options=chat_options):
             updates.append(update)
 
@@ -245,7 +303,7 @@ class TestAGUIChatClient:
             isinstance(content, ServerFunctionCallContent) for update in updates for content in update.contents
         )
 
-    async def test_server_tool_calls_not_executed_locally(self, monkeypatch) -> None:
+    async def test_server_tool_calls_not_executed_locally(self, monkeypatch: MonkeyPatch) -> None:
         """Server tools should not trigger local function invocation even when client tools exist."""
 
         @ai_function
@@ -260,18 +318,18 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             for event in mock_events:
                 yield event
 
-        async def fake_auto_invoke(*args, **kwargs):
+        async def fake_auto_invoke(*args: object, **kwargs: Any) -> None:
             function_call = kwargs.get("function_call_content") or args[0]
             raise AssertionError(f"Unexpected local execution of server tool: {getattr(function_call, 'name', '?')}")
 
         monkeypatch.setattr("agent_framework._tools._auto_invoke_function", fake_auto_invoke)
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         messages = [ChatMessage(role="user", text="Test server tool execution")]
         chat_options = ChatOptions(tool_choice="auto", tools=[client_tool])
@@ -279,7 +337,7 @@ class TestAGUIChatClient:
         async for _ in client.get_streaming_response(messages, chat_options=chat_options):
             pass
 
-    async def test_state_transmission(self, monkeypatch) -> None:
+    async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Test state is properly transmitted to server."""
         import base64
 
@@ -302,16 +360,16 @@ class TestAGUIChatClient:
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
-        async def mock_post_run(*args, **kwargs):
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
             assert kwargs.get("state") == state_data
             for event in mock_events:
                 yield event
 
-        client = AGUIChatClient(endpoint="http://localhost:8888/")
-        monkeypatch.setattr(client._http_service, "post_run", mock_post_run)
+        client = TestableAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
 
         chat_options = ChatOptions()
 
-        response = await client._inner_get_response(messages=messages, chat_options=chat_options)
+        response = await client.inner_get_response(messages=messages, chat_options=chat_options)
 
         assert response is not None

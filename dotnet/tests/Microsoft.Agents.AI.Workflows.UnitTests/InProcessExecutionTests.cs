@@ -111,7 +111,7 @@ public class InProcessExecutionTests
         await using StreamingRun streamingRun = await InProcessExecution.StreamAsync(workflow2, new List<ChatMessage> { inputMessage });
         await streamingRun.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
-        List<WorkflowEvent> streamingEvents = new();
+        List<WorkflowEvent> streamingEvents = [];
         await foreach (WorkflowEvent evt in streamingRun.WatchStreamAsync())
         {
             streamingEvents.Add(evt);
@@ -137,14 +137,12 @@ public class InProcessExecutionTests
     /// </summary>
     private sealed class SimpleTestAgent : AIAgent
     {
-        private readonly string _name;
-
         public SimpleTestAgent(string name)
         {
-            this._name = name;
+            this.Name = name;
         }
 
-        public override string Name => this._name;
+        public override string Name { get; }
 
         public override AgentThread GetNewThread() => new SimpleTestAgentThread();
 
@@ -176,16 +174,16 @@ public class InProcessExecutionTests
             string messageId = Guid.NewGuid().ToString("N");
 
             // Yield role first
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this._name)
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name)
             {
-                AuthorName = this._name,
+                AuthorName = this.Name,
                 MessageId = messageId
             };
 
             // Then yield content
             yield return new AgentRunResponseUpdate(ChatRole.Assistant, responseText)
             {
-                AuthorName = this._name,
+                AuthorName = this.Name,
                 MessageId = messageId
             };
         }
@@ -194,7 +192,5 @@ public class InProcessExecutionTests
     /// <summary>
     /// Simple thread implementation for SimpleTestAgent.
     /// </summary>
-    private sealed class SimpleTestAgentThread : InMemoryAgentThread
-    {
-    }
+    private sealed class SimpleTestAgentThread : InMemoryAgentThread;
 }

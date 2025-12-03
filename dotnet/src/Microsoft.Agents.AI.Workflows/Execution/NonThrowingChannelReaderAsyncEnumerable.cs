@@ -16,8 +16,7 @@ internal sealed class NonThrowingChannelReaderAsyncEnumerable<T>(ChannelReader<T
 {
     private class Enumerator(ChannelReader<T> reader, CancellationToken cancellationToken) : IAsyncEnumerator<T>
     {
-        private T? _current;
-        public T Current => this._current ?? throw new InvalidOperationException("Enumeration not started.");
+        public T Current { get => field ?? throw new InvalidOperationException("Enumeration not started."); private set; }
 
         public ValueTask DisposeAsync()
         {
@@ -36,7 +35,7 @@ internal sealed class NonThrowingChannelReaderAsyncEnumerable<T>(ChannelReader<T
                 bool hasData = await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false);
                 if (hasData)
                 {
-                    this._current = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    this.Current = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
                     return true;
                 }
             }

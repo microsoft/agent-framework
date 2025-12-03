@@ -39,11 +39,16 @@ namespace SampleApp
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
 
+            if (thread is not CustomAgentThread typedThread)
+            {
+                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+            }
+
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
+            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
 
             return new AgentRunResponse
             {
@@ -58,11 +63,16 @@ namespace SampleApp
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
 
+            if (thread is not CustomAgentThread typedThread)
+            {
+                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+            }
+
             // Clone the input messages and turn them into response messages with upper case text.
             List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
+            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
 
             foreach (var message in responseMessages)
             {

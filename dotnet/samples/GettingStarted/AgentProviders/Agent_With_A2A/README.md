@@ -2,7 +2,7 @@
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Access to the A2A agent host service
 
 **Note**: These samples need to be run against a valid A2A server. If no A2A server is available, they can be run against the echo-agent that can be spun up locally by following the guidelines at: https://github.com/a2aproject/a2a-dotnet/blob/main/samples/AgentServer/README.md

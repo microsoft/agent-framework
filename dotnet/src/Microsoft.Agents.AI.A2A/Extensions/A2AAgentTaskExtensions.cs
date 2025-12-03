@@ -11,20 +11,37 @@ namespace A2A;
 /// </summary>
 internal static class A2AAgentTaskExtensions
 {
-    internal static IList<ChatMessage> ToChatMessages(this AgentTask agentTask)
+    internal static IList<ChatMessage>? ToChatMessages(this AgentTask agentTask)
     {
         _ = Throw.IfNull(agentTask);
 
-        List<ChatMessage> messages = [];
+        List<ChatMessage>? messages = null;
+
+        if (agentTask?.Artifacts is { Count: > 0 })
+        {
+            foreach (var artifact in agentTask.Artifacts)
+            {
+                (messages ??= []).Add(artifact.ToChatMessage());
+            }
+        }
+
+        return messages;
+    }
+
+    internal static IList<AIContent>? ToAIContents(this AgentTask agentTask)
+    {
+        _ = Throw.IfNull(agentTask);
+
+        List<AIContent>? aiContents = null;
 
         if (agentTask.Artifacts is not null)
         {
             foreach (var artifact in agentTask.Artifacts)
             {
-                messages.Add(artifact.ToChatMessage());
+                (aiContents ??= []).AddRange(artifact.ToAIContents());
             }
         }
 
-        return messages;
+        return aiContents;
     }
 }

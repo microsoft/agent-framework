@@ -33,7 +33,7 @@ public sealed class ObservabilityTests : IDisposable
         this._activityListener = new ActivityListener
         {
             ShouldListenTo = source => source.Name.Contains(typeof(Workflow).Namespace!),
-            Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+            Sample = (ref options) => ActivitySamplingResult.AllData,
             ActivityStarted = activity => this._capturedActivities.Add(activity),
         };
         ActivitySource.AddActivityListener(this._activityListener);

@@ -222,7 +222,7 @@ export function ExecutionTimeline({
 
       // Handle new standard OpenAI events
       if (event.type === "response.output_item.added") {
-        const item = (event as { item?: { type?: string; executor_id?: string; id?: string; created_at?: number; metadata?: any } }).item;
+        const item = (event as import("@/types/openai").ResponseOutputItemAddedEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
         if (item && item.type === "executor_action" && item.executor_id && item.id) {
@@ -261,7 +261,7 @@ export function ExecutionTimeline({
 
       // Handle completion events
       if (event.type === "response.output_item.done") {
-        const item = (event as { item?: { type?: string; executor_id?: string; id?: string; status?: string; error?: string; metadata?: any } }).item;
+        const item = (event as import("@/types/openai").ResponseOutputItemDoneEvent).item;
 
         // Handle both executor_action items AND message items from Magentic agents
         if (item && item.type === "executor_action" && item.executor_id && item.id) {

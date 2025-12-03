@@ -32,7 +32,7 @@ What it does:
 Prerequisites:
 - Azure AI/ Azure OpenAI for `AzureOpenAIChatClient` agents.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
-- For visualization export: `pip install agent-framework[viz] --pre` and install GraphViz binaries.
+- For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.
 """
 
 
@@ -157,12 +157,10 @@ async def main() -> None:
     print("DiGraph string: \n=======")
     print(viz.to_digraph())
     print("=======")
-    try:
-        # Export the DiGraph visualization as SVG.
-        svg_file = viz.export(format="svg")
-        print(f"SVG file saved to: {svg_file}")
-    except ImportError:
-        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
+
+    # Export the DiGraph visualization as SVG.
+    svg_file = viz.export(format="svg")
+    print(f"SVG file saved to: {svg_file}")
 
     # 3) Run with a single prompt
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):

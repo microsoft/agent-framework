@@ -1973,6 +1973,7 @@ class ChatMessage(SerializationMixin):
         author_name: The name of the author of the message.
         message_id: The ID of the chat message.
         additional_properties: Any additional properties associated with the chat message.
+            Additional properties are used within Agent Framework, they are not sent to services.
         raw_representation: The raw representation of the chat message from an underlying implementation.
 
     Examples:
@@ -2033,6 +2034,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -2059,6 +2061,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -2086,6 +2089,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             kwargs: will be combined with additional_properties if provided.
         """

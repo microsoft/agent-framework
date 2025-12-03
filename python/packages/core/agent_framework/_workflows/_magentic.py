@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -19,15 +19,13 @@ from agent_framework import (
     AgentRunResponseUpdate,
     ChatClientProtocol,
     ChatMessage,
-    FunctionCallContent,
-    FunctionResultContent,
     Role,
 )
 
 from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._const import EXECUTOR_STATE_KEY
-from ._events import WorkflowEvent
+from ._events import AgentRunUpdateEvent, WorkflowEvent
 from ._executor import Executor, handler
 from ._group_chat import (
     GroupChatBuilder,
@@ -104,64 +102,13 @@ def _message_from_payload(payload: Any) -> ChatMessage:
     raise TypeError("Unable to reconstruct ChatMessage from payload")
 
 
-# region Unified callback API (developer-facing)
+# region Magentic event metadata constants
 
+# Event type identifiers for magentic_event_type in additional_properties
+MAGENTIC_EVENT_TYPE_ORCHESTRATOR = "orchestrator_message"
+MAGENTIC_EVENT_TYPE_AGENT_DELTA = "agent_delta"
 
-@dataclass
-class MagenticOrchestratorMessageEvent(WorkflowEvent):
-    orchestrator_id: str = ""
-    message: ChatMessage | None = None
-    kind: str = ""
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-@dataclass
-class MagenticAgentDeltaEvent(WorkflowEvent):
-    agent_id: str | None = None
-    text: str | None = None
-    function_call_id: str | None = None
-    function_call_name: str | None = None
-    function_call_arguments: Any | None = None
-    function_result_id: str | None = None
-    function_result: Any | None = None
-    role: Role | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.text)
-
-
-@dataclass
-class MagenticAgentMessageEvent(WorkflowEvent):
-    agent_id: str = ""
-    message: ChatMessage | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-@dataclass
-class MagenticFinalResultEvent(WorkflowEvent):
-    message: ChatMessage | None = None
-
-    def __post_init__(self) -> None:
-        super().__init__(data=self.message)
-
-
-MagenticCallbackEvent = Union[
-    MagenticOrchestratorMessageEvent,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
-    MagenticFinalResultEvent,
-]
-
-
-class CallbackSink(Protocol):
-    async def __call__(self, event: MagenticCallbackEvent) -> None: ...
-
-
-# endregion Unified callback API
+# endregion Magentic event metadata constants
 
 # region Magentic One Prompts
 
@@ -1014,15 +961,14 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _emit_orchestrator_message(
         self,
-        ctx: WorkflowContext[Any, ChatMessage],
+        ctx: WorkflowContext[Any, list[ChatMessage]],
         message: ChatMessage,
         kind: str,
     ) -> None:
         """Emit orchestrator message to the workflow event stream.
 
-        Orchestrator messages flow through the unified workflow event stream as
-        MagenticOrchestratorMessageEvent instances. Consumers should subscribe to
-        these events via workflow.run_stream().
+        Emits an AgentRunUpdateEvent (for agent wrapper consumers) with metadata indicating
+        the orchestrator event type.
 
         Args:
             ctx: Workflow context for adding events to the stream
@@ -1031,15 +977,24 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         Example:
             async for event in workflow.run_stream("task"):
-                if isinstance(event, MagenticOrchestratorMessageEvent):
-                    print(f"Orchestrator {event.kind}: {event.message.text}")
+                if isinstance(event, AgentRunUpdateEvent):
+                    props = event.data.additional_properties if event.data else None
+                    if props and props.get("magentic_event_type") == "orchestrator_message":
+                        kind = props.get("orchestrator_message_kind", "")
+                        print(f"Orchestrator {kind}: {event.data.text}")
         """
-        event = MagenticOrchestratorMessageEvent(
-            orchestrator_id=self.id,
-            message=message,
-            kind=kind,
+        # Emit AgentRunUpdateEvent with metadata
+        update = AgentRunResponseUpdate(
+            text=message.text,
+            role=message.role,
+            author_name=self._get_author_name(),
+            additional_properties={
+                "magentic_event_type": MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
+                "orchestrator_message_kind": kind,
+                "orchestrator_id": self.id,
+            },
         )
-        await ctx.add_event(event)
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -1155,7 +1110,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         self,
         message: _MagenticStartMessage,
         context: WorkflowContext[
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, list[ChatMessage]
         ],
     ) -> None:
         """Handle the initial start message to begin orchestration."""
@@ -1190,7 +1145,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
         # Start the inner loop
         ctx2 = cast(
-            WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+            WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
             context,
         )
         await self._run_inner_loop(ctx2)
@@ -1200,7 +1155,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         self,
         task_text: str,
         context: WorkflowContext[
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, list[ChatMessage]
         ],
     ) -> None:
         await self.handle_start_message(_MagenticStartMessage.from_string(task_text), context)
@@ -1210,7 +1165,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         self,
         task_message: ChatMessage,
         context: WorkflowContext[
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, list[ChatMessage]
         ],
     ) -> None:
         await self.handle_start_message(_MagenticStartMessage(task_message), context)
@@ -1220,7 +1175,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         self,
         conversation: list[ChatMessage],
         context: WorkflowContext[
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, list[ChatMessage]
         ],
     ) -> None:
         await self.handle_start_message(_MagenticStartMessage(conversation), context)
@@ -1229,7 +1184,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
     async def handle_response_message(
         self,
         message: _MagenticResponseMessage,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Handle responses from agents."""
         if getattr(self, "_terminated", False):
@@ -1261,7 +1216,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         response: _MagenticPlanReviewReply,
         context: WorkflowContext[
             # may broadcast ledger next, or ask for another round of review
-            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, ChatMessage
+            _MagenticResponseMessage | _MagenticRequestMessage | _MagenticPlanReviewRequest, list[ChatMessage]
         ],
     ) -> None:
         if getattr(self, "_terminated", False):
@@ -1307,7 +1262,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
             # Enter the normal coordination loop
             ctx2 = cast(
-                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -1334,7 +1289,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
                 self._context.chat_history.append(self._task_ledger)
                 # No further review requests; proceed directly into coordination
             ctx2 = cast(
-                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+                WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
                 context,
             )
             await self._run_inner_loop(ctx2)
@@ -1369,7 +1324,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _run_outer_loop(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Run the outer orchestration loop - planning phase."""
         if self._context is None:
@@ -1392,7 +1347,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _run_inner_loop(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Run the inner orchestration loop. Coordination phase. Serialized with a lock."""
         if self._context is None or self._task_ledger is None:
@@ -1402,7 +1357,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _run_inner_loop_helper(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Run inner loop with exclusive access."""
         # Narrow optional context for the remainder of this method
@@ -1487,7 +1442,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _reset_and_replan(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Reset context and replan."""
         if self._context is None:
@@ -1513,7 +1468,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
 
     async def _prepare_final_answer(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> None:
         """Prepare the final answer using the manager."""
         if self._context is None:
@@ -1523,12 +1478,11 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
         final_answer = await self._manager.prepare_final_answer(self._context.clone(deep=True))
 
         # Emit a completed event for the workflow
-        await context.yield_output(final_answer)
-        await context.add_event(MagenticFinalResultEvent(message=final_answer))
+        await context.yield_output([final_answer])
 
     async def _check_within_limits_or_complete(
         self,
-        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, ChatMessage],
+        context: WorkflowContext[_MagenticResponseMessage | _MagenticRequestMessage, list[ChatMessage]],
     ) -> bool:
         """Check if orchestrator is within operational limits."""
         if self._context is None:
@@ -1555,8 +1509,7 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
                     )
 
                 # Yield the partial result and signal completion
-                await context.yield_output(partial_result)
-                await context.add_event(MagenticFinalResultEvent(message=partial_result))
+                await context.yield_output([partial_result])
             return False
 
         return True
@@ -1733,45 +1686,23 @@ class MagenticAgentExecutor(Executor):
         ctx: WorkflowContext[Any, Any],
         update: AgentRunResponseUpdate,
     ) -> None:
-        contents = list(getattr(update, "contents", []) or [])
-        chunk = getattr(update, "text", None)
-        if not chunk:
-            chunk = "".join(getattr(item, "text", "") for item in contents if hasattr(item, "text"))
-        if chunk:
-            await ctx.add_event(
-                MagenticAgentDeltaEvent(
-                    agent_id=self._agent_id,
-                    text=chunk or None,
-                    role=getattr(update, "role", None),
-                )
-            )
-        for item in contents:
-            if isinstance(item, FunctionCallContent):
-                await ctx.add_event(
-                    MagenticAgentDeltaEvent(
-                        agent_id=self._agent_id,
-                        function_call_id=getattr(item, "call_id", None),
-                        function_call_name=getattr(item, "name", None),
-                        function_call_arguments=getattr(item, "arguments", None),
-                        role=getattr(update, "role", None),
-                    )
-                )
-            elif isinstance(item, FunctionResultContent):
-                await ctx.add_event(
-                    MagenticAgentDeltaEvent(
-                        agent_id=self._agent_id,
-                        function_result_id=getattr(item, "call_id", None),
-                        function_result=getattr(item, "result", None),
-                        role=getattr(update, "role", None),
-                    )
-                )
+        # Add metadata to identify this as an agent streaming update
+        if update.additional_properties is None:
+            update.additional_properties = {}
+        update.additional_properties["magentic_event_type"] = MAGENTIC_EVENT_TYPE_AGENT_DELTA
+        update.additional_properties["agent_id"] = self._agent_id
+
+        # Emit AgentRunUpdateEvent with the agent response update
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self._agent_id, data=update))
 
     async def _emit_agent_message_event(
         self,
         ctx: WorkflowContext[Any, Any],
         message: ChatMessage,
     ) -> None:
-        await ctx.add_event(MagenticAgentMessageEvent(agent_id=self._agent_id, message=message))
+        # Agent message completion is already communicated via streaming updates
+        # No additional event needed
+        pass
 
     async def _invoke_agent(
         self,
@@ -1796,7 +1727,7 @@ class MagenticAgentExecutor(Executor):
             last: ChatMessage = messages[-1]
             author = last.author_name or self._agent_id
             role: Role = last.role if last.role else Role.ASSISTANT
-            text = last.text or str(last)
+            text = last.text or ""
             msg = ChatMessage(role=role, text=text, author_name=author)
             await self._emit_agent_message_event(ctx, msg)
             return msg
@@ -2352,21 +2283,22 @@ class MagenticWorkflow:
             return
 
         # At this point, checkpoint is guaranteed to be WorkflowCheckpoint
-        executor_states: dict[str, Any] = checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {})
+        executor_states = cast(dict[str, Any], checkpoint.shared_state.get(EXECUTOR_STATE_KEY, {}))
         orchestrator_id = getattr(orchestrator, "id", "")
-        orchestrator_state = executor_states.get(orchestrator_id)
+        orchestrator_state = cast(Any, executor_states.get(orchestrator_id))
         if orchestrator_state is None:
-            orchestrator_state = executor_states.get("magentic_orchestrator")
+            orchestrator_state = cast(Any, executor_states.get("magentic_orchestrator"))
 
         if not isinstance(orchestrator_state, dict):
             return
 
-        context_payload = orchestrator_state.get("magentic_context")
+        orchestrator_state_dict = cast(dict[str, Any], orchestrator_state)
+        context_payload = cast(Any, orchestrator_state_dict.get("magentic_context"))
         if not isinstance(context_payload, dict):
             return
 
         context_dict = cast(dict[str, Any], context_payload)
-        restored_participants = context_dict.get("participant_descriptions")
+        restored_participants = cast(Any, context_dict.get("participant_descriptions"))
         if not isinstance(restored_participants, dict):
             return
 

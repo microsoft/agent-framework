@@ -329,7 +329,7 @@ public sealed class OpenAIConversationsSerializationTests
             Assert.NotNull(item);
             Assert.NotNull(item.Id);
             Assert.Equal("message", item.Type);
-            var messageItem = Assert.IsAssignableFrom<ResponsesMessageItemResource>(item);
+            var messageItem = Assert.IsType<ResponsesMessageItemResource>(item, exactMatch: false);
             // Content is on concrete message types (ResponsesAssistantMessageItemResource, etc.)
             // For this test, we just verify the type is correct
             Assert.NotNull(messageItem);

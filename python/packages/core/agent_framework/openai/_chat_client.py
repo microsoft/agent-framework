@@ -369,8 +369,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
-            if message.additional_properties:
-                args["metadata"] = message.additional_properties
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:

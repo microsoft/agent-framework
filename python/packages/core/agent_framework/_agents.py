@@ -337,6 +337,7 @@ class BaseAgent(SerializationMixin):
         thread: AgentThread,
         input_messages: ChatMessage | Sequence[ChatMessage],
         response_messages: ChatMessage | Sequence[ChatMessage],
+        **kwargs: Any,
     ) -> None:
         """Notify the thread of new messages.
 
@@ -346,13 +347,14 @@ class BaseAgent(SerializationMixin):
             thread: The thread to notify of new messages.
             input_messages: The input messages to notify about.
             response_messages: The response messages to notify about.
+            **kwargs: Any extra arguments to pass from the agent run.
         """
         if isinstance(input_messages, ChatMessage) or len(input_messages) > 0:
             await thread.on_new_messages(input_messages)
         if isinstance(response_messages, ChatMessage) or len(response_messages) > 0:
             await thread.on_new_messages(response_messages)
         if thread.context_provider:
-            await thread.context_provider.invoked(input_messages, response_messages)
+            await thread.context_provider.invoked(input_messages, response_messages, **kwargs)
 
     @property
     def display_name(self) -> str:
@@ -853,6 +855,7 @@ class ChatAgent(BaseAgent):
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
             model_id=model_id,
             conversation_id=thread.service_thread_id,
@@ -871,11 +874,15 @@ class ChatAgent(BaseAgent):
             tools=final_tools,
             top_p=top_p,
             user=user,
-            **(additional_chat_options or {}),
+            additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
-        response = await self.chat_client.get_response(messages=thread_messages, chat_options=co, **filtered_kwargs)
+        response = await self.chat_client.get_response(
+            messages=thread_messages,
+            chat_options=co,
+            **filtered_kwargs,
+        )
 
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
 
@@ -964,7 +971,7 @@ class ChatAgent(BaseAgent):
         """
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, input_messages=input_messages
+            thread=thread, input_messages=input_messages, **kwargs
         )
         agent_name = self._get_agent_name()
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -986,6 +993,7 @@ class ChatAgent(BaseAgent):
                 await self._async_exit_stack.enter_async_context(mcp_server)
             final_tools.extend(mcp_server.functions)
 
+        merged_additional_options = additional_chat_options or {}
         co = run_chat_options & ChatOptions(
             conversation_id=thread.service_thread_id,
             allow_multiple_tool_calls=allow_multiple_tool_calls,
@@ -1004,14 +1012,16 @@ class ChatAgent(BaseAgent):
             tools=final_tools,
             top_p=top_p,
             user=user,
-            **(additional_chat_options or {}),
+            additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
 
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response_updates: list[ChatResponseUpdate] = []
         async for update in self.chat_client.get_streaming_response(
-            messages=thread_messages, chat_options=co, **filtered_kwargs
+            messages=thread_messages,
+            chat_options=co,
+            **filtered_kwargs,
         ):
             response_updates.append(update)
 
@@ -1031,7 +1041,7 @@ class ChatAgent(BaseAgent):
 
         response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages, **kwargs)
 
     @override
     def get_new_thread(
@@ -1226,6 +1236,7 @@ class ChatAgent(BaseAgent):
         *,
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
+        **kwargs: Any,
     ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
         """Prepare the thread and messages for agent execution.
 
@@ -1235,6 +1246,7 @@ class ChatAgent(BaseAgent):
         Keyword Args:
             thread: The conversation thread.
             input_messages: Messages to process.
+            **kwargs: Any extra arguments to pass from the agent run.
 
         Returns:
             A tuple containing:
@@ -1255,7 +1267,7 @@ class ChatAgent(BaseAgent):
         context: Context | None = None
         if self.context_provider:
             async with self.context_provider:
-                context = await self.context_provider.invoking(input_messages or [])
+                context = await self.context_provider.invoking(input_messages or [], **kwargs)
                 if context:
                     if context.messages:
                         thread_messages.extend(context.messages)

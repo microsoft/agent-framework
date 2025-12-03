@@ -1,8 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- CA2007: This rule should generally be suppressed in Durable Task libraries -->
     <!-- MEAI001: UserInputRequestContent is experimental but used in source-generated code for AgentRunResponse -->
@@ -29,6 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.DurableTask.IntegrationTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.DurableTask.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureFunctions" />
   </ItemGroup>

@@ -15,6 +15,7 @@ See the README.md for each sample for the prerequisites for that sample.
 |Sample|Description|
 |---|---|
 |[Creating an AIAgent with A2A](./Agent_With_A2A/)|This sample demonstrates how to create AIAgent for an existing A2A agent.|
+|[Creating an AIAgent with Anthropic](./Agent_With_Anthropic/)|This sample demonstrates how to create an AIAgent using Anthropic Claude models as the underlying inference service|
 |[Creating an AIAgent with Foundry Agents using Azure.AI.Agents.Persistent](./Agent_With_AzureAIAgentsPersistent/)|This sample demonstrates how to create a Foundry Persistent agent and expose it as an AIAgent using the Azure.AI.Agents.Persistent SDK|
 |[Creating an AIAgent with Foundry Agents using Azure.AI.Project](./Agent_With_AzureAIProject/)|This sample demonstrates how to create an Foundry Project agent and expose it as an AIAgent using the Azure.AI.Project SDK|
 |[Creating an AIAgent with AzureFoundry Model](./Agent_With_AzureFoundryModel/)|This sample demonstrates how to use any model deployed to Azure Foundry to create an AIAgent|

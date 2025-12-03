@@ -396,7 +396,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         var json = JsonSerializer.Serialize(testResponse, ClientJsonContext.Default.ClientForecastResponse);
 
         // Assert
-        var jsonElement = JsonDocument.Parse(json).RootElement;
+        var jsonElement = JsonElement.Parse(json);
         jsonElement.GetProperty("MaxTemp").GetInt32().Should().Be(75);
         jsonElement.GetProperty("MinTemp").GetInt32().Should().Be(60);
         jsonElement.GetProperty("Outlook").GetString().Should().Be("Rainy");
@@ -652,15 +652,15 @@ internal sealed class FakeToolCallingChatClient : IChatClient
         return functionName switch
         {
             "GetWeather" => new Dictionary<string, object?> { ["location"] = "Seattle" },
-            "GetTime" => new Dictionary<string, object?>(), // No parameters
+            "GetTime" => [], // No parameters
             "Calculate" => new Dictionary<string, object?> { ["a"] = 5, ["b"] = 3 },
             "FormatText" => new Dictionary<string, object?> { ["text"] = "hello" },
-            "GetServerData" => new Dictionary<string, object?>(), // No parameters
-            "GetClientData" => new Dictionary<string, object?>(), // No parameters
+            "GetServerData" => [], // No parameters
+            "GetClientData" => [], // No parameters
             // For custom types, the parameter name is "request" and the value is an instance of the request type
             "GetServerForecast" => new Dictionary<string, object?> { ["request"] = new ServerForecastRequest("Seattle", 5) },
             "GetClientForecast" => new Dictionary<string, object?> { ["request"] = new ClientForecastRequest("Portland", true) },
-            _ => new Dictionary<string, object?>() // Default: no parameters
+            _ => [] // Default: no parameters
         };
     }
 
@@ -689,9 +689,9 @@ public record ClientForecastResponse(int MaxTemp, int MinTemp, string Outlook);
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(ServerForecastRequest))]
 [JsonSerializable(typeof(ServerForecastResponse))]
-internal sealed partial class ServerJsonContext : JsonSerializerContext { }
+internal sealed partial class ServerJsonContext : JsonSerializerContext;
 
 [JsonSourceGenerationOptions(WriteIndented = false)]
 [JsonSerializable(typeof(ClientForecastRequest))]
 [JsonSerializable(typeof(ClientForecastResponse))]
-internal sealed partial class ClientJsonContext : JsonSerializerContext { }
+internal sealed partial class ClientJsonContext : JsonSerializerContext;

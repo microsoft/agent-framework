@@ -10,13 +10,13 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
     BaseAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatResponse,
     ChatResponseUpdate,
     Executor,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
     MagenticManagerBase,
     MagenticPlanReviewDecision,
@@ -33,6 +33,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
+from agent_framework._workflows import _group_chat as group_chat_module  # type: ignore
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._magentic import (  # type: ignore[reportPrivateUsage]
     MagenticAgentExecutor,
@@ -42,6 +43,7 @@ from agent_framework._workflows._magentic import (  # type: ignore[reportPrivate
     _MagenticProgressLedgerItem,  # type: ignore
     _MagenticStartMessage,  # type: ignore
 )
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
 
 if sys.version_info >= (3, 12):
     from typing import override
@@ -162,6 +164,19 @@ class FakeManager(MagenticManagerBase):
         return ChatMessage(role=Role.ASSISTANT, text="FINAL", author_name="magentic_manager")
 
 
+class _CountingWorkflowBuilder(WorkflowBuilder):
+    created: list["_CountingWorkflowBuilder"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.start_calls = 0
+        _CountingWorkflowBuilder.created.append(self)
+
+    def set_start_executor(self, executor: Any) -> "_CountingWorkflowBuilder":  # type: ignore[override]
+        self.start_calls += 1
+        return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
+
+
 async def test_standard_manager_plan_and_replan_combined_ledger():
     manager = FakeManager(max_round_count=10, max_stall_count=3, max_reset_count=2)
     ctx = MagenticContext(
@@ -210,7 +225,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert req_event is not None
 
     completed = False
-    output: ChatMessage | None = None
+    output: list[ChatMessage] | None = None
     async for ev in wf.send_responses_streaming(
         responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
     ):
@@ -222,7 +237,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
             break
     assert completed
     assert output is not None
-    assert isinstance(output, ChatMessage)
+    assert isinstance(output, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output)
 
 
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
@@ -300,8 +316,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, ChatMessage)
-    assert data.role == Role.ASSISTANT
+    assert isinstance(data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in data)
+    assert len(data) > 0
+    assert data[-1].role == Role.ASSISTANT
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -372,6 +390,23 @@ class _DummyExec(Executor):
     @handler
     async def _noop(self, message: object, ctx: WorkflowContext[object]) -> None:  # pragma: no cover - not called
         pass
+
+
+def test_magentic_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure MagenticBuilder wiring sets the start executor only once."""
+    _CountingWorkflowBuilder.created.clear()
+    monkeypatch.setattr(group_chat_module, "WorkflowBuilder", _CountingWorkflowBuilder)
+
+    manager = FakeManager()
+
+    workflow = (
+        MagenticBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager=manager).build()
+    )
+
+    assert workflow is not None
+    assert _CountingWorkflowBuilder.created, "Expected CountingWorkflowBuilder to be instantiated"
+    builder = _CountingWorkflowBuilder.created[-1]
+    assert builder.start_calls == 1, "set_start_executor should be called exactly once"
 
 
 async def test_magentic_agent_executor_on_checkpoint_save_and_restore_roundtrip():
@@ -561,8 +596,12 @@ async def _collect_agent_responses_setup(participant_obj: object):
         events.append(ev)
         if isinstance(ev, WorkflowOutputEvent):
             break
-        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
-            captured.append(ev.message)
+        if isinstance(ev, AgentRunUpdateEvent) and ev.data is not None:
+            captured.append(
+                ChatMessage(
+                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                )
+            )
         if len(events) > 50:
             break
 
@@ -742,9 +781,11 @@ async def test_magentic_stall_and_reset_successfully():
     assert idle_status is not None
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
-    assert isinstance(output_event.data, ChatMessage)
-    assert output_event.data.text is not None
-    assert output_event.data.text == "re-ledger"
+    assert isinstance(output_event.data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output_event.data)
+    assert len(output_event.data) > 0
+    assert output_event.data[-1].text is not None
+    assert output_event.data[-1].text == "re-ledger"
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:
