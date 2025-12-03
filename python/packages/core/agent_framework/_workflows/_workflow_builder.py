@@ -707,7 +707,7 @@ class WorkflowBuilder:
         internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
         for case in cases:
             # Allow case targets to be agents
-            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[attr-defined]
+            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[arg-type]
             self._add_executor(case.target)
             if isinstance(case, Default):
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
