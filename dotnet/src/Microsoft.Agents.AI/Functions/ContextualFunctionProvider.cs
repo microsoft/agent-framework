@@ -61,7 +61,7 @@ public sealed class ContextualFunctionProvider : AIContextProvider
         int maxNumberOfFunctions,
         ContextualFunctionProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this(vectorStore, vectorDimensions, functions, maxNumberOfFunctions, default, null, options, loggerFactory)
+        : this(vectorStore, vectorDimensions, functions, maxNumberOfFunctions, default(JsonElement), options, null, loggerFactory)
     {
     }
 
@@ -73,8 +73,8 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     /// <param name="functions">The functions to vectorize and store for searching related functions.</param>
     /// <param name="maxNumberOfFunctions">The maximum number of relevant functions to retrieve from the vector store.</param>
     /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized provider state.</param>
-    /// <param name="jsonSerializerOptions">Optional serializer options (unused - source generated context is used).</param>
     /// <param name="options">Further optional settings for configuring the provider.</param>
+    /// <param name="jsonSerializerOptions">Optional serializer options (unused - source generated context is used).</param>
     /// <param name="loggerFactory">The logger factory to use for logging. If not provided, no logging will be performed.</param>
     public ContextualFunctionProvider(
         VectorStore vectorStore,
@@ -82,8 +82,8 @@ public sealed class ContextualFunctionProvider : AIContextProvider
         IEnumerable<AIFunction> functions,
         int maxNumberOfFunctions,
         JsonElement serializedState,
-        JsonSerializerOptions? jsonSerializerOptions = null,
         ContextualFunctionProviderOptions? options = null,
+        JsonSerializerOptions? jsonSerializerOptions = null,
         ILoggerFactory? loggerFactory = null)
     {
         Throw.IfNull(vectorStore);
