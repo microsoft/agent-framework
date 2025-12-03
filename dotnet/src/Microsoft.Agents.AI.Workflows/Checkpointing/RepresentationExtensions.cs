@@ -9,10 +9,10 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 
 internal static class RepresentationExtensions
 {
-    public static ExecutorInfo ToExecutorInfo(this ExecutorRegistration registration)
+    public static ExecutorInfo ToExecutorInfo(this ExecutorBinding binding)
     {
-        Throw.IfNull(registration);
-        return new ExecutorInfo(new TypeId(registration.ExecutorType), registration.Id);
+        Throw.IfNull(binding);
+        return new ExecutorInfo(new TypeId(binding.ExecutorType), binding.Id);
     }
 
     public static EdgeInfo ToEdgeInfo(this Edge edge)
@@ -33,13 +33,13 @@ internal static class RepresentationExtensions
         return new(new TypeId(port.Request), new TypeId(port.Response), port.Id);
     }
 
-    private static WorkflowInfo ToWorkflowInfo(this Workflow workflow, TypeId? inputType, TypeId? outputType, string? outputExecutorId)
+    public static WorkflowInfo ToWorkflowInfo(this Workflow workflow)
     {
         Throw.IfNull(workflow);
 
         Dictionary<string, ExecutorInfo> executors =
-            workflow.Registrations.Values.ToDictionary(
-                keySelector: registration => registration.Id,
+            workflow.ExecutorBindings.Values.ToDictionary(
+                keySelector: binding => binding.Id,
                 elementSelector: ToExecutorInfo);
 
         Dictionary<string, List<EdgeInfo>> edges = workflow.Edges.Keys.ToDictionary(
@@ -48,12 +48,6 @@ internal static class RepresentationExtensions
 
         HashSet<RequestPortInfo> inputPorts = new(workflow.Ports.Values.Select(ToPortInfo));
 
-        return new WorkflowInfo(executors, edges, inputPorts, inputType, workflow.StartExecutorId, workflow.OutputExecutors);
+        return new WorkflowInfo(executors, edges, inputPorts, workflow.StartExecutorId, workflow.OutputExecutors);
     }
-
-    public static WorkflowInfo ToWorkflowInfo(this Workflow workflow)
-        => workflow.ToWorkflowInfo(inputType: null, outputType: null, outputExecutorId: null);
-
-    public static WorkflowInfo ToWorkflowInfo<TInput>(this Workflow<TInput> workflow)
-        => workflow.ToWorkflowInfo(inputType: new(workflow.InputType), outputType: null, outputExecutorId: null);
 }

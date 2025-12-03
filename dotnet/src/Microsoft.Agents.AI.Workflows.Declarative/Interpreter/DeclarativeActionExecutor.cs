@@ -24,7 +24,6 @@ internal abstract class DeclarativeActionExecutor<TAction>(TAction model, Workfl
 
 internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResult>, IResettableExecutor, IModeledAction
 {
-    private string? _parentId;
     private readonly WorkflowFormulaState _state;
 
     protected DeclarativeActionExecutor(DialogAction model, WorkflowFormulaState state)
@@ -42,7 +41,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
     public DialogAction Model { get; }
 
-    public string ParentId => this._parentId ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root();
+    public string ParentId { get => field ??= this.Model.GetParentId() ?? WorkflowActionVisitor.Steps.Root(); }
 
     public RecalcEngine Engine => this._state.Engine;
 
@@ -73,7 +72,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
 
         try
         {
-            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken: default).ConfigureAwait(false);
+            object? result = await this.ExecuteAsync(new DeclarativeWorkflowContext(context, this._state), cancellationToken).ConfigureAwait(false);
             Debug.WriteLine($"RESULT #{this.Id} - {result ?? "(null)"}");
 
             if (this.EmitResultEvent)

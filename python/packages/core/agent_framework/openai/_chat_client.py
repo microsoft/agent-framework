@@ -28,6 +28,8 @@ from .._types import (
     Contents,
     DataContent,
     FinishReason,
+    FunctionApprovalRequestContent,
+    FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -67,10 +69,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
+        client = await self.ensure_client()
         options_dict = self._prepare_options(messages, chat_options)
         try:
             return self._create_chat_response(
-                await self.client.chat.completions.create(stream=False, **options_dict), chat_options
+                await client.chat.completions.create(stream=False, **options_dict), chat_options
             )
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -95,10 +98,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        client = await self.ensure_client()
         options_dict = self._prepare_options(messages, chat_options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
-            async for chunk in await self.client.chat.completions.create(stream=True, **options_dict):
+            async for chunk in await client.chat.completions.create(stream=True, **options_dict):
                 if len(chunk.choices) == 0 and chunk.usage is None:
                     continue
                 yield self._create_chat_response_update(chunk)
@@ -154,10 +158,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
         # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(exclude={"type"})
-        instructions = options_dict.pop("instructions", None)
-        if instructions:
-            messages = [ChatMessage(role="system", text=instructions), *messages]
+        options_dict = chat_options.to_dict(
+            exclude={
+                "type",
+                "instructions",  # included as system message
+            }
+        )
+
         if messages and "messages" not in options_dict:
             options_dict["messages"] = self._prepare_chat_history_for_request(messages)
         if "messages" not in options_dict:
@@ -186,6 +193,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     options_dict[key] = value
+        if (tool_choice := options_dict.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            options_dict["tool_choice"] = tool_choice["mode"]
         return options_dict
 
     def _create_chat_response(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":
@@ -353,11 +362,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         """Parse a chat message into the openai format."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
+            # Skip approval content - it's internal framework state, not for the LLM
+            if isinstance(content, (FunctionApprovalRequestContent, FunctionApprovalResponseContent)):
+                continue
+
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
-            if message.additional_properties:
-                args["metadata"] = message.additional_properties
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:
@@ -369,11 +380,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     args["tool_call_id"] = content.call_id
                     if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
-                    elif content.exception is not None:
-                        # Send the exception message to the model
-                        # Otherwise we won't have any channels to talk to OpenAI
-                        # TODO(yuge): This should ideally be customizable
-                        args["content"] = "Error: " + str(content.exception)
                 case _:
                     if "content" not in args:
                         args["content"] = []

@@ -63,6 +63,26 @@ def test_ai_function_decorator_without_args():
     assert test_tool(1, 2) == 3
 
 
+def test_ai_function_without_args():
+    """Test the ai_function decorator."""
+
+    @ai_function
+    def test_tool() -> int:
+        """A simple function that adds two numbers."""
+        return 1 + 2
+
+    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, AIFunction)
+    assert test_tool.name == "test_tool"
+    assert test_tool.description == "A simple function that adds two numbers."
+    assert test_tool.parameters() == {
+        "properties": {},
+        "title": "test_tool_input",
+        "type": "object",
+    }
+    assert test_tool() == 3
+
+
 async def test_ai_function_decorator_with_async():
     """Test the ai_function decorator with an async function."""
 
@@ -82,6 +102,136 @@ async def test_ai_function_decorator_with_async():
         "type": "object",
     }
     assert (await async_test_tool(1, 2)) == 3
+
+
+def test_ai_function_decorator_in_class():
+    """Test the ai_function decorator."""
+
+    class my_tools:
+        @ai_function(name="test_tool", description="A test tool")
+        def test_tool(self, x: int, y: int) -> int:
+            """A simple function that adds two numbers."""
+            return x + y
+
+    test_tool = my_tools().test_tool
+
+    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, AIFunction)
+    assert test_tool.name == "test_tool"
+    assert test_tool.description == "A test tool"
+    assert test_tool.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "test_tool_input",
+        "type": "object",
+    }
+    assert test_tool(1, 2) == 3
+
+
+async def test_ai_function_decorator_shared_state():
+    """Test that decorated methods maintain shared state across multiple calls and tool usage."""
+
+    class StatefulCounter:
+        """A class that maintains a counter and provides decorated methods to interact with it."""
+
+        def __init__(self, initial_value: int = 0):
+            self.counter = initial_value
+            self.operation_log: list[str] = []
+
+        @ai_function(name="increment", description="Increment the counter")
+        def increment(self, amount: int) -> str:
+            """Increment the counter by the given amount."""
+            self.counter += amount
+            self.operation_log.append(f"increment({amount})")
+            return f"Counter incremented by {amount}. New value: {self.counter}"
+
+        @ai_function(name="get_value", description="Get the current counter value")
+        def get_value(self) -> str:
+            """Get the current counter value."""
+            self.operation_log.append("get_value()")
+            return f"Current counter value: {self.counter}"
+
+        @ai_function(name="multiply", description="Multiply the counter")
+        def multiply(self, factor: int) -> str:
+            """Multiply the counter by the given factor."""
+            self.counter *= factor
+            self.operation_log.append(f"multiply({factor})")
+            return f"Counter multiplied by {factor}. New value: {self.counter}"
+
+    # Create a single instance with shared state
+    counter_instance = StatefulCounter(initial_value=10)
+
+    # Get the decorated methods - these will be used by different "agents" or tools
+    increment_tool = counter_instance.increment
+    get_value_tool = counter_instance.get_value
+    multiply_tool = counter_instance.multiply
+
+    # Verify they are AIFunction instances
+    assert isinstance(increment_tool, AIFunction)
+    assert isinstance(get_value_tool, AIFunction)
+    assert isinstance(multiply_tool, AIFunction)
+
+    # Tool 1 (increment) is used
+    result1 = increment_tool(5)
+    assert result1 == "Counter incremented by 5. New value: 15"
+    assert counter_instance.counter == 15
+
+    # Tool 2 (get_value) sees the state change from tool 1
+    result2 = get_value_tool()
+    assert result2 == "Current counter value: 15"
+    assert counter_instance.counter == 15
+
+    # Tool 3 (multiply) modifies the shared state
+    result3 = multiply_tool(3)
+    assert result3 == "Counter multiplied by 3. New value: 45"
+    assert counter_instance.counter == 45
+
+    # Tool 2 (get_value) sees the state change from tool 3
+    result4 = get_value_tool()
+    assert result4 == "Current counter value: 45"
+    assert counter_instance.counter == 45
+
+    # Tool 1 (increment) sees the current state and modifies it
+    result5 = increment_tool(10)
+    assert result5 == "Counter incremented by 10. New value: 55"
+    assert counter_instance.counter == 55
+
+    # Verify the operation log shows all operations in order
+    assert counter_instance.operation_log == [
+        "increment(5)",
+        "get_value()",
+        "multiply(3)",
+        "get_value()",
+        "increment(10)",
+    ]
+
+    # Verify the parameters don't include 'self'
+    assert increment_tool.parameters() == {
+        "properties": {"amount": {"title": "Amount", "type": "integer"}},
+        "required": ["amount"],
+        "title": "increment_input",
+        "type": "object",
+    }
+    assert multiply_tool.parameters() == {
+        "properties": {"factor": {"title": "Factor", "type": "integer"}},
+        "required": ["factor"],
+        "title": "multiply_input",
+        "type": "object",
+    }
+    assert get_value_tool.parameters() == {
+        "properties": {},
+        "title": "get_value_input",
+        "type": "object",
+    }
+
+    # Test with invoke method as well (simulating agent execution)
+    result6 = await increment_tool.invoke(amount=5)
+    assert result6 == "Counter incremented by 5. New value: 60"
+    assert counter_instance.counter == 60
+
+    result7 = await get_value_tool.invoke()
+    assert result7 == "Current counter value: 60"
+    assert counter_instance.counter == 60
 
 
 async def test_ai_function_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
@@ -169,6 +319,26 @@ async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: In
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+
+
+async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
+    """Ensure ai_function tools drop unknown kwargs when invoked with validated arguments."""
+
+    @ai_function
+    async def simple_tool(message: str) -> str:
+        """Echo tool."""
+        return message.upper()
+
+    args = simple_tool.input_model(message="hello world")
+
+    # These kwargs simulate runtime context passed through function invocation.
+    result = await simple_tool.invoke(
+        arguments=args,
+        api_token="secret-token",
+        chat_options={"model_id": "dummy"},
+    )
+
+    assert result == "HELLO WORLD"
 
 
 async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -297,6 +467,48 @@ async def test_ai_function_invoke_invalid_pydantic_args():
     # Call invoke with wrong model type
     with pytest.raises(TypeError, match="Expected invalid_args_test_input, got WrongModel"):
         await invalid_args_test.invoke(arguments=wrong_args)
+
+
+def test_ai_function_serialization():
+    """Test AIFunction serialization and deserialization."""
+
+    def serialize_test(x: int, y: int) -> int:
+        """A function for testing serialization."""
+        return x - y
+
+    serialize_test_ai_function = ai_function(name="serialize_test", description="A test tool for serialization")(
+        serialize_test
+    )
+
+    # Serialize to dict
+    tool_dict = serialize_test_ai_function.to_dict()
+    assert tool_dict["type"] == "ai_function"
+    assert tool_dict["name"] == "serialize_test"
+    assert tool_dict["description"] == "A test tool for serialization"
+    assert tool_dict["input_model"] == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "serialize_test_input",
+        "type": "object",
+    }
+
+    # Deserialize from dict
+    restored_tool = AIFunction.from_dict(tool_dict, dependencies={"ai_function": {"func": serialize_test}})
+    assert isinstance(restored_tool, AIFunction)
+    assert restored_tool.name == "serialize_test"
+    assert restored_tool.description == "A test tool for serialization"
+    assert restored_tool.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool(10, 4) == 6
+
+    # Deserialize from dict with instance name
+    restored_tool_2 = AIFunction.from_dict(
+        tool_dict, dependencies={"ai_function": {"name:serialize_test": {"func": serialize_test}}}
+    )
+    assert isinstance(restored_tool_2, AIFunction)
+    assert restored_tool_2.name == "serialize_test"
+    assert restored_tool_2.description == "A test tool for serialization"
+    assert restored_tool_2.parameters() == serialize_test_ai_function.parameters()
+    assert restored_tool_2(10, 4) == 6
 
 
 # region HostedCodeInterpreterTool and _parse_inputs
@@ -747,13 +959,14 @@ async def test_non_streaming_single_function_requires_approval():
     # Execute
     result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
 
-    # Verify: should return 2 messages - function call and approval request
+    # Verify: should return 1 message with function call and approval request
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 2
     assert isinstance(result.messages[0].contents[0], FunctionCallContent)
-    assert isinstance(result.messages[1].contents[0], FunctionApprovalRequestContent)
-    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
+    assert isinstance(result.messages[0].contents[1], FunctionApprovalRequestContent)
+    assert result.messages[0].contents[1].function_call.name == "requires_approval_tool"
 
 
 async def test_non_streaming_two_functions_both_no_approval():
@@ -838,16 +1051,17 @@ async def test_non_streaming_two_functions_both_require_approval():
     # Execute
     result = await wrapped(mock_client, messages=[], tools=[requires_approval_tool])
 
-    # Verify: should return 2 messages - function calls and approval requests
+    # Verify: should return 1 message with function calls and approval requests
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
-    assert len(result.messages[0].contents) == 2  # Both function calls
-    assert all(isinstance(c, FunctionCallContent) for c in result.messages[0].contents)
-    assert len(result.messages[1].contents) == 2  # Both approval requests
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
-    assert result.messages[1].contents[0].function_call.name == "requires_approval_tool"
-    assert result.messages[1].contents[1].function_call.name == "requires_approval_tool"
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
+    function_calls = [c for c in result.messages[0].contents if isinstance(c, FunctionCallContent)]
+    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    assert len(function_calls) == 2
+    assert len(approval_requests) == 2
+    assert approval_requests[0].function_call.name == "requires_approval_tool"
+    assert approval_requests[1].function_call.name == "requires_approval_tool"
 
 
 async def test_non_streaming_two_functions_mixed_approval():
@@ -886,10 +1100,10 @@ async def test_non_streaming_two_functions_mixed_approval():
     # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
     from agent_framework import FunctionApprovalRequestContent
 
-    assert len(result.messages) == 2
-    assert len(result.messages[0].contents) == 2  # Both function calls
-    assert len(result.messages[1].contents) == 2  # Both approval requests
-    assert all(isinstance(c, FunctionApprovalRequestContent) for c in result.messages[1].contents)
+    assert len(result.messages) == 1
+    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
+    approval_requests = [c for c in result.messages[0].contents if isinstance(c, FunctionApprovalRequestContent)]
+    assert len(approval_requests) == 2
 
 
 async def test_streaming_single_function_no_approval():
@@ -974,7 +1188,7 @@ async def test_streaming_single_function_requires_approval():
 
     assert len(updates) == 2
     assert isinstance(updates[0].contents[0], FunctionCallContent)
-    assert updates[1].role == Role.TOOL
+    assert updates[1].role == Role.ASSISTANT
     assert isinstance(updates[1].contents[0], FunctionApprovalRequestContent)
 
 
@@ -1069,8 +1283,8 @@ async def test_streaming_two_functions_both_require_approval():
     assert len(updates) == 3
     assert isinstance(updates[0].contents[0], FunctionCallContent)
     assert isinstance(updates[1].contents[0], FunctionCallContent)
-    # Tool update with both approval requests
-    assert updates[2].role == Role.TOOL
+    # Assistant update with both approval requests
+    assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
 
@@ -1116,7 +1330,7 @@ async def test_streaming_two_functions_mixed_approval():
     assert len(updates) == 3
     assert isinstance(updates[0].contents[0], FunctionCallContent)
     assert isinstance(updates[1].contents[0], FunctionCallContent)
-    # Tool update with both approval requests
-    assert updates[2].role == Role.TOOL
+    # Assistant update with both approval requests
+    assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)

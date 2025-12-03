@@ -9,7 +9,7 @@ namespace AgentWebChat.Web;
 /// <summary>
 /// Interface for clients that can interact with agents and provide streaming responses.
 /// </summary>
-public interface IAgentClient
+internal abstract class AgentClientBase
 {
     /// <summary>
     /// Runs an agent with the specified messages and returns a streaming response.
@@ -19,7 +19,7 @@ public interface IAgentClient
     /// <param name="threadId">Optional thread identifier for conversation continuity.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An asynchronous enumerable of agent response updates.</returns>
-    IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string agentName,
         IList<ChatMessage> messages,
         string? threadId = null,
@@ -31,7 +31,8 @@ public interface IAgentClient
     /// <param name="agentName">The name of the agent.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The agent card if supported, null otherwise.</returns>
-    Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default);
+    public virtual Task<AgentCard?> GetAgentCardAsync(string agentName, CancellationToken cancellationToken = default)
+        => Task.FromResult<AgentCard?>(null);
 }
 
 /// <summary>
