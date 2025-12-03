@@ -7,7 +7,7 @@ from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 
 """
-Azure AI Agent With Local MCP Example
+Azure AI Agent with Local MCP Example
 
 This sample demonstrates integration of Azure AI Agents with local Model Context Protocol (MCP)
 servers, showing both agent-level and run-level tool configuration patterns.
@@ -29,7 +29,7 @@ async def mcp_tools_on_agent_level() -> None:
         AzureCliCredential() as credential,
         AzureAIClient(async_credential=credential).create_agent(
             name="DocsAgent",
-            instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+            instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
             tools=MCPStreamableHTTPTool(  # Tools defined at agent creation
                 name="Microsoft Learn MCP",
                 url="https://learn.microsoft.com/api/mcp",
@@ -64,7 +64,7 @@ async def mcp_tools_on_run_level() -> None:
         ) as mcp_server,
         AzureAIClient(async_credential=credential).create_agent(
             name="DocsAgent",
-            instructions="You are a helpful assistant that can help with microsoft documentation questions.",
+            instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
         ) as agent,
     ):
         # First query
