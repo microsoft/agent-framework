@@ -441,32 +441,36 @@ async def test_azure_ai_chat_client_close_client_when_should_close_false(mock_ag
     mock_agents_client.close.assert_not_called()
 
 
-def test_azure_ai_chat_client_update_agent_name_when_current_is_none(mock_agents_client: MagicMock) -> None:
-    """Test _update_agent_name updates name when current agent_name is None."""
+def test_azure_ai_chat_client_update_agent_name_and_description_when_current_is_none(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _update_agent_name_and_description updates name when current agent_name is None."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
     chat_client.agent_name = None  # type: ignore
 
-    chat_client._update_agent_name("NewAgentName")  # type: ignore
+    chat_client._update_agent_name_and_description("NewAgentName")  # type: ignore
 
     assert chat_client.agent_name == "NewAgentName"
 
 
-def test_azure_ai_chat_client_update_agent_name_when_current_exists(mock_agents_client: MagicMock) -> None:
-    """Test _update_agent_name does not update when current agent_name exists."""
+def test_azure_ai_chat_client_update_agent_name_and_description_when_current_exists(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _update_agent_name_and_description does not update when current agent_name exists."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
     chat_client.agent_name = "ExistingName"  # type: ignore
 
-    chat_client._update_agent_name("NewAgentName")  # type: ignore
+    chat_client._update_agent_name_and_description("NewAgentName")  # type: ignore
 
     assert chat_client.agent_name == "ExistingName"
 
 
-def test_azure_ai_chat_client_update_agent_name_with_none_input(mock_agents_client: MagicMock) -> None:
-    """Test _update_agent_name with None input."""
+def test_azure_ai_chat_client_update_agent_name_and_description_with_none_input(mock_agents_client: MagicMock) -> None:
+    """Test _update_agent_name_and_description with None input."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
     chat_client.agent_name = None  # type: ignore
 
-    chat_client._update_agent_name(None)  # type: ignore
+    chat_client._update_agent_name_and_description(None)  # type: ignore
 
     assert chat_client.agent_name is None
 

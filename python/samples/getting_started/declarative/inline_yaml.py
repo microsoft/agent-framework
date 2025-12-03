@@ -23,6 +23,7 @@ async def main():
 name: DiagnosticAgent
 displayName: Diagnostic Assistant
 instructions: Specialized diagnostic and issue detection agent for systems with critical error protocol and automatic handoff capabilities
+description: A agent that performs diagnostics on systems and can escalate issues when critical errors are detected.
 
 model:
   id: =Env.AZURE_OPENAI_MODEL
