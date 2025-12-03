@@ -74,7 +74,7 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     /// <param name="maxNumberOfFunctions">The maximum number of relevant functions to retrieve from the vector store.</param>
     /// <param name="serializedState">A <see cref="JsonElement"/> representing the serialized provider state.</param>
     /// <param name="options">Further optional settings for configuring the provider.</param>
-    /// <param name="jsonSerializerOptions">Optional serializer options (unused - source generated context is used).</param>
+    /// <param name="jsonSerializerOptions">Optional serializer options. If not provided, <see cref="AgentJsonUtilities.DefaultOptions"/> will be used.</param>
     /// <param name="loggerFactory">The logger factory to use for logging. If not provided, no logging will be performed.</param>
     public ContextualFunctionProvider(
         VectorStore vectorStore,
@@ -178,7 +178,7 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     /// <summary>
     /// Serializes the current provider state to a <see cref="JsonElement"/> containing the recent messages.
     /// </summary>
-    /// <param name="jsonSerializerOptions">Optional serializer options (ignored, source generated context is used).</param>
+    /// <param name="jsonSerializerOptions">Optional serializer options. This parameter is not used; <see cref="AgentJsonUtilities.DefaultOptions"/> is always used for serialization.</param>
     /// <returns>A <see cref="JsonElement"/> with the recent messages, or default if there are no recent messages.</returns>
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
