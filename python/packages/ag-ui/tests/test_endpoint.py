@@ -360,3 +360,24 @@ async def test_endpoint_missing_required_field():
     assert response.status_code == 422
     error_detail = response.json()
     assert "detail" in error_detail
+
+
+async def test_endpoint_internal_error_handling():
+    """Test endpoint error handling when an exception occurs before streaming starts."""
+    from unittest.mock import patch
+
+    app = FastAPI()
+    agent = ChatAgent(name="test", instructions="Test agent", chat_client=build_chat_client())
+
+    # Use default_state to trigger the code path that can raise an exception
+    add_agent_framework_fastapi_endpoint(app, agent, path="/error-test", default_state={"key": "value"})
+
+    client = TestClient(app)
+
+    # Mock copy.deepcopy to raise an exception during default_state processing
+    with patch("agent_framework_ag_ui._endpoint.copy.deepcopy") as mock_deepcopy:
+        mock_deepcopy.side_effect = Exception("Simulated internal error")
+        response = client.post("/error-test", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    assert response.json() == {"error": "An internal error has occurred."}

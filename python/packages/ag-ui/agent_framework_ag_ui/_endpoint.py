@@ -49,7 +49,7 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path, tags=tags or ["AG-UI"])
+    @app.post(path, tags=tags or ["AG-UI"])  # type: ignore[arg-type]
     async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
         """Handle AG-UI agent requests.
 
