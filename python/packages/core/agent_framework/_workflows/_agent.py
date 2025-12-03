@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
@@ -269,7 +269,7 @@ class WorkflowAgent(BaseAgent):
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
-                    created_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 )
             case _:
                 # Ignore workflow-internal events

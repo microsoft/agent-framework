@@ -935,6 +935,56 @@ def test_agent_run_response_update_str_method(text_content: TextContent) -> None
     assert str(update) == "Test content"
 
 
+def test_agent_run_response_update_created_at() -> None:
+    """Test that AgentRunResponseUpdate properly handles created_at timestamps."""
+    from datetime import datetime, timezone
+
+    # Test with a properly formatted UTC timestamp
+    utc_timestamp = "2024-12-01T00:31:30.000000Z"
+    update = AgentRunResponseUpdate(
+        contents=[TextContent(text="test")],
+        role=Role.ASSISTANT,
+        created_at=utc_timestamp,
+    )
+    assert update.created_at == utc_timestamp
+    assert update.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Verify that we can generate a proper UTC timestamp
+    now_utc = datetime.now(tz=timezone.utc)
+    formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    update_with_now = AgentRunResponseUpdate(
+        contents=[TextContent(text="test")],
+        role=Role.ASSISTANT,
+        created_at=formatted_utc,
+    )
+    assert update_with_now.created_at == formatted_utc
+    assert update_with_now.created_at.endswith("Z")
+
+
+def test_agent_run_response_created_at() -> None:
+    """Test that AgentRunResponse properly handles created_at timestamps."""
+    from datetime import datetime, timezone
+
+    # Test with a properly formatted UTC timestamp
+    utc_timestamp = "2024-12-01T00:31:30.000000Z"
+    response = AgentRunResponse(
+        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        created_at=utc_timestamp,
+    )
+    assert response.created_at == utc_timestamp
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Verify that we can generate a proper UTC timestamp
+    now_utc = datetime.now(tz=timezone.utc)
+    formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    response_with_now = AgentRunResponse(
+        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        created_at=formatted_utc,
+    )
+    assert response_with_now.created_at == formatted_utc
+    assert response_with_now.created_at.endswith("Z")
+
+
 # region ErrorContent
 
 
