@@ -112,6 +112,12 @@ public sealed class ContextualFunctionProvider : AIContextProvider
     {
         Throw.IfNull(context);
 
+        // Don't add messages to the recent messages queue if the invocation failed
+        if (context.InvokeException is not null)
+        {
+            return default;
+        }
+
         // Add the request and response messages to the recent messages queue
         foreach (var message in context.RequestMessages)
         {

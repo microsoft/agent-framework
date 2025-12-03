@@ -304,6 +304,46 @@ public sealed class ContextualFunctionProviderTests
         Assert.Equal("msg5", capturedNewMessages.ElementAt(1).Text);
     }
 
+    [Fact]
+    public async Task InvokedAsync_ShouldNotAddMessages_WhenExceptionIsPresent_Async()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        var options = new ContextualFunctionProviderOptions
+        {
+            NumberOfRecentMessagesInContext = 5
+        };
+
+        var provider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            options: options);
+
+        var message1 = new ChatMessage() { Contents = [new TextContent("msg1")] };
+        var message2 = new ChatMessage() { Contents = [new TextContent("msg2")] };
+        var message3 = new ChatMessage() { Contents = [new TextContent("msg3")] };
+
+        // Add successful invocations first
+        await provider.InvokedAsync(new AIContextProvider.InvokedContext([message1], null) { ResponseMessages = [] });
+        await provider.InvokedAsync(new AIContextProvider.InvokedContext([message2], null) { ResponseMessages = [] });
+
+        // Act - Add an invocation with an exception
+        await provider.InvokedAsync(new AIContextProvider.InvokedContext([message3], null)
+        {
+            ResponseMessages = [],
+            InvokeException = new InvalidOperationException("Test exception")
+        });
+
+        // Assert - The exception-causing message should not be added to recent messages
+        var invokingContext = new AIContextProvider.InvokingContext([new() { Contents = [new TextContent("new message")] }]);
+        await provider.InvokingAsync(invokingContext);
+
+        var expected = string.Join(Environment.NewLine, ["msg1", "msg2", "new message"]);
+        this._collectionMock.Verify(c => c.SearchAsync(expected, It.IsAny<int>(), null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static AIFunction CreateFunction(string name, string description = "")
     {
         return AIFunctionFactory.Create(() => { }, name, description);
