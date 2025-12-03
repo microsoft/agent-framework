@@ -31,7 +31,7 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
     private async Task ExecuteTestAsync(
         string displayName,
         string variableName,
-        AgentMessageRoleWrapper? role,
+        AgentMessageRoleWrapper role,
         string messageText)
     {
         // Arrange
@@ -59,7 +59,7 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
         string displayName,
         string messageVariable,
         string conversationId,
-        AgentMessageRoleWrapper? role,
+        AgentMessageRoleWrapper role,
         string messageText)
     {
         AddConversationMessage.Builder actionBuilder =
