@@ -285,19 +285,19 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
         this._agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
         {
             Name = "Critic",
-            Instructions = """
-                You are a constructive critic. Review the content and provide specific feedback.
-                Always try to provide actionable suggestions for improvement and strive to identify improvement points.
-                Only approve if the content is high quality, clear, and meets the original requirements and you see no improvement points.
-                
-                Provide your decision as structured output with:
-                - approved: true if content is good, false if revisions needed
-                - feedback: specific improvements needed (empty if approved)
-                
-                Be concise but specific in your feedback.
-                """,
             ChatOptions = new()
             {
+                Instructions = """
+                    You are a constructive critic. Review the content and provide specific feedback.
+                    Always try to provide actionable suggestions for improvement and strive to identify improvement points.
+                    Only approve if the content is high quality, clear, and meets the original requirements and you see no improvement points.
+                
+                    Provide your decision as structured output with:
+                    - approved: true if content is good, false if revisions needed
+                    - feedback: specific improvements needed (empty if approved)
+                
+                    Be concise but specific in your feedback.
+                    """,
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<CriticDecision>()
             }
         });

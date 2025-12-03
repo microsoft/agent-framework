@@ -148,74 +148,105 @@ class TestSearchProviderInitialization:
                 vector_field_name="embedding",
             )
 
-    def test_init_agentic_mode_requires_azure_openai_resource_url(self) -> None:
-        """Test that agentic mode requires azure_openai_resource_url."""
-        with pytest.raises(ValueError, match="azure_openai_resource_url"):
+    def test_init_agentic_mode_with_kb_only(self) -> None:
+        """Test agentic mode with existing knowledge_base_name (simplest path)."""
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                env_file_path="",  # Disable .env file loading
+            )
+            assert provider.mode == "agentic"
+            assert provider.knowledge_base_name == "test-kb"
+            assert provider._use_existing_knowledge_base is True
+
+    def test_init_agentic_mode_with_index_requires_model(self) -> None:
+        """Test that agentic mode with index_name requires model_deployment_name."""
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="model_deployment_name"),
+        ):
             AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
                 api_key="test-key",
                 mode="agentic",
+                env_file_path="",  # Disable .env file loading
             )
 
-    def test_init_agentic_mode_requires_model_deployment_name(self) -> None:
-        """Test that agentic mode requires model_deployment_name."""
-        with pytest.raises(ValueError, match="model_deployment_name"):
-            AzureAISearchContextProvider(
+    def test_init_agentic_mode_with_index_and_model(self) -> None:
+        """Test agentic mode with index_name (auto-create KB path)."""
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            provider = AzureAISearchContextProvider(
                 endpoint="https://test.search.windows.net",
                 index_name="test-index",
                 api_key="test-key",
                 mode="agentic",
-                azure_ai_project_endpoint="https://test.services.ai.azure.com",
-                azure_openai_resource_url="https://test.openai.azure.com",
-            )
-
-    def test_init_agentic_mode_requires_knowledge_base_name(self) -> None:
-        """Test that agentic mode requires knowledge_base_name."""
-        with pytest.raises(ValueError, match="knowledge_base_name"):
-            AzureAISearchContextProvider(
-                endpoint="https://test.search.windows.net",
-                index_name="test-index",
-                api_key="test-key",
-                mode="agentic",
-                azure_ai_project_endpoint="https://test.services.ai.azure.com",
                 model_deployment_name="gpt-4o",
                 azure_openai_resource_url="https://test.openai.azure.com",
+                env_file_path="",  # Disable .env file loading
+            )
+            assert provider.mode == "agentic"
+            assert provider.index_name == "test-index"
+            assert provider.knowledge_base_name == "test-index-kb"  # Auto-generated
+            assert provider._use_existing_knowledge_base is False
+
+    def test_init_agentic_mode_rejects_both_index_and_kb(self) -> None:
+        """Test that agentic mode rejects both index_name AND knowledge_base_name."""
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="either 'index_name' OR 'knowledge_base_name', not both"),
+        ):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                model_deployment_name="gpt-4o",
+                azure_openai_resource_url="https://test.openai.azure.com",
+                env_file_path="",  # Disable .env file loading
             )
 
-    def test_init_agentic_mode_with_all_params(self) -> None:
-        """Test initialization with all agentic mode parameters."""
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="my-gpt-4o-deployment",
-            model_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
-        assert provider.mode == "agentic"
-        assert provider.azure_ai_project_endpoint == "https://test.services.ai.azure.com"
-        assert provider.azure_openai_resource_url == "https://test.openai.azure.com"
-        assert provider.azure_openai_deployment_name == "my-gpt-4o-deployment"
-        assert provider.model_name == "gpt-4o"
-        assert provider.knowledge_base_name == "test-kb"
+    def test_init_agentic_mode_requires_index_or_kb(self) -> None:
+        """Test that agentic mode requires either index_name or knowledge_base_name."""
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with (
+            patch.dict(os.environ, clean_env, clear=True),
+            pytest.raises(ServiceInitializationError, match="provide either 'index_name'.*or 'knowledge_base_name'"),
+        ):
+            AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                env_file_path="",  # Disable .env file loading
+            )
 
     def test_init_model_name_defaults_to_deployment_name(self) -> None:
         """Test that model_name defaults to deployment_name if not provided."""
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
-        assert provider.model_name == "gpt-4o"
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                model_deployment_name="gpt-4o",
+                env_file_path="",  # Disable .env file loading
+            )
+            assert provider.model_name == "gpt-4o"
 
     def test_init_with_custom_context_prompt(self) -> None:
         """Test initialization with custom context prompt."""
@@ -335,7 +366,7 @@ class TestKnowledgeBaseSetup:
     async def test_ensure_knowledge_base_creates_when_not_exists(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
-        """Test that Knowledge Base is created when it doesn't exist."""
+        """Test that Knowledge Base is created when it doesn't exist (index_name path)."""
         # Setup mocks
         mock_index_client = AsyncMock()
         mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
@@ -347,57 +378,58 @@ class TestKnowledgeBaseSetup:
         mock_search_client = AsyncMock()
         mock_search_class.return_value = mock_search_client
 
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            model_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use index_name path (auto-create KB)
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                index_name="test-index",
+                api_key="test-key",
+                mode="agentic",
+                model_deployment_name="gpt-4o",
+                azure_openai_resource_url="https://test.openai.azure.com",
+                env_file_path="",  # Disable .env file loading
+            )
 
-        await provider._ensure_knowledge_base()
+            await provider._ensure_knowledge_base()
 
-        # Verify knowledge source was created
-        mock_index_client.create_knowledge_source.assert_called_once()
-        # Verify Knowledge Base was created
-        mock_index_client.create_or_update_knowledge_base.assert_called_once()
+            # Verify knowledge source was created
+            mock_index_client.create_knowledge_source.assert_called_once()
+            # Verify Knowledge Base was created
+            mock_index_client.create_or_update_knowledge_base.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("agent_framework_azure_ai_search._search_provider.SearchIndexClient")
     @patch("agent_framework_azure_ai_search._search_provider.SearchClient")
-    async def test_ensure_knowledge_base_skips_when_exists(
+    async def test_ensure_knowledge_base_skips_when_using_existing_kb(
         self, mock_search_class: MagicMock, mock_index_class: MagicMock
     ) -> None:
-        """Test that Knowledge Base setup is skipped when already exists."""
+        """Test that KB setup is skipped when using existing knowledge_base_name."""
         # Setup mocks
         mock_index_client = AsyncMock()
-        mock_index_client.get_knowledge_source.return_value = MagicMock()  # Exists
-        mock_index_client.get_knowledge_base.return_value = MagicMock()  # Exists
         mock_index_class.return_value = mock_index_client
 
         mock_search_client = AsyncMock()
         mock_search_class.return_value = mock_search_client
 
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use knowledge_base_name path (existing KB)
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                env_file_path="",  # Disable .env file loading
+            )
 
-        await provider._ensure_knowledge_base()
+            await provider._ensure_knowledge_base()
 
-        # Verify nothing was created
-        mock_index_client.create_knowledge_source.assert_not_called()
-        mock_index_client.create_agent.assert_not_called()
+            # Verify nothing was created (using existing KB)
+            mock_index_client.create_knowledge_source.assert_not_called()
+            mock_index_client.create_or_update_knowledge_base.assert_not_called()
 
 
 class TestContextProviderLifecycle:
@@ -437,21 +469,22 @@ class TestContextProviderLifecycle:
         mock_retrieval_client.close = AsyncMock()
         mock_retrieval_class.return_value = mock_retrieval_client
 
-        async with AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        ) as provider:
-            # Simulate retrieval client being created
-            provider._retrieval_client = mock_retrieval_client
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use knowledge_base_name path (existing KB)
+            async with AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                env_file_path="",  # Disable .env file loading
+            ) as provider:
+                # Simulate retrieval client being created
+                provider._retrieval_client = mock_retrieval_client
 
-        # Verify cleanup was called
-        mock_retrieval_client.close.assert_called_once()
+            # Verify cleanup was called
+            mock_retrieval_client.close.assert_called_once()
 
     def test_string_api_key_conversion(self) -> None:
         """Test that string api_key is converted to AzureKeyCredential."""
@@ -579,9 +612,6 @@ class TestAgenticSearch:
 
         # Setup index client mock
         mock_index_client = AsyncMock()
-        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
-        mock_index_client.create_knowledge_source = AsyncMock()
-        mock_index_client.create_or_update_knowledge_base = AsyncMock()
         mock_index_class.return_value = mock_index_client
 
         # Setup retrieval client mock with response
@@ -603,22 +633,23 @@ class TestAgenticSearch:
         mock_retrieval_client.close = AsyncMock()
         mock_retrieval_class.return_value = mock_retrieval_client
 
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use knowledge_base_name path (existing KB)
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                env_file_path="",  # Disable .env file loading
+            )
 
-        context = await provider.invoking(sample_messages)
+            context = await provider.invoking(sample_messages)
 
-        assert isinstance(context, Context)
-        # Should have at least the prompt message
-        assert len(context.messages) >= 1
+            assert isinstance(context, Context)
+            # Should have at least the prompt message
+            assert len(context.messages) >= 1
 
     @pytest.mark.asyncio
     @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
@@ -637,9 +668,6 @@ class TestAgenticSearch:
         mock_search_class.return_value = mock_search_client
 
         mock_index_client = AsyncMock()
-        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
-        mock_index_client.create_knowledge_source = AsyncMock()
-        mock_index_client.create_or_update_knowledge_base = AsyncMock()
         mock_index_class.return_value = mock_index_client
 
         # Empty response
@@ -650,22 +678,23 @@ class TestAgenticSearch:
         mock_retrieval_client.close = AsyncMock()
         mock_retrieval_class.return_value = mock_retrieval_client
 
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-        )
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use knowledge_base_name path (existing KB)
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                env_file_path="",  # Disable .env file loading
+            )
 
-        context = await provider.invoking(sample_messages)
+            context = await provider.invoking(sample_messages)
 
-        assert isinstance(context, Context)
-        # Should have fallback message
-        assert len(context.messages) >= 1
+            assert isinstance(context, Context)
+            # Should have fallback message
+            assert len(context.messages) >= 1
 
     @pytest.mark.asyncio
     @patch("agent_framework_azure_ai_search._search_provider.KnowledgeBaseRetrievalClient")
@@ -684,9 +713,6 @@ class TestAgenticSearch:
         mock_search_class.return_value = mock_search_client
 
         mock_index_client = AsyncMock()
-        mock_index_client.get_knowledge_source.side_effect = ResourceNotFoundError("Not found")
-        mock_index_client.create_knowledge_source = AsyncMock()
-        mock_index_client.create_or_update_knowledge_base = AsyncMock()
         mock_index_class.return_value = mock_index_client
 
         mock_retrieval_client = AsyncMock()
@@ -706,22 +732,23 @@ class TestAgenticSearch:
         mock_retrieval_client.close = AsyncMock()
         mock_retrieval_class.return_value = mock_retrieval_client
 
-        provider = AzureAISearchContextProvider(
-            endpoint="https://test.search.windows.net",
-            index_name="test-index",
-            api_key="test-key",
-            mode="agentic",
-            azure_ai_project_endpoint="https://test.services.ai.azure.com",
-            model_deployment_name="gpt-4o",
-            knowledge_base_name="test-kb",
-            azure_openai_resource_url="https://test.openai.azure.com",
-            retrieval_reasoning_effort="medium",  # Test medium reasoning
-        )
+        # Clear environment to ensure no env vars interfere
+        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("AZURE_SEARCH_")}
+        with patch.dict(os.environ, clean_env, clear=True):
+            # Use knowledge_base_name path (existing KB)
+            provider = AzureAISearchContextProvider(
+                endpoint="https://test.search.windows.net",
+                api_key="test-key",
+                mode="agentic",
+                knowledge_base_name="test-kb",
+                retrieval_reasoning_effort="medium",  # Test medium reasoning
+                env_file_path="",  # Disable .env file loading
+            )
 
-        context = await provider.invoking(sample_messages)
+            context = await provider.invoking(sample_messages)
 
-        assert isinstance(context, Context)
-        assert len(context.messages) >= 1
+            assert isinstance(context, Context)
+            assert len(context.messages) >= 1
 
 
 class TestVectorFieldAutoDiscovery:
