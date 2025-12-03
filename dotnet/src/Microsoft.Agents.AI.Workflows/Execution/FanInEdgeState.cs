@@ -14,7 +14,7 @@ internal sealed class FanInEdgeState
     public FanInEdgeState(FanInEdgeData fanInEdge)
     {
         this.SourceIds = fanInEdge.SourceIds.ToArray();
-        this.Unseen = new(this.SourceIds);
+        this.Unseen = [.. this.SourceIds];
 
         this._pendingMessages = [];
     }
@@ -40,7 +40,7 @@ internal sealed class FanInEdgeState
         if (this.Unseen.Count == 0)
         {
             List<PortableMessageEnvelope> takenMessages = Interlocked.Exchange(ref this._pendingMessages, []);
-            this.Unseen = new(this.SourceIds);
+            this.Unseen = [.. this.SourceIds];
 
             if (takenMessages.Count == 0)
             {

@@ -77,7 +77,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
             this._emulatorAvailable = true;
         }
-        catch (Exception ex) when (!(ex is OutOfMemoryException || ex is StackOverflowException || ex is AccessViolationException))
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
             // Emulator not available, tests will be skipped
             this._emulatorAvailable = false;

@@ -133,7 +133,7 @@ internal sealed class Mem0Client
         [JsonPropertyName("agent_id")] public string? AgentId { get; set; }
         [JsonPropertyName("run_id")] public string? RunId { get; set; }
         [JsonPropertyName("user_id")] public string? UserId { get; set; }
-        [JsonPropertyName("messages")] public CreateMemoryMessage[] Messages { get; set; } = Array.Empty<CreateMemoryMessage>();
+        [JsonPropertyName("messages")] public CreateMemoryMessage[] Messages { get; set; } = [];
     }
 
     internal sealed class CreateMemoryMessage

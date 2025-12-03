@@ -46,7 +46,7 @@ internal static class RepresentationExtensions
             keySelector: sourceId => sourceId,
             elementSelector: sourceId => workflow.Edges[sourceId].Select(ToEdgeInfo).ToList());
 
-        HashSet<RequestPortInfo> inputPorts = new(workflow.Ports.Values.Select(ToPortInfo));
+        HashSet<RequestPortInfo> inputPorts = [.. workflow.Ports.Values.Select(ToPortInfo)];
 
         return new WorkflowInfo(executors, edges, inputPorts, workflow.StartExecutorId, workflow.OutputExecutors);
     }

@@ -73,13 +73,20 @@ internal sealed class PurviewWrapper : IDisposable
             (bool shouldBlockPrompt, resolvedUserId) = await this._scopedProcessor.ProcessMessagesAsync(messages, options?.ConversationId, Activity.UploadText, this._purviewSettings, null, cancellationToken).ConfigureAwait(false);
             if (shouldBlockPrompt)
             {
-                this._logger.LogInformation("Prompt blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedPromptMessage);
+                if (this._logger.IsEnabled(LogLevel.Information))
+                {
+                    this._logger.LogInformation("Prompt blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedPromptMessage);
+                }
+
                 return new ChatResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedPromptMessage));
             }
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+            }
 
             if (!this._purviewSettings.IgnoreExceptions)
             {
@@ -94,13 +101,20 @@ internal sealed class PurviewWrapper : IDisposable
             (bool shouldBlockResponse, _) = await this._scopedProcessor.ProcessMessagesAsync(response.Messages, options?.ConversationId, Activity.UploadText, this._purviewSettings, resolvedUserId, cancellationToken).ConfigureAwait(false);
             if (shouldBlockResponse)
             {
-                this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
+                if (this._logger.IsEnabled(LogLevel.Information))
+                {
+                    this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
+                }
+
                 return new ChatResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
             }
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+            }
 
             if (!this._purviewSettings.IgnoreExceptions)
             {
@@ -132,13 +146,20 @@ internal sealed class PurviewWrapper : IDisposable
 
             if (shouldBlockPrompt)
             {
-                this._logger.LogInformation("Prompt blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedPromptMessage);
+                if (this._logger.IsEnabled(LogLevel.Information))
+                {
+                    this._logger.LogInformation("Prompt blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedPromptMessage);
+                }
+
                 return new AgentRunResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedPromptMessage));
             }
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error processing prompt: {ExceptionMessage}", ex.Message);
+            }
 
             if (!this._purviewSettings.IgnoreExceptions)
             {
@@ -154,13 +175,20 @@ internal sealed class PurviewWrapper : IDisposable
 
             if (shouldBlockResponse)
             {
-                this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
+                if (this._logger.IsEnabled(LogLevel.Information))
+                {
+                    this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
+                }
+
                 return new AgentRunResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
             }
         }
         catch (Exception ex)
         {
-            this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(ex, "Error processing response: {ExceptionMessage}", ex.Message);
+            }
 
             if (!this._purviewSettings.IgnoreExceptions)
             {

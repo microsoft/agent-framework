@@ -64,12 +64,12 @@ public sealed class A2AArtifactExtensionsTests
         {
             ArtifactId = "artifact-ai-multi",
             Name = "test",
-            Parts = new List<Part>
-            {
+            Parts =
+            [
                 new TextPart { Text = "Part 1" },
                 new TextPart { Text = "Part 2" },
                 new TextPart { Text = "Part 3" }
-            },
+            ],
             Metadata = null
         };
 
@@ -93,7 +93,7 @@ public sealed class A2AArtifactExtensionsTests
         {
             ArtifactId = "artifact-empty",
             Name = "test",
-            Parts = new List<Part>(),
+            Parts = [],
             Metadata = null
         };
 
