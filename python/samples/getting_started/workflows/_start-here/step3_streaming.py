@@ -109,16 +109,15 @@ class Reviewer(Executor):
 
 async def main():
     """Build the two node workflow and run it with streaming to observe events."""
+    # Create the Azure chat client. AzureCliCredential uses your current az login.
+    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Instantiate the two agent backed executors.
+    writer = Writer(chat_client)
+    reviewer = Reviewer(chat_client)
+
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = (
-        WorkflowBuilder()
-        .register_executor(lambda: Writer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="writer")
-        .register_executor(lambda: Reviewer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="reviewer")
-        .set_start_executor("writer")
-        .add_edge("writer", "reviewer")
-        .build()
-    )
+    workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
     # Run the workflow with the user's initial message and stream events as they occur.
     # This surfaces executor events, workflow outputs, run-state changes, and errors.

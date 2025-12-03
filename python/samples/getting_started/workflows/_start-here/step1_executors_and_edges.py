@@ -103,19 +103,14 @@ async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
 
 async def main():
     """Build and run a simple 2-step workflow using the fluent builder API."""
+
+    upper_case = UpperCase(id="upper_case_executor")
+
     # Build the workflow using a fluent pattern:
-    # 1) register(executor_factory, name) registers executor factories for lazy instantiation
-    # 2) add_edge(from_node, to_node) defines a directed edge upper_case -> reverse_text
-    # 3) set_start_executor(node) declares the entry point
-    # 4) build() finalizes and returns an immutable Workflow object
-    workflow = (
-        WorkflowBuilder()
-        .register_executor(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
-        .register_executor(lambda: reverse_text, name="ReverseText")
-        .add_edge("UpperCase", "ReverseText")
-        .set_start_executor("UpperCase")
-        .build()
-    )
+    # 1) add_edge(from_node, to_node) defines a directed edge upper_case -> reverse_text
+    # 2) set_start_executor(node) declares the entry point
+    # 3) build() finalizes and returns an immutable Workflow object
+    workflow = WorkflowBuilder().add_edge(upper_case, reverse_text).set_start_executor(upper_case).build()
 
     # Run the workflow by sending the initial message to the start node.
     # The run(...) call returns an event collection; its get_outputs() method
