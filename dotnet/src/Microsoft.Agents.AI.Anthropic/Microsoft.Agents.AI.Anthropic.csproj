@@ -4,7 +4,6 @@
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <NoWarn>$(NoWarn);CS8002</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

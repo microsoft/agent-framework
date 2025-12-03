@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "openai-chatkit>=1.1.0,<2.0.0",
+    "openai-chatkit>=1.4.0,<2.0.0",
 ]
 
 [tool.uv]
