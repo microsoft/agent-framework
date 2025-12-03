@@ -110,8 +110,8 @@ async def main():
     # Set the start node and connect an edge from writer to reviewer.
     workflow = (
         WorkflowBuilder()
-        .register_executor(lambda: Writer(), name="writer")
-        .register_executor(lambda: Reviewer(), name="reviewer")
+        .register_executor(Writer, name="writer")
+        .register_executor(Reviewer, name="reviewer")
         .set_start_executor("writer")
         .add_edge("writer", "reviewer")
         .build()

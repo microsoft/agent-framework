@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +17,6 @@ from agent_framework import (
     executor,
 )
 from agent_framework.azure import AzureOpenAIChatClient
-from anyio import Path
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from typing_extensions import Never
@@ -211,8 +211,8 @@ async def main() -> None:
     # Read an email from resources/spam.txt if available; otherwise use a default sample.
     current_file = Path(__file__)
     resources_path = current_file.parent.parent / "resources" / "spam.txt"
-    if await resources_path.exists():
-        email = await resources_path.read_text(encoding="utf-8")
+    if resources_path.exists():
+        email = resources_path.read_text(encoding="utf-8")
     else:
         print("Unable to find resource file, using default text.")
         email = "You are a WINNER! Click here for a free lottery offer!!!"

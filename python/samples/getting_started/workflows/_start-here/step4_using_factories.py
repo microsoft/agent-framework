@@ -41,11 +41,7 @@ class UpperCase(Executor):
 
     @handler
     async def to_upper_case(self, text: str, ctx: WorkflowContext[str]) -> None:
-        """Convert the input to uppercase and forward it to the next node.
-
-        Note: The WorkflowContext is parameterized with the type this handler will
-        emit. Here WorkflowContext[str] means downstream nodes should expect str.
-        """
+        """Convert the input to uppercase and forward it to the next node."""
         result = text.upper()
 
         # Send the result to the next executor in the workflow.
@@ -54,18 +50,10 @@ class UpperCase(Executor):
 
 @executor(id="reverse_text_executor")
 async def reverse_text(text: str, ctx: WorkflowContext[str]) -> None:
-    """Reverse the input string and yield the workflow output.
-
-    This node yields the final output using ctx.yield_output(result).
-    The workflow will complete when it becomes idle (no more work to do).
-
-    The WorkflowContext is parameterized with two types:
-    - T_Out = Never: this node does not send messages to downstream nodes.
-    - T_W_Out = str: this node yields workflow output of type str.
-    """
+    """Reverse the input string and send it downstream."""
     result = text[::-1]
 
-    # Yield the output - the workflow will complete when idle
+    # Send the result to the next executor in the workflow.
     await ctx.send_message(result)
 
 
