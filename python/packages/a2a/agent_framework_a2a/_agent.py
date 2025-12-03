@@ -94,8 +94,9 @@ class A2AAgent(BaseAgent):
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
-            timeout: Request timeout configuration.
-                httpx.Timeout object (for full control), or None (use defaults).
+            timeout: Request timeout configuration. Can be a float (applied to all timeout components),
+                httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
+                10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
