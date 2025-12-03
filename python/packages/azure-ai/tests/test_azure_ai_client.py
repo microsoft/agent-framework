@@ -84,6 +84,7 @@ def create_test_azure_ai_client(
     client.credential = None
     client.agent_name = agent_name
     client.agent_version = agent_version
+    client.agent_description = None
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
