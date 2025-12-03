@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Functions;
@@ -302,6 +303,188 @@ public sealed class ContextualFunctionProviderTests
         Assert.NotNull(capturedNewMessages);
         Assert.Equal("msg4", capturedNewMessages.ElementAt(0).Text);
         Assert.Equal("msg5", capturedNewMessages.ElementAt(1).Text);
+    }
+
+    [Fact]
+    public void Serialize_WithNoRecentMessages_ShouldReturnEmptyState()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        var options = new ContextualFunctionProviderOptions
+        {
+            NumberOfRecentMessagesInContext = 3
+        };
+
+        var provider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            options: options);
+
+        // Act
+        JsonElement state = provider.Serialize();
+
+        // Assert
+        Assert.Equal(JsonValueKind.Object, state.ValueKind);
+        Assert.False(state.TryGetProperty("recentMessages", out _));
+    }
+
+    [Fact]
+    public async Task Serialize_WithRecentMessages_ShouldPersistMessagesUpToLimitAsync()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        var options = new ContextualFunctionProviderOptions
+        {
+            NumberOfRecentMessagesInContext = 3
+        };
+
+        var provider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            options: options);
+
+        var messages = new[]
+        {
+            new ChatMessage() { Contents = [new TextContent("M1")] },
+            new ChatMessage() { Contents = [new TextContent("M2")] },
+            new ChatMessage() { Contents = [new TextContent("M3")] }
+        };
+
+        // Act
+        await provider.InvokedAsync(new AIContextProvider.InvokedContext(messages, aiContextProviderMessages: null));
+        JsonElement state = provider.Serialize();
+
+        // Assert
+        Assert.True(state.TryGetProperty("recentMessages", out JsonElement recentProperty));
+        Assert.Equal(JsonValueKind.Array, recentProperty.ValueKind);
+        int count = recentProperty.GetArrayLength();
+        Assert.Equal(3, count);
+    }
+
+    [Fact]
+    public async Task SerializeAndDeserialize_RoundtripRestoresMessagesAsync()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        var options = new ContextualFunctionProviderOptions
+        {
+            NumberOfRecentMessagesInContext = 4
+        };
+
+        var provider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            options: options);
+
+        var messages = new[]
+        {
+            new ChatMessage() { Contents = [new TextContent("A")] },
+            new ChatMessage() { Contents = [new TextContent("B")] },
+            new ChatMessage() { Contents = [new TextContent("C")] },
+            new ChatMessage() { Contents = [new TextContent("D")] }
+        };
+
+        await provider.InvokedAsync(new AIContextProvider.InvokedContext(messages, aiContextProviderMessages: null));
+
+        // Act
+        JsonElement state = provider.Serialize();
+        var roundTrippedProvider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            serializedState: state,
+            options: new ContextualFunctionProviderOptions
+            {
+                NumberOfRecentMessagesInContext = 4
+            });
+
+        // Trigger search to verify messages are used
+        var invokingContext = new AIContextProvider.InvokingContext(Array.Empty<ChatMessage>());
+        await roundTrippedProvider.InvokingAsync(invokingContext);
+
+        // Assert
+        string expected = string.Join(Environment.NewLine, ["A", "B", "C", "D"]);
+        this._collectionMock.Verify(c => c.SearchAsync(expected, It.IsAny<int>(), null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Deserialize_WithChangedLowerLimit_ShouldTruncateToNewLimitAsync()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        var initialProvider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            options: new ContextualFunctionProviderOptions
+            {
+                NumberOfRecentMessagesInContext = 5
+            });
+
+        var messages = new[]
+        {
+            new ChatMessage() { Contents = [new TextContent("L1")] },
+            new ChatMessage() { Contents = [new TextContent("L2")] },
+            new ChatMessage() { Contents = [new TextContent("L3")] },
+            new ChatMessage() { Contents = [new TextContent("L4")] },
+            new ChatMessage() { Contents = [new TextContent("L5")] }
+        };
+
+        await initialProvider.InvokedAsync(new AIContextProvider.InvokedContext(messages, aiContextProviderMessages: null));
+        JsonElement state = initialProvider.Serialize();
+
+        // Act
+        var restoredProvider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            serializedState: state,
+            options: new ContextualFunctionProviderOptions
+            {
+                NumberOfRecentMessagesInContext = 3 // Lower limit
+            });
+
+        var invokingContext = new AIContextProvider.InvokingContext(Array.Empty<ChatMessage>());
+        await restoredProvider.InvokingAsync(invokingContext);
+
+        // Assert
+        string expected = string.Join(Environment.NewLine, ["L1", "L2", "L3"]);
+        this._collectionMock.Verify(c => c.SearchAsync(expected, It.IsAny<int>(), null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Deserialize_WithEmptyState_ShouldHaveNoMessagesAsync()
+    {
+        // Arrange
+        var functions = new List<AIFunction> { CreateFunction("f1") };
+        JsonElement emptyState = JsonSerializer.Deserialize("{}", TestJsonSerializerContext.Default.JsonElement);
+
+        // Act
+        var provider = new ContextualFunctionProvider(
+            vectorStore: this._vectorStoreMock.Object,
+            vectorDimensions: 1536,
+            functions: functions,
+            maxNumberOfFunctions: 5,
+            serializedState: emptyState,
+            options: new ContextualFunctionProviderOptions
+            {
+                NumberOfRecentMessagesInContext = 3
+            });
+
+        var invokingContext = new AIContextProvider.InvokingContext(Array.Empty<ChatMessage>());
+        await provider.InvokingAsync(invokingContext);
+
+        // Assert
+        this._collectionMock.Verify(c => c.SearchAsync(string.Empty, It.IsAny<int>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static AIFunction CreateFunction(string name, string description = "")
