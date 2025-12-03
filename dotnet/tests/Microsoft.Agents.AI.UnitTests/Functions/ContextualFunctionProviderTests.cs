@@ -337,7 +337,7 @@ public sealed class ContextualFunctionProviderTests
         var functions = new List<AIFunction> { CreateFunction("f1") };
         var options = new ContextualFunctionProviderOptions
         {
-            NumberOfRecentMessagesInContext = 3
+            NumberOfRecentMessagesInContext = 2
         };
 
         var provider = new ContextualFunctionProvider(
@@ -362,7 +362,7 @@ public sealed class ContextualFunctionProviderTests
         Assert.True(state.TryGetProperty("recentMessages", out JsonElement recentProperty));
         Assert.Equal(JsonValueKind.Array, recentProperty.ValueKind);
         int count = recentProperty.GetArrayLength();
-        Assert.Equal(3, count);
+        Assert.Equal(2, count);
     }
 
     [Fact]
