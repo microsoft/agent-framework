@@ -111,7 +111,7 @@ async def main() -> None:
         WorkflowBuilder()
         .register_agent(create_research_agent, name="research_agent")
         .register_agent(create_final_editor_agent, name="final_editor_agent")
-        .register(lambda: enrich_with_references, name="enrich_with_references")
+        .register_executor(lambda: enrich_with_references, name="enrich_with_references")
         .set_start_executor("research_agent")
         .add_edge("research_agent", "enrich_with_references")
         .add_edge("enrich_with_references", "final_editor_agent")
