@@ -82,7 +82,7 @@ export interface Conversation {
   id: string;
   object: "conversation";
   created_at: number;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RunAgentRequest {
@@ -248,6 +248,12 @@ export interface WorkflowSession {
     name?: string;
     description?: string;
     type: "workflow_session";
+    checkpoint_summary?: {
+      count: number;
+      latest_iteration: number;
+      has_pending_hil: boolean;
+      pending_hil_count: number;
+    };
     [key: string]: unknown;
   };
 }
@@ -258,4 +264,33 @@ export interface CheckpointInfo {
   timestamp: number;
   iteration_count: number;
   metadata?: Record<string, unknown>;
+}
+
+// Checkpoint item from conversation items API
+export interface CheckpointItem {
+  id: string;
+  type: "checkpoint";
+  checkpoint_id: string;
+  workflow_id: string;
+  timestamp: string;
+  status: "completed";
+  metadata: {
+    iteration_count: number;
+    pending_hil_count: number;
+    has_pending_hil: boolean;
+    message_count: number;
+    size_bytes?: number;
+    version: string;
+    full_checkpoint?: {
+      checkpoint_id: string;
+      workflow_id: string;
+      timestamp: string;
+      messages: Record<string, unknown[]>;
+      shared_state: Record<string, unknown>;
+      pending_request_info_events: Record<string, unknown>;
+      iteration_count: number;
+      metadata: Record<string, unknown>;
+      version: string;
+    };
+  };
 }

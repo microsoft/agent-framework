@@ -538,7 +538,7 @@ export interface Conversation {
   id: string;
   object: "conversation";
   created_at: number;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 // List response
