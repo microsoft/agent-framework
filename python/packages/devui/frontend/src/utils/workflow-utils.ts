@@ -222,19 +222,22 @@ export function convertWorkflowDumpToEdges(
     return [];
   }
 
-  const edges = connections.map((connection) => ({
-    id: `${connection.source}-${connection.target}`,
-    source: connection.source,
-    target: connection.target,
-    sourceHandle: "source",
-    targetHandle: "target",
-    type: "default",
-    animated: false,
-    style: {
-      stroke: "#6b7280",
-      strokeWidth: 2,
-    },
-  }));
+  const edges = connections.map((connection) => {
+    const isSelfLoop = connection.source === connection.target;
+    return {
+      id: `${connection.source}-${connection.target}`,
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: "source",
+      targetHandle: "target",
+      type: isSelfLoop ? "selfLoop" : "default",
+      animated: false,
+      style: {
+        stroke: "#6b7280",
+        strokeWidth: 2,
+      },
+    };
+  });
 
   return edges;
 }
@@ -717,6 +720,13 @@ export function consolidateBidirectionalEdges(edges: Edge[]): Edge[] {
   edges.forEach(edge => {
     const forwardKey = `${edge.source}-${edge.target}`;
     const reverseKey = `${edge.target}-${edge.source}`;
+
+    // Self-loops (source === target) should always be preserved as-is
+    // They are not bidirectional edges, just a node pointing to itself
+    if (edge.source === edge.target) {
+      edgeMap.set(forwardKey, edge);
+      return;
+    }
 
     // Check if we already have the reverse edge
     if (edgeMap.has(reverseKey)) {

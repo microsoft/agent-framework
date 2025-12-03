@@ -33,6 +33,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ExecutorNode, type ExecutorNodeData } from "./executor-node";
+import { SelfLoopEdge } from "./self-loop-edge";
 import {
   convertWorkflowDumpToNodes,
   convertWorkflowDumpToEdges,
@@ -48,6 +49,10 @@ import type { Workflow } from "@/types/workflow";
 
 const nodeTypes: NodeTypes = {
   executor: ExecutorNode,
+};
+
+const edgeTypes = {
+  selfLoop: SelfLoopEdge,
 };
 
 // ViewOptions panel component that renders inside ReactFlow
@@ -468,6 +473,7 @@ export const WorkflowFlow = memo(function WorkflowFlow({
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}
