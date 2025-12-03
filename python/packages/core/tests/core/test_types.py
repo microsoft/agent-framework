@@ -2,6 +2,7 @@
 
 import base64
 from collections.abc import AsyncIterable
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -937,8 +938,6 @@ def test_agent_run_response_update_str_method(text_content: TextContent) -> None
 
 def test_agent_run_response_update_created_at() -> None:
     """Test that AgentRunResponseUpdate properly handles created_at timestamps."""
-    from datetime import datetime, timezone
-
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     update = AgentRunResponseUpdate(
@@ -963,8 +962,6 @@ def test_agent_run_response_update_created_at() -> None:
 
 def test_agent_run_response_created_at() -> None:
     """Test that AgentRunResponse properly handles created_at timestamps."""
-    from datetime import datetime, timezone
-
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentRunResponse(

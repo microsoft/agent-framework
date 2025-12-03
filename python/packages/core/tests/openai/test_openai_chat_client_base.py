@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -381,8 +382,6 @@ def test_chat_response_created_at_uses_utc(openai_unit_test_env: dict[str, str])
     This is a regression test for the issue where created_at was using local time
     but labeling it as UTC (with 'Z' suffix).
     """
-    from datetime import datetime, timezone
-
     from agent_framework import ChatOptions
 
     # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
@@ -420,8 +419,6 @@ def test_chat_response_update_created_at_uses_utc(openai_unit_test_env: dict[str
     This is a regression test for the issue where created_at was using local time
     but labeling it as UTC (with 'Z' suffix).
     """
-    from datetime import datetime, timezone
-
     # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
     utc_timestamp = 1733011890
 
