@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -21,10 +21,17 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, Field, create_model
 
-from agent_framework import FunctionCallContent, FunctionResultContent
-
 from ._tools import AIFunction, HostedMCPSpecificApproval
-from ._types import ChatMessage, Contents, DataContent, Role, TextContent, UriContent
+from ._types import (
+    ChatMessage,
+    Contents,
+    DataContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    Role,
+    TextContent,
+    UriContent,
+)
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -126,7 +133,7 @@ def _mcp_type_to_ai_content(
     | types.ResourceLink
     | types.ToolUseContent
     | types.ToolResultContent
-    | list[
+    | Sequence[
         types.ImageContent
         | types.TextContent
         | types.AudioContent
@@ -137,7 +144,7 @@ def _mcp_type_to_ai_content(
     ],
 ) -> list[Contents]:
     """Convert a MCP type to a Agent Framework type."""
-    mcp_types = mcp_type if isinstance(mcp_type, list) else [mcp_type]
+    mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
     return_types: list[Contents] = []
     for mcp_type in mcp_types:
         match mcp_type:
@@ -175,11 +182,11 @@ def _mcp_type_to_ai_content(
                         result=_mcp_type_to_ai_content(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
-                        exception=Exception if mcp_type.isError else None,
+                        exception=Exception() if mcp_type.isError else None,
                         raw_representation=mcp_type,
                     )
                 )
-            case _:
+            case types.EmbeddedResource():
                 match mcp_type.resource:
                     case types.TextResourceContents():
                         return_types.append(
