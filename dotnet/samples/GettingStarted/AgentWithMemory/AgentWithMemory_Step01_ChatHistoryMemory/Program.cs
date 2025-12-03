@@ -32,7 +32,7 @@ AIAgent agent = new AzureOpenAIClient(
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {
-        Instructions = "You are good at telling jokes.",
+        ChatOptions = new() { Instructions = "You are good at telling jokes." },
         Name = "Joker",
         AIContextProviderFactory = (ctx) => new ChatHistoryMemoryProvider(
             vectorStore,

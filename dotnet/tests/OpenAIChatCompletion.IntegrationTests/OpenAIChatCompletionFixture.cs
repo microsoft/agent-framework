@@ -47,8 +47,7 @@ public class OpenAIChatCompletionFixture : IChatClientAgentFixture
         return Task.FromResult(new ChatClientAgent(chatClient, options: new()
         {
             Name = name,
-            Instructions = instructions,
-            ChatOptions = new() { Tools = aiTools }
+            ChatOptions = new() { Instructions = instructions, Tools = aiTools }
         }));
     }
 

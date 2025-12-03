@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -166,5 +167,115 @@ public sealed class OpenAIResponseClientExtensionsTests
             responseClient.CreateAIAgent((ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+        var serviceProvider = new TestServiceProvider();
+
+        // Act
+        var agent = responseClient.CreateAIAgent(
+            instructions: "Test instructions",
+            name: "Test Agent",
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options and services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithOptionsAndServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+        var serviceProvider = new TestServiceProvider();
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new() { Instructions = "Test instructions" }
+        };
+
+        // Act
+        var agent = responseClient.CreateAIAgent(options, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with both clientFactory and services works correctly.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithClientFactoryAndServices_AppliesBothCorrectly()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+        var serviceProvider = new TestServiceProvider();
+        var testChatClient = new TestChatClient(responseClient.AsIChatClient());
+
+        // Act
+        var agent = responseClient.CreateAIAgent(
+            instructions: "Test instructions",
+            name: "Test Agent",
+            clientFactory: (innerClient) => testChatClient,
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the custom chat client was applied
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+
+        // Verify the IServiceProvider was passed through
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// A simple test IServiceProvider implementation for testing.
+    /// </summary>
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
+    }
+
+    /// <summary>
+    /// Uses reflection to access the FunctionInvocationServices property which is not public.
+    /// </summary>
+    private static IServiceProvider? GetFunctionInvocationServices(FunctionInvokingChatClient client)
+    {
+        var property = typeof(FunctionInvokingChatClient).GetProperty(
+            "FunctionInvocationServices",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(client) as IServiceProvider;
     }
 }

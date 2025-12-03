@@ -34,16 +34,20 @@ public class AzureAIAgentsPersistentCreateTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new() { Instructions = AgentInstructions },
+                    Name = AgentName,
+                    Description = AgentDescription
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new() { Instructions = AgentInstructions },
+                    Name = AgentName,
+                    Description = AgentDescription
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
@@ -109,14 +113,24 @@ public class AzureAIAgentsPersistentCreateTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]
+                    }
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
@@ -179,15 +193,24 @@ public class AzureAIAgentsPersistentCreateTests
             // Hosted tool path (tools supplied via ChatClientAgentOptions)
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }])),
-            // Foundry (definitions + resources provided directly)
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]
+                    }
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
                 instructions: AgentInstructions,
@@ -232,14 +255,24 @@ public class AzureAIAgentsPersistentCreateTests
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
                 s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
         };
 
