@@ -185,8 +185,8 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
             ),
             name="writer",
         )
-        .register(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
-        .register(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
+        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
+        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
         .set_start_executor("prepare_brief")
         .add_edge("prepare_brief", "writer")
         .add_edge("writer", "review_gateway")

@@ -110,8 +110,8 @@ async def main():
     # 4) build() finalizes and returns an immutable Workflow object
     workflow = (
         WorkflowBuilder()
-        .register(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
-        .register(lambda: reverse_text, name="ReverseText")
+        .register_executor(lambda: UpperCase(id="upper_case_executor"), name="UpperCase")
+        .register_executor(lambda: reverse_text, name="ReverseText")
         .add_edge("UpperCase", "ReverseText")
         .set_start_executor("UpperCase")
         .build()

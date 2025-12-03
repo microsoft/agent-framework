@@ -186,7 +186,7 @@ class WorkflowBuilder:
             | _MultiSelectionEdgeGroupRegistration
             | _FanInEdgeRegistration
         ] = []
-        self._executor_registry: dict[str, Callable[[], Executor | AgentProtocol]] = {}
+        self._executor_registry: dict[str, Callable[[], Executor]] = {}
 
     # Agents auto-wrapped by builder now always stream incremental updates.
 
@@ -260,7 +260,7 @@ class WorkflowBuilder:
             f"WorkflowBuilder expected an Executor or AgentProtocol instance; got {type(candidate).__name__}."
         )
 
-    def register(self, factory_func: Callable[[], Executor | AgentProtocol], name: str | list[str]) -> Self:
+    def register_executor(self, factory_func: Callable[[], Executor], name: str | list[str]) -> Self:
         """Register an executor factory function for lazy initialization.
 
         This method allows you to register a factory function that creates an executor.
@@ -1152,12 +1152,10 @@ class WorkflowBuilder:
         deferred_edge_groups: list[EdgeGroup] = []
         for name, exec_factory in self._executor_registry.items():
             instance = exec_factory()
-            executors[name] = AgentExecutor(instance) if isinstance(instance, AgentProtocol) else instance
-
             if isinstance(self._start_executor, str) and name == self._start_executor:
-                start_executor = executors[name]
-
+                start_executor = instance
             deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
+            executors[name] = instance
 
         def _get_executor(name: str) -> Executor:
             """Helper to get executor by the registered name. Raises if not found."""

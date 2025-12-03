@@ -129,10 +129,10 @@ async def main():
     # This time we are creating a loop in the workflow.
     workflow = (
         WorkflowBuilder()
-        .register(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
+        .register_executor(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
         .register_agent(create_judge_agent, name="judge_agent")
-        .register(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
-        .register(lambda: ParseJudgeResponse(id="parse_judge"), name="parse_judge")
+        .register_executor(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
+        .register_executor(lambda: ParseJudgeResponse(id="parse_judge"), name="parse_judge")
         .add_edge("guess_number", "submit_judge")
         .add_edge("submit_judge", "judge_agent")
         .add_edge("judge_agent", "parse_judge")

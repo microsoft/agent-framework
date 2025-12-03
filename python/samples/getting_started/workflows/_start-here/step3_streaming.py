@@ -113,8 +113,8 @@ async def main():
     # Set the start node and connect an edge from writer to reviewer.
     workflow = (
         WorkflowBuilder()
-        .register(lambda: Writer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="writer")
-        .register(lambda: Reviewer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="reviewer")
+        .register_executor(lambda: Writer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="writer")
+        .register_executor(lambda: Reviewer(AzureOpenAIChatClient(credential=AzureCliCredential())), name="reviewer")
         .set_start_executor("writer")
         .add_edge("writer", "reviewer")
         .build()

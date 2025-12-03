@@ -171,10 +171,10 @@ def build_resource_request_distribution_workflow() -> Workflow:
 
     return (
         WorkflowBuilder()
-        .register(lambda: RequestDistribution("orchestrator"), name="orchestrator")
-        .register(lambda: ResourceRequester("resource_requester"), name="resource_requester")
-        .register(lambda: PolicyChecker("policy_checker"), name="policy_checker")
-        .register(lambda: ResultCollector("result_collector"), name="result_collector")
+        .register_executor(lambda: RequestDistribution("orchestrator"), name="orchestrator")
+        .register_executor(lambda: ResourceRequester("resource_requester"), name="resource_requester")
+        .register_executor(lambda: PolicyChecker("policy_checker"), name="policy_checker")
+        .register_executor(lambda: ResultCollector("result_collector"), name="result_collector")
         .set_start_executor("orchestrator")
         .add_edge("orchestrator", "resource_requester")
         .add_edge("orchestrator", "policy_checker")
@@ -290,9 +290,9 @@ async def main() -> None:
     # Build the main workflow
     main_workflow = (
         WorkflowBuilder()
-        .register(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
-        .register(lambda: PolicyEngine("policy_engine"), name="policy_engine")
-        .register(
+        .register_executor(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
+        .register_executor(lambda: PolicyEngine("policy_engine"), name="policy_engine")
+        .register_executor(
             lambda: WorkflowExecutor(
                 build_resource_request_distribution_workflow(),
                 "sub_workflow_executor",

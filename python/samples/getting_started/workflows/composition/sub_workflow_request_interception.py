@@ -156,9 +156,9 @@ def build_email_address_validation_workflow() -> Workflow:
     # Build the workflow
     return (
         WorkflowBuilder()
-        .register(lambda: EmailSanitizer(id="email_sanitizer"), name="email_sanitizer")
-        .register(lambda: EmailFormatValidator(id="email_format_validator"), name="email_format_validator")
-        .register(lambda: DomainValidator(id="domain_validator"), name="domain_validator")
+        .register_executor(lambda: EmailSanitizer(id="email_sanitizer"), name="email_sanitizer")
+        .register_executor(lambda: EmailFormatValidator(id="email_format_validator"), name="email_format_validator")
+        .register_executor(lambda: DomainValidator(id="domain_validator"), name="domain_validator")
         .set_start_executor("email_sanitizer")
         .add_edge("email_sanitizer", "email_format_validator")
         .add_edge("email_format_validator", "domain_validator")
@@ -272,12 +272,12 @@ async def main() -> None:
     # Build the main workflow
     workflow = (
         WorkflowBuilder()
-        .register(
+        .register_executor(
             lambda: SmartEmailOrchestrator(id="smart_email_orchestrator", approved_domains=approved_domains),
             name="smart_email_orchestrator",
         )
-        .register(lambda: EmailDelivery(id="email_delivery"), name="email_delivery")
-        .register(
+        .register_executor(lambda: EmailDelivery(id="email_delivery"), name="email_delivery")
+        .register_executor(
             lambda: WorkflowExecutor(build_email_address_validation_workflow(), id="email_validation_workflow"),
             name="email_validation_workflow",
         )

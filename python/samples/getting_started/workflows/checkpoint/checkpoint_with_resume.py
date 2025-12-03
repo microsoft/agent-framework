@@ -102,8 +102,8 @@ async def main():
     # Build workflow with checkpointing enabled
     workflow_builder = (
         WorkflowBuilder()
-        .register(lambda: StartExecutor(id="start"), name="start")
-        .register(lambda: WorkerExecutor(id="worker"), name="worker")
+        .register_executor(lambda: StartExecutor(id="start"), name="start")
+        .register_executor(lambda: WorkerExecutor(id="worker"), name="worker")
         .set_start_executor("start")
         .add_edge("start", "worker")
         .add_edge("worker", "worker")  # Self-loop for iterative processing

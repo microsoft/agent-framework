@@ -65,8 +65,8 @@ async def main() -> None:
     # Order matters. We connect upper_case_executor -> reverse_text_executor and set the start.
     workflow = (
         WorkflowBuilder()
-        .register(lambda: UpperCaseExecutor(id="upper_case_executor"), name="upper_case_executor")
-        .register(lambda: ReverseTextExecutor(id="reverse_text_executor"), name="reverse_text_executor")
+        .register_executor(lambda: UpperCaseExecutor(id="upper_case_executor"), name="upper_case_executor")
+        .register_executor(lambda: ReverseTextExecutor(id="reverse_text_executor"), name="reverse_text_executor")
         .add_edge("upper_case_executor", "reverse_text_executor")
         .set_start_executor("upper_case_executor")
         .build()
