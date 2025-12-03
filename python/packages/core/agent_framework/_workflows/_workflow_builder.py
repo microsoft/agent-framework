@@ -140,8 +140,8 @@ class WorkflowBuilder:
             # Build a workflow
             workflow = (
                 WorkflowBuilder()
-                .register(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                .register(lambda: ReverseExecutor(id="reverse"), name="Reverse")
+                .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
+                .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
                 .add_edge("UpperCase", "Reverse")
                 .set_start_executor("UpperCase")
                 .build()
@@ -293,8 +293,8 @@ class WorkflowBuilder:
                 # Build a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
-                    .register(lambda: ReverseExecutor(id="reverse"), name="Reverse")
+                    .register_executor(lambda: UpperCaseExecutor(id="upper"), name="UpperCase")
+                    .register_executor(lambda: ReverseExecutor(id="reverse"), name="Reverse")
                     .set_start_executor("UpperCase")
                     .add_edge("UpperCase", "Reverse")
                     .build()
@@ -315,7 +315,7 @@ class WorkflowBuilder:
                 # Register the same executor factory under multiple names
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: CustomExecutor(id="logger"), name=["ExecutorA", "ExecutorB"])
+                    .register_executor(lambda: CustomExecutor(id="logger"), name=["ExecutorA", "ExecutorB"])
                     .set_start_executor("ExecutorA")
                     .add_edge("ExecutorA", "ExecutorB")
                     .build()
@@ -362,7 +362,7 @@ class WorkflowBuilder:
                 # Build a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: ..., name="SomeOtherExecutor")
+                    .register_executor(lambda: ..., name="SomeOtherExecutor")
                     .register_agent(
                         lambda: AnthropicAgent(name="writer", model="claude-3-5-sonnet-20241022"),
                         name="WriterAgent",
@@ -483,8 +483,8 @@ class WorkflowBuilder:
                 # Connect executors with an edge
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
+                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .build()
@@ -498,8 +498,8 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: ProcessorA(id="a"), name="ProcessorA")
-                    .register(lambda: ProcessorB(id="b"), name="ProcessorB")
+                    .register_executor(lambda: ProcessorA(id="a"), name="ProcessorA")
+                    .register_executor(lambda: ProcessorB(id="b"), name="ProcessorB")
                     .add_edge("ProcessorA", "ProcessorB", condition=only_large_numbers)
                     .set_start_executor("ProcessorA")
                     .build()
@@ -575,9 +575,9 @@ class WorkflowBuilder:
                 # Broadcast to multiple validators
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: DataSource(id="source"), name="DataSource")
-                    .register(lambda: ValidatorA(id="val_a"), name="ValidatorA")
-                    .register(lambda: ValidatorB(id="val_b"), name="ValidatorB")
+                    .register_executor(lambda: DataSource(id="source"), name="DataSource")
+                    .register_executor(lambda: ValidatorA(id="val_a"), name="ValidatorA")
+                    .register_executor(lambda: ValidatorB(id="val_b"), name="ValidatorB")
                     .add_fan_out_edges("DataSource", ["ValidatorA", "ValidatorB"])
                     .set_start_executor("DataSource")
                     .build()
@@ -667,9 +667,9 @@ class WorkflowBuilder:
                 # Route based on score value
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: Evaluator(id="eval"), name="Evaluator")
-                    .register(lambda: HighScoreHandler(id="high"), name="HighScoreHandler")
-                    .register(lambda: LowScoreHandler(id="low"), name="LowScoreHandler")
+                    .register_executor(lambda: Evaluator(id="eval"), name="Evaluator")
+                    .register_executor(lambda: HighScoreHandler(id="high"), name="HighScoreHandler")
+                    .register_executor(lambda: LowScoreHandler(id="low"), name="LowScoreHandler")
                     .add_switch_case_edge_group(
                         "Evaluator",
                         [
@@ -783,9 +783,9 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: TaskDispatcher(id="dispatcher"), name="TaskDispatcher")
-                    .register(lambda: WorkerA(id="worker_a"), name="WorkerA")
-                    .register(lambda: WorkerB(id="worker_b"), name="WorkerB")
+                    .register_executor(lambda: TaskDispatcher(id="dispatcher"), name="TaskDispatcher")
+                    .register_executor(lambda: WorkerA(id="worker_a"), name="WorkerA")
+                    .register_executor(lambda: WorkerB(id="worker_b"), name="WorkerB")
                     .add_multi_selection_edge_group(
                         "TaskDispatcher",
                         ["WorkerA", "WorkerB"],
@@ -871,9 +871,9 @@ class WorkflowBuilder:
                 # Collect results from multiple producers
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: Producer(id="prod_1"), name="Producer1")
-                    .register(lambda: Producer(id="prod_2"), name="Producer2")
-                    .register(lambda: Aggregator(id="agg"), name="Aggregator")
+                    .register_executor(lambda: Producer(id="prod_1"), name="Producer1")
+                    .register_executor(lambda: Producer(id="prod_2"), name="Producer2")
+                    .register_executor(lambda: Aggregator(id="agg"), name="Aggregator")
                     .add_fan_in_edges(["Producer1", "Producer2"], "Aggregator")
                     .set_start_executor("Producer1")
                     .build()
@@ -947,9 +947,9 @@ class WorkflowBuilder:
                 # Chain executors in sequence
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: Step1(id="step1"), name="step1")
-                    .register(lambda: Step2(id="step2"), name="step2")
-                    .register(lambda: Step3(id="step3"), name="step3")
+                    .register_executor(lambda: Step1(id="step1"), name="step1")
+                    .register_executor(lambda: Step2(id="step2"), name="step2")
+                    .register_executor(lambda: Step3(id="step3"), name="step3")
                     .add_chain(["step1", "step2", "step3"])
                     .set_start_executor("step1")
                     .build()
@@ -1017,8 +1017,8 @@ class WorkflowBuilder:
 
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: EntryPoint(id="entry"), name="EntryPoint")
-                    .register(lambda: Processor(id="proc"), name="Processor")
+                    .register_executor(lambda: EntryPoint(id="entry"), name="EntryPoint")
+                    .register_executor(lambda: Processor(id="proc"), name="Processor")
                     .add_edge("EntryPoint", "Processor")
                     .set_start_executor("EntryPoint")
                     .build()
@@ -1075,8 +1075,8 @@ class WorkflowBuilder:
                 workflow = (
                     WorkflowBuilder()
                     .set_max_iterations(500)
-                    .register(lambda: StepA(id="step_a"), name="StepA")
-                    .register(lambda: StepB(id="step_b"), name="StepB")
+                    .register_executor(lambda: StepA(id="step_a"), name="StepA")
+                    .register_executor(lambda: StepB(id="step_b"), name="StepB")
                     .add_edge("StepA", "StepB")
                     .add_edge("StepB", "StepA")  # Cycle
                     .set_start_executor("StepA")
@@ -1125,8 +1125,8 @@ class WorkflowBuilder:
                 storage = FileCheckpointStorage("./checkpoints")
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: ProcessorA(id="proc_a"), name="ProcessorA")
-                    .register(lambda: ProcessorB(id="proc_b"), name="ProcessorB")
+                    .register_executor(lambda: ProcessorA(id="proc_a"), name="ProcessorA")
+                    .register_executor(lambda: ProcessorB(id="proc_b"), name="ProcessorB")
                     .add_edge("ProcessorA", "ProcessorB")
                     .set_start_executor("ProcessorA")
                     .with_checkpointing(storage)
@@ -1154,6 +1154,7 @@ class WorkflowBuilder:
             instance = exec_factory()
             if isinstance(self._start_executor, str) and name == self._start_executor:
                 start_executor = instance
+            # All executors will get their own internal edge group for receiving system messages
             deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
             executors[name] = instance
 
@@ -1235,7 +1236,7 @@ class WorkflowBuilder:
                 # Build and execute a workflow
                 workflow = (
                     WorkflowBuilder()
-                    .register(lambda: MyExecutor(id="executor"), name="MyExecutor")
+                    .register_executor(lambda: MyExecutor(id="executor"), name="MyExecutor")
                     .set_start_executor("MyExecutor")
                     .build()
                 )
