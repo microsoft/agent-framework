@@ -321,7 +321,6 @@ public sealed class ContextualFunctionProviderTests
             functions: functions,
             maxNumberOfFunctions: 5,
             options: options);
-      
         var message1 = new ChatMessage() { Contents = [new TextContent("msg1")] };
         var message2 = new ChatMessage() { Contents = [new TextContent("msg2")] };
         var message3 = new ChatMessage() { Contents = [new TextContent("msg3")] };
