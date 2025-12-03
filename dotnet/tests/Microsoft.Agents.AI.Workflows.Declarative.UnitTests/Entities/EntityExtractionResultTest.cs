@@ -2,7 +2,6 @@
 
 using Microsoft.Agents.AI.Workflows.Declarative.Entities;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.Entities;
 

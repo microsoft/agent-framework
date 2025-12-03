@@ -3,7 +3,6 @@
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 

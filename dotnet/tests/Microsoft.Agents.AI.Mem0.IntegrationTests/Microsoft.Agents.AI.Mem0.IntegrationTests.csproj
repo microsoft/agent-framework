@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>True</InjectSharedIntegrationTestCode>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>

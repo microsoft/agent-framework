@@ -40,6 +40,28 @@ public class AgentRunOptionsTests
     }
 
     [Fact]
+    public void CloningConstructorWithNullProperties()
+    {
+        // Arrange
+        var options = new AgentRunOptions
+        {
+            ContinuationToken = new object(),
+            AllowBackgroundResponses = true,
+            AdditionalProperties = null,
+        };
+
+        // Act
+        var clone = new AgentRunOptions(options);
+
+        // Assert
+        Assert.NotNull(clone);
+        Assert.Same(options.ContinuationToken, clone.ContinuationToken);
+        Assert.Equal(options.AllowBackgroundResponses, clone.AllowBackgroundResponses);
+        Assert.Null(clone.AdditionalProperties);
+        Assert.Null(options.AdditionalProperties);
+    }
+
+    [Fact]
     public void CloningConstructorThrowsIfNull() =>
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new AgentRunOptions(null!));

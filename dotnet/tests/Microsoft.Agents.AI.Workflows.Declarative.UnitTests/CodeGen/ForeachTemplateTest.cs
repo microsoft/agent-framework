@@ -4,7 +4,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Bot.ObjectModel;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 

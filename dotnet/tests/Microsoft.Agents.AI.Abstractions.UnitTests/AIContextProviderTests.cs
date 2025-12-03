@@ -34,6 +34,22 @@ public class AIContextProviderTests
     }
 
     [Fact]
+    public void InvokingContext_Constructor_DoesNotThrowForEmptyMessages()
+    {
+        var context = new AIContextProvider.InvokingContext([]);
+        Assert.Empty(context.RequestMessages);
+    }
+
+    [Fact]
+    public void InvokingContext_Constructor_DoesNotThrowForSingleMessages()
+    {
+        var expected = new ChatMessage(ChatRole.User, "Message content");
+        var context = new AIContextProvider.InvokingContext([expected]);
+        var actual = Assert.Single(context.RequestMessages);
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
     public void InvokedContext_Constructor_ThrowsForNullMessages()
     {
         Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!, aiContextProviderMessages: null));
