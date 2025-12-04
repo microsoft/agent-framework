@@ -244,7 +244,7 @@ class WorkflowAgent(BaseAgent):
             case AgentRunUpdateEvent(data=update):
                 # Direct pass-through of update in an agent streaming event
                 if update:
-                    return cast(AgentRunResponseUpdate, update)
+                    return update
                 return None
 
             case RequestInfoEvent(request_id=request_id):

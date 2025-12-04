@@ -719,7 +719,7 @@ class ChatAgent(BaseAgent):
             additional_properties=additional_chat_options or {},  # type: ignore
         )
         self._async_exit_stack = AsyncExitStack()
-        self._update_agent_name()
+        self._update_agent_name_and_description()
 
     async def __aenter__(self) -> "Self":
         """Enter the async context manager.
@@ -755,15 +755,17 @@ class ChatAgent(BaseAgent):
         """
         await self._async_exit_stack.aclose()
 
-    def _update_agent_name(self) -> None:
+    def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
 
         Checks if the chat client supports agent name updates. The implementation
         should check if there is already an agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
-            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue, attr-defined]
+        if hasattr(self.chat_client, "_update_agent_name_and_description") and callable(
+            self.chat_client._update_agent_name_and_description
+        ):  # type: ignore[reportAttributeAccessIssue, attr-defined]
+            self.chat_client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     async def run(
         self,

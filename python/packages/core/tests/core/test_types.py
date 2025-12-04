@@ -36,6 +36,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     ai_function,
+    prepare_function_call_results,
 )
 from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
@@ -1965,3 +1966,75 @@ def test_text_content_with_multiple_annotations_serialization():
     assert reconstructed.annotations[0].title == "Citation 1"
     assert reconstructed.annotations[1].title == "Citation 2"
     assert all(isinstance(ann.annotated_regions[0], TextSpanRegion) for ann in reconstructed.annotations)
+
+
+# region prepare_function_call_results with Pydantic models
+
+
+class WeatherResult(BaseModel):
+    """A Pydantic model for testing."""
+
+    temperature: float
+    condition: str
+
+
+class NestedModel(BaseModel):
+    """A Pydantic model with nested structure."""
+
+    name: str
+    weather: WeatherResult
+
+
+def test_prepare_function_call_results_pydantic_model():
+    """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
+    result = WeatherResult(temperature=22.5, condition="sunny")
+    json_result = prepare_function_call_results(result)
+
+    # The result should be a valid JSON string
+    assert isinstance(json_result, str)
+    assert '"temperature": 22.5' in json_result or '"temperature":22.5' in json_result
+    assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
+
+
+def test_prepare_function_call_results_pydantic_model_in_list():
+    """Test that lists containing Pydantic models are properly serialized."""
+    results = [
+        WeatherResult(temperature=20.0, condition="cloudy"),
+        WeatherResult(temperature=25.0, condition="sunny"),
+    ]
+    json_result = prepare_function_call_results(results)
+
+    # The result should be a valid JSON string representing a list
+    assert isinstance(json_result, str)
+    assert json_result.startswith("[")
+    assert json_result.endswith("]")
+    assert "cloudy" in json_result
+    assert "sunny" in json_result
+
+
+def test_prepare_function_call_results_pydantic_model_in_dict():
+    """Test that dicts containing Pydantic models are properly serialized."""
+    results = {
+        "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
+        "forecast": WeatherResult(temperature=24.0, condition="sunny"),
+    }
+    json_result = prepare_function_call_results(results)
+
+    # The result should be a valid JSON string representing a dict
+    assert isinstance(json_result, str)
+    assert "current" in json_result
+    assert "forecast" in json_result
+    assert "partly cloudy" in json_result
+    assert "sunny" in json_result
+
+
+def test_prepare_function_call_results_nested_pydantic_model():
+    """Test that nested Pydantic models are properly serialized."""
+    result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
+    json_result = prepare_function_call_results(result)
+
+    # The result should be a valid JSON string
+    assert isinstance(json_result, str)
+    assert "Seattle" in json_result
+    assert "rainy" in json_result
+    assert "18.0" in json_result or "18" in json_result
