@@ -21,6 +21,7 @@ import {
   markStreamingCompleted,
   clearStreamingState,
 } from "./streaming-state";
+import { isAbortError } from "@/hooks";
 
 // Backend API response type - polymorphic entity that can be agent or workflow
 // This matches the Python Pydantic EntityInfo model which has all fields optional
@@ -60,7 +61,7 @@ interface ConversationApiResponse {
   id: string;
   object: "conversation";
   created_at: number;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 const DEFAULT_API_BASE_URL =
@@ -411,6 +412,14 @@ class ApiClient {
     return this.request<{ data: unknown[]; has_more: boolean }>(url);
   }
 
+  async getConversationItem(
+    conversationId: string,
+    itemId: string
+  ): Promise<unknown> {
+    const url = `/v1/conversations/${conversationId}/items/${itemId}`;
+    return this.request<unknown>(url);
+  }
+
   async deleteConversationItem(
     conversationId: string,
     itemId: string
@@ -430,6 +439,7 @@ class ApiClient {
   private async *streamOpenAIResponse(
     openAIRequest: AgentFrameworkRequest,
     conversationId?: string,
+    signal?: AbortSignal,
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     // Check if OpenAI proxy mode is enabled
@@ -518,6 +528,7 @@ class ApiClient {
           response = await fetch(url, {
             method: "GET",
             headers,
+            signal,
           });
         } else {
           const url = `${this.baseUrl}/v1/responses`;
@@ -540,6 +551,7 @@ class ApiClient {
             method: "POST",
             headers,
             body: JSON.stringify(openAIRequest),
+            signal,
           });
         }
 
@@ -591,6 +603,11 @@ class ApiClient {
 
         try {
           while (true) {
+            // Check if the request was aborted
+            if (signal?.aborted) {
+              throw new DOMException('Request aborted', 'AbortError');
+            }
+
             const { done, value } = await reader.read();
 
             if (done) {
@@ -702,6 +719,14 @@ class ApiClient {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
+        // Don't retry on abort
+        if (isAbortError(error)) {
+          if (conversationId) {
+            markStreamingCompleted(conversationId); // Clean up state
+          }
+          throw error; // Re-throw abort error without retrying
+        }
+
         // Don't retry on auth errors or client errors
         if (errorMessage === "UNAUTHORIZED" || errorMessage.startsWith("CLIENT_ERROR:")) {
           throw error; // Re-throw without retrying
@@ -729,6 +754,7 @@ class ApiClient {
   async *streamAgentExecutionOpenAI(
     agentId: string,
     request: RunAgentRequest,
+    signal?: AbortSignal,
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     const openAIRequest: AgentFrameworkRequest = {
@@ -738,7 +764,7 @@ class ApiClient {
       conversation: request.conversation_id, // OpenAI standard conversation param
     };
 
-    return yield* this.streamAgentExecutionOpenAIDirect(agentId, openAIRequest, request.conversation_id, resumeResponseId);
+    return yield* this.streamAgentExecutionOpenAIDirect(agentId, openAIRequest, request.conversation_id, signal, resumeResponseId);
   }
 
   // Stream agent execution using direct OpenAI format
@@ -746,18 +772,21 @@ class ApiClient {
     _agentId: string,
     openAIRequest: AgentFrameworkRequest,
     conversationId?: string,
+    signal?: AbortSignal,
     resumeResponseId?: string
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     // Proxy mode handling is now inside streamOpenAIResponse
-    yield* this.streamOpenAIResponse(openAIRequest, conversationId, resumeResponseId);
+    yield* this.streamOpenAIResponse(openAIRequest, conversationId, signal, resumeResponseId);
   }
 
   // Stream workflow execution using OpenAI format
   async *streamWorkflowExecutionOpenAI(
     workflowId: string,
-    request: RunWorkflowRequest
+    request: RunWorkflowRequest,
+    signal?: AbortSignal
   ): AsyncGenerator<ExtendedResponseStreamEvent, void, unknown> {
     // Convert to OpenAI format - use metadata.entity_id for routing
+    // input_data is serialized as JSON string - backend will parse and detect format
     const openAIRequest: AgentFrameworkRequest = {
       metadata: { entity_id: workflowId }, // Entity ID in metadata for routing
       input: JSON.stringify(request.input_data || {}), // Serialize workflow input as JSON string
@@ -768,7 +797,7 @@ class ApiClient {
         : undefined, // Pass checkpoint_id if provided
     };
 
-    yield* this.streamOpenAIResponse(openAIRequest, request.conversation_id);
+    yield* this.streamOpenAIResponse(openAIRequest, request.conversation_id, signal);
   }
 
   // REMOVED: Legacy streaming methods - use streamAgentExecutionOpenAI and streamWorkflowExecutionOpenAI instead
@@ -888,15 +917,16 @@ class ApiClient {
       has_more: boolean;
     }>(url);
 
-    // Transform conversations to WorkflowSession format (no checkpoint counting)
+    // Transform conversations to WorkflowSession format
     const sessions = response.data.map((conv) => ({
       conversation_id: conv.id,
-      entity_id: conv.metadata?.entity_id || entityId,
+      entity_id: (conv.metadata?.entity_id as string) || entityId,
       created_at: conv.created_at,
       metadata: {
-        name: conv.metadata?.name || `Session ${new Date(conv.created_at * 1000).toLocaleString()}`,
-        description: conv.metadata?.description,
+        name: (conv.metadata?.name as string) || `Session ${new Date(conv.created_at * 1000).toLocaleString()}`,
+        description: conv.metadata?.description as string | undefined,
         type: "workflow_session" as const,
+        checkpoint_summary: conv.metadata?.checkpoint_summary as { count: number; latest_iteration: number; has_pending_hil: boolean; pending_hil_count: number } | undefined,
       },
     }));
 
