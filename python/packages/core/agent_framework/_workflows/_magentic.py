@@ -1727,7 +1727,7 @@ class MagenticAgentExecutor(Executor):
             last: ChatMessage = messages[-1]
             author = last.author_name or self._agent_id
             role: Role = last.role if last.role else Role.ASSISTANT
-            text = last.text or str(last)
+            text = last.text or ""
             msg = ChatMessage(role=role, text=text, author_name=author)
             await self._emit_agent_message_event(ctx, msg)
             return msg

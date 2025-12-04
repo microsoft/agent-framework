@@ -418,7 +418,7 @@ async def test_executor_action_events(mapper: MessageMapper, test_request: Agent
 async def test_magentic_agent_delta_creates_message_container(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
-    """Test that MagenticAgentDeltaEvent creates message containers (Option A implementation)."""
+    """Test that MagenticAgentDeltaEvent creates message containers when no executor context (fallback)."""
 
     # Create mock MagenticAgentDeltaEvent that mimics the real class
     from dataclasses import dataclass
@@ -438,7 +438,7 @@ async def test_magentic_agent_delta_creates_message_container(
             agent_id: str
             text: str | None = None
 
-    # First delta should create message container
+    # First delta should create message container (no executor context = fallback behavior)
     first_delta = MagenticAgentDeltaEvent(agent_id="test_agent", text="Hello ")
     events = await mapper.convert_event(first_delta, test_request)
 
@@ -463,6 +463,57 @@ async def test_magentic_agent_delta_creates_message_container(
     assert len(events) == 1
     assert events[0].type == "response.output_text.delta"
     assert events[0].item_id == message_id
+
+
+async def test_magentic_agent_delta_routes_to_executor_item(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test that MagenticAgentDeltaEvent routes to executor item when executor context is present."""
+
+    from dataclasses import dataclass
+
+    try:
+        from agent_framework import WorkflowEvent
+
+        @dataclass
+        class ExecutorInvokedEvent(WorkflowEvent):
+            executor_id: str
+
+        @dataclass
+        class MagenticAgentDeltaEvent(WorkflowEvent):
+            agent_id: str
+            text: str | None = None
+
+    except ImportError:
+
+        @dataclass
+        class ExecutorInvokedEvent:
+            executor_id: str
+
+        @dataclass
+        class MagenticAgentDeltaEvent:
+            agent_id: str
+            text: str | None = None
+
+    # First, simulate executor being invoked (sets current_executor_id in context)
+    executor_event = ExecutorInvokedEvent(executor_id="agent_writer")
+    executor_events = await mapper.convert_event(executor_event, test_request)
+
+    # Should create executor item
+    assert len(executor_events) == 1
+    assert executor_events[0].type == "response.output_item.added"
+    assert executor_events[0].item.type == "executor_action"
+    executor_item_id = executor_events[0].item.id
+
+    # Now send Magentic delta - should route to executor's item, NOT create new message
+    delta = MagenticAgentDeltaEvent(agent_id="writer", text="Hello world")
+    delta_events = await mapper.convert_event(delta, test_request)
+
+    # Should only emit 1 event: text delta routed to executor's item
+    assert len(delta_events) == 1
+    assert delta_events[0].type == "response.output_text.delta"
+    assert delta_events[0].item_id == executor_item_id  # Routed to executor's item!
+    assert delta_events[0].delta == "Hello world"
 
 
 if __name__ == "__main__":

@@ -1,11 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.A2A\Microsoft.Agents.AI.A2A.csproj" />
   </ItemGroup>
   
