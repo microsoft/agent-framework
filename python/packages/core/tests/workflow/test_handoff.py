@@ -23,6 +23,7 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._workflows import AgentRunEvent
 from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -224,12 +225,12 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     # Initial run should preserve complex metadata in the triage response
     events = await _drain(workflow.run_stream("Need help with a return"))
-    agent_events = [ev for ev in events if hasattr(ev, "data") and hasattr(ev.data, "messages")]
+    agent_events = [ev for ev in events if isinstance(ev, AgentRunEvent)]
     if agent_events:
         first_agent_event = agent_events[0]
         first_agent_event_data = first_agent_event.data
-        if first_agent_event_data and hasattr(first_agent_event_data, "messages"):
-            first_agent_message = first_agent_event_data.messages[0]  # type: ignore[attr-defined]
+        if first_agent_event_data and first_agent_event_data.messages:
+            first_agent_message = first_agent_event_data.messages[0]
             assert "complex" in first_agent_message.additional_properties, "Agent event lost complex metadata"
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests, "Workflow should request additional user input"

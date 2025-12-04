@@ -145,3 +145,40 @@
 .workflow-chat-view .text-green-800 {
   @apply text-emerald-800;
 }
+
+/* HIL Timeline Item Animations */
+.highlight-attention {
+  animation: highlight-flash 1s ease-out;
+}
+
+@keyframes highlight-flash {
+  0% {
+    background-color: rgb(251 146 60 / 0.3);
+    transform: scale(1.02);
+  }
+  100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+}
+
+/* Pulsing glow effect for HIL waiting state */
+.hil-waiting-glow {
+  box-shadow:
+    0 0 0 0 rgb(251 146 60 / 0.4),
+    inset 0 0 0 1px rgb(251 146 60 / 0.2);
+  animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgb(251 146 60 / 0.4),
+      inset 0 0 0 1px rgb(251 146 60 / 0.2);
+  }
+  50% {
+    box-shadow:
+      0 0 20px 5px rgb(251 146 60 / 0.2),
+      inset 0 0 0 2px rgb(251 146 60 / 0.3);
+  }
+}
