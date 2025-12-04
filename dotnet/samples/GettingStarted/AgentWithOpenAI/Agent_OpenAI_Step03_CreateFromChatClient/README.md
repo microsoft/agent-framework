@@ -1,6 +1,6 @@
 # Creating an Agent from a ChatClient
 
-This sample demonstrates how to create an AI agent directly from a `OpenAI.Chat.ChatClient` instance using the `OpenAIChatClientAgent` class.
+This sample demonstrates how to create an AI agent directly from an `OpenAI.Chat.ChatClient` instance using the `OpenAIChatClientAgent` class.
 
 ## What This Sample Shows
 
