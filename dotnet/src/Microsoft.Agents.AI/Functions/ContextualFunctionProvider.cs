@@ -61,7 +61,7 @@ public sealed class ContextualFunctionProvider : AIContextProvider
         int maxNumberOfFunctions,
         ContextualFunctionProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this(vectorStore, vectorDimensions, functions, maxNumberOfFunctions, default(JsonElement), options, null, loggerFactory)
+        : this(vectorStore, vectorDimensions, functions, maxNumberOfFunctions, default, options, null, loggerFactory)
     {
     }
 
