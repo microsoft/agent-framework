@@ -1,12 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 
-namespace OpenAI;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides extension methods for <see cref="AIAgent"/> to simplify interaction with OpenAI chat messages

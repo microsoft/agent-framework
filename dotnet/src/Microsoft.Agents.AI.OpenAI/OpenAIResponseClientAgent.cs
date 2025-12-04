@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
-namespace OpenAI;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides an <see cref="AIAgent"/> backed by an OpenAI Responses implementation.

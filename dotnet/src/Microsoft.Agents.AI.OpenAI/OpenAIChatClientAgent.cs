@@ -1,13 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 using ChatMessage = OpenAI.Chat.ChatMessage;
 
-namespace OpenAI;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides an <see cref="AIAgent"/> backed by an OpenAI chat completion implementation.
@@ -86,12 +85,4 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
 
         return response.AsChatResponseUpdatesAsync().AsOpenAIStreamingChatCompletionUpdatesAsync(cancellationToken);
     }
-
-    /// <inheritdoc/>
-    public sealed override Task<AgentRunResponse> RunAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.RunAsync(messages, thread, options, cancellationToken);
-
-    /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-        base.RunStreamingAsync(messages, thread, options, cancellationToken);
 }
