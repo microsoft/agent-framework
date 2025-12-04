@@ -885,6 +885,10 @@ class MessageMapper:
                 context[f"exec_item_{executor_id}"] = item_id
                 context["output_index"] = context.get("output_index", -1) + 1
 
+                # Track current executor for routing Magentic agent events
+                # This allows MagenticAgentDeltaEvent to route to the executor's item
+                context["current_executor_id"] = executor_id
+
                 # Create ExecutorActionItem with proper type
                 executor_item = ExecutorActionItem(
                     type="executor_action",
@@ -907,6 +911,10 @@ class MessageMapper:
             if event_class == "ExecutorCompletedEvent":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
+
+                # Clear current executor tracking when executor completes
+                if context.get("current_executor_id") == executor_id:
+                    context.pop("current_executor_id", None)
 
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
@@ -1059,6 +1067,30 @@ class MessageMapper:
                 text = getattr(event, "text", None)
 
                 if text:
+                    # Check if we're inside an executor - route to executor's item
+                    # This prevents duplicate timeline entries (executor + inner agent)
+                    current_executor_id = context.get("current_executor_id")
+                    executor_item_key = f"exec_item_{current_executor_id}" if current_executor_id else None
+
+                    if executor_item_key and executor_item_key in context:
+                        # Route delta to the executor's item instead of creating a new message item
+                        item_id = context[executor_item_key]
+
+                        # Emit text delta event routed to the executor's item
+                        return [
+                            ResponseTextDeltaEvent(
+                                type="response.output_text.delta",
+                                output_index=context.get("output_index", 0),
+                                content_index=0,
+                                item_id=item_id,
+                                delta=text,
+                                logprobs=[],
+                                sequence_number=self._next_sequence(context),
+                            )
+                        ]
+
+                    # Fallback: No executor context - create separate message item (original behavior)
+                    # This handles cases where MagenticAgentDeltaEvent is emitted outside an executor
                     events = []
 
                     # Track Magentic agent messages separately from regular messages
@@ -1181,7 +1213,21 @@ class MessageMapper:
                 agent_id = getattr(event, "agent_id", "unknown_agent")
                 message = getattr(event, "message", None)
 
-                # Track Magentic agent messages
+                # Check if we're inside an executor - if so, deltas were already routed there
+                # We don't need to emit a separate message completion event
+                current_executor_id = context.get("current_executor_id")
+                executor_item_key = f"exec_item_{current_executor_id}" if current_executor_id else None
+
+                if executor_item_key and executor_item_key in context:
+                    # Deltas were routed to executor item - no separate message item to complete
+                    # The executor's output_item.done will mark completion
+                    logger.debug(
+                        f"MagenticAgentMessageEvent from {agent_id} - "
+                        f"deltas routed to executor {current_executor_id}, skipping"
+                    )
+                    return []
+
+                # Fallback: Handle case where we created a separate message item (no executor context)
                 magentic_key = f"magentic_message_{agent_id}"
 
                 # Check if we were streaming for this agent

@@ -107,6 +107,7 @@ export default function App() {
           runtime: meta.runtime,
           capabilities: meta.capabilities,
           authRequired: meta.auth_required,
+          version: meta.version,
         });
 
         // Single API call instead of two parallel calls to same endpoint
