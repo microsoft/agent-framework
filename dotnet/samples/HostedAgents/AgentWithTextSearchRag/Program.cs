@@ -8,6 +8,7 @@ using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Data;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
