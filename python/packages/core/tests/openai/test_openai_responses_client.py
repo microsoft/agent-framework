@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import os
+from datetime import datetime, timezone
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -682,6 +683,51 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.name == "do_sensitive_action"
     assert req.function_call.arguments == {"arg": 1}
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
+
+
+def test_responses_client_created_at_uses_utc(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that ChatResponse from responses client uses UTC timestamp.
+
+    This is a regression test for the issue where created_at was using local time
+    but labeling it as UTC (with 'Z' suffix).
+    """
+    client = OpenAIResponsesClient()
+
+    # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
+    utc_timestamp = 1733011890
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = utc_timestamp
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "Test response"
+    mock_message_content.annotations = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+
+    mock_response.output = [mock_message_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify that created_at is correctly formatted as UTC
+    assert response.created_at is not None
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Parse the timestamp and verify it matches UTC time
+    expected_utc_time = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
+    expected_formatted = expected_utc_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert response.created_at == expected_formatted, (
+        f"Expected UTC timestamp {expected_formatted}, got {response.created_at}"
+    )
 
 
 def test_tools_to_response_tools_with_raw_image_generation() -> None:
@@ -1423,12 +1469,12 @@ async def test_prepare_options_store_parameter_handling() -> None:
 
     chat_options = ChatOptions(store=None, conversation_id=None)
     options = await client.prepare_options(messages, chat_options)
-    assert options["store"] is False
+    assert "store" not in options
     assert "previous_response_id" not in options
 
     chat_options = ChatOptions()
     options = await client.prepare_options(messages, chat_options)
-    assert options["store"] is False
+    assert "store" not in options
     assert "previous_response_id" not in options
 
 

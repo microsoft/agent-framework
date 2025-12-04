@@ -37,6 +37,13 @@ public record RunRequest
     internal string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>
+    /// Gets or sets the ID of the orchestration that initiated this request (if any).
+    /// </summary>
+    [JsonInclude]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    internal string? OrchestrationId { get; set; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="RunRequest"/> class for a single message.
     /// </summary>
     /// <param name="message">The message to send to the agent.</param>

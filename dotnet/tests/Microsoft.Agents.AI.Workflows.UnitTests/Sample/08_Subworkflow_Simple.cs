@@ -81,8 +81,8 @@ internal static class Step8EntryPoint
     {
         internal sealed class State
         {
-            public List<TextProcessingResult> Results { get; } = new();
-            public HashSet<string> PendingTaskIds { get; } = new();
+            public List<TextProcessingResult> Results { get; } = [];
+            public HashSet<string> PendingTaskIds { get; } = [];
 
             public bool IsComplete => this.PendingTaskIds.Count == 0;
 
@@ -102,7 +102,7 @@ internal static class Step8EntryPoint
 
             async ValueTask<State?> QueueProcessingTasksAsync(State state, IWorkflowContext context, CancellationToken cancellationToken)
             {
-                foreach (TextProcessingRequest request in texts.Select((string value, int index) => new TextProcessingRequest(Text: value, TaskId: $"Task{index}")))
+                foreach (TextProcessingRequest request in texts.Select((value, index) => new TextProcessingRequest(Text: value, TaskId: $"Task{index}")))
                 {
                     state.PendingTaskIds.Add(request.TaskId);
                     await context.SendMessageAsync(request, cancellationToken: cancellationToken).ConfigureAwait(false);

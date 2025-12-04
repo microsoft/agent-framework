@@ -67,6 +67,13 @@ from agent_framework.observability import setup_observability
 setup_observability()
 ```
 
+Agent Framework also has an opinionated logging format, which you can setup using:
+```python
+from agent_framework import setup_logging
+
+setup_logging()
+```
+
 #### Environment variables for `setup_observability()`
 
 The `setup_observability()` function will look for the following environment variables to determine how to setup the exporters and providers:
@@ -89,6 +96,13 @@ setup_observability(exporters=[exporter])
 > Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
 #### Logging
+Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
+
+```python
+from agent_framework import setup_logging
+
+setup_logging()
+```
 You can control at what level logging happens and thus what logs get exported, you can do this, by adding this:
 
 ```python
@@ -105,7 +119,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 | Sample | Description |
 |--------|-------------|
-| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. |
+| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. This sample also uses the `setup_logging()` function to configure logging. |
 | [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
 | [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |

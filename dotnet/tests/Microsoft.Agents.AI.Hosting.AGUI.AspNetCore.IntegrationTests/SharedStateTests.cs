@@ -62,7 +62,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         // Verify the state content
         string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonSerializer.Deserialize<JsonElement>(receivedJson);
+        JsonElement receivedState = JsonElement.Parse(receivedJson);
         receivedState.GetProperty("counter").GetInt32().Should().Be(43, "state should be incremented");
         receivedState.GetProperty("status").GetString().Should().Be("active");
     }
@@ -141,7 +141,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         DataContent? dataContent = stateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
         string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonSerializer.Deserialize<JsonElement>(receivedJson);
+        JsonElement receivedState = JsonElement.Parse(receivedJson);
 
         receivedState.GetProperty("sessionId").GetString().Should().Be("test-123");
         receivedState.GetProperty("nested").GetProperty("count").GetInt32().Should().Be(10);
@@ -196,7 +196,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         DataContent? secondStateContent = secondStateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
         string secondStateJson = System.Text.Encoding.UTF8.GetString(secondStateContent!.Data.ToArray());
-        JsonElement secondState = JsonSerializer.Deserialize<JsonElement>(secondStateJson);
+        JsonElement secondState = JsonElement.Parse(secondStateJson);
 
         secondState.GetProperty("counter").GetInt32().Should().Be(3, "counter should be incremented twice: 1 -> 2 -> 3");
     }
@@ -304,7 +304,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         DataContent? dataContent = stateResponseMessage!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
         string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonSerializer.Deserialize<JsonElement>(receivedJson);
+        JsonElement receivedState = JsonElement.Parse(receivedJson);
         receivedState.GetProperty("counter").GetInt32().Should().Be(6);
     }
 
@@ -385,7 +385,7 @@ internal sealed class FakeStateAgent : AIAgent
                     {
                         modifiedState[prop.Name] = prop.Value.GetString();
                     }
-                    else if (prop.Value.ValueKind == JsonValueKind.Object || prop.Value.ValueKind == JsonValueKind.Array)
+                    else if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
                     {
                         modifiedState[prop.Name] = prop.Value;
                     }

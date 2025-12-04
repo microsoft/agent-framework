@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, Role
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, ErrorContent, Role
 from pydantic import BaseModel
 
 from agent_framework_azurefunctions._durable_agent_state import (
@@ -79,7 +79,7 @@ class TestAgentEntityInit:
         assert entity.agent == mock_agent
         assert len(entity.state.data.conversation_history) == 0
         assert entity.state.data.extension_data is None
-        assert entity.state.schema_version == "1.0.0"
+        assert entity.state.schema_version == DurableAgentState.SCHEMA_VERSION
 
     def test_init_stores_agent_reference(self) -> None:
         """Test that the agent reference is stored correctly."""
@@ -124,8 +124,7 @@ class TestAgentEntityRunAgent:
         # Verify agent.run was called
         mock_agent.run.assert_called_once()
         _, kwargs = mock_agent.run.call_args
-        sent_messages = kwargs.get("messages")
-        assert isinstance(sent_messages, list)
+        sent_messages: list[Any] = kwargs.get("messages")
         assert len(sent_messages) == 1
         sent_message = sent_messages[0]
         assert isinstance(sent_message, ChatMessage)
@@ -133,10 +132,8 @@ class TestAgentEntityRunAgent:
         assert getattr(sent_message.role, "value", sent_message.role) == "user"
 
         # Verify result
-        assert result["status"] == "success"
-        assert result["response"] == "Test response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Test response"
 
     async def test_run_agent_streaming_callbacks_invoked(self) -> None:
         """Ensure streaming updates trigger callbacks and run() is not used."""
@@ -168,8 +165,8 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert result["status"] == "success"
-        assert "Hello" in result.get("response", "")
+        assert isinstance(result, AgentRunResponse)
+        assert "Hello" in result.text
         assert callback.stream_mock.await_count == len(updates)
         assert callback.response_mock.await_count == 1
         mock_agent.run.assert_not_called()
@@ -215,8 +212,8 @@ class TestAgentEntityRunAgent:
             },
         )
 
-        assert result["status"] == "success"
-        assert result.get("response") == "Final response"
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Final response"
         assert callback.stream_mock.await_count == 0
         assert callback.response_mock.await_count == 1
 
@@ -293,44 +290,6 @@ class TestAgentEntityRunAgent:
             await entity.run_agent(
                 mock_context, {"message": "Message", "thread_id": None, "correlationId": "corr-entity-5"}
             )
-
-    async def test_run_agent_handles_response_without_text_attribute(self) -> None:
-        """Test that run_agent handles responses without a text attribute."""
-        mock_agent = Mock()
-
-        class NoTextResponse(AgentRunResponse):
-            @property
-            def text(self) -> str:  # type: ignore[override]
-                raise AttributeError("text attribute missing")
-
-        mock_response = NoTextResponse(messages=[ChatMessage(role="assistant", text="ignored")])
-        mock_agent.run = AsyncMock(return_value=mock_response)
-
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
-
-        result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-6"}
-        )
-
-        # Should handle gracefully
-        assert result["status"] == "success"
-        assert result["response"] == "Error extracting response"
-
-    async def test_run_agent_handles_none_response_text(self) -> None:
-        """Test that run_agent handles responses with None text."""
-        mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=_agent_response(None))
-
-        entity = AgentEntity(mock_agent)
-        mock_context = Mock()
-
-        result = await entity.run_agent(
-            mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-7"}
-        )
-
-        assert result["status"] == "success"
-        assert result["response"] == "No response"
 
     async def test_run_agent_multiple_conversations(self) -> None:
         """Test that run_agent maintains history across multiple messages."""
@@ -621,10 +580,12 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-1"}
         )
 
-        assert result["status"] == "error"
-        assert "error" in result
-        assert "Agent failed" in result["error"]
-        assert result["error_type"] == "Exception"
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert "Agent failed" in (content.message or "")
+        assert content.error_code == "Exception"
 
     async def test_run_agent_handles_value_error(self) -> None:
         """Test that run_agent handles ValueError instances."""
@@ -638,9 +599,12 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-2"}
         )
 
-        assert result["status"] == "error"
-        assert result["error_type"] == "ValueError"
-        assert "Invalid input" in result["error"]
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert content.error_code == "ValueError"
+        assert "Invalid input" in str(content.message)
 
     async def test_run_agent_handles_timeout_error(self) -> None:
         """Test that run_agent handles TimeoutError instances."""
@@ -654,8 +618,11 @@ class TestErrorHandling:
             mock_context, {"message": "Message", "thread_id": "conv-1", "correlationId": "corr-entity-error-3"}
         )
 
-        assert result["status"] == "error"
-        assert result["error_type"] == "TimeoutError"
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert content.error_code == "TimeoutError"
 
     def test_entity_function_handles_exception_in_operation(self) -> None:
         """Test that the entity function handles exceptions gracefully."""
@@ -690,9 +657,10 @@ class TestErrorHandling:
         )
 
         # Even on error, message info should be preserved
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
-        assert result["status"] == "error"
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
 
 
 class TestConversationHistory:
@@ -800,10 +768,8 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
-        assert result["response"] == "Response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-123"
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Response"
 
     async def test_run_agent_with_dict_request(self) -> None:
         """Test run_agent with a dictionary request."""
@@ -823,9 +789,8 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request_dict)
 
-        assert result["status"] == "success"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "conv-456"
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Response"
 
     async def test_run_agent_with_string_raises_without_correlation(self) -> None:
         """Test that run_agent rejects legacy string input without correlation ID."""
@@ -879,10 +844,9 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
-        # Should have structured_response
-        if "structured_response" in result:
-            assert result["structured_response"]["answer"] == 42
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == '{"answer": 42}'
+        assert result.value is None
 
     async def test_run_agent_disable_tool_calls(self) -> None:
         """Test run_agent with tool calls disabled."""
@@ -898,7 +862,7 @@ class TestRunRequestSupport:
 
         result = await entity.run_agent(mock_context, request)
 
-        assert result["status"] == "success"
+        assert isinstance(result, AgentRunResponse)
         # Agent should have been called (tool disabling is framework-dependent)
         mock_agent.run.assert_called_once()
 
@@ -925,8 +889,117 @@ class TestRunRequestSupport:
         # Verify result was set
         assert mock_context.set_result.called
         result = mock_context.set_result.call_args[0][0]
-        assert result["status"] == "success"
-        assert result["message"] == "Test message"
+        assert isinstance(result, dict)
+
+        # Check if messages are present
+        assert "messages" in result
+        assert len(result["messages"]) > 0
+        message = result["messages"][0]
+
+        # Check for text in various possible locations
+        text_found = False
+        if "text" in message and message["text"] == "Response":
+            text_found = True
+        elif "contents" in message:
+            for content in message["contents"]:
+                if isinstance(content, dict) and content.get("text") == "Response":
+                    text_found = True
+                    break
+
+        assert text_found, f"Response text not found in message: {message}"
+
+
+class TestDurableAgentStateRequestOrchestrationId:
+    """Test suite for DurableAgentStateRequest orchestration_id field."""
+
+    def test_request_with_orchestration_id(self) -> None:
+        """Test creating a request with an orchestration_id."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+            orchestration_id="orch-456",
+        )
+
+        assert request.orchestration_id == "orch-456"
+
+    def test_request_to_dict_includes_orchestration_id(self) -> None:
+        """Test that to_dict includes orchestrationId when set."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+            orchestration_id="orch-789",
+        )
+
+        data = request.to_dict()
+
+        assert "orchestrationId" in data
+        assert data["orchestrationId"] == "orch-789"
+
+    def test_request_to_dict_excludes_orchestration_id_when_none(self) -> None:
+        """Test that to_dict excludes orchestrationId when not set."""
+        request = DurableAgentStateRequest(
+            correlation_id="corr-123",
+            created_at=datetime.now(),
+            messages=[
+                DurableAgentStateMessage(
+                    role="user",
+                    contents=[DurableAgentStateTextContent(text="test")],
+                )
+            ],
+        )
+
+        data = request.to_dict()
+
+        assert "orchestrationId" not in data
+
+    def test_request_from_dict_with_orchestration_id(self) -> None:
+        """Test from_dict correctly parses orchestrationId."""
+        data = {
+            "$type": "request",
+            "correlationId": "corr-123",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "messages": [{"role": "user", "contents": [{"$type": "text", "text": "test"}]}],
+            "orchestrationId": "orch-from-dict",
+        }
+
+        request = DurableAgentStateRequest.from_dict(data)
+
+        assert request.orchestration_id == "orch-from-dict"
+
+    def test_request_from_run_request_with_orchestration_id(self) -> None:
+        """Test from_run_request correctly transfers orchestration_id."""
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+            orchestration_id="orch-from-run-request",
+        )
+
+        durable_request = DurableAgentStateRequest.from_run_request(run_request)
+
+        assert durable_request.orchestration_id == "orch-from-run-request"
+
+    def test_request_from_run_request_without_orchestration_id(self) -> None:
+        """Test from_run_request correctly handles missing orchestration_id."""
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+        )
+
+        durable_request = DurableAgentStateRequest.from_run_request(run_request)
+
+        assert durable_request.orchestration_id is None
 
 
 if __name__ == "__main__":

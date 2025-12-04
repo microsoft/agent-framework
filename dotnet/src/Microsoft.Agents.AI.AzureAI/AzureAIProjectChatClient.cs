@@ -101,7 +101,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     }
 
     /// <inheritdoc/>
-    public async override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var agentOptions = this.GetAgentEnabledChatOptions(options);
 

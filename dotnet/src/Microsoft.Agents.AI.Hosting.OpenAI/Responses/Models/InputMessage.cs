@@ -40,7 +40,7 @@ internal sealed class InputMessage
     {
         if (this.Content.IsText)
         {
-            return new ChatMessage(this.Role, this.Content.Text!);
+            return new ChatMessage(this.Role, this.Content.Text);
         }
         else if (this.Content.IsContents)
         {

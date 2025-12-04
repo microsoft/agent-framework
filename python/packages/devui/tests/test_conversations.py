@@ -119,13 +119,13 @@ async def test_list_conversations_by_metadata():
     conv3 = store.create_conversation(metadata={"agent_id": "agent1", "session_id": "sess_1"})
 
     # Filter by agent_id
-    results = store.list_conversations_by_metadata({"agent_id": "agent1"})
+    results = await store.list_conversations_by_metadata({"agent_id": "agent1"})
 
     assert len(results) == 2
     assert all(cast(dict[str, str], c.metadata).get("agent_id") == "agent1" for c in results if c.metadata)
 
     # Filter by agent_id and session_id
-    results = store.list_conversations_by_metadata({"agent_id": "agent1", "session_id": "sess_1"})
+    results = await store.list_conversations_by_metadata({"agent_id": "agent1", "session_id": "sess_1"})
 
     assert len(results) == 1
     assert results[0].id == conv3.id

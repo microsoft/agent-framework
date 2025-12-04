@@ -1,8 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugTargetFrameworks)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
   </PropertyGroup>
 
@@ -24,8 +22,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" />
-    <PackageReference Include="System.Net.ServerSentEvents" VersionOverride="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" VersionOverride="10.0.0-rc.2.25502.107" />
+    <PackageReference Include="System.Net.ServerSentEvents" />
     <PackageReference Include="System.Net.Http.Json" />
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>

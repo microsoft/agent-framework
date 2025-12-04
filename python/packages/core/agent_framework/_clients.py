@@ -568,10 +568,6 @@ class BaseChatClient(SerializationMixin, ABC):
             additional_properties=additional_properties,
         )
 
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            chat_options.store = True
-
         if chat_options.instructions:
             system_msg = ChatMessage(role="system", text=chat_options.instructions)
             prepped_messages = [system_msg, *prepare_messages(messages)]
@@ -665,10 +661,6 @@ class BaseChatClient(SerializationMixin, ABC):
             user=user,
             additional_properties=additional_properties,
         )
-
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            chat_options.store = True
 
         if chat_options.instructions:
             system_msg = ChatMessage(role="system", text=chat_options.instructions)

@@ -166,6 +166,10 @@
       "description": "The request (i.e. prompt) sent to the agent.",
       "properties": {
         "$type": { "type": "string", "const": "request" },
+        "orchestrationId": {
+          "type": "string",
+          "description": "The identifier of the orchestration that initiated this agent request (if any)."
+        },
         "responseSchema": {
           "type": "object",
           "description": "If the expected response type is JSON, this schema defines the expected structure of the response."

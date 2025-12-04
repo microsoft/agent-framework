@@ -18,7 +18,7 @@ These samples are designed to be run locally in a cloned repository.
 
 The following prerequisites are required to run the samples:
 
-- [.NET 9.0 SDK or later](https://dotnet.microsoft.com/download/dotnet)
+- [.NET 10.0 SDK or later](https://dotnet.microsoft.com/download/dotnet)
 - [Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local) (version 4.x or later)
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) installed and authenticated (`az login`) or an API key for the Azure OpenAI service
 - [Azure OpenAI Service](https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource) with a deployed model (gpt-4o-mini or better is recommended)

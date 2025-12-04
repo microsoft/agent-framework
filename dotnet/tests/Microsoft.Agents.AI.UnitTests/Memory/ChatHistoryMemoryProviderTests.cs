@@ -259,7 +259,7 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
-            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
             Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
         }

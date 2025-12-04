@@ -57,7 +57,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
 
     improved_prompt = (
         "Improve this further while keeping it under 25 words: "
-        f"{initial.get('response', '').strip()}"
+        f"{initial.text}"
     )
 
     refined = yield writer.run(
@@ -65,7 +65,7 @@ def single_agent_orchestration(context: DurableOrchestrationContext):
         thread=writer_thread,
     )
 
-    return refined.get("response", "")
+    return refined.text
 
 
 # 5. HTTP endpoint to kick off the orchestration and return the status query URI.

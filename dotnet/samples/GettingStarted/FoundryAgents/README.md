@@ -6,11 +6,20 @@ of Azure Foundry Agents and can be used with Azure Foundry as the AI provider.
 These samples showcase how to work with agents managed through Azure Foundry, including agent creation,
 versioning, multi-turn conversations, and advanced features like code interpretation and computer use.
 
+## Classic vs New Foundry Agents
+
+> [!NOTE]
+> Recently, Azure Foundry introduced a new and improved experience for creating and managing AI agents, which is the target of these samples.
+
+For more information about the previous classic agents and for what's new in Foundry Agents, see the [Foundry Agents migration documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/migrate?view=foundry).
+
+For a sample demonstrating how to use classic Foundry Agents, see the following: [Agent with Azure AI Persistent](../AgentProviders/Agent_With_AzureAIAgentsPersistent/README.md).
+
 ## Getting started with Foundry Agents prerequisites
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure Foundry service endpoint and project configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 

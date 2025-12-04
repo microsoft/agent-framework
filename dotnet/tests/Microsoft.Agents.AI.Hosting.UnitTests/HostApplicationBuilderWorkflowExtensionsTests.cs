@@ -59,7 +59,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var result = builder.AddWorkflow("workflowName", (sp, key) => CreateTestWorkflow(key));
 
         Assert.NotNull(result);
-        Assert.IsAssignableFrom<IHostedWorkflowBuilder>(result);
+        Assert.IsType<IHostedWorkflowBuilder>(result, exactMatch: false);
     }
 
     /// <summary>
@@ -234,7 +234,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var agentBuilder = workflowBuilder.AddAsAIAgent(AgentName);
 
         Assert.NotNull(agentBuilder);
-        Assert.IsAssignableFrom<IHostedAgentBuilder>(agentBuilder);
+        Assert.IsType<IHostedAgentBuilder>(agentBuilder, exactMatch: false);
         Assert.Equal(AgentName, agentBuilder.Name);
     }
 
@@ -251,7 +251,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var agentBuilder = workflowBuilder.AddAsAIAgent();
 
         Assert.NotNull(agentBuilder);
-        Assert.IsAssignableFrom<IHostedAgentBuilder>(agentBuilder);
+        Assert.IsType<IHostedAgentBuilder>(agentBuilder, exactMatch: false);
         Assert.Equal(WorkflowName, agentBuilder.Name);
     }
 

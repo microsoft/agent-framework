@@ -92,7 +92,7 @@ public sealed class Mem0ProviderTests : IDisposable
             UserId = "user"
         };
         var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "What is my name?") });
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "What is my name?")]);
 
         // Act
         var aiContext = await sut.InvokingAsync(invokingContext);
@@ -419,7 +419,7 @@ public sealed class Mem0ProviderTests : IDisposable
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses = new();
-        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = new();
+        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

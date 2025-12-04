@@ -13,7 +13,7 @@ see the [How to create an agent for each provider](../AgentProviders/README.md) 
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.
@@ -45,6 +45,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Reducing chat history size](./Agent_Step16_ChatReduction/)|This sample demonstrates how to reduce the chat history to constrain its size, where chat history is maintained locally|
 |[Background responses](./Agent_Step17_BackgroundResponses/)|This sample demonstrates how to use background responses for long-running operations with polling and resumption support|
 |[Deep research with an agent](./Agent_Step18_DeepResearch/)|This sample demonstrates how to use the Deep Research Tool to perform comprehensive research on complex topics|
+|[Declarative agent](./Agent_Step19_Declarative/)|This sample demonstrates how to declaratively define an agent.|
 
 ## Running the samples from the console
 
