@@ -69,7 +69,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             // The consumer will call EnqueueMessageAsync which signals the run loop
             await this._inputWaiter.WaitForInputAsync(cancellationToken: linkedSource.Token).ConfigureAwait(false);
 
-            this._runStatus = RunStatus.Running;
             activity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
             while (!linkedSource.Token.IsCancellationRequested)
@@ -78,6 +77,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Events are streamed out in real-time as they happen via the event handler
                 while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
                 {
+                    this._runStatus = RunStatus.Running; // Ensure we do not inappropriately signal Running status unless
+                                                         // messages are being processed.
+
                     await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
                 }
 
@@ -96,9 +98,6 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
                 await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
-
-                // When signaled, resume running
-                this._runStatus = RunStatus.Running;
             }
         }
         catch (OperationCanceledException)
