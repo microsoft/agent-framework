@@ -4,7 +4,7 @@ This sample demonstrates how to create an AI agent directly from an `OpenAI.Chat
 
 ## What This Sample Shows
 
-- **Direct ChatClient Creation**: Shows how to create a `OpenAI.Chat.ChatClient` from `OpenAI.OpenAIClient` and then use it to instantiate an agent
+- **Direct ChatClient Creation**: Shows how to create an `OpenAI.Chat.ChatClient` from `OpenAI.OpenAIClient` and then use it to instantiate an agent
 - **OpenAIChatClientAgent**: Demonstrates using the OpenAI SDK primitives instead of the ones from Microsoft.Extensions.AI and Microsoft.Agents.AI abstractions
 - **Full Agent Capabilities**: Shows both regular and streaming invocation of the agent
 
