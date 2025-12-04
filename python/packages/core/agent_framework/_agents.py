@@ -337,6 +337,7 @@ class BaseAgent(SerializationMixin):
         thread: AgentThread,
         input_messages: ChatMessage | Sequence[ChatMessage],
         response_messages: ChatMessage | Sequence[ChatMessage],
+        **kwargs: Any,
     ) -> None:
         """Notify the thread of new messages.
 
@@ -346,13 +347,14 @@ class BaseAgent(SerializationMixin):
             thread: The thread to notify of new messages.
             input_messages: The input messages to notify about.
             response_messages: The response messages to notify about.
+            **kwargs: Any extra arguments to pass from the agent run.
         """
         if isinstance(input_messages, ChatMessage) or len(input_messages) > 0:
             await thread.on_new_messages(input_messages)
         if isinstance(response_messages, ChatMessage) or len(response_messages) > 0:
             await thread.on_new_messages(response_messages)
         if thread.context_provider:
-            await thread.context_provider.invoked(input_messages, response_messages)
+            await thread.context_provider.invoked(input_messages, response_messages, **kwargs)
 
     @property
     def display_name(self) -> str:
@@ -717,7 +719,7 @@ class ChatAgent(BaseAgent):
             additional_properties=additional_chat_options or {},  # type: ignore
         )
         self._async_exit_stack = AsyncExitStack()
-        self._update_agent_name()
+        self._update_agent_name_and_description()
 
     async def __aenter__(self) -> "Self":
         """Enter the async context manager.
@@ -753,15 +755,17 @@ class ChatAgent(BaseAgent):
         """
         await self._async_exit_stack.aclose()
 
-    def _update_agent_name(self) -> None:
+    def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
 
         Checks if the chat client supports agent name updates. The implementation
         should check if there is already an agent name defined, and if not
         set it to this value.
         """
-        if hasattr(self.chat_client, "_update_agent_name") and callable(self.chat_client._update_agent_name):  # type: ignore[reportAttributeAccessIssue, attr-defined]
-            self.chat_client._update_agent_name(self.name)  # type: ignore[reportAttributeAccessIssue, attr-defined]
+        if hasattr(self.chat_client, "_update_agent_name_and_description") and callable(
+            self.chat_client._update_agent_name_and_description
+        ):  # type: ignore[reportAttributeAccessIssue, attr-defined]
+            self.chat_client._update_agent_name_and_description(self.name, self.description)  # type: ignore[reportAttributeAccessIssue, attr-defined]
 
     async def run(
         self,
@@ -969,7 +973,7 @@ class ChatAgent(BaseAgent):
         """
         input_messages = self._normalize_messages(messages)
         thread, run_chat_options, thread_messages = await self._prepare_thread_and_messages(
-            thread=thread, input_messages=input_messages
+            thread=thread, input_messages=input_messages, **kwargs
         )
         agent_name = self._get_agent_name()
         # Resolve final tool list (runtime provided tools + local MCP server tools)
@@ -1039,7 +1043,7 @@ class ChatAgent(BaseAgent):
 
         response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+        await self._notify_thread_of_new_messages(thread, input_messages, response.messages, **kwargs)
 
     @override
     def get_new_thread(
@@ -1234,6 +1238,7 @@ class ChatAgent(BaseAgent):
         *,
         thread: AgentThread | None,
         input_messages: list[ChatMessage] | None = None,
+        **kwargs: Any,
     ) -> tuple[AgentThread, ChatOptions, list[ChatMessage]]:
         """Prepare the thread and messages for agent execution.
 
@@ -1243,6 +1248,7 @@ class ChatAgent(BaseAgent):
         Keyword Args:
             thread: The conversation thread.
             input_messages: Messages to process.
+            **kwargs: Any extra arguments to pass from the agent run.
 
         Returns:
             A tuple containing:
@@ -1263,7 +1269,7 @@ class ChatAgent(BaseAgent):
         context: Context | None = None
         if self.context_provider:
             async with self.context_provider:
-                context = await self.context_provider.invoking(input_messages or [])
+                context = await self.context_provider.invoking(input_messages or [], **kwargs)
                 if context:
                     if context.messages:
                         thread_messages.extend(context.messages)

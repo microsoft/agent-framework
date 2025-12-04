@@ -562,6 +562,7 @@ class AgentFunctionApp(DFAppBase):
             logger.debug("[MCP Tool Trigger] Received invocation for agent: %s", agent_name)
             return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
 
+        _ = mcp_tool_handler
         logger.debug("[AgentFunctionApp] Registered MCP tool trigger for agent: %s", agent_name)
 
     async def _handle_mcp_tool_invocation(
@@ -587,15 +588,17 @@ class AgentFunctionApp(DFAppBase):
 
         # Parse JSON context string
         try:
-            parsed_context = json.loads(context)
+            parsed_context: Any = json.loads(context)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid MCP context format: {e}") from e
 
+        parsed_context = cast(Mapping[str, Any], parsed_context) if isinstance(parsed_context, dict) else {}
+
         # Extract arguments from MCP context
-        arguments = parsed_context.get("arguments", {}) if isinstance(parsed_context, dict) else {}
+        arguments: dict[str, Any] = parsed_context.get("arguments", {})
 
         # Validate required 'query' argument
-        query = arguments.get("query")
+        query: Any = arguments.get("query")
         if not query or not isinstance(query, str):
             raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
 
@@ -951,10 +954,9 @@ class AgentFunctionApp(DFAppBase):
         """Create a lowercase header mapping from the incoming request."""
         headers: dict[str, str] = {}
         raw_headers = req.headers
-        if isinstance(raw_headers, Mapping):
-            for key, value in raw_headers.items():
-                if value is not None:
-                    headers[str(key).lower()] = str(value)
+        for key, value in cast(Mapping[str, str], raw_headers).items():
+            headers[key.lower()] = value
+
         return headers
 
     @staticmethod

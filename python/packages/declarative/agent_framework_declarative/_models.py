@@ -253,7 +253,7 @@ class Connection(SerializationMixin):
             # We're being called on a subclass, use the normal from_dict
             return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[misc]
 
-        kind = value.get("kind", "")
+        kind = value.get("kind", "").lower()
         if kind == "reference":
             return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
                 ReferenceConnection, value, dependencies=dependencies
@@ -262,7 +262,7 @@ class Connection(SerializationMixin):
             return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
                 RemoteConnection, value, dependencies=dependencies
             )
-        if kind == "key":
+        if kind in ("key", "apikey"):
             return SerializationMixin.from_dict.__func__(  # type: ignore[misc]
                 ApiKeyConnection, value, dependencies=dependencies
             )

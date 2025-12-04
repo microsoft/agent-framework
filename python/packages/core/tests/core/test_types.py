@@ -2,6 +2,7 @@
 
 import base64
 from collections.abc import AsyncIterable
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -36,6 +37,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     ai_function,
+    prepare_function_call_results,
 )
 from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
@@ -933,6 +935,52 @@ def test_agent_run_response_update_text_property_empty() -> None:
 def test_agent_run_response_update_str_method(text_content: TextContent) -> None:
     update = AgentRunResponseUpdate(contents=[text_content])
     assert str(update) == "Test content"
+
+
+def test_agent_run_response_update_created_at() -> None:
+    """Test that AgentRunResponseUpdate properly handles created_at timestamps."""
+    # Test with a properly formatted UTC timestamp
+    utc_timestamp = "2024-12-01T00:31:30.000000Z"
+    update = AgentRunResponseUpdate(
+        contents=[TextContent(text="test")],
+        role=Role.ASSISTANT,
+        created_at=utc_timestamp,
+    )
+    assert update.created_at == utc_timestamp
+    assert update.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Verify that we can generate a proper UTC timestamp
+    now_utc = datetime.now(tz=timezone.utc)
+    formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    update_with_now = AgentRunResponseUpdate(
+        contents=[TextContent(text="test")],
+        role=Role.ASSISTANT,
+        created_at=formatted_utc,
+    )
+    assert update_with_now.created_at == formatted_utc
+    assert update_with_now.created_at.endswith("Z")
+
+
+def test_agent_run_response_created_at() -> None:
+    """Test that AgentRunResponse properly handles created_at timestamps."""
+    # Test with a properly formatted UTC timestamp
+    utc_timestamp = "2024-12-01T00:31:30.000000Z"
+    response = AgentRunResponse(
+        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        created_at=utc_timestamp,
+    )
+    assert response.created_at == utc_timestamp
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Verify that we can generate a proper UTC timestamp
+    now_utc = datetime.now(tz=timezone.utc)
+    formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    response_with_now = AgentRunResponse(
+        messages=[ChatMessage(role=Role.ASSISTANT, text="Hello")],
+        created_at=formatted_utc,
+    )
+    assert response_with_now.created_at == formatted_utc
+    assert response_with_now.created_at.endswith("Z")
 
 
 # region ErrorContent
@@ -1965,3 +2013,75 @@ def test_text_content_with_multiple_annotations_serialization():
     assert reconstructed.annotations[0].title == "Citation 1"
     assert reconstructed.annotations[1].title == "Citation 2"
     assert all(isinstance(ann.annotated_regions[0], TextSpanRegion) for ann in reconstructed.annotations)
+
+
+# region prepare_function_call_results with Pydantic models
+
+
+class WeatherResult(BaseModel):
+    """A Pydantic model for testing."""
+
+    temperature: float
+    condition: str
+
+
+class NestedModel(BaseModel):
+    """A Pydantic model with nested structure."""
+
+    name: str
+    weather: WeatherResult
+
+
+def test_prepare_function_call_results_pydantic_model():
+    """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
+    result = WeatherResult(temperature=22.5, condition="sunny")
+    json_result = prepare_function_call_results(result)
+
+    # The result should be a valid JSON string
+    assert isinstance(json_result, str)
+    assert '"temperature": 22.5' in json_result or '"temperature":22.5' in json_result
+    assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
+
+
+def test_prepare_function_call_results_pydantic_model_in_list():
+    """Test that lists containing Pydantic models are properly serialized."""
+    results = [
+        WeatherResult(temperature=20.0, condition="cloudy"),
+        WeatherResult(temperature=25.0, condition="sunny"),
+    ]
+    json_result = prepare_function_call_results(results)
+
+    # The result should be a valid JSON string representing a list
+    assert isinstance(json_result, str)
+    assert json_result.startswith("[")
+    assert json_result.endswith("]")
+    assert "cloudy" in json_result
+    assert "sunny" in json_result
+
+
+def test_prepare_function_call_results_pydantic_model_in_dict():
+    """Test that dicts containing Pydantic models are properly serialized."""
+    results = {
+        "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
+        "forecast": WeatherResult(temperature=24.0, condition="sunny"),
+    }
+    json_result = prepare_function_call_results(results)
+
+    # The result should be a valid JSON string representing a dict
+    assert isinstance(json_result, str)
+    assert "current" in json_result
+    assert "forecast" in json_result
+    assert "partly cloudy" in json_result
+    assert "sunny" in json_result
+
+
+def test_prepare_function_call_results_nested_pydantic_model():
+    """Test that nested Pydantic models are properly serialized."""
+    result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
+    json_result = prepare_function_call_results(result)
+
+    # The result should be a valid JSON string
+    assert isinstance(json_result, str)
+    assert "Seattle" in json_result
+    assert "rainy" in json_result
+    assert "18.0" in json_result or "18" in json_result

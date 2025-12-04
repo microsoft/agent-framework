@@ -11,8 +11,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="10.4.0" />
-    <PackageVersion Include="Anthropic.Foundry" Version="0.0.2" />
+    <PackageVersion Include="Anthropic" Version="11.0.0" />
+    <PackageVersion Include="Anthropic.Foundry" Version="0.1.0" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
@@ -21,7 +21,7 @@
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.3" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.4" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.7" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.7.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
@@ -46,6 +46,7 @@
     <PackageVersion Include="System.Text.Json" Version="10.0.0" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.0" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+    <PackageVersion Include="System.Net.Security" Version="4.3.2" />
     <!-- OpenTelemetry -->
     <PackageVersion Include="OpenTelemetry" Version="1.13.1" />
     <PackageVersion Include="OpenTelemetry.Api" Version="1.13.1" />
@@ -162,17 +163,17 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Roslynator.Analyzers" Version="[4.14.1]" />
+    <PackageVersion Include="Roslynator.Analyzers" Version="4.14.1" />
     <PackageReference Include="Roslynator.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Roslynator.CodeAnalysis.Analyzers" Version="[4.14.0]" />
+    <PackageVersion Include="Roslynator.CodeAnalysis.Analyzers" Version="4.14.1" />
     <PackageReference Include="Roslynator.CodeAnalysis.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="[4.14.0]" />
+    <PackageVersion Include="Roslynator.Formatting.Analyzers" Version="4.14.1" />
     <PackageReference Include="Roslynator.Formatting.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
