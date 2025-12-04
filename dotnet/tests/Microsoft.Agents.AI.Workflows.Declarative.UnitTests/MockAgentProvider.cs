@@ -40,6 +40,12 @@ internal sealed class MockAgentProvider : Mock<WorkflowAgentProvider>
                 It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ToAsyncEnumerableAsync(testMessages));
+
+        this.Setup(provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(testMessages.First()));
     }
 
     private string CreateConversationId()

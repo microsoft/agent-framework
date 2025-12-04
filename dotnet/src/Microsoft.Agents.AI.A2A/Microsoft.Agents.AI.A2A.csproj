@@ -14,8 +14,6 @@
 
   <ItemGroup>
     <PackageReference Include="A2A" />
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
   </ItemGroup>
   
   <PropertyGroup>
