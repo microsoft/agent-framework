@@ -306,7 +306,7 @@ public sealed class ContextualFunctionProviderTests
     }
 
     [Fact]
-    public void Serialize_WithNoRecentMessages_ShouldReturnEmptyState()
+    public async Task Serialize_WithNoRecentMessages_ShouldReturnEmptyStateAsync()
     {
         // Arrange
         var functions = new List<AIFunction> { CreateFunction("f1") };
@@ -343,7 +343,7 @@ public sealed class ContextualFunctionProviderTests
         var expected = string.Join(Environment.NewLine, ["msg1", "msg2", "new message"]);
         this._collectionMock.Verify(c => c.SearchAsync(expected, It.IsAny<int>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
-      
+
     [Fact]
     public async Task InvokedAsync_ShouldNotAddMessages_WhenExceptionIsPresent_Async()
     {
