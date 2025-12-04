@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 
 from agent_framework import ChatAgent, HostedFileSearchTool, HostedVectorStoreContent
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.identity import AzureCliCredential
 
 """
 Azure OpenAI Responses Client with File Search Example
@@ -12,8 +12,11 @@ Azure OpenAI Responses Client with File Search Example
 This sample demonstrates using HostedFileSearchTool with Azure OpenAI Responses Client
 for direct document-based question answering and information retrieval.
 
-NOTE: File search with Azure OpenAI Responses API currently requires API key authentication.
-Make sure to set the AZURE_OPENAI_API_KEY environment variable.
+Prerequisites:
+- Set environment variables:
+  - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint URL
+  - AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: Your Responses API deployment name
+- Authenticate via 'az login' for AzureCliCredential
 """
 
 # Helper functions
@@ -44,12 +47,9 @@ async def delete_vector_store(client: AzureOpenAIResponsesClient, file_id: str, 
 async def main() -> None:
     print("=== Azure OpenAI Responses Client with File Search Example ===\n")
 
-    # File search with Responses API requires API key authentication
-    # Make sure AZURE_OPENAI_API_KEY environment variable is set
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-
-    # Initialize Responses client with API key
-    client = AzureOpenAIResponsesClient(api_key=api_key)
+    # Initialize Responses client
+    # Make sure you're logged in via 'az login' before running this sample
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     file_id, vector_store = await create_vector_store(client)
 
@@ -62,7 +62,7 @@ async def main() -> None:
     query = "What is the weather today? Do a file search to find the answer."
     print(f"User: {query}")
     result = await agent.run(query)
-    print(f"Result: {result}\n")
+    print(f"Agent: {result}\n")
 
     await delete_vector_store(client, file_id, vector_store.vector_store_id)
 
