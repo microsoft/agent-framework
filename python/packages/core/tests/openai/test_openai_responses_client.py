@@ -653,64 +653,6 @@ def test_tools_to_response_tools_with_hosted_mcp() -> None:
     assert "require_approval" in mcp
 
 
-def test_tools_to_response_tools_with_local_mcp() -> None:
-    """Test that local MCPTool (MCPStreamableHTTPTool) functions are converted to FunctionToolParam."""
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Create a mock MCPStreamableHTTPTool with mock functions
-    mcp_tool = MCPStreamableHTTPTool(
-        name="test-mcp",
-        url="https://example.com/mcp",
-        description="Test MCP tool",
-    )
-
-    # Mock the functions property to return AIFunction instances
-    mock_func1 = MagicMock()
-    mock_func1.name = "search_docs"
-    mock_func1.description = "Search documentation"
-    mock_func1.parameters.return_value = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-    }
-
-    mock_func2 = MagicMock()
-    mock_func2.name = "fetch_page"
-    mock_func2.description = "Fetch a page"
-    mock_func2.parameters.return_value = {
-        "type": "object",
-        "properties": {"url": {"type": "string"}},
-        "required": ["url"],
-    }
-
-    # Mock the functions property
-    with patch.object(
-        type(mcp_tool), "functions", new_callable=lambda: property(lambda self: [mock_func1, mock_func2])
-    ):
-        resp_tools = client._tools_to_response_tools([mcp_tool])
-
-    assert isinstance(resp_tools, list)
-    assert len(resp_tools) == 2
-
-    # Verify first function
-    func1 = resp_tools[0]
-    assert func1["type"] == "function"
-    assert func1["name"] == "search_docs"
-    assert func1["description"] == "Search documentation"
-    assert func1["strict"] is False
-    assert func1["parameters"]["additionalProperties"] is False
-    assert "query" in func1["parameters"]["properties"]
-
-    # Verify second function
-    func2 = resp_tools[1]
-    assert func2["type"] == "function"
-    assert func2["name"] == "fetch_page"
-    assert func2["description"] == "Fetch a page"
-    assert func2["strict"] is False
-    assert func2["parameters"]["additionalProperties"] is False
-    assert "url" in func2["parameters"]["properties"]
-
-
 def test_create_response_content_with_mcp_approval_request() -> None:
     """Test that a non-streaming mcp_approval_request is parsed into FunctionApprovalRequestContent."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

@@ -26,7 +26,6 @@ from pydantic import BaseModel, ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
-from .._mcp import MCPTool
 from .._middleware import use_chat_middleware
 from .._tools import (
     AIFunction,
@@ -328,19 +327,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 else None,
                             )
                         )
-                    case MCPTool():
-                        for func in tool.functions:
-                            params = func.parameters()
-                            params["additionalProperties"] = False
-                            response_tools.append(
-                                FunctionToolParam(
-                                    name=func.name,
-                                    parameters=params,
-                                    strict=False,
-                                    type="function",
-                                    description=func.description,
-                                )
-                            )
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
