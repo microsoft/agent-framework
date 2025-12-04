@@ -1805,6 +1805,8 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
     if isinstance(content, dict):
         return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if isinstance(content, BaseModel):
+        return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
     return content

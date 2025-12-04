@@ -264,7 +264,7 @@ class Executor(RequestInfoMixin, DictConvertible):
 
             # Invoke the handler with the message and context
             with _framework_event_origin():
-                invoke_event = ExecutorInvokedEvent(self.id)
+                invoke_event = ExecutorInvokedEvent(self.id, message)
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
@@ -275,7 +275,9 @@ class Executor(RequestInfoMixin, DictConvertible):
                 await context.add_event(failure_event)
                 raise
             with _framework_event_origin():
-                completed_event = ExecutorCompletedEvent(self.id)
+                # Include sent messages as the completion data
+                sent_messages = context.get_sent_messages()
+                completed_event = ExecutorCompletedEvent(self.id, sent_messages if sent_messages else None)
             await context.add_event(completed_event)
 
     def _create_context_for_handler(

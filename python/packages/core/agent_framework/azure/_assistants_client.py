@@ -27,6 +27,7 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
         deployment_name: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
+        assistant_description: str | None = None,
         thread_id: str | None = None,
         api_key: str | None = None,
         endpoint: str | None = None,
@@ -49,6 +50,7 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
             assistant_id: The ID of an Azure OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
+            assistant_description: The description to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
@@ -155,6 +157,7 @@ class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
             model_id=azure_openai_settings.chat_deployment_name,
             assistant_id=assistant_id,
             assistant_name=assistant_name,
+            assistant_description=assistant_description,
             thread_id=thread_id,
             async_client=async_client,  # type: ignore[reportArgumentType]
             default_headers=default_headers,
