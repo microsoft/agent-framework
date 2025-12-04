@@ -31,7 +31,7 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
         {
             Name = name,
             Description = description,
-            Instructions = instructions,
+            ChatOptions = new ChatOptions() { Instructions = instructions },
         }, loggerFactory)
     {
     }
