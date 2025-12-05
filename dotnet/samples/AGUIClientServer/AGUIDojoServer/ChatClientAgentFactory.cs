@@ -78,22 +78,22 @@ internal static class ChatClientAgentFactory
         {
             Name = "AgenticUIAgent",
             Description = "An agent that generates agentic user interfaces using Azure OpenAI",
-            Instructions = """
-                When planning use tools only, without any other messages.
-                IMPORTANT:
-                - Use the `create_plan` tool to set the initial state of the steps
-                - Use the `update_plan_step` tool to update the status of each step
-                - Do NOT repeat the plan or summarise it in a message
-                - Do NOT confirm the creation or updates in a message
-                - Do NOT ask the user for additional information or next steps
-                - Do NOT leave a plan hanging, always complete the plan via `update_plan_step` if one is ongoing.
-                - Continue calling update_plan_step until all steps are marked as completed.
-
-                Only one plan can be active at a time, so do not call the `create_plan` tool
-                again until all the steps in current plan are completed.
-                """,
             ChatOptions = new ChatOptions
             {
+                Instructions = """
+                    When planning use tools only, without any other messages.
+                    IMPORTANT:
+                    - Use the `create_plan` tool to set the initial state of the steps
+                    - Use the `update_plan_step` tool to update the status of each step
+                    - Do NOT repeat the plan or summarise it in a message
+                    - Do NOT confirm the creation or updates in a message
+                    - Do NOT ask the user for additional information or next steps
+                    - Do NOT leave a plan hanging, always complete the plan via `update_plan_step` if one is ongoing.
+                    - Continue calling update_plan_step until all steps are marked as completed.
+
+                    Only one plan can be active at a time, so do not call the `create_plan` tool
+                    again until all the steps in current plan are completed.
+                    """,
                 Tools = [
                     AIFunctionFactory.Create(
                         AgenticPlanningTools.CreatePlan,
@@ -132,23 +132,23 @@ internal static class ChatClientAgentFactory
         {
             Name = "PredictiveStateUpdatesAgent",
             Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
-            Instructions = """
-                You are a document editor assistant. When asked to write or edit content:
-                
-                IMPORTANT:
-                - Use the `write_document` tool with the full document text in Markdown format
-                - Format the document extensively so it's easy to read
-                - You can use all kinds of markdown (headings, lists, bold, etc.)
-                - However, do NOT use italic or strike-through formatting
-                - You MUST write the full document, even when changing only a few words
-                - When making edits to the document, try to make them minimal - do not change every word
-                - Keep stories SHORT!
-                - After you are done writing the document you MUST call a confirm_changes tool after you call write_document
-                
-                After the user confirms the changes, provide a brief summary of what you wrote.
-                """,
             ChatOptions = new ChatOptions
             {
+                Instructions = """
+                    You are a document editor assistant. When asked to write or edit content:
+                    
+                    IMPORTANT:
+                    - Use the `write_document` tool with the full document text in Markdown format
+                    - Format the document extensively so it's easy to read
+                    - You can use all kinds of markdown (headings, lists, bold, etc.)
+                    - However, do NOT use italic or strike-through formatting
+                    - You MUST write the full document, even when changing only a few words
+                    - When making edits to the document, try to make them minimal - do not change every word
+                    - Keep stories SHORT!
+                    - After you are done writing the document you MUST call a confirm_changes tool after you call write_document
+                    
+                    After the user confirms the changes, provide a brief summary of what you wrote.
+                    """,
                 Tools = [
                     AIFunctionFactory.Create(
                         WriteDocument,
