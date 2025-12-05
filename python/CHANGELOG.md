@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251204] - 2025-12-04
+
+### Added
+
+- **agent-framework-core**: Add support for Pydantic `BaseModel` as function call result (#2606)
+- **agent-framework-core**: Executor events now include I/O data (#2591)
+- **samples**: Inline YAML declarative sample (#2582)
+- **samples**: Handoff-as-agent with HITL sample (#2534)
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Support Magentic agent tool call approvals and plan stalling HITL behavior (#2569)
+- **agent-framework-core**: [BREAKING] Standardize orchestration outputs as list of `ChatMessage`; allow agent as group chat manager (#2291)
+- **agent-framework-core**: [BREAKING] Respond with `AgentRunResponse` including serialized structured output (#2285)
+- **observability**: Use `executor_id` and `edge_group_id` as span names for clearer traces (#2538)
+- **agent-framework-devui**: Add multimodal input support for workflows and refactor chat input (#2593)
+- **docs**: Update Python orchestration documentation (#2087)
+
+### Fixed
+
+- **observability**: Resolve mypy error in observability module (#2641)
+- **agent-framework-core**: Fix `AgentRunResponse.created_at` returning local datetime labeled as UTC (#2590)
+- **agent-framework-core**: Emit `ExecutorFailedEvent` before `WorkflowFailedEvent` when executor throws (#2537)
+- **agent-framework-core**: Fix MagenticAgentExecutor producing `repr` string for tool call content (#2566)
+- **agent-framework-core**: Fixed empty text content Pydantic validation failure (#2539)
+- **agent-framework-azure-ai**: Added support for application endpoints in Azure AI client (#2460)
+- **agent-framework-azurefunctions**: Add MCP tool support (#2385)
+- **agent-framework-core**: Preserve MCP array items schema in Pydantic field generation (#2382)
+- **agent-framework-devui**: Make tool call view optional and fix links (#2243)
+- **agent-framework-core**: Always include output in function call result messages (#2414)
+- **agent-framework-redis**: Fix TypeError (#2411)
+
 ## [1.0.0b251120] - 2025-11-20
 
 ### Added
@@ -290,7 +322,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...HEAD
+[1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
 [1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
 [1.0.0b251117]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...python-1.0.0b251117
 [1.0.0b251114]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251112.post1...python-1.0.0b251114
