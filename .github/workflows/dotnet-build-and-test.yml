@@ -37,7 +37,7 @@ jobs:
     outputs:
       dotnetChanges: ${{ steps.filter.outputs.dotnet}}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -68,7 +68,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     environment: ${{ matrix.environment }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
             persist-credentials: false
             sparse-checkout: |
