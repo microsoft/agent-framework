@@ -3,6 +3,7 @@
 """Utility functions for AG-UI integration."""
 
 import copy
+import json
 import uuid
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import asdict, is_dataclass
@@ -164,3 +165,34 @@ def convert_tools_to_agui_format(
             continue
 
     return results if results else None
+
+
+def serialize_content_result(result: Any) -> str:  # noqa: ANN401
+    """Serialize content result to string for AG-UI.
+
+    Handles various result types from tool execution, including dict, list
+    (e.g., list[TextContent] from MCP tools), and other types.
+
+    Args:
+        result: The result to serialize (dict, list, or other types).
+
+    Returns:
+        Serialized string representation.
+    """
+    if result is None:
+        return ""
+    if isinstance(result, dict):
+        return json.dumps(result)
+    if isinstance(result, list):
+        if not result:  # Empty list returns empty string
+            return ""
+        texts: list[str] = []
+        for item in result:
+            if hasattr(item, "text"):  # TextContent
+                texts.append(item.text)
+            elif hasattr(item, "model_dump"):
+                texts.append(json.dumps(item.model_dump(mode="json")))
+            else:
+                texts.append(str(item))
+        return texts[0] if len(texts) == 1 else json.dumps(texts)
+    return str(result)
