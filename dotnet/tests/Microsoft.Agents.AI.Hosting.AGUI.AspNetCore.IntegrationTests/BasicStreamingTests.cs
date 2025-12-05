@@ -278,11 +278,10 @@ internal sealed class FakeChatClientAgent : AIAgent
 {
     public FakeChatClientAgent()
     {
-        this.Id = "fake-agent";
         this.Description = "A fake agent for testing";
     }
 
-    public override string Id { get; }
+    protected override string? IdCore => "fake-agent";
 
     public override string? Description { get; }
 
@@ -352,11 +351,10 @@ internal sealed class FakeMultiMessageAgent : AIAgent
 {
     public FakeMultiMessageAgent()
     {
-        this.Id = "fake-multi-message-agent";
         this.Description = "A fake agent that sends multiple messages for testing";
     }
 
-    public override string Id { get; }
+    protected override string? IdCore => "fake-multi-message-agent";
 
     public override string? Description { get; }
 
