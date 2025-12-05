@@ -518,7 +518,7 @@ public partial class ChatClientAgentTests
 
         // Assert
         Assert.IsType<ChatMessageStore>(thread!.MessageStore, exactMatch: false);
-        mockChatMessageStore.Verify(s => s.AddMessagesAsync(It.Is<IEnumerable<ChatMessage>>(x => x.Count() == 2), It.IsAny<CancellationToken>()), Times.Once);
+        mockChatMessageStore.Verify(s => s.InvokedAsync(It.Is<ChatMessageStore.InvokedContext>(x => x.RequestMessages.Count() == 1 && x.ResponseMessages!.Count() == 1), It.IsAny<CancellationToken>()), Times.Once);
         mockFactory.Verify(f => f(It.IsAny<ChatClientAgentOptions.ChatMessageStoreFactoryContext>()), Times.Once);
     }
 
@@ -610,7 +610,7 @@ public partial class ChatClientAgentTests
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
 
-        // Verify that the thread was updated with the input, ai context and response messages
+        // Verify that the thread was updated with the ai context provider, input and response messages
         var messageStore = Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
         Assert.Equal(3, messageStore.Count);
         Assert.Equal("user message", messageStore[0].Text);
@@ -2067,7 +2067,7 @@ public partial class ChatClientAgentTests
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
 
-        // Verify that the thread was updated with the input, ai context and response messages
+        // Verify that the thread was updated with the input, ai context provider, and response messages
         var messageStore = Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
         Assert.Equal(3, messageStore.Count);
         Assert.Equal("user message", messageStore[0].Text);
