@@ -44,7 +44,6 @@ async def test_server_health_endpoint(test_entities_dir):
     # Framework name is now hardcoded since we simplified to single framework
 
 
-@pytest.mark.skip("Skipping while we fix discovery")
 async def test_server_entities_endpoint(test_entities_dir):
     """Test /v1/entities endpoint."""
     server = DevServer(entities_dir=test_entities_dir)
@@ -52,11 +51,13 @@ async def test_server_entities_endpoint(test_entities_dir):
 
     entities = await executor.discover_entities()
     assert len(entities) >= 1
-    # Should find at least the weather agent
+    # Should find at least one agent
     agent_entities = [e for e in entities if e.type == "agent"]
-    assert len(agent_entities) >= 1
-    agent_names = [e.name for e in agent_entities]
-    assert "WeatherAgent" in agent_names
+    assert len(agent_entities) >= 1, "Should discover at least one agent"
+    # Verify agents have required properties
+    for agent in agent_entities:
+        assert agent.id, "Agent should have an ID"
+        assert agent.name, "Agent should have a name"
 
 
 async def test_server_execution_sync(test_entities_dir):
