@@ -272,7 +272,7 @@ public sealed partial class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await NotifyMessageStoreOfNewMessagesAsync(safeThread, (aiContextProviderMessages ?? []).Concat(inputMessages).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
 
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, aiContextProviderMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
@@ -415,7 +415,7 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
-        await NotifyMessageStoreOfNewMessagesAsync(safeThread, (aiContextProviderMessages ?? []).Concat(inputMessages).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
 
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, aiContextProviderMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);

@@ -613,8 +613,8 @@ public partial class ChatClientAgentTests
         // Verify that the thread was updated with the input, ai context and response messages
         var messageStore = Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
         Assert.Equal(3, messageStore.Count);
-        Assert.Equal("context provider message", messageStore[0].Text);
-        Assert.Equal("user message", messageStore[1].Text);
+        Assert.Equal("user message", messageStore[0].Text);
+        Assert.Equal("context provider message", messageStore[1].Text);
         Assert.Equal("response", messageStore[2].Text);
 
         mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -2070,8 +2070,8 @@ public partial class ChatClientAgentTests
         // Verify that the thread was updated with the input, ai context and response messages
         var messageStore = Assert.IsType<InMemoryChatMessageStore>(thread!.MessageStore);
         Assert.Equal(3, messageStore.Count);
-        Assert.Equal("context provider message", messageStore[0].Text);
-        Assert.Equal("user message", messageStore[1].Text);
+        Assert.Equal("user message", messageStore[0].Text);
+        Assert.Equal("context provider message", messageStore[1].Text);
         Assert.Equal("response", messageStore[2].Text);
 
         mockProvider.Verify(p => p.InvokingAsync(It.IsAny<AIContextProvider.InvokingContext>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -2130,8 +2130,8 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that messages are stored in MessageStore in the same order they are sent to the chat client.
-    /// Order should be: AIContextProvider messages, Input messages, Response messages.
+    /// Verify that messages are stored in MessageStore with AIContextProvider messages.
+    /// Order stored should be: Input messages, AIContextProvider messages, Response messages.
     /// </summary>
     [Fact]
     public async Task VerifyMessageOrderingWithAIContextProviderAsync()
@@ -2191,19 +2191,19 @@ public partial class ChatClientAgentTests
         Assert.Equal("Message X", messagesToChatClient[2].Text);
         Assert.Equal("Message C", messagesToChatClient[3].Text);
 
-        // Assert - Verify order stored in MessageStore: [Existing, AIContextProvider, Input, Response]
+        // Assert - Verify order stored in MessageStore: [Existing, Input, AIContextProvider, Response]
         var storedMessagesList = (await messageStore.GetMessagesAsync()).ToList();
         Assert.Equal(5, storedMessagesList.Count);
         Assert.Equal("Message A", storedMessagesList[0].Text);
         Assert.Equal("Message B", storedMessagesList[1].Text);
-        Assert.Equal("Message X", storedMessagesList[2].Text);
-        Assert.Equal("Message C", storedMessagesList[3].Text);
+        Assert.Equal("Message C", storedMessagesList[2].Text);
+        Assert.Equal("Message X", storedMessagesList[3].Text);
         Assert.Equal("Message D", storedMessagesList[4].Text);
     }
 
     /// <summary>
-    /// Verify that messages are stored in MessageStore in the same order they are sent to the chat client (streaming version).
-    /// Order should be: AIContextProvider messages, Input messages, Response messages.
+    /// Verify that messages are stored in MessageStore with AIContextProvider messages (streaming version).
+    /// Order stored should be: Input messages, AIContextProvider messages, Response messages.
     /// </summary>
     [Fact]
     public async Task VerifyMessageOrderingWithAIContextProviderStreamingAsync()
@@ -2265,13 +2265,13 @@ public partial class ChatClientAgentTests
         Assert.Equal("Message X", messagesToChatClient[2].Text);
         Assert.Equal("Message C", messagesToChatClient[3].Text);
 
-        // Assert - Verify order stored in MessageStore: [Existing, AIContextProvider, Input, Response]
+        // Assert - Verify order stored in MessageStore: [Existing, Input, AIContextProvider, Response]
         var storedMessagesList = (await messageStore.GetMessagesAsync()).ToList();
         Assert.Equal(5, storedMessagesList.Count);
         Assert.Equal("Message A", storedMessagesList[0].Text);
         Assert.Equal("Message B", storedMessagesList[1].Text);
-        Assert.Equal("Message X", storedMessagesList[2].Text);
-        Assert.Equal("Message C", storedMessagesList[3].Text);
+        Assert.Equal("Message C", storedMessagesList[2].Text);
+        Assert.Equal("Message X", storedMessagesList[3].Text);
         Assert.Equal("Message D", storedMessagesList[4].Text);
     }
 
