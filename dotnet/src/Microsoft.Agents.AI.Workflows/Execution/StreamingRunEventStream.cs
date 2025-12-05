@@ -118,11 +118,12 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         }
         finally
         {
+            // Mark as ended when run loop exits
+            this._runStatus = RunStatus.Ended;
+
             this._stepRunner.OutgoingEvents.EventRaised -= OnEventRaisedAsync;
             this._eventChannel.Writer.Complete();
 
-            // Mark as ended when run loop exits
-            this._runStatus = RunStatus.Ended;
             activity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
         }
 
