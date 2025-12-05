@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Testing deprecated OpenAI Assistants API extension methods
+
 using System;
 using System.Diagnostics;
 using System.IO;
