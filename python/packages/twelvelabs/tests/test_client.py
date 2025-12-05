@@ -327,7 +327,7 @@ async def test_get_or_create_index(mock_client):
     """Test index creation and caching."""
     # Mock index list
     mock_index = Mock()
-    mock_index.name = "test-index"
+    mock_index.index_name = "test-index"
     mock_index.id = "index-abc"
 
     with patch("asyncio.to_thread", new=AsyncMock(return_value=[mock_index])):

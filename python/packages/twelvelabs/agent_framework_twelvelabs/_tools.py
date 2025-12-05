@@ -10,6 +10,7 @@ from ._client import TwelveLabsClient
 from ._types import (
     ChapterResult,
     HighlightResult,
+    SearchResults,
     SummaryResult,
 )
 
@@ -331,6 +332,119 @@ class TwelveLabsTools:
         }
 
     @ai_function(
+        description="Search across indexed videos using natural language to find specific moments",
+        name="search_videos",
+    )
+    async def search_videos(
+        self,
+        query: str,
+        index_name: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Search videos using a natural language query.
+
+        Uses Marengo 3.0 embeddings for semantic video search across all indexed content.
+
+        Args:
+            query: Natural language search query (e.g., "person walking in the park")
+            index_name: Name of index to search (defaults to 'default')
+            limit: Maximum number of results to return (default 10)
+
+        Returns:
+            Dictionary with search results including timestamps and scores
+
+        Example:
+            ```python
+            results = await tools.search_videos(
+                query="product demonstration",
+                limit=5
+            )
+            for r in results['results']:
+                print(f"Video {r['video_id']}: {r['start_time']}-{r['end_time']}s (score: {r['score']})")
+            ```
+
+        """
+        search_results = await self.client.search_videos(
+            query=query,
+            index_name=index_name,
+            limit=limit,
+        )
+
+        return {
+            "query": search_results.query,
+            "total_count": search_results.total_count,
+            "search_options": search_results.search_options,
+            "results": [
+                {
+                    "video_id": r.video_id,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                    "score": r.score,
+                    "confidence": r.confidence,
+                    "thumbnail_url": r.thumbnail_url,
+                    "metadata": r.metadata,
+                }
+                for r in search_results.results
+            ],
+        }
+
+    @ai_function(
+        description="Search videos using an image to find visually similar moments",
+        name="search_by_image",
+    )
+    async def search_by_image(
+        self,
+        image_path: str,
+        index_name: Optional[str] = None,
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """Search videos using an image to find visually similar moments.
+
+        Uses Marengo 3.0 visual embeddings for image-to-video similarity search.
+
+        Args:
+            image_path: Path to the query image file
+            index_name: Name of index to search (defaults to 'default')
+            limit: Maximum number of results to return (default 10)
+
+        Returns:
+            Dictionary with search results including timestamps and scores
+
+        Example:
+            ```python
+            results = await tools.search_by_image(
+                image_path="product_screenshot.jpg",
+                limit=5
+            )
+            for r in results['results']:
+                print(f"Found similar content in video {r['video_id']} at {r['start_time']}s")
+            ```
+
+        """
+        search_results = await self.client.search_by_image(
+            image_path=image_path,
+            index_name=index_name,
+            limit=limit,
+        )
+
+        return {
+            "query": search_results.query,
+            "total_count": search_results.total_count,
+            "search_options": search_results.search_options,
+            "results": [
+                {
+                    "video_id": r.video_id,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                    "score": r.score,
+                    "confidence": r.confidence,
+                    "thumbnail_url": r.thumbnail_url,
+                }
+                for r in search_results.results
+            ],
+        }
+
+    @ai_function(
         description="Process multiple videos in batch",
         name="batch_process_videos",
     )
@@ -433,7 +547,8 @@ class TwelveLabsTools:
         # Get the decorated methods and bind them properly
         for method_name in ['upload_video', 'chat_with_video', 'summarize_video',
                            'generate_chapters', 'generate_highlights',
-                           'get_video_info', 'delete_video', 'batch_process_videos']:
+                           'get_video_info', 'delete_video', 'search_videos',
+                           'search_by_image', 'batch_process_videos']:
             method = getattr(self, method_name)
             # The method is already an AIFunction, we need to update its func
             if hasattr(method, 'func'):

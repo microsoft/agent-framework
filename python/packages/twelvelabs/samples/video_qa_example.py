@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Sample: Video Q&A with Twelve Labs Pegasus.
+"""Sample: Video Q&A and Search with Twelve Labs Pegasus and Marengo.
 
 This sample demonstrates how to use the VideoProcessingAgent to:
 1. Upload and index a video (from URL or local file)
 2. Get video metadata
-3. Ask questions about the video content
-4. Generate summaries
-5. Create chapter markers
-6. Generate highlights
-7. Clean up by deleting the video
+3. Ask questions about the video content (Pegasus)
+4. Search for specific moments in the video (Marengo)
+5. Generate summaries
+6. Create chapter markers
+7. Generate highlights
+8. Clean up by deleting the video
 
 Prerequisites:
     - Set TWELVELABS_API_KEY environment variable
@@ -77,7 +78,7 @@ async def main():
     messages = []
 
     print("\n" + "=" * 60)
-    print("🎬 Video Q&A with Twelve Labs Pegasus")
+    print("🎬 Video Q&A and Search with Twelve Labs Pegasus + Marengo")
     print("=" * 60)
 
     # 1. Upload video
@@ -105,32 +106,40 @@ async def main():
     print(f"✅ {response}")
     messages.append(ChatMessage(role="assistant", text=str(response)))
 
-    # 4. Summarize video
-    print("\n4. GENERATING SUMMARY")
+    # 4. Search video (Marengo)
+    print("\n4. SEARCHING VIDEO (Marengo 3.0)")
+    print("-" * 60)
+    messages.append(ChatMessage(role="user", text="Search the video for 'rabbit' or 'bunny'"))
+    response = await agent.run(messages)
+    print(f"✅ {response}")
+    messages.append(ChatMessage(role="assistant", text=str(response)))
+
+    # 5. Summarize video
+    print("\n5. GENERATING SUMMARY")
     print("-" * 60)
     messages.append(ChatMessage(role="user", text="Generate a summary of this video"))
     response = await agent.run(messages)
     print(f"✅ {response}")
     messages.append(ChatMessage(role="assistant", text=str(response)))
 
-    # 5. Generate chapters
-    print("\n5. GENERATING CHAPTERS")
+    # 6. Generate chapters
+    print("\n6. GENERATING CHAPTERS")
     print("-" * 60)
     messages.append(ChatMessage(role="user", text="Generate chapter markers for this video"))
     response = await agent.run(messages)
     print(f"✅ {response}")
     messages.append(ChatMessage(role="assistant", text=str(response)))
 
-    # 6. Generate highlights
-    print("\n6. GENERATING HIGHLIGHTS")
+    # 7. Generate highlights
+    print("\n7. GENERATING HIGHLIGHTS")
     print("-" * 60)
     messages.append(ChatMessage(role="user", text="Generate highlights for this video"))
     response = await agent.run(messages)
     print(f"✅ {response}")
     messages.append(ChatMessage(role="assistant", text=str(response)))
 
-    # 7. Delete video
-    print("\n7. CLEANING UP")
+    # 8. Delete video
+    print("\n8. CLEANING UP")
     print("-" * 60)
     messages.append(ChatMessage(role="user", text="Delete this video from the index"))
     response = await agent.run(messages)

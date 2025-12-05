@@ -19,7 +19,7 @@ from tenacity import (
 
 try:
     from twelvelabs import TwelveLabs
-    from twelvelabs.models import Task
+    Task = None  # Task model not directly used
 except ImportError:
     # Mock for testing when Twelve Labs SDK is not available
     class TwelveLabs:
@@ -65,6 +65,8 @@ from ._types import (
     ChapterResult,
     HighlightInfo,
     HighlightResult,
+    SearchResult,
+    SearchResults,
     SummaryResult,
     VideoMetadata,
     VideoStatus,
@@ -301,9 +303,9 @@ class TwelveLabsClient:
         """Upload smaller files using simple method."""
         # Run sync SDK call in thread pool
         task = await asyncio.to_thread(
-            self._client.task.create,
+            self._client.tasks.create,
             index_id=index_id,
-            file=file_path,
+            video_file=file_path,
         )
         return task.id if hasattr(task, 'id') else str(task)
 
@@ -311,9 +313,9 @@ class TwelveLabsClient:
         """Upload video from URL."""
         # Run sync SDK call in thread pool
         task = await asyncio.to_thread(
-            self._client.task.create,
+            self._client.tasks.create,
             index_id=index_id,
-            url=url,
+            video_url=url,
         )
         return task.id if hasattr(task, 'id') else str(task)
 
@@ -406,30 +408,35 @@ class TwelveLabsClient:
 
         try:
             # Check if index exists - list() returns an iterator
-            indexes_result = await asyncio.to_thread(self._client.index.list)
+            indexes_result = await asyncio.to_thread(self._client.indexes.list)
             for index in indexes_result:
-                if hasattr(index, 'name') and index.name == index_name:
+                if hasattr(index, 'index_name') and index.index_name == index_name:
                     self._indexes[index_name] = index.id
                     return index.id
 
             # If not found and it's "default", use the first existing index
             if index_name == "default":
-                indexes_list = list(await asyncio.to_thread(self._client.index.list))
+                indexes_list = list(await asyncio.to_thread(self._client.indexes.list))
                 if indexes_list:
                     first_index = indexes_list[0]
                     self._indexes[index_name] = first_index.id
                     return first_index.id
 
-            # Create new index with Pegasus model
+            # Create new index with both Pegasus and Marengo models
             print(f"Creating new index: {index_name}")
+            from twelvelabs.indexes.types.indexes_create_request_models_item import IndexesCreateRequestModelsItem
             index = await asyncio.to_thread(
-                self._client.index.create,
-                name=index_name,
+                self._client.indexes.create,
+                index_name=index_name,
                 models=[
-                    {
-                        "name": "pegasus1.2",  # Latest Pegasus version
-                        "options": ["visual", "audio"]  # Valid options per API
-                    }
+                    IndexesCreateRequestModelsItem(
+                        model_name="pegasus1.2",  # Video understanding (chat, summarize)
+                        model_options=["visual", "audio"]
+                    ),
+                    IndexesCreateRequestModelsItem(
+                        model_name="marengo3.0",  # Video search (embeddings)
+                        model_options=["visual", "audio"]
+                    )
                 ]
             )
             if hasattr(index, 'id'):
@@ -449,11 +456,11 @@ class TwelveLabsClient:
         # Get index_id if not provided
         if not index_id:
             # Get from default index
-            indexes = await asyncio.to_thread(self._client.index.list)
+            indexes = await asyncio.to_thread(self._client.indexes.list)
             if indexes:
                 # Look for configured index name
                 for idx in indexes:
-                    if idx.name == self.settings.default_index_name:
+                    if idx.index_name == self.settings.default_index_name:
                         index_id = idx.id
                         break
                 # If not found, use first available
@@ -462,9 +469,9 @@ class TwelveLabsClient:
 
         # Get video details from the API
         video_info = await asyncio.to_thread(
-            self._client.index.video.retrieve,
-            index_id=index_id,
-            id=video_id
+            self._client.indexes.videos.retrieve,
+            index_id,
+            video_id
         )
 
         # Map status
@@ -533,6 +540,8 @@ class TwelveLabsClient:
                     # Handle both real response objects and mock strings
                     if isinstance(response, str):
                         return response
+                    elif hasattr(response, 'data'):
+                        return response.data
                     elif hasattr(response, 'text'):
                         return response.text
                     elif hasattr(response, 'content'):
@@ -665,6 +674,165 @@ class TwelveLabsClient:
                     )
             return HighlightResult(highlights=highlights)
 
+    async def search_videos(
+        self,
+        query: str,
+        index_name: Optional[str] = None,
+        search_options: Optional[List[str]] = None,
+        group_by: Optional[str] = None,
+        limit: int = 10,
+    ) -> SearchResults:
+        """Search across indexed videos using natural language query.
+
+        Uses Marengo 3.0 embeddings for semantic video search.
+
+        Args:
+            query: Natural language search query
+            index_name: Name of index to search (defaults to settings.default_index_name)
+            search_options: Modalities to search - ["visual", "audio"] (default: both)
+            group_by: Group results by "video" or None for clip-level results
+            limit: Maximum number of results to return
+
+        Returns:
+            SearchResults with matching video segments
+
+        """
+        if search_options is None:
+            search_options = ["visual", "audio"]
+
+        index_name = index_name or self.settings.default_index_name
+        index_id = await self._get_or_create_index(index_name)
+
+        async with self._rate_limiter.acquire():
+            try:
+                # Use the search.query API
+                search_kwargs = {
+                    "index_id": index_id,
+                    "query_text": query,
+                    "search_options": search_options,
+                }
+
+                if group_by:
+                    search_kwargs["group_by"] = group_by
+
+                results = await asyncio.to_thread(
+                    self._client.search.query,
+                    **search_kwargs
+                )
+
+                # Parse results
+                search_results = []
+                count = 0
+                for result in results:
+                    if count >= limit:
+                        break
+
+                    # Determine confidence based on score
+                    score = getattr(result, "score", None) or 0.0
+                    if score >= 0.8:
+                        confidence = "high"
+                    elif score >= 0.5:
+                        confidence = "medium"
+                    else:
+                        confidence = "low"
+
+                    search_results.append(
+                        SearchResult(
+                            video_id=getattr(result, "video_id", ""),
+                            start_time=getattr(result, "start", None) or 0.0,
+                            end_time=getattr(result, "end", None) or 0.0,
+                            score=score,
+                            confidence=confidence,
+                            thumbnail_url=getattr(result, "thumbnail_url", None),
+                            metadata={
+                                "modules": getattr(result, "modules", []),
+                            },
+                        )
+                    )
+                    count += 1
+
+                return SearchResults(
+                    results=search_results,
+                    total_count=len(search_results),
+                    query=query,
+                    search_options=search_options,
+                )
+
+            except Exception as e:
+                raise VideoProcessingError(f"Search failed: {e}") from e
+
+    async def search_by_image(
+        self,
+        image_path: str,
+        index_name: Optional[str] = None,
+        limit: int = 10,
+    ) -> SearchResults:
+        """Search videos using an image to find similar moments.
+
+        Uses Marengo 3.0 visual embeddings for image-to-video search.
+
+        Args:
+            image_path: Path to the query image file
+            index_name: Name of index to search (defaults to settings.default_index_name)
+            limit: Maximum number of results to return
+
+        Returns:
+            SearchResults with matching video segments
+
+        """
+        index_name = index_name or self.settings.default_index_name
+        index_id = await self._get_or_create_index(index_name)
+
+        async with self._rate_limiter.acquire():
+            try:
+                # Open image file and search
+                with open(image_path, "rb") as f:
+                    results = await asyncio.to_thread(
+                        self._client.search.query,
+                        index_id=index_id,
+                        query_media_type="image",
+                        query_media_file=f,
+                        search_options=["visual"],
+                    )
+
+                # Parse results
+                search_results = []
+                count = 0
+                for result in results:
+                    if count >= limit:
+                        break
+
+                    score = getattr(result, "score", None) or 0.0
+                    if score >= 0.8:
+                        confidence = "high"
+                    elif score >= 0.5:
+                        confidence = "medium"
+                    else:
+                        confidence = "low"
+
+                    search_results.append(
+                        SearchResult(
+                            video_id=getattr(result, "video_id", ""),
+                            start_time=getattr(result, "start", None) or 0.0,
+                            end_time=getattr(result, "end", None) or 0.0,
+                            score=score,
+                            confidence=confidence,
+                            thumbnail_url=getattr(result, "thumbnail_url", None),
+                        )
+                    )
+                    count += 1
+
+                return SearchResults(
+                    results=search_results,
+                    total_count=len(search_results),
+                    query=f"image:{image_path}",
+                    search_options=["visual"],
+                )
+
+            except FileNotFoundError:
+                raise VideoProcessingError(f"Image file not found: {image_path}")
+            except Exception as e:
+                raise VideoProcessingError(f"Image search failed: {e}") from e
 
     async def delete_video(self, video_id: str, index_id: Optional[str] = None):
         """Delete an indexed video.
@@ -683,11 +851,11 @@ class TwelveLabsClient:
                     index_id = cached_info.index_id
                 else:
                     # Use default index
-                    indexes = await asyncio.to_thread(self._client.index.list)
+                    indexes = await asyncio.to_thread(self._client.indexes.list)
                     if indexes:
                         # Look for configured index name
                         for idx in indexes:
-                            if idx.name == self.settings.default_index_name:
+                            if idx.index_name == self.settings.default_index_name:
                                 index_id = idx.id
                                 break
                         # If not found, use first available
@@ -699,9 +867,9 @@ class TwelveLabsClient:
 
             # Delete the video from the index
             await asyncio.to_thread(
-                self._client.index.video.delete,
-                index_id=index_id,
-                id=video_id
+                self._client.indexes.videos.delete,
+                index_id,
+                video_id
             )
 
     async def create_index(
@@ -725,26 +893,32 @@ class TwelveLabsClient:
 
         """
         if engines is None:
-            engines = ["pegasus"]
+            engines = ["pegasus", "marengo"]
 
         async with self._rate_limiter.acquire():
             try:
-                # Build models configuration - ONLY PEGASUS as per requirements
+                # Build models configuration for Pegasus and Marengo
+                from twelvelabs.indexes.types.indexes_create_request_models_item import IndexesCreateRequestModelsItem
                 model_configs = []
                 for engine in engines:
                     if engine == "pegasus":
-                        model_configs.append({
-                            "name": "pegasus1.2",  # Latest Pegasus version
-                            "options": ["visual", "audio"]  # Valid options per API
-                        })
+                        model_configs.append(IndexesCreateRequestModelsItem(
+                            model_name="pegasus1.2",  # Video understanding (chat, summarize)
+                            model_options=["visual", "audio"]
+                        ))
+                    elif engine == "marengo":
+                        model_configs.append(IndexesCreateRequestModelsItem(
+                            model_name="marengo3.0",  # Video search (embeddings)
+                            model_options=["visual", "audio"]
+                        ))
                     else:
-                        # Skip any non-Pegasus engines
+                        # Skip unknown engines
                         continue
 
                 # Create index
                 index = await asyncio.to_thread(
-                    self._client.index.create,
-                    name=index_name,
+                    self._client.indexes.create,
+                    index_name=index_name,
                     models=model_configs
                 )
 
@@ -765,11 +939,11 @@ class TwelveLabsClient:
 
         """
         async with self._rate_limiter.acquire():
-            indexes = await asyncio.to_thread(self._client.index.list)
+            indexes = await asyncio.to_thread(self._client.indexes.list)
             return [
                 {
                     "id": idx.id,
-                    "name": idx.name if hasattr(idx, 'name') else None,
+                    "name": idx.index_name if hasattr(idx, 'index_name') else None,
                     "created_at": idx.created_at if hasattr(idx, 'created_at') else None,
                 }
                 for idx in indexes

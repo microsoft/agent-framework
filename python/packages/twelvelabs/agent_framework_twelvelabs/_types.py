@@ -153,3 +153,24 @@ class VideoIndex(BaseModel):
     created_at: str = Field(..., description="Creation timestamp")
     engines: List[str] = Field(..., description="Enabled engines")
     status: str = Field(..., description="Index status")
+
+
+class SearchResult(BaseModel):
+    """A single search result from video search."""
+
+    video_id: str = Field(..., description="ID of the matched video")
+    start_time: float = Field(..., description="Start time of the match in seconds")
+    end_time: float = Field(..., description="End time of the match in seconds")
+    score: float = Field(..., description="Relevance score (0-1)")
+    confidence: str = Field(default="medium", description="Confidence level: high, medium, low")
+    thumbnail_url: Optional[str] = Field(None, description="URL to thumbnail at match time")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional match metadata")
+
+
+class SearchResults(BaseModel):
+    """Results from a video search query."""
+
+    results: List[SearchResult] = Field(default_factory=list, description="List of search results")
+    total_count: int = Field(0, description="Total number of matches found")
+    query: str = Field(..., description="The search query used")
+    search_options: List[str] = Field(default_factory=list, description="Search modalities used")

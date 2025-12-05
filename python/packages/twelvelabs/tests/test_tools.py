@@ -333,12 +333,112 @@ async def test_batch_process_videos(tools, mock_client):
     assert len(result["videos"]) == 2
 
 
+@pytest.mark.asyncio
+async def test_search_videos(tools, mock_client):
+    """Test searching videos with natural language query."""
+    from agent_framework_twelvelabs import SearchResult, SearchResults
+
+    # Mock client response
+    mock_results = SearchResults(
+        results=[
+            SearchResult(
+                video_id="video-123",
+                start_time=10.0,
+                end_time=20.0,
+                score=0.92,
+                confidence="high",
+                thumbnail_url="https://example.com/thumb1.jpg",
+                metadata={"modules": ["visual"]},
+            ),
+            SearchResult(
+                video_id="video-456",
+                start_time=5.0,
+                end_time=15.0,
+                score=0.75,
+                confidence="medium",
+                metadata={"modules": ["visual", "audio"]},
+            ),
+        ],
+        total_count=2,
+        query="product demonstration",
+        search_options=["visual", "audio"],
+    )
+    mock_client.search_videos = AsyncMock(return_value=mock_results)
+
+    # Search videos - call the bound method
+    result = await tools.search_videos.func(
+        tools,
+        query="product demonstration",
+        limit=10,
+    )
+
+    # Verify
+    assert result["query"] == "product demonstration"
+    assert result["total_count"] == 2
+    assert len(result["results"]) == 2
+    assert result["results"][0]["video_id"] == "video-123"
+    assert result["results"][0]["score"] == 0.92
+    assert result["results"][0]["confidence"] == "high"
+    assert result["results"][1]["video_id"] == "video-456"
+
+    mock_client.search_videos.assert_called_once_with(
+        query="product demonstration",
+        index_name=None,
+        limit=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_by_image(tools, mock_client):
+    """Test searching videos with an image query."""
+    from agent_framework_twelvelabs import SearchResult, SearchResults
+
+    # Mock client response
+    mock_results = SearchResults(
+        results=[
+            SearchResult(
+                video_id="video-789",
+                start_time=25.0,
+                end_time=35.0,
+                score=0.88,
+                confidence="high",
+                thumbnail_url="https://example.com/thumb.jpg",
+            ),
+        ],
+        total_count=1,
+        query="image:/path/to/image.jpg",
+        search_options=["visual"],
+    )
+    mock_client.search_by_image = AsyncMock(return_value=mock_results)
+
+    # Search by image - call the bound method
+    result = await tools.search_by_image.func(
+        tools,
+        image_path="/path/to/image.jpg",
+        limit=5,
+    )
+
+    # Verify
+    assert result["total_count"] == 1
+    assert result["search_options"] == ["visual"]
+    assert len(result["results"]) == 1
+    assert result["results"][0]["video_id"] == "video-789"
+    assert result["results"][0]["start_time"] == 25.0
+    assert result["results"][0]["confidence"] == "high"
+
+    mock_client.search_by_image.assert_called_once_with(
+        image_path="/path/to/image.jpg",
+        index_name=None,
+        limit=5,
+    )
+
+
 def test_get_all_tools(tools):
     """Test getting all available tools."""
     all_tools = tools.get_all_tools()
 
-    # Verify all tools are present
-    assert len(all_tools) == 8
+    # Verify all tools are present (now includes search_videos and search_by_image)
+    assert len(all_tools) == 10
 
     # Check that each is a callable
     for tool in all_tools:
@@ -354,6 +454,8 @@ def test_get_all_tools(tools):
     assert "generate_highlights" in tool_names
     assert "get_video_info" in tool_names
     assert "delete_video" in tool_names
+    assert "search_videos" in tool_names
+    assert "search_by_image" in tool_names
     assert "batch_process_videos" in tool_names
 
 

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Twelve Labs Pegasus integration for Microsoft Agent Framework."""
+"""Twelve Labs Pegasus and Marengo integration for Microsoft Agent Framework."""
 
 from ._agent import VideoProcessingAgent
 from ._client import TwelveLabsClient, TwelveLabsSettings
@@ -25,6 +25,8 @@ from ._types import (
     ChapterResult,
     HighlightInfo,
     HighlightResult,
+    SearchResult,
+    SearchResults,
     SummaryResult,
     VideoMetadata,
     VideoOperationType,
@@ -51,6 +53,8 @@ __all__ = [
     "ChapterInfo",
     "HighlightResult",
     "HighlightInfo",
+    "SearchResult",
+    "SearchResults",
     # Exceptions
     "TwelveLabsError",
     "VideoUploadError",

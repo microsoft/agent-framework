@@ -1,14 +1,22 @@
 # Twelve Labs Integration for Microsoft Agent Framework
 
-Add video intelligence capabilities to your agents using Twelve Labs Pegasus 1.2 APIs.
+Add video intelligence capabilities to your agents using Twelve Labs Pegasus 1.2 and Marengo 3.0 APIs.
 
 ## Features
 
-- 🎥 **Video Upload & Indexing** - Upload videos from files or URLs
+### Pegasus 1.2 - Video Understanding
 - 💬 **Interactive Q&A** - Chat with video content using natural language
 - 📝 **Summarization** - Generate comprehensive summaries
 - 📑 **Chapter Generation** - Create chapter markers with timestamps
 - ✨ **Highlight Extraction** - Extract key moments and highlights
+
+### Marengo 3.0 - Video Search
+- 🔍 **Text Search** - Find specific moments using natural language queries
+- 🖼️ **Image Search** - Find similar video moments using an image
+- 📊 **Semantic Matching** - Multimodal embeddings for accurate results
+
+### General
+- 🎥 **Video Upload & Indexing** - Upload videos from files or URLs
 - 📊 **Batch Processing** - Process multiple videos concurrently
 
 ## Installation
@@ -51,7 +59,7 @@ tools = TwelveLabsTools()
 agent = ChatAgent(
     chat_client=OpenAIChatClient(),  # or any chat client
     instructions="You are a helpful assistant",
-    tools=tools.get_all_tools()  # Adds 8 video functions
+    tools=tools.get_all_tools()  # Adds 10 video functions
 )
 
 # Now your agent can process videos
@@ -110,10 +118,24 @@ metadata = await client.upload_video(
     url="https://example.com/video.mp4"  # or file_path="video.mp4"
 )
 
-# Chat with video
+# Chat with video (Pegasus)
 response = await client.chat_with_video(
     video_id=metadata.video_id,
     query="What products are shown?"
+)
+
+# Search video (Marengo)
+results = await client.search_videos(
+    query="person walking",
+    limit=5
+)
+for result in results.results:
+    print(f"Found at {result.start_time}-{result.end_time}s (score: {result.score})")
+
+# Search by image (Marengo)
+results = await client.search_by_image(
+    image_path="screenshot.jpg",
+    limit=5
 )
 
 # Generate summary
@@ -136,13 +158,20 @@ Additional configuration options are available through environment variables or 
 
 ## Available Tools
 
-These 8 AI functions are added to your agent when using TwelveLabsTools:
+These 10 AI functions are added to your agent when using TwelveLabsTools:
 
-- `upload_video` - Upload and index videos from file path or URL
+### Video Understanding (Pegasus 1.2)
 - `chat_with_video` - Q&A with video content
 - `summarize_video` - Generate comprehensive video summaries
 - `generate_chapters` - Create chapter markers with timestamps
 - `generate_highlights` - Extract key highlights and moments
+
+### Video Search (Marengo 3.0)
+- `search_videos` - Search videos using natural language queries
+- `search_by_image` - Find similar moments using an image
+
+### General
+- `upload_video` - Upload and index videos from file path or URL
 - `get_video_info` - Get video metadata
 - `delete_video` - Remove indexed videos
 - `batch_process_videos` - Process multiple videos concurrently
