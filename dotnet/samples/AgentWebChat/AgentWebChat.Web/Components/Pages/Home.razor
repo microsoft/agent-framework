@@ -606,14 +606,6 @@
         box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
     }
 
-    .start-chat-btn.start-chat-btn-disabled {
-        background: #e5e7eb;
-        color: #9ca3af;
-        cursor: not-allowed;
-        box-shadow: none;
-        transform: none;
-    }
-
     .conversations-section {
         margin-bottom: 1.5rem;
     }
@@ -912,8 +904,6 @@
 	private bool isDiscoveringCard = false;
 	private string? discoveredAgentCardJson = null;
 	private string? discoveryError = null;
-
-    private bool IsStartChatDisabled => string.IsNullOrEmpty(selectedAgentName) || currentConversation is not null || isStreaming;
 
 	private enum Protocol
 	{
