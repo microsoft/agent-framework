@@ -4,9 +4,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
-using OpenAI.Responses;
 
-namespace OpenAI;
+namespace OpenAI.Responses;
 
 /// <summary>
 /// Provides extension methods for <see cref="OpenAIResponseClient"/>

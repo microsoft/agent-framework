@@ -4,6 +4,7 @@
 
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";

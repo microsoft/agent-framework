@@ -9,6 +9,7 @@ using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_OPENAI_ENDPOINT is not set.");
 var apiKey = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_OPENAI_APIKEY");

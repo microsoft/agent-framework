@@ -5,9 +5,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
-using OpenAI.Assistants;
 
-namespace OpenAI;
+namespace OpenAI.Assistants;
 
 /// <summary>
 /// Provides extension methods for OpenAI <see cref="AssistantClient"/>
