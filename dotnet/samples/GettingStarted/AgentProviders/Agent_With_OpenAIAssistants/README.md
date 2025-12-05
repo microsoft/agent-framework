@@ -11,6 +11,6 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:OPENAI_APIKEY="*****" # Replace with your OpenAI API key
+$env:OPENAI_API_KEY="*****" # Replace with your OpenAI API key
 $env:OPENAI_MODEL="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
 ```
