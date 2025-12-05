@@ -2,6 +2,7 @@
 
 // This sample demonstrates how to create OpenAIResponseClientAgent directly from an OpenAIResponseClient instance.
 
+using Microsoft.Agents.AI;
 using OpenAI;
 using OpenAI.Responses;
 
