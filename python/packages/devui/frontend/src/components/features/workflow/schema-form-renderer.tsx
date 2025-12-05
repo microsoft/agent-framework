@@ -429,7 +429,7 @@ export function SchemaFormRenderer({
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+    <div className="space-y-3">
       {/* Required fields section */}
       {requiredFieldNames.map((fieldName) => (
         <FormField
@@ -445,7 +445,7 @@ export function SchemaFormRenderer({
 
       {/* Separator between required and optional */}
       {hasRequiredFields && optionalFieldNames.length > 0 && (
-        <div className="md:col-span-2 lg:col-span-3 xl:col-span-4">
+        <div>
           <div className="border-t border-border"></div>
         </div>
       )}

@@ -4,16 +4,15 @@ import asyncio
 from enum import Enum
 
 from agent_framework import (
-    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    ChatAgent,
     ChatMessage,
     Executor,
     ExecutorCompletedEvent,
     Role,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowOutputEvent,
     handler,
 )
 from agent_framework.azure import AzureOpenAIChatClient
@@ -49,9 +48,9 @@ class NumberSignal(Enum):
 class GuessNumberExecutor(Executor):
     """An executor that guesses a number."""
 
-    def __init__(self, bound: tuple[int, int], id: str | None = None):
+    def __init__(self, bound: tuple[int, int], id: str):
         """Initialize the executor with a target number."""
-        super().__init__(id=id or "guess_number")
+        super().__init__(id=id)
         self._lower = bound[0]
         self._upper = bound[1]
 
@@ -116,43 +115,37 @@ class ParseJudgeResponse(Executor):
             await ctx.send_message(NumberSignal.BELOW)
 
 
+def create_judge_agent() -> ChatAgent:
+    """Create a judge agent that evaluates guesses."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
+        name="judge_agent",
+    )
+
+
 async def main():
     """Main function to run the workflow."""
-    # Step 1: Create the executors.
-    guess_number_executor = GuessNumberExecutor((1, 100))
-
-    # Agent judge setup
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    judge_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."
-            )
-        ),
-        id="judge_agent",
-    )
-    submit_to_judge = SubmitToJudgeAgent(judge_agent_id=judge_agent.id, target=30, id="submit_judge")
-    parse_judge = ParseJudgeResponse(id="parse_judge")
-
-    # Step 2: Build the workflow with the defined edges.
+    # Step 1: Build the workflow with the defined edges.
     # This time we are creating a loop in the workflow.
     workflow = (
         WorkflowBuilder()
-        .add_edge(guess_number_executor, submit_to_judge)
-        .add_edge(submit_to_judge, judge_agent)
-        .add_edge(judge_agent, parse_judge)
-        .add_edge(parse_judge, guess_number_executor)
-        .set_start_executor(guess_number_executor)
+        .register_executor(lambda: GuessNumberExecutor((1, 100), "guess_number"), name="guess_number")
+        .register_agent(create_judge_agent, name="judge_agent")
+        .register_executor(lambda: SubmitToJudgeAgent(judge_agent_id="judge_agent", target=30), name="submit_judge")
+        .register_executor(lambda: ParseJudgeResponse(id="parse_judge"), name="parse_judge")
+        .add_edge("guess_number", "submit_judge")
+        .add_edge("submit_judge", "judge_agent")
+        .add_edge("judge_agent", "parse_judge")
+        .add_edge("parse_judge", "guess_number")
+        .set_start_executor("guess_number")
         .build()
     )
 
-    # Step 3: Run the workflow and print the events.
+    # Step 2: Run the workflow and print the events.
     iterations = 0
     async for event in workflow.run_stream(NumberSignal.INIT):
-        if isinstance(event, ExecutorCompletedEvent) and event.executor_id == guess_number_executor.id:
+        if isinstance(event, ExecutorCompletedEvent) and event.executor_id == "guess_number":
             iterations += 1
-        elif isinstance(event, WorkflowOutputEvent):
-            print(f"Final result: {event.data}")
         print(f"Event: {event}")
 
     # This is essentially a binary search, so the number of iterations should be logarithmic.

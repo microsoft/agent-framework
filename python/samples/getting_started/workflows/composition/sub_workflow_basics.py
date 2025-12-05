@@ -8,7 +8,6 @@ from agent_framework import (
     Executor,
     WorkflowBuilder,
     WorkflowContext,
-    WorkflowEvent,
     WorkflowExecutor,
     handler,
 )
@@ -44,13 +43,6 @@ class TextProcessingResult:
     text: str
     word_count: int
     char_count: int
-
-
-class AllTasksCompleted(WorkflowEvent):
-    """Event triggered when all processing tasks are complete."""
-
-    def __init__(self, results: list[TextProcessingResult]):
-        super().__init__(results)
 
 
 # Sub-workflow executor
@@ -113,7 +105,11 @@ class TextProcessingOrchestrator(Executor):
             await ctx.send_message(request, target_id="text_processor_workflow")
 
     @handler
-    async def collect_result(self, result: TextProcessingResult, ctx: WorkflowContext) -> None:
+    async def collect_result(
+        self,
+        result: TextProcessingResult,
+        ctx: WorkflowContext[Never, list[TextProcessingResult]],
+    ) -> None:
         """Collect results from sub-workflows."""
         print(f"📥 Collected result from {result.task_id}")
         self.results.append(result)
@@ -121,48 +117,54 @@ class TextProcessingOrchestrator(Executor):
         # Check if all results are collected
         if len(self.results) == self.expected_count:
             print("\n🎉 All tasks completed!")
-            await ctx.add_event(AllTasksCompleted(self.results))
+            await ctx.yield_output(self.results)
 
-    def get_summary(self) -> dict[str, Any]:
-        """Get a summary of all processing results."""
-        total_words = sum(result.word_count for result in self.results)
-        total_chars = sum(result.char_count for result in self.results)
-        avg_words = total_words / len(self.results) if self.results else 0
-        avg_chars = total_chars / len(self.results) if self.results else 0
 
-        return {
-            "total_texts": len(self.results),
-            "total_words": total_words,
-            "total_characters": total_chars,
-            "average_words_per_text": round(avg_words, 2),
-            "average_characters_per_text": round(avg_chars, 2),
-        }
+def get_result_summary(results: list[TextProcessingResult]) -> dict[str, Any]:
+    """Get a summary of all processing results."""
+    total_words = sum(result.word_count for result in results)
+    total_chars = sum(result.char_count for result in results)
+    avg_words = total_words / len(results) if results else 0
+    avg_chars = total_chars / len(results) if results else 0
+
+    return {
+        "total_texts": len(results),
+        "total_words": total_words,
+        "total_characters": total_chars,
+        "average_words_per_text": round(avg_words, 2),
+        "average_characters_per_text": round(avg_chars, 2),
+    }
+
+
+def create_sub_workflow() -> WorkflowExecutor:
+    """Create the text processing sub-workflow."""
+    print("🚀 Setting up sub-workflow...")
+
+    processing_workflow = (
+        WorkflowBuilder()
+        .register_executor(TextProcessor, name="text_processor")
+        .set_start_executor("text_processor")
+        .build()
+    )
+
+    return WorkflowExecutor(processing_workflow, id="text_processor_workflow")
 
 
 async def main():
     """Main function to run the basic sub-workflow example."""
-    print("🚀 Setting up sub-workflow...")
-
-    # Step 1: Create the text processing sub-workflow
-    text_processor = TextProcessor()
-
-    processing_workflow = WorkflowBuilder().set_start_executor(text_processor).build()
-
     print("🔧 Setting up parent workflow...")
-
-    # Step 2: Create the parent workflow
-    orchestrator = TextProcessingOrchestrator()
-    workflow_executor = WorkflowExecutor(processing_workflow, id="text_processor_workflow")
-
+    # Step 1: Create the parent workflow
     main_workflow = (
         WorkflowBuilder()
-        .set_start_executor(orchestrator)
-        .add_edge(orchestrator, workflow_executor)
-        .add_edge(workflow_executor, orchestrator)
+        .register_executor(TextProcessingOrchestrator, name="text_orchestrator")
+        .register_executor(create_sub_workflow, name="text_processor_workflow")
+        .set_start_executor("text_orchestrator")
+        .add_edge("text_orchestrator", "text_processor_workflow")
+        .add_edge("text_processor_workflow", "text_orchestrator")
         .build()
     )
 
-    # Step 3: Test data - various text strings
+    # Step 2: Test data - various text strings
     test_texts = [
         "Hello world! This is a simple test.",
         "Python is a powerful programming language used for many applications.",
@@ -175,15 +177,17 @@ async def main():
     print(f"\n🧪 Testing with {len(test_texts)} text strings")
     print("=" * 60)
 
-    # Step 4: Run the workflow
-    await main_workflow.run(test_texts)
+    # Step 3: Run the workflow
+    result = await main_workflow.run(test_texts)
 
-    # Step 5: Display results
+    # Step 4: Display results
     print("\n📊 Processing Results:")
     print("=" * 60)
 
     # Sort results by task_id for consistent display
-    sorted_results = sorted(orchestrator.results, key=lambda r: r.task_id)
+    task_results = result.get_outputs()
+    assert len(task_results) == 1
+    sorted_results = sorted(task_results[0], key=lambda r: r.task_id)
 
     for result in sorted_results:
         preview = result.text[:30] + "..." if len(result.text) > 30 else result.text
@@ -191,7 +195,7 @@ async def main():
         print(f"✅ {result.task_id}: '{preview}' -> {result.word_count} words, {result.char_count} chars")
 
     # Step 6: Display summary
-    summary = orchestrator.get_summary()
+    summary = get_result_summary(sorted_results)
     print("\n📈 Summary:")
     print("=" * 60)
     print(f"📄 Total texts processed: {summary['total_texts']}")

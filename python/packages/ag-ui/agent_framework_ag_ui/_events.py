@@ -134,6 +134,13 @@ class AgentFrameworkEventBridge:
             logger.info(f"  Suppressed summary length={len(self.suppressed_summary)}")
             return events
 
+        # Skip empty text chunks to avoid emitting
+        # TextMessageContentEvent with an empty `delta` which fails
+        # Pydantic validation (AG-UI requires non-empty strings).
+        if not content.text:
+            logger.info("  SKIPPING TextContent: empty chunk")
+            return events
+
         if not self.current_message_id:
             self.current_message_id = generate_event_id()
             start_event = TextMessageStartEvent(

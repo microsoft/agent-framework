@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from agent_framework import (
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
-    AgentExecutorResponse,  # Result returned by an AgentExecutor
+    AgentExecutorResponse,
+    ChatAgent,  # Result returned by an AgentExecutor
     ChatMessage,  # Chat message structure
     Executor,  # Base class for workflow executors
     RequestInfoEvent,  # Event emitted when human input is requested
@@ -142,11 +143,9 @@ class TurnManager(Executor):
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
-async def main() -> None:
-    # Create the chat agent and wrap it in an AgentExecutor.
-    # response_format enforces that the model produces JSON compatible with GuessOutput.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    agent = chat_client.create_agent(
+def create_guessing_agent() -> ChatAgent:
+    """Create the guessing agent with instructions to guess a number between 1 and 10."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "
@@ -154,19 +153,22 @@ async def main() -> None:
             'You MUST return ONLY a JSON object exactly matching this schema: {"guess": <integer 1..10>}. '
             "No explanations or additional text."
         ),
-        # Structured output enforced via Pydantic model.
+        # response_format enforces that the model produces JSON compatible with GuessOutput.
         response_format=GuessOutput,
     )
 
-    # TurnManager coordinates and gathers human replies while AgentExecutor runs the model.
-    turn_manager = TurnManager(id="turn_manager")
+
+async def main() -> None:
+    """Run the human-in-the-loop guessing game workflow."""
 
     # Build a simple loop: TurnManager <-> AgentExecutor.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(turn_manager)
-        .add_edge(turn_manager, agent)  # Ask agent to make/adjust a guess
-        .add_edge(agent, turn_manager)  # Agent's response comes back to coordinator
+        .register_agent(create_guessing_agent, name="guessing_agent")
+        .register_executor(lambda: TurnManager(id="turn_manager"), name="turn_manager")
+        .set_start_executor("turn_manager")
+        .add_edge("turn_manager", "guessing_agent")  # Ask agent to make/adjust a guess
+        .add_edge("guessing_agent", "turn_manager")  # Agent's response comes back to coordinator
     ).build()
 
     # Human in the loop run: alternate between invoking the workflow and supplying collected responses.

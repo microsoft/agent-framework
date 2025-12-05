@@ -7,10 +7,10 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from agent_framework import (  # Core chat primitives used to form LLM requests
-    AgentExecutor,  # Wraps an agent so it can run inside a workflow
     AgentExecutorRequest,  # Message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # Result returned by an AgentExecutor
-    Case,  # Case entry for a switch-case edge group
+    Case,
+    ChatAgent,  # Case entry for a switch-case edge group
     ChatMessage,
     Default,  # Default branch when no cases match
     Role,
@@ -152,51 +152,56 @@ async def handle_uncertain(detection: DetectionResult, ctx: WorkflowContext[Neve
         raise RuntimeError("This executor should only handle Uncertain messages.")
 
 
+def create_spam_detection_agent() -> ChatAgent:
+    """Create and return the spam detection agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Be less confident in your assessments. "
+            "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
+            "and 'reason' (string)."
+        ),
+        name="spam_detection_agent",
+        response_format=DetectionResultAgent,
+    )
+
+
+def create_email_assistant_agent() -> ChatAgent:
+    """Create and return the email assistant agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
+        name="email_assistant_agent",
+        response_format=EmailResponse,
+    )
+
+
 async def main():
     """Main function to run the workflow."""
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Agents. response_format enforces that the LLM returns JSON that Pydantic can validate.
-    spam_detection_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are a spam detection assistant that identifies spam emails. "
-                "Be less confident in your assessments. "
-                "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
-                "and 'reason' (string)."
-            ),
-            response_format=DetectionResultAgent,
-        ),
-        id="spam_detection_agent",
-    )
-
-    email_assistant_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email assistant that helps users draft responses to emails with professionalism."
-            ),
-            response_format=EmailResponse,
-        ),
-        id="email_assistant_agent",
-    )
-
     # Build workflow: store -> detection agent -> to_detection_result -> switch (NotSpam or Spam or Default).
     # The switch-case group evaluates cases in order, then falls back to Default when none match.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(store_email)
-        .add_edge(store_email, spam_detection_agent)
-        .add_edge(spam_detection_agent, to_detection_result)
+        .register_agent(create_spam_detection_agent, name="spam_detection_agent")
+        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
+        .register_executor(lambda: store_email, name="store_email")
+        .register_executor(lambda: to_detection_result, name="to_detection_result")
+        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
+        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
+        .register_executor(lambda: handle_spam, name="handle_spam")
+        .register_executor(lambda: handle_uncertain, name="handle_uncertain")
+        .set_start_executor("store_email")
+        .add_edge("store_email", "spam_detection_agent")
+        .add_edge("spam_detection_agent", "to_detection_result")
         .add_switch_case_edge_group(
-            to_detection_result,
+            "to_detection_result",
             [
-                Case(condition=get_case("NotSpam"), target=submit_to_email_assistant),
-                Case(condition=get_case("Spam"), target=handle_spam),
-                Default(target=handle_uncertain),
+                Case(condition=get_case("NotSpam"), target="submit_to_email_assistant"),
+                Case(condition=get_case("Spam"), target="handle_spam"),
+                Default(target="handle_uncertain"),
             ],
         )
-        .add_edge(submit_to_email_assistant, email_assistant_agent)
-        .add_edge(email_assistant_agent, finalize_and_send)
+        .add_edge("submit_to_email_assistant", "email_assistant_agent")
+        .add_edge("email_assistant_agent", "finalize_and_send")
         .build()
     )
 

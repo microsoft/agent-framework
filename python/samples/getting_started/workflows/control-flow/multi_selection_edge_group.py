@@ -9,9 +9,9 @@ from typing import Literal
 from uuid import uuid4
 
 from agent_framework import (
-    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
+    ChatAgent,
     ChatMessage,
     Role,
     WorkflowBuilder,
@@ -181,40 +181,38 @@ async def database_access(analysis: AnalysisResult, ctx: WorkflowContext[Never, 
     await ctx.add_event(DatabaseEvent(f"Email {analysis.email_id} saved to database."))
 
 
+def create_email_analysis_agent() -> ChatAgent:
+    """Creates the email analysis agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=(
+            "You are a spam detection assistant that identifies spam emails. "
+            "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
+            "and 'reason' (string)."
+        ),
+        name="email_analysis_agent",
+        response_format=AnalysisResultAgent,
+    )
+
+
+def create_email_assistant_agent() -> ChatAgent:
+    """Creates the email assistant agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=("You are an email assistant that helps users draft responses to emails with professionalism."),
+        name="email_assistant_agent",
+        response_format=EmailResponse,
+    )
+
+
+def create_email_summary_agent() -> ChatAgent:
+    """Creates the email summary agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=("You are an assistant that helps users summarize emails."),
+        name="email_summary_agent",
+        response_format=EmailSummaryModel,
+    )
+
+
 async def main() -> None:
-    # Agents
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    email_analysis_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are a spam detection assistant that identifies spam emails. "
-                "Always return JSON with fields 'spam_decision' (one of NotSpam, Spam, Uncertain) "
-                "and 'reason' (string)."
-            ),
-            response_format=AnalysisResultAgent,
-        ),
-        id="email_analysis_agent",
-    )
-
-    email_assistant_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You are an email assistant that helps users draft responses to emails with professionalism."
-            ),
-            response_format=EmailResponse,
-        ),
-        id="email_assistant_agent",
-    )
-
-    email_summary_agent = AgentExecutor(
-        chat_client.create_agent(
-            instructions=("You are an assistant that helps users summarize emails."),
-            response_format=EmailSummaryModel,
-        ),
-        id="email_summary_agent",
-    )
-
     # Build the workflow
     def select_targets(analysis: AnalysisResult, target_ids: list[str]) -> list[str]:
         # Order: [handle_spam, submit_to_email_assistant, summarize_email, handle_uncertain]
@@ -228,24 +226,39 @@ async def main() -> None:
             return targets
         return [handle_uncertain_id]
 
-    workflow = (
+    workflow_builder = (
         WorkflowBuilder()
-        .set_start_executor(store_email)
-        .add_edge(store_email, email_analysis_agent)
-        .add_edge(email_analysis_agent, to_analysis_result)
+        .register_agent(create_email_analysis_agent, name="email_analysis_agent")
+        .register_agent(create_email_assistant_agent, name="email_assistant_agent")
+        .register_agent(create_email_summary_agent, name="email_summary_agent")
+        .register_executor(lambda: store_email, name="store_email")
+        .register_executor(lambda: to_analysis_result, name="to_analysis_result")
+        .register_executor(lambda: submit_to_email_assistant, name="submit_to_email_assistant")
+        .register_executor(lambda: finalize_and_send, name="finalize_and_send")
+        .register_executor(lambda: summarize_email, name="summarize_email")
+        .register_executor(lambda: merge_summary, name="merge_summary")
+        .register_executor(lambda: handle_spam, name="handle_spam")
+        .register_executor(lambda: handle_uncertain, name="handle_uncertain")
+        .register_executor(lambda: database_access, name="database_access")
+    )
+
+    workflow = (
+        workflow_builder.set_start_executor("store_email")
+        .add_edge("store_email", "email_analysis_agent")
+        .add_edge("email_analysis_agent", "to_analysis_result")
         .add_multi_selection_edge_group(
-            to_analysis_result,
-            [handle_spam, submit_to_email_assistant, summarize_email, handle_uncertain],
+            "to_analysis_result",
+            ["handle_spam", "submit_to_email_assistant", "summarize_email", "handle_uncertain"],
             selection_func=select_targets,
         )
-        .add_edge(submit_to_email_assistant, email_assistant_agent)
-        .add_edge(email_assistant_agent, finalize_and_send)
-        .add_edge(summarize_email, email_summary_agent)
-        .add_edge(email_summary_agent, merge_summary)
+        .add_edge("submit_to_email_assistant", "email_assistant_agent")
+        .add_edge("email_assistant_agent", "finalize_and_send")
+        .add_edge("summarize_email", "email_summary_agent")
+        .add_edge("email_summary_agent", "merge_summary")
         # Save to DB if short (no summary path)
-        .add_edge(to_analysis_result, database_access, condition=lambda r: r.email_length <= LONG_EMAIL_THRESHOLD)
+        .add_edge("to_analysis_result", "database_access", condition=lambda r: r.email_length <= LONG_EMAIL_THRESHOLD)
         # Save to DB with summary when long
-        .add_edge(merge_summary, database_access)
+        .add_edge("merge_summary", "database_access")
         .build()
     )
 

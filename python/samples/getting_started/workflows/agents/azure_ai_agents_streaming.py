@@ -1,11 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from contextlib import AsyncExitStack
-from typing import Any
 
-from agent_framework import AgentRunUpdateEvent, WorkflowBuilder, WorkflowOutputEvent
+from agent_framework import AgentRunUpdateEvent, ChatAgent, WorkflowBuilder, WorkflowOutputEvent
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
@@ -29,48 +26,36 @@ Prerequisites:
 """
 
 
-async def create_azure_ai_agent() -> tuple[Callable[..., Awaitable[Any]], Callable[[], Awaitable[None]]]:
-    """Helper method to create a Azure AI agent factory and a close function.
+def create_writer_agent(client: AzureAIAgentClient) -> ChatAgent:
+    return client.create_agent(
+        name="Writer",
+        instructions=(
+            "You are an excellent content writer. You create new content and edit contents based on the feedback."
+        ),
+    )
 
-    This makes sure the async context managers are properly handled.
-    """
-    stack = AsyncExitStack()
-    cred = await stack.enter_async_context(AzureCliCredential())
 
-    client = await stack.enter_async_context(AzureAIAgentClient(async_credential=cred))
-
-    async def agent(**kwargs: Any) -> Any:
-        return await stack.enter_async_context(client.create_agent(**kwargs))
-
-    async def close() -> None:
-        await stack.aclose()
-
-    return agent, close
+def create_reviewer_agent(client: AzureAIAgentClient) -> ChatAgent:
+    return client.create_agent(
+        name="Reviewer",
+        instructions=(
+            "You are an excellent content reviewer. "
+            "Provide actionable feedback to the writer about the provided content. "
+            "Provide the feedback in the most concise manner possible."
+        ),
+    )
 
 
 async def main() -> None:
-    agent, close = await create_azure_ai_agent()
-    try:
-        writer = await agent(
-            name="Writer",
-            instructions=(
-                "You are an excellent content writer. You create new content and edit contents based on the feedback."
-            ),
-        )
-        reviewer = await agent(
-            name="Reviewer",
-            instructions=(
-                "You are an excellent content reviewer. "
-                "Provide actionable feedback to the writer about the provided content. "
-                "Provide the feedback in the most concise manner possible."
-            ),
-        )
+    async with AzureCliCredential() as cred, AzureAIAgentClient(async_credential=cred) as client:
         # Build the workflow by adding agents directly as edges.
         # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
         workflow = (
             WorkflowBuilder()
-            .set_start_executor(writer)
-            .add_edge(writer, reviewer)
+            .register_agent(lambda: create_writer_agent(client), name="writer")
+            .register_agent(lambda: create_reviewer_agent(client), name="reviewer", output_response=True)
+            .set_start_executor("writer")
+            .add_edge("writer", "reviewer")
             .build()
         )
 
@@ -89,8 +74,6 @@ async def main() -> None:
             elif isinstance(event, WorkflowOutputEvent):
                 print("\n===== Final output =====")
                 print(event.data)
-    finally:
-        await close()
 
 
 if __name__ == "__main__":

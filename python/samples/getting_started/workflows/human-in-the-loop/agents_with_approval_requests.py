@@ -7,6 +7,7 @@ from typing import Annotated, Never
 
 from agent_framework import (
     AgentExecutorResponse,
+    ChatAgent,
     ChatMessage,
     Executor,
     FunctionApprovalRequestContent,
@@ -210,10 +211,9 @@ async def conclude_workflow(
     await ctx.yield_output(email_response.agent_run_response.text)
 
 
-async def main() -> None:
-    # Create the agent and executors
-    chat_client = OpenAIChatClient()
-    email_writer = chat_client.create_agent(
+def create_email_writer_agent() -> ChatAgent:
+    """Create the Email Writer agent with tools that require approval."""
+    return OpenAIChatClient().create_agent(
         name="Email Writer",
         instructions=("You are an excellent email assistant. You respond to incoming emails."),
         # tools with `approval_mode="always_require"` will trigger approval requests
@@ -225,14 +225,21 @@ async def main() -> None:
             get_my_information,
         ],
     )
-    email_preprocessor = EmailPreprocessor(special_email_addresses={"mike@contoso.com"})
 
+
+async def main() -> None:
     # Build the workflow
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(email_preprocessor)
-        .add_edge(email_preprocessor, email_writer)
-        .add_edge(email_writer, conclude_workflow)
+        .register_agent(create_email_writer_agent, name="email_writer")
+        .register_executor(
+            lambda: EmailPreprocessor(special_email_addresses={"mike@contoso.com"}),
+            name="email_preprocessor",
+        )
+        .register_executor(lambda: conclude_workflow, name="conclude_workflow")
+        .set_start_executor("email_preprocessor")
+        .add_edge("email_preprocessor", "email_writer")
+        .add_edge("email_writer", "conclude_workflow")
         .build()
     )
 

@@ -1091,6 +1091,116 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Contains(updates, u => u is StreamingResponseContentPartAddedUpdate);
     }
 
+    /// <summary>
+    /// Verifies that when a client provides a conversation ID, the underlying IChatClient
+    /// does NOT receive that conversation ID via ChatOptions.ConversationId.
+    /// This ensures that the host's conversation management is separate from the IChatClient's
+    /// conversation handling (if any).
+    /// </summary>
+    [Fact]
+    public async Task CreateResponse_WithConversationId_DoesNotForwardConversationIdToIChatClientAsync()
+    {
+        // Arrange
+        const string AgentName = "conversation-id-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string ExpectedResponse = "Response";
+
+        this._httpClient = await this.CreateTestServerWithConversationsAsync(AgentName, Instructions, ExpectedResponse);
+        var mockChatClient = this.ResolveMockChatClient();
+
+        // First, create a conversation
+        var createConversationRequest = new { metadata = new { agent_id = AgentName } };
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(createConversationRequest);
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative),
+            createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode, $"Create conversation failed: {createConvResponse.StatusCode}");
+
+        string convResponseJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convResponseJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - Send request with conversation ID using raw HTTP
+        // (OpenAI SDK doesn't expose ConversationId directly on ResponseCreationOptions)
+        var requestBody = new
+        {
+            input = "Test",
+            agent = new { name = AgentName },
+            conversation = conversationId,
+            stream = false
+        };
+        string requestJson = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert - Response is successful
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+
+        // Assert - The IChatClient should have received ChatOptions, but without the ConversationId set
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Null(mockChatClient.LastChatOptions.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when a client provides a conversation ID in streaming mode, the underlying
+    /// IChatClient does NOT receive that conversation ID via ChatOptions.ConversationId.
+    /// </summary>
+    [Fact]
+    public async Task CreateResponseStreaming_WithConversationId_DoesNotForwardConversationIdToIChatClientAsync()
+    {
+        // Arrange
+        const string AgentName = "conversation-streaming-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string ExpectedResponse = "Streaming response";
+
+        this._httpClient = await this.CreateTestServerWithConversationsAsync(AgentName, Instructions, ExpectedResponse);
+        var mockChatClient = this.ResolveMockChatClient();
+
+        // First, create a conversation
+        var createConversationRequest = new { metadata = new { agent_id = AgentName } };
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(createConversationRequest);
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative),
+            createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode, $"Create conversation failed: {createConvResponse.StatusCode}");
+
+        string convResponseJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convResponseJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - Send streaming request with conversation ID using raw HTTP
+        var requestBody = new
+        {
+            input = "Test",
+            agent = new { name = AgentName },
+            conversation = conversationId,
+            stream = true
+        };
+        string requestJson = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert - Response is successful and is SSE
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+        Assert.Equal("text/event-stream", httpResponse.Content.Headers.ContentType?.MediaType);
+
+        // Consume the SSE stream to complete the request
+        string sseContent = await httpResponse.Content.ReadAsStringAsync();
+
+        // Verify streaming completed successfully by checking for response.completed event
+        Assert.Contains("response.completed", sseContent);
+
+        // Assert - The IChatClient should have received ChatOptions, but without the ConversationId set
+        Assert.NotNull(mockChatClient.LastChatOptions);
+        Assert.Null(mockChatClient.LastChatOptions.ConversationId);
+    }
+
     private OpenAIResponseClient CreateResponseClient(string agentName)
     {
         return new OpenAIResponseClient(
@@ -1101,6 +1211,19 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
                 Endpoint = new Uri(this._httpClient!.BaseAddress!, $"/{agentName}/v1/"),
                 Transport = new HttpClientPipelineTransport(this._httpClient)
             });
+    }
+
+    private TestHelpers.SimpleMockChatClient ResolveMockChatClient()
+    {
+        ArgumentNullException.ThrowIfNull(this._app, nameof(this._app));
+
+        var chatClient = this._app.Services.GetRequiredKeyedService<IChatClient>("chat-client");
+        if (chatClient is not TestHelpers.SimpleMockChatClient mockChatClient)
+        {
+            throw new InvalidOperationException("Mock chat client not found or of incorrect type.");
+        }
+
+        return mockChatClient;
     }
 
     private async Task<HttpClient> CreateTestServerAsync(string agentName, string instructions, string responseText = "Test response")
@@ -1116,6 +1239,30 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIResponses(agent);
+
+        await this._app.StartAsync();
+
+        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found");
+
+        return testServer.CreateClient();
+    }
+
+    private async Task<HttpClient> CreateTestServerWithConversationsAsync(string agentName, string instructions, string responseText = "Test response")
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+
+        IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
+        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
+        builder.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
+        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+
+        this._app = builder.Build();
+        AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIConversations();
 
         await this._app.StartAsync();
 

@@ -259,27 +259,50 @@ class CompletionExecutor(Executor):
 
 async def main():
     """Construct the map reduce workflow, visualize it, then run it over a sample file."""
-    # Step 1: Create the executors.
-    map_operations = [Map(id=f"map_executor_{i}") for i in range(3)]
-    split_operation = Split(
-        [map_operation.id for map_operation in map_operations],
-        id="split_data_executor",
+
+    # Step 1: Create the workflow builder and register executors.
+    workflow_builder = (
+        WorkflowBuilder()
+        .register_executor(lambda: Map(id="map_executor_0"), name="map_executor_0")
+        .register_executor(lambda: Map(id="map_executor_1"), name="map_executor_1")
+        .register_executor(lambda: Map(id="map_executor_2"), name="map_executor_2")
+        .register_executor(
+            lambda: Split(["map_executor_0", "map_executor_1", "map_executor_2"], id="split_data_executor"),
+            name="split_data_executor",
+        )
+        .register_executor(lambda: Reduce(id="reduce_executor_0"), name="reduce_executor_0")
+        .register_executor(lambda: Reduce(id="reduce_executor_1"), name="reduce_executor_1")
+        .register_executor(lambda: Reduce(id="reduce_executor_2"), name="reduce_executor_2")
+        .register_executor(lambda: Reduce(id="reduce_executor_3"), name="reduce_executor_3")
+        .register_executor(
+            lambda: Shuffle(
+                ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+                id="shuffle_executor",
+            ),
+            name="shuffle_executor",
+        )
+        .register_executor(lambda: CompletionExecutor(id="completion_executor"), name="completion_executor")
     )
-    reduce_operations = [Reduce(id=f"reduce_executor_{i}") for i in range(4)]
-    shuffle_operation = Shuffle(
-        [reduce_operation.id for reduce_operation in reduce_operations],
-        id="shuffle_executor",
-    )
-    completion_executor = CompletionExecutor(id="completion_executor")
 
     # Step 2: Build the workflow graph using fan out and fan in edges.
     workflow = (
-        WorkflowBuilder()
-        .set_start_executor(split_operation)
-        .add_fan_out_edges(split_operation, map_operations)  # Split -> many mappers
-        .add_fan_in_edges(map_operations, shuffle_operation)  # All mappers -> shuffle
-        .add_fan_out_edges(shuffle_operation, reduce_operations)  # Shuffle -> many reducers
-        .add_fan_in_edges(reduce_operations, completion_executor)  # All reducers -> completion
+        workflow_builder.set_start_executor("split_data_executor")
+        .add_fan_out_edges(
+            "split_data_executor",
+            ["map_executor_0", "map_executor_1", "map_executor_2"],
+        )  # Split -> many mappers
+        .add_fan_in_edges(
+            ["map_executor_0", "map_executor_1", "map_executor_2"],
+            "shuffle_executor",
+        )  # All mappers -> shuffle
+        .add_fan_out_edges(
+            "shuffle_executor",
+            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+        )  # Shuffle -> many reducers
+        .add_fan_in_edges(
+            ["reduce_executor_0", "reduce_executor_1", "reduce_executor_2", "reduce_executor_3"],
+            "completion_executor",
+        )  # All reducers -> completion
         .build()
     )
 

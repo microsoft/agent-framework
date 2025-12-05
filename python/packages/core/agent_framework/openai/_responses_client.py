@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, TypeVar
 
@@ -815,7 +815,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
-            "created_at": datetime.fromtimestamp(response.created_at).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
             "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,

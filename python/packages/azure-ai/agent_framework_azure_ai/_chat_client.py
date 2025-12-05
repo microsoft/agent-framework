@@ -118,6 +118,7 @@ class AzureAIAgentClient(BaseChatClient):
         agents_client: AgentsClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
+        agent_description: str | None = None,
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
@@ -135,6 +136,7 @@ class AzureAIAgentClient(BaseChatClient):
                 a new agent will be created (and deleted after the request). If neither agents_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
+            agent_description: The description to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
@@ -215,6 +217,7 @@ class AzureAIAgentClient(BaseChatClient):
         self.credential = async_credential
         self.agent_id = agent_id
         self.agent_name = agent_name
+        self.agent_description = agent_description
         self.model_id = azure_ai_settings.model_deployment_name
         self.thread_id = thread_id
         self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
@@ -311,6 +314,7 @@ class AzureAIAgentClient(BaseChatClient):
             args: dict[str, Any] = {
                 "model": run_options["model"],
                 "name": agent_name,
+                "description": self.agent_description,
             }
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
@@ -1038,16 +1042,19 @@ class AzureAIAgentClient(BaseChatClient):
 
         return run_id, tool_outputs, tool_approvals
 
-    def _update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None) -> None:
         """Update the agent name in the chat client.
 
         Args:
             agent_name: The new name for the agent.
+            description: The new description for the agent.
         """
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
+        if description and not self.agent_description:
+            self.agent_description = description
 
     def service_url(self) -> str:
         """Get the service URL for the chat client.

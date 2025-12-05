@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
@@ -107,6 +108,9 @@ public class AzureAIAgentsPersistentCreateTests
             purpose: PersistentAgentFilePurpose.Agents
         );
         var vectorStoreMetadata = await this._persistentAgentsClient.VectorStores.CreateVectorStoreAsync([uploadedAgentFile.Id], name: "WordCodeLookup_VectorStore");
+
+        // Wait for vector store indexing to complete before using it
+        await this.WaitForVectorStoreReadyAsync(this._persistentAgentsClient, vectorStoreMetadata.Value.Id);
 
         // Act.
         var agent = createMechanism switch
@@ -291,5 +295,43 @@ public class AzureAIAgentsPersistentCreateTests
         {
             await this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
         }
+    }
+
+    /// <summary>
+    /// Waits for a vector store to complete indexing by polling its status.
+    /// </summary>
+    /// <param name="client">The persistent agents client.</param>
+    /// <param name="vectorStoreId">The ID of the vector store.</param>
+    /// <param name="maxWaitSeconds">Maximum time to wait in seconds (default: 30).</param>
+    /// <returns>A task that completes when the vector store is ready or throws on timeout/failure.</returns>
+    private async Task WaitForVectorStoreReadyAsync(
+        PersistentAgentsClient client,
+        string vectorStoreId,
+        int maxWaitSeconds = 30)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
+        {
+            PersistentAgentsVectorStore vectorStore = await client.VectorStores.GetVectorStoreAsync(vectorStoreId);
+
+            if (vectorStore.Status == VectorStoreStatus.Completed)
+            {
+                if (vectorStore.FileCounts.Failed > 0)
+                {
+                    throw new InvalidOperationException("Vector store indexing failed for some files");
+                }
+
+                return;
+            }
+
+            if (vectorStore.Status == VectorStoreStatus.Expired)
+            {
+                throw new InvalidOperationException("Vector store has expired");
+            }
+
+            await Task.Delay(1000);
+        }
+
+        throw new TimeoutException($"Vector store did not complete indexing within {maxWaitSeconds}s");
     }
 }

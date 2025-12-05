@@ -195,19 +195,20 @@ async def main() -> None:
     print("Starting Workflow Agent Demo")
     print("=" * 50)
 
-    # Initialize chat clients and executors.
-    print("Creating chat client and executors...")
-    mini_chat_client = OpenAIChatClient(model_id="gpt-4.1-nano")
-    chat_client = OpenAIChatClient(model_id="gpt-4.1")
-    reviewer = Reviewer(id="reviewer", chat_client=chat_client)
-    worker = Worker(id="worker", chat_client=mini_chat_client)
-
     print("Building workflow with Worker ↔ Reviewer cycle...")
     agent = (
         WorkflowBuilder()
-        .add_edge(worker, reviewer)  # Worker sends responses to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer provides feedback to Worker
-        .set_start_executor(worker)
+        .register_executor(
+            lambda: Worker(id="worker", chat_client=OpenAIChatClient(model_id="gpt-4.1-nano")),
+            name="worker",
+        )
+        .register_executor(
+            lambda: Reviewer(id="reviewer", chat_client=OpenAIChatClient(model_id="gpt-4.1")),
+            name="reviewer",
+        )
+        .add_edge("worker", "reviewer")  # Worker sends responses to Reviewer
+        .add_edge("reviewer", "worker")  # Reviewer provides feedback to Worker
+        .set_start_executor("worker")
         .build()
         .as_agent()  # Wrap workflow as an agent
     )

@@ -26,7 +26,7 @@ async def main():
 
     # create the AgentFactory with a chat client and bindings
     agent_factory = AgentFactory(
-        AzureOpenAIResponsesClient(credential=AzureCliCredential()),
+        chat_client=AzureOpenAIResponsesClient(credential=AzureCliCredential()),
         bindings={"get_weather": get_weather},
     )
     # create the agent from the yaml

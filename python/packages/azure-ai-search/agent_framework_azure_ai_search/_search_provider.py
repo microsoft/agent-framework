@@ -5,7 +5,7 @@ import sys
 from collections.abc import Awaitable, Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from agent_framework import ChatMessage, Context, ContextProvider, Role
+from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMessage, Context, ContextProvider, Role
 from agent_framework._logging import get_logger
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
@@ -129,6 +129,8 @@ class AzureAISearchSettings(AFBaseSettings):
             Can be set via environment variable AZURE_SEARCH_ENDPOINT.
         index_name: Name of the search index.
             Can be set via environment variable AZURE_SEARCH_INDEX_NAME.
+        knowledge_base_name: Name of an existing Knowledge Base (for agentic mode).
+            Can be set via environment variable AZURE_SEARCH_KNOWLEDGE_BASE_NAME.
         api_key: API key for authentication (optional, use managed identity if not provided).
             Can be set via environment variable AZURE_SEARCH_API_KEY.
         env_file_path: If provided, the .env settings are read from this file path location.
@@ -158,6 +160,7 @@ class AzureAISearchSettings(AFBaseSettings):
 
     endpoint: str | None = None
     index_name: str | None = None
+    knowledge_base_name: str | None = None
     api_key: SecretStr | None = None
 
 
@@ -239,7 +242,6 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: Callable[[str], Awaitable[list[float]]] | None = None,
         context_prompt: str | None = None,
         # Agentic mode parameters (Knowledge Base)
-        azure_ai_project_endpoint: str | None = None,
         azure_openai_resource_url: str | None = None,
         model_deployment_name: str | None = None,
         model_name: str | None = None,
@@ -277,22 +279,18 @@ class AzureAISearchContextProvider(ContextProvider):
                 Required if vector_field_name is specified and no server-side vectorization.
             context_prompt: Custom prompt to prepend to retrieved context.
                 Default: "Use the following context to answer the question:"
-            azure_ai_project_endpoint: Azure AI Foundry project endpoint URL.
-                This is NOT the same as azure_openai_resource_url - the project endpoint is used
-                for Azure AI Foundry services, while the OpenAI endpoint is used by the Knowledge
-                Base to call the model for query planning. Required for agentic mode.
-                Example: "https://myproject.services.ai.azure.com/api/projects/myproject"
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base model calls.
-                This is the OpenAI endpoint used by the Knowledge Base to call the LLM for
-                query planning and reasoning. This is separate from the project endpoint because
-                the Knowledge Base directly calls Azure OpenAI for its internal operations.
-                Required for agentic mode. Example: "https://myresource.openai.azure.com"
+                Required when using agentic mode with index_name (to auto-create Knowledge Base).
+                Not required when using an existing knowledge_base_name.
+                Example: "https://myresource.openai.azure.com"
             model_deployment_name: Model deployment name in Azure OpenAI for Knowledge Base.
-                This is the deployment name the Knowledge Base uses to call the LLM.
-                Required for agentic mode.
+                Required when using agentic mode with index_name (to auto-create Knowledge Base).
+                Not required when using an existing knowledge_base_name.
             model_name: The underlying model name (e.g., "gpt-4o", "gpt-4o-mini").
                 If not provided, defaults to model_deployment_name. Used for Knowledge Base configuration.
-            knowledge_base_name: Name for the Knowledge Base. Required for agentic mode.
+            knowledge_base_name: Name of an existing Knowledge Base to use.
+                Required for agentic mode if not providing index_name.
+                Supports KBs with any source type (web, blob, index, etc.).
             retrieval_instructions: Custom instructions for the Knowledge Base's
                 retrieval planning. Only used in agentic mode.
             azure_openai_api_key: Azure OpenAI API key for Knowledge Base to call the model.
@@ -340,6 +338,7 @@ class AzureAISearchContextProvider(ContextProvider):
             settings = AzureAISearchSettings(
                 endpoint=endpoint,
                 index_name=index_name,
+                knowledge_base_name=knowledge_base_name,
                 api_key=api_key if isinstance(api_key, str) else None,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
@@ -353,11 +352,36 @@ class AzureAISearchContextProvider(ContextProvider):
                 "Azure AI Search endpoint is required. Set via 'endpoint' parameter "
                 "or 'AZURE_SEARCH_ENDPOINT' environment variable."
             )
-        if not settings.index_name:
-            raise ServiceInitializationError(
-                "Azure AI Search index name is required. Set via 'index_name' parameter "
-                "or 'AZURE_SEARCH_INDEX_NAME' environment variable."
-            )
+
+        # Validate index_name and knowledge_base_name based on mode
+        # Note: settings.* contains the resolved value (explicit param OR env var)
+        if mode == "semantic":
+            # Semantic mode: always requires index_name
+            if not settings.index_name:
+                raise ServiceInitializationError(
+                    "Azure AI Search index name is required for semantic mode. "
+                    "Set via 'index_name' parameter or 'AZURE_SEARCH_INDEX_NAME' environment variable."
+                )
+        elif mode == "agentic":
+            # Agentic mode: requires exactly ONE of index_name or knowledge_base_name
+            if settings.index_name and settings.knowledge_base_name:
+                raise ServiceInitializationError(
+                    "For agentic mode, provide either 'index_name' OR 'knowledge_base_name', not both. "
+                    "Use 'index_name' to auto-create a Knowledge Base, or 'knowledge_base_name' to use an existing one."
+                )
+            if not settings.index_name and not settings.knowledge_base_name:
+                raise ServiceInitializationError(
+                    "For agentic mode, provide either 'index_name' (to auto-create Knowledge Base) "
+                    "or 'knowledge_base_name' (to use existing Knowledge Base). "
+                    "Set via parameters or environment variables "
+                    "AZURE_SEARCH_INDEX_NAME / AZURE_SEARCH_KNOWLEDGE_BASE_NAME."
+                )
+            # If using index_name to create KB, model config is required
+            if settings.index_name and not model_deployment_name:
+                raise ServiceInitializationError(
+                    "model_deployment_name is required for agentic mode when creating Knowledge Base from index. "
+                    "This is the Azure OpenAI deployment used by the Knowledge Base for query planning."
+                )
 
         # Determine the credential to use
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
@@ -389,13 +413,26 @@ class AzureAISearchContextProvider(ContextProvider):
         self.azure_openai_deployment_name = model_deployment_name
         # If model_name not provided, default to deployment name
         self.model_name = model_name or model_deployment_name
-        self.knowledge_base_name = knowledge_base_name
+        # Use resolved KB name (from explicit param or env var)
+        self.knowledge_base_name = settings.knowledge_base_name
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
-        self.azure_ai_project_endpoint = azure_ai_project_endpoint
         self.knowledge_base_output_mode = knowledge_base_output_mode
         self.retrieval_reasoning_effort = retrieval_reasoning_effort
         self.agentic_message_history_count = agentic_message_history_count
+
+        # Determine if using existing Knowledge Base or auto-creating from index
+        # Since validation ensures exactly one of index_name/knowledge_base_name for agentic mode:
+        # - knowledge_base_name provided: use existing KB
+        # - index_name provided: auto-create KB from index
+        self._use_existing_knowledge_base = False
+        if mode == "agentic":
+            if settings.knowledge_base_name:
+                # Use existing KB directly (supports any source type: web, blob, index, etc.)
+                self._use_existing_knowledge_base = True
+            else:
+                # Auto-generate KB name from index name
+                self.knowledge_base_name = f"{settings.index_name}-kb"
 
         # Auto-discover vector field if not specified
         self._auto_discovered_vector_field = False
@@ -415,22 +452,24 @@ class AzureAISearchContextProvider(ContextProvider):
                     "Agentic retrieval requires azure-search-documents >= 11.7.0b1 with Knowledge Base support. "
                     "Please upgrade: pip install azure-search-documents>=11.7.0b1"
                 )
-            if not self.azure_openai_resource_url:
+            # Only require OpenAI resource URL if NOT using existing KB
+            # (existing KB already has its model configuration)
+            # Note: model_deployment_name is already validated at initialization
+            if not self._use_existing_knowledge_base and not self.azure_openai_resource_url:
                 raise ValueError(
-                    "azure_openai_resource_url is required for agentic mode. "
+                    "azure_openai_resource_url is required for agentic mode when creating Knowledge Base from index. "
                     "This should be your Azure OpenAI endpoint (e.g., 'https://myresource.openai.azure.com')"
                 )
-            if not self.azure_openai_deployment_name:
-                raise ValueError("model_deployment_name is required for agentic mode")
-            if not knowledge_base_name:
-                raise ValueError("knowledge_base_name is required for agentic mode")
 
-        # Create search client for semantic mode
-        self._search_client = SearchClient(
-            endpoint=self.endpoint,
-            index_name=self.index_name,
-            credential=self.credential,
-        )
+        # Create search client for semantic mode (only if index_name is available)
+        self._search_client: SearchClient | None = None
+        if self.index_name:
+            self._search_client = SearchClient(
+                endpoint=self.endpoint,
+                index_name=self.index_name,
+                credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            )
 
         # Create index client and retrieval client for agentic mode (Knowledge Base)
         self._index_client: SearchIndexClient | None = None
@@ -439,6 +478,7 @@ class AzureAISearchContextProvider(ContextProvider):
             self._index_client = SearchIndexClient(
                 endpoint=self.endpoint,
                 credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             # Retrieval client will be created after Knowledge Base initialization
 
@@ -574,10 +614,19 @@ class AzureAISearchContextProvider(ContextProvider):
         try:
             # Use existing index client or create temporary one
             if not self._index_client:
-                self._index_client = SearchIndexClient(endpoint=self.endpoint, credential=self.credential)
+                self._index_client = SearchIndexClient(
+                    endpoint=self.endpoint,
+                    credential=self.credential,
+                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                )
             index_client = self._index_client
 
-            # Get index schema
+            # Get index schema (index_name is guaranteed to be set for semantic mode)
+            if not self.index_name:
+                logger.warning("Cannot auto-discover vector field: index_name is not set.")
+                self._auto_discovered_vector_field = True
+                return
+
             index = await index_client.get_index(self.index_name)
 
             # Step 1: Find all vector fields
@@ -694,7 +743,10 @@ class AzureAISearchContextProvider(ContextProvider):
             search_params["semantic_configuration_name"] = self.semantic_configuration_name
             search_params["query_caption"] = QueryCaptionType.EXTRACTIVE
 
-        # Execute search
+        # Execute search (search client is guaranteed to exist for semantic mode)
+        if not self._search_client:
+            raise RuntimeError("Search client is not initialized. This should not happen in semantic mode.")
+
         results = await self._search_client.search(**search_params)  # type: ignore[reportUnknownVariableType]
 
         # Format results with citations
@@ -711,27 +763,48 @@ class AzureAISearchContextProvider(ContextProvider):
         return formatted_results
 
     async def _ensure_knowledge_base(self) -> None:
-        """Ensure Knowledge Base and knowledge source are created.
+        """Ensure Knowledge Base and knowledge source are created or use existing KB.
 
         This method is idempotent - it will only create resources if they don't exist.
 
         Note: Azure SDK uses KnowledgeAgent classes internally, but the feature
         is marketed as "Knowledge Bases" in Azure AI Search.
         """
-        if self._knowledge_base_initialized or not self._index_client:
+        if self._knowledge_base_initialized:
             return
 
-        # Runtime validation for agentic mode parameters
+        # Runtime validation
         if not self.knowledge_base_name:
             raise ValueError("knowledge_base_name is required for agentic mode")
-        if not self.azure_openai_resource_url:
-            raise ValueError("azure_openai_resource_url is required for agentic mode")
-        if not self.azure_openai_deployment_name:
-            raise ValueError("model_deployment_name is required for agentic mode")
 
         knowledge_base_name = self.knowledge_base_name
 
-        # Step 1: Create or get knowledge source
+        # Path 1: Use existing Knowledge Base directly (no index needed)
+        # This supports KB with any source type (web, blob, index, etc.)
+        if self._use_existing_knowledge_base:
+            # Just create the retrieval client - KB already exists with its own sources
+            if _agentic_retrieval_available and self._retrieval_client is None:
+                self._retrieval_client = KnowledgeBaseRetrievalClient(
+                    endpoint=self.endpoint,
+                    knowledge_base_name=knowledge_base_name,
+                    credential=self.credential,
+                    user_agent=AGENT_FRAMEWORK_USER_AGENT,
+                )
+            self._knowledge_base_initialized = True
+            return
+
+        # Path 2: Auto-create Knowledge Base from search index
+        # Requires index_client and OpenAI configuration
+        if not self._index_client:
+            raise ValueError("Index client is required when creating Knowledge Base from index")
+        if not self.azure_openai_resource_url:
+            raise ValueError("azure_openai_resource_url is required when creating Knowledge Base from index")
+        if not self.azure_openai_deployment_name:
+            raise ValueError("model_deployment_name is required when creating Knowledge Base from index")
+        if not self.index_name:
+            raise ValueError("index_name is required when creating Knowledge Base from index")
+
+        # Step 1: Create or get knowledge source from index
         knowledge_source_name = f"{self.index_name}-source"
 
         try:
@@ -794,6 +867,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 endpoint=self.endpoint,
                 knowledge_base_name=knowledge_base_name,
                 credential=self.credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 
     async def _agentic_search(self, messages: list[ChatMessage]) -> list[str]:

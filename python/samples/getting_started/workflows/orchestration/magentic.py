@@ -65,6 +65,14 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
+    )
+
     print("\nBuilding Magentic Workflow...")
 
     # State used by on_agent_stream callback
@@ -75,7 +83,7 @@ async def main() -> None:
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
         .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+            agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,

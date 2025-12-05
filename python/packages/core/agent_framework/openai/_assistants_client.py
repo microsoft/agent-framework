@@ -64,6 +64,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         model_id: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
+        assistant_description: str | None = None,
         thread_id: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
@@ -82,6 +83,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             assistant_id: The ID of an OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
+            assistant_description: The description to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
@@ -147,6 +149,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         )
         self.assistant_id: str | None = assistant_id
         self.assistant_name: str | None = assistant_name
+        self.assistant_description: str | None = assistant_description
         self.thread_id: str | None = thread_id
         self._should_delete_assistant: bool = False
 
@@ -220,7 +223,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self.ensure_client()
-            created_assistant = await client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
+            created_assistant = await client.beta.assistants.create(
+                model=self.model_id,
+                description=self.assistant_description,
+                name=self.assistant_name,
+            )
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
 
@@ -516,13 +523,16 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         return run_id, tool_outputs
 
-    def _update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
         """Update the agent name in the chat client.
 
         Args:
             agent_name: The new name for the agent.
+            description: The new description for the agent.
         """
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.assistant_name:
-            object.__setattr__(self, "assistant_name", agent_name)
+            self.assistant_name = agent_name
+        if description and not self.assistant_description:
+            self.assistant_description = description

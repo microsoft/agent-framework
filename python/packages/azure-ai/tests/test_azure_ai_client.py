@@ -84,6 +84,7 @@ def create_test_azure_ai_client(
     client.credential = None
     client.agent_name = agent_name
     client.agent_version = agent_version
+    client.agent_description = None
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
@@ -397,14 +398,14 @@ async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock)
     mock_project_client.get_openai_client.assert_called_once()
 
 
-def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> None:
-    """Test _update_agent_name method."""
+def test_azure_ai_client_update_agent_name_and_description(mock_project_client: MagicMock) -> None:
+    """Test _update_agent_name_and_description method."""
     client = create_test_azure_ai_client(mock_project_client)
 
     # Test updating agent name when current is None
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name("new-agent")  # type: ignore
+        client._update_agent_name_and_description("new-agent")  # type: ignore
         mock_update.assert_called_once_with("new-agent")
 
     # Test behavior when agent name is updated
@@ -412,9 +413,9 @@ def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> No
     client.agent_name = "test-agent"  # Manually set for the test
 
     # Test with None input
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name(None)  # type: ignore
+        client._update_agent_name_and_description(None)  # type: ignore
         mock_update.assert_called_once_with(None)
 
 

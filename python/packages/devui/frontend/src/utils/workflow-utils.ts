@@ -7,9 +7,54 @@ import type {
 import type {
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
+  JSONSchemaProperty,
 } from "@/types";
 import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
+
+/**
+ * Detects if a JSON schema represents a ChatMessage input type.
+ * ChatMessage schemas typically have:
+ * - type: "object"
+ * - properties with "text" (required string) and "role" (optional string)
+ *
+ * This is used to determine whether to show the rich ChatMessageInput
+ * component for workflows that start with an AgentExecutor.
+ *
+ * @param schema - The JSON schema to check
+ * @returns true if the schema represents a ChatMessage-like input
+ */
+export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boolean {
+  if (!schema) return false;
+
+  // Must be an object type
+  if (schema.type !== "object") return false;
+
+  // Must have properties
+  if (!schema.properties) return false;
+
+  const props = schema.properties;
+
+  // ChatMessage has "text" property (the main content)
+  const hasText = "text" in props && props.text?.type === "string";
+
+  // ChatMessage has "role" property (user, assistant, system)
+  const hasRole = "role" in props && props.role?.type === "string";
+
+  // If it has both text and role, it's likely a ChatMessage
+  if (hasText && hasRole) {
+    return true;
+  }
+
+  // Also check for simpler chat-like schemas (just text field)
+  // This covers cases where the schema might be simplified
+  const propKeys = Object.keys(props);
+  if (propKeys.length === 1 && hasText) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Truncates text that exceeds the maximum length and appends ellipsis
@@ -177,19 +222,22 @@ export function convertWorkflowDumpToEdges(
     return [];
   }
 
-  const edges = connections.map((connection) => ({
-    id: `${connection.source}-${connection.target}`,
-    source: connection.source,
-    target: connection.target,
-    sourceHandle: "source",
-    targetHandle: "target",
-    type: "default",
-    animated: false,
-    style: {
-      stroke: "#6b7280",
-      strokeWidth: 2,
-    },
-  }));
+  const edges = connections.map((connection) => {
+    const isSelfLoop = connection.source === connection.target;
+    return {
+      id: `${connection.source}-${connection.target}`,
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: "source",
+      targetHandle: "target",
+      type: isSelfLoop ? "selfLoop" : "default",
+      animated: false,
+      style: {
+        stroke: "#6b7280",
+        strokeWidth: 2,
+      },
+    };
+  });
 
   return edges;
 }
@@ -478,7 +526,8 @@ export function processWorkflowEvents(
  */
 export function updateNodesWithEvents(
   nodes: Node<ExecutorNodeData>[],
-  nodeUpdates: Record<string, NodeUpdate>
+  nodeUpdates: Record<string, NodeUpdate>,
+  isStreaming: boolean = true
 ): Node<ExecutorNodeData>[] {
   return nodes.map((node) => {
     const update = nodeUpdates[node.id];
@@ -490,6 +539,8 @@ export function updateNodesWithEvents(
           state: update.state,
           outputData: update.data,
           error: update.error,
+          // Add isStreaming to control spinning animation
+          isStreaming: isStreaming,
           // Preserve layoutDirection
           layoutDirection: node.data.layoutDirection,
         },
@@ -669,6 +720,13 @@ export function consolidateBidirectionalEdges(edges: Edge[]): Edge[] {
   edges.forEach(edge => {
     const forwardKey = `${edge.source}-${edge.target}`;
     const reverseKey = `${edge.target}-${edge.source}`;
+
+    // Self-loops (source === target) should always be preserved as-is
+    // They are not bidirectional edges, just a node pointing to itself
+    if (edge.source === edge.target) {
+      edgeMap.set(forwardKey, edge);
+      return;
+    }
 
     // Check if we already have the reverse edge
     if (edgeMap.has(reverseKey)) {

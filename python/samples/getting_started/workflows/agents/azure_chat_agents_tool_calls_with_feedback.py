@@ -10,6 +10,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentRunResponse,
     AgentRunUpdateEvent,
+    ChatAgent,
     ChatMessage,
     Executor,
     FunctionCallContent,
@@ -166,6 +167,31 @@ class Coordinator(Executor):
         )
 
 
+def create_writer_agent() -> ChatAgent:
+    """Creates a writer agent with tools."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        name="writer_agent",
+        instructions=(
+            "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
+            "Always call both tools once before drafting. Summarize tool outputs as bullet points, then "
+            "produce a 3-sentence draft."
+        ),
+        tools=[fetch_product_brief, get_brand_voice_profile],
+        tool_choice=ToolMode.REQUIRED_ANY,
+    )
+
+
+def create_final_editor_agent() -> ChatAgent:
+    """Creates a final editor agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        name="final_editor_agent",
+        instructions=(
+            "You are an editor who polishes marketing copy after human approval. "
+            "Correct any legal or factual issues. Return the final version even if no changes are made. "
+        ),
+    )
+
+
 def display_agent_run_update(event: AgentRunUpdateEvent, last_executor: str | None) -> None:
     """Display an AgentRunUpdateEvent in a readable format."""
     printed_tool_calls: set[str] = set()
@@ -211,42 +237,25 @@ def display_agent_run_update(event: AgentRunUpdateEvent, last_executor: str | No
 
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
-    # Create agents with tools and instructions.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    writer_agent = chat_client.create_agent(
-        name="writer_agent",
-        instructions=(
-            "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
-            "Always call both tools once before drafting. Summarize tool outputs as bullet points, then "
-            "produce a 3-sentence draft."
-        ),
-        tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice=ToolMode.REQUIRED_ANY,
-    )
-
-    final_editor_agent = chat_client.create_agent(
-        name="final_editor_agent",
-        instructions=(
-            "You are an editor who polishes marketing copy after human approval. "
-            "Correct any legal or factual issues. Return the final version even if no changes are made. "
-        ),
-    )
-
-    coordinator = Coordinator(
-        id="coordinator",
-        writer_id="writer_agent",
-        final_editor_id="final_editor_agent",
-    )
 
     # Build the workflow.
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(writer_agent)
-        .add_edge(writer_agent, coordinator)
-        .add_edge(coordinator, writer_agent)
-        .add_edge(final_editor_agent, coordinator)
-        .add_edge(coordinator, final_editor_agent)
+        .register_agent(create_writer_agent, name="writer_agent")
+        .register_agent(create_final_editor_agent, name="final_editor_agent")
+        .register_executor(
+            lambda: Coordinator(
+                id="coordinator",
+                writer_id="writer_agent",
+                final_editor_id="final_editor_agent",
+            ),
+            name="coordinator",
+        )
+        .set_start_executor("writer_agent")
+        .add_edge("writer_agent", "coordinator")
+        .add_edge("coordinator", "writer_agent")
+        .add_edge("final_editor_agent", "coordinator")
+        .add_edge("coordinator", "final_editor_agent")
         .build()
     )
 
