@@ -8,7 +8,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = System.Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 const string VisionInstructions = "You are a helpful agent that can analyze images";
 const string VisionName = "VisionAgent";
@@ -21,7 +21,7 @@ AIAgent agent = aiProjectClient.CreateAIAgent(name: VisionName, model: deploymen
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
-    new UriContent("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg", "image/jpeg")
+    new DataContent(File.ReadAllBytes("assets/walkway.jpg"), "image/jpeg")
 ]);
 
 AgentThread thread = agent.GetNewThread();

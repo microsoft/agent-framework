@@ -9,7 +9,9 @@ var azOpenAiResourceGroup = builder.AddParameterFromConfiguration("AzureOpenAIRe
 var chatModel = builder.AddAIModel("chat-model").AsAzureOpenAI("gpt-4o", o => o.AsExisting(azOpenAiResource, azOpenAiResourceGroup));
 
 var agentHost = builder.AddProject<Projects.AgentWebChat_AgentHost>("agenthost")
-        .WithReference(chatModel);
+    .WithHttpEndpoint(name: "devui")
+    .WithUrlForEndpoint("devui", (url) => new() { Url = "/devui", DisplayText = "Dev UI" })
+    .WithReference(chatModel);
 
 builder.AddProject<Projects.AgentWebChat_Web>("webfrontend")
     .WithExternalHttpEndpoints()

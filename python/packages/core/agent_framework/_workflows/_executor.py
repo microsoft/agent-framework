@@ -155,6 +155,11 @@ class Executor(RequestInfoMixin, DictConvertible):
     that parent workflows can intercept. See WorkflowExecutor documentation for details on
     workflow composition patterns and request/response handling.
 
+    ## State Management
+    Executors can contain states that persist across workflow runs and checkpoints. Override the
+    `on_checkpoint_save` and `on_checkpoint_restore` methods to implement custom state
+    serialization and restoration logic.
+
     ## Implementation Notes
     - Do not call `execute()` directly - it's invoked by the workflow engine
     - Do not override `execute()` - define handlers using decorators instead
@@ -259,7 +264,7 @@ class Executor(RequestInfoMixin, DictConvertible):
 
             # Invoke the handler with the message and context
             with _framework_event_origin():
-                invoke_event = ExecutorInvokedEvent(self.id)
+                invoke_event = ExecutorInvokedEvent(self.id, message)
             await context.add_event(invoke_event)
             try:
                 await handler(message, context)
@@ -270,7 +275,9 @@ class Executor(RequestInfoMixin, DictConvertible):
                 await context.add_event(failure_event)
                 raise
             with _framework_event_origin():
-                completed_event = ExecutorCompletedEvent(self.id)
+                # Include sent messages as the completion data
+                sent_messages = context.get_sent_messages()
+                completed_event = ExecutorCompletedEvent(self.id, sent_messages if sent_messages else None)
             await context.add_event(completed_event)
 
     def _create_context_for_handler(
@@ -459,6 +466,32 @@ class Executor(RequestInfoMixin, DictConvertible):
             if is_instance_of(message, message_type):
                 return self._handlers[message_type]
         raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Hook called when the workflow is being saved to a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        return state to be saved in the checkpoint.
+
+        The returned state dictionary will be passed to `on_checkpoint_restore`
+        when the workflow is restored from the checkpoint. The dictionary should
+        only contain JSON-serializable data.
+
+        Returns:
+            A state dictionary to be saved during checkpointing.
+        """
+        return {}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Hook called when the workflow is restored from a checkpoint.
+
+        Override this method in subclasses to implement custom logic that should
+        run when the workflow is restored from a checkpoint.
+
+        Args:
+            state: The state dictionary that was saved during checkpointing.
+        """
+        ...
 
 
 # endregion: Executor

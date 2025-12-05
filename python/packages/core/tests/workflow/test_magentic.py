@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any, cast
@@ -9,18 +10,15 @@ import pytest
 from agent_framework import (
     AgentRunResponse,
     AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
     BaseAgent,
-    ChatClientProtocol,
     ChatMessage,
-    ChatResponse,
-    ChatResponseUpdate,
     Executor,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
+    MagenticHumanInterventionDecision,
+    MagenticHumanInterventionReply,
+    MagenticHumanInterventionRequest,
     MagenticManagerBase,
-    MagenticPlanReviewDecision,
-    MagenticPlanReviewReply,
-    MagenticPlanReviewRequest,
     RequestInfoEvent,
     Role,
     TextContent,
@@ -32,6 +30,7 @@ from agent_framework import (
     WorkflowStatusEvent,
     handler,
 )
+from agent_framework._workflows import _group_chat as group_chat_module  # type: ignore
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._magentic import (  # type: ignore[reportPrivateUsage]
     MagenticAgentExecutor,
@@ -41,6 +40,12 @@ from agent_framework._workflows._magentic import (  # type: ignore[reportPrivate
     _MagenticProgressLedgerItem,  # type: ignore
     _MagenticStartMessage,  # type: ignore
 )
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+
+if sys.version_info >= (3, 12):
+    from typing import override
+else:
+    from typing_extensions import override
 
 
 def test_magentic_start_message_from_string():
@@ -51,21 +56,25 @@ def test_magentic_start_message_from_string():
     assert msg.task.text == "Do the thing"
 
 
-def test_plan_review_request_defaults_and_reply_variants():
-    req = MagenticPlanReviewRequest()  # defaults provided by dataclass
+def test_human_intervention_request_defaults_and_reply_variants():
+    from agent_framework._workflows._magentic import MagenticHumanInterventionKind
+
+    req = MagenticHumanInterventionRequest(kind=MagenticHumanInterventionKind.PLAN_REVIEW)
     assert hasattr(req, "request_id")
     assert req.task_text == "" and req.facts_text == "" and req.plan_text == ""
     assert isinstance(req.round_index, int) and req.round_index == 0
 
     # Replies: approve, revise with comments, revise with edited text
-    approve = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
-    revise_comments = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE, comments="Tighten scope")
-    revise_text = MagenticPlanReviewReply(
-        decision=MagenticPlanReviewDecision.REVISE,
+    approve = MagenticHumanInterventionReply(decision=MagenticHumanInterventionDecision.APPROVE)
+    revise_comments = MagenticHumanInterventionReply(
+        decision=MagenticHumanInterventionDecision.REVISE, comments="Tighten scope"
+    )
+    revise_text = MagenticHumanInterventionReply(
+        decision=MagenticHumanInterventionDecision.REVISE,
         edited_plan_text="- Step 1\n- Step 2",
     )
 
-    assert approve.decision == MagenticPlanReviewDecision.APPROVE
+    assert approve.decision == MagenticHumanInterventionDecision.APPROVE
     assert revise_comments.comments == "Tighten scope"
     assert revise_text.edited_plan_text is not None and revise_text.edited_plan_text.startswith("- Step 1")
 
@@ -101,8 +110,9 @@ class FakeManager(MagenticManagerBase):
     next_speaker_name: str = "agentA"
     instruction_text: str = "Proceed with step 1"
 
-    def snapshot_state(self) -> dict[str, Any]:
-        state = super().snapshot_state()
+    @override
+    def on_checkpoint_save(self) -> dict[str, Any]:
+        state = super().on_checkpoint_save()
         if self.task_ledger is not None:
             state = dict(state)
             state["task_ledger"] = {
@@ -111,8 +121,9 @@ class FakeManager(MagenticManagerBase):
             }
         return state
 
-    def restore_state(self, state: dict[str, Any]) -> None:
-        super().restore_state(state)
+    @override
+    def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        super().on_checkpoint_restore(state)
         ledger_state = state.get("task_ledger")
         if isinstance(ledger_state, dict):
             ledger_dict = cast(dict[str, Any], ledger_state)
@@ -154,6 +165,19 @@ class FakeManager(MagenticManagerBase):
         return ChatMessage(role=Role.ASSISTANT, text="FINAL", author_name="magentic_manager")
 
 
+class _CountingWorkflowBuilder(WorkflowBuilder):
+    created: list["_CountingWorkflowBuilder"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.start_calls = 0
+        _CountingWorkflowBuilder.created.append(self)
+
+    def set_start_executor(self, executor: Any) -> "_CountingWorkflowBuilder":  # type: ignore[override]
+        self.start_calls += 1
+        return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
+
+
 async def test_standard_manager_plan_and_replan_combined_ledger():
     manager = FakeManager(max_round_count=10, max_stall_count=3, max_reset_count=2)
     ctx = MagenticContext(
@@ -185,7 +209,6 @@ async def test_standard_manager_progress_ledger_and_fallback():
     assert ledger2.is_request_satisfied.answer is False
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_workflow_plan_review_approval_to_completion():
     manager = FakeManager(max_round_count=10)
     wf = (
@@ -198,15 +221,14 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     req_event: RequestInfoEvent | None = None
     async for ev in wf.run_stream("do work"):
-        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticHumanInterventionRequest:
             req_event = ev
     assert req_event is not None
 
     completed = False
-    output: ChatMessage | None = None
-    async for ev in wf.run_stream(
-        responses={req_event.request_id: MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)}
-    ):
+    output: list[ChatMessage] | None = None
+    reply = MagenticHumanInterventionReply(decision=MagenticHumanInterventionDecision.APPROVE)
+    async for ev in wf.send_responses_streaming(responses={req_event.request_id: reply}):
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
@@ -215,10 +237,10 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
             break
     assert completed
     assert output is not None
-    assert isinstance(output, ChatMessage)
+    assert isinstance(output, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output)
 
 
-@pytest.mark.skip(reason="Response handling refactored - responses no longer passed to run_stream()")
 async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds():
     class CountingManager(FakeManager):
         # Declare as a model field so assignment is allowed under Pydantic
@@ -243,22 +265,22 @@ async def test_magentic_plan_review_approve_with_comments_replans_and_proceeds()
     # Wait for the initial plan review request
     req_event: RequestInfoEvent | None = None
     async for ev in wf.run_stream("do work"):
-        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticHumanInterventionRequest:
             req_event = ev
     assert req_event is not None
 
     # Reply APPROVE with comments (no edited text). Expect one replan and no second review round.
     saw_second_review = False
     completed = False
-    async for ev in wf.run_stream(
+    async for ev in wf.send_responses_streaming(
         responses={
-            req_event.request_id: MagenticPlanReviewReply(
-                decision=MagenticPlanReviewDecision.APPROVE,
+            req_event.request_id: MagenticHumanInterventionReply(
+                decision=MagenticHumanInterventionDecision.APPROVE,
                 comments="Looks good; consider Z",
             )
         }
     ):
-        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticHumanInterventionRequest:
             saw_second_review = True
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -294,11 +316,12 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, ChatMessage)
-    assert data.role == Role.ASSISTANT
+    assert isinstance(data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in data)
+    assert len(data) > 0
+    assert data[-1].role == Role.ASSISTANT
 
 
-@pytest.mark.skip(reason="Response handling refactored - send_responses_streaming no longer exists")
 async def test_magentic_checkpoint_resume_round_trip():
     storage = InMemoryCheckpointStorage()
 
@@ -315,7 +338,7 @@ async def test_magentic_checkpoint_resume_round_trip():
     task_text = "checkpoint task"
     req_event: RequestInfoEvent | None = None
     async for ev in wf.run_stream(task_text):
-        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticPlanReviewRequest:
+        if isinstance(ev, RequestInfoEvent) and ev.request_type is MagenticHumanInterventionRequest:
             req_event = ev
     assert req_event is not None
 
@@ -336,13 +359,13 @@ async def test_magentic_checkpoint_resume_round_trip():
 
     orchestrator = next(exec for exec in wf_resume.executors.values() if isinstance(exec, MagenticOrchestratorExecutor))
 
-    reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+    reply = MagenticHumanInterventionReply(decision=MagenticHumanInterventionDecision.APPROVE)
     completed: WorkflowOutputEvent | None = None
     req_event = None
     async for event in wf_resume.run_stream(
         resume_checkpoint.checkpoint_id,
     ):
-        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticHumanInterventionRequest:
             req_event = event
     assert req_event is not None
 
@@ -369,7 +392,24 @@ class _DummyExec(Executor):
         pass
 
 
-def test_magentic_agent_executor_snapshot_roundtrip():
+def test_magentic_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure MagenticBuilder wiring sets the start executor only once."""
+    _CountingWorkflowBuilder.created.clear()
+    monkeypatch.setattr(group_chat_module, "WorkflowBuilder", _CountingWorkflowBuilder)
+
+    manager = FakeManager()
+
+    workflow = (
+        MagenticBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager=manager).build()
+    )
+
+    assert workflow is not None
+    assert _CountingWorkflowBuilder.created, "Expected CountingWorkflowBuilder to be instantiated"
+    builder = _CountingWorkflowBuilder.created[-1]
+    assert builder.start_calls == 1, "set_start_executor should be called exactly once"
+
+
+async def test_magentic_agent_executor_on_checkpoint_save_and_restore_roundtrip():
     backing_executor = _DummyExec("backing")
     agent_exec = MagenticAgentExecutor(backing_executor, "agentA")
     agent_exec._chat_history.extend([  # type: ignore[reportPrivateUsage]
@@ -377,10 +417,10 @@ def test_magentic_agent_executor_snapshot_roundtrip():
         ChatMessage(role=Role.ASSISTANT, text="world", author_name="agentA"),
     ])
 
-    state = agent_exec.snapshot_state()
+    state = await agent_exec.on_checkpoint_save()
 
     restored_executor = MagenticAgentExecutor(_DummyExec("backing2"), "agentA")
-    restored_executor.restore_state(state)
+    await restored_executor.on_checkpoint_restore(state)
 
     assert len(restored_executor._chat_history) == 2  # type: ignore[reportPrivateUsage]
     assert restored_executor._chat_history[0].text == "hello"  # type: ignore[reportPrivateUsage]
@@ -390,25 +430,33 @@ def test_magentic_agent_executor_snapshot_roundtrip():
 from agent_framework import StandardMagenticManager  # noqa: E402
 
 
-class _StubChatClient(ChatClientProtocol):
-    @property
-    def additional_properties(self) -> dict[str, Any]:
-        """Get additional properties associated with the client."""
-        return {}
+class _StubManagerAgent(BaseAgent):
+    """Stub agent for testing StandardMagenticManager."""
 
-    async def get_response(self, messages, **kwargs):  # type: ignore[override]
-        return ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
+    async def run(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: Any = None,
+        **kwargs: Any,
+    ) -> AgentRunResponse:
+        return AgentRunResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
-    def get_streaming_response(self, messages, **kwargs) -> AsyncIterable[ChatResponseUpdate]:  # type: ignore[override]
-        async def _gen():
-            if False:
-                yield ChatResponseUpdate()  # pragma: no cover
+    def run_stream(
+        self,
+        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        *,
+        thread: Any = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
+        async def _gen() -> AsyncIterable[AgentRunResponseUpdate]:
+            yield AgentRunResponseUpdate(message_deltas=[ChatMessage(role=Role.ASSISTANT, text="ok")])
 
         return _gen()
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
-    mgr = StandardMagenticManager(chat_client=_StubChatClient())
+    mgr = StandardMagenticManager(agent=_StubManagerAgent())
 
     async def fake_complete_plan(messages: list[ChatMessage], **kwargs: Any) -> ChatMessage:
         # Return a different response depending on call order length
@@ -441,7 +489,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
 
 
 async def test_standard_manager_progress_ledger_success_and_error():
-    mgr = StandardMagenticManager(chat_client=_StubChatClient())
+    mgr = StandardMagenticManager(agent=_StubManagerAgent())
     ctx = MagenticContext(
         task=ChatMessage(role=Role.USER, text="task"),
         participant_descriptions={"alice": "desc"},
@@ -556,8 +604,12 @@ async def _collect_agent_responses_setup(participant_obj: object):
         events.append(ev)
         if isinstance(ev, WorkflowOutputEvent):
             break
-        if isinstance(ev, MagenticAgentMessageEvent) and ev.message is not None:
-            captured.append(ev.message)
+        if isinstance(ev, AgentRunUpdateEvent) and ev.data is not None:
+            captured.append(
+                ChatMessage(
+                    role=ev.data.role or Role.ASSISTANT, text=ev.data.text or "", author_name=ev.data.author_name
+                )
+            )
         if len(events) > 50:
             break
 
@@ -674,7 +726,7 @@ async def test_magentic_checkpoint_resume_rejects_participant_renames():
 
     req_event: RequestInfoEvent | None = None
     async for event in workflow.run_stream("task"):
-        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
+        if isinstance(event, RequestInfoEvent) and event.request_type is MagenticHumanInterventionRequest:
             req_event = event
 
     assert req_event is not None
@@ -737,9 +789,11 @@ async def test_magentic_stall_and_reset_successfully():
     assert idle_status is not None
     output_event = next((e for e in events if isinstance(e, WorkflowOutputEvent)), None)
     assert output_event is not None
-    assert isinstance(output_event.data, ChatMessage)
-    assert output_event.data.text is not None
-    assert output_event.data.text == "re-ledger"
+    assert isinstance(output_event.data, list)
+    assert all(isinstance(msg, ChatMessage) for msg in output_event.data)
+    assert len(output_event.data) > 0
+    assert output_event.data[-1].text is not None
+    assert output_event.data[-1].text == "re-ledger"
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:

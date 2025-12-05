@@ -6,10 +6,12 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentThread
+from agent_framework import AgentRunResponse, AgentThread, ChatMessage
+from azure.durable_functions.models.Task import TaskBase, TaskState
 
 from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
 from agent_framework_azurefunctions._models import AgentSessionId, DurableAgentThread
+from agent_framework_azurefunctions._orchestration import AgentTask
 
 
 def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
@@ -19,6 +21,169 @@ def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
         agent.name = name
         app.add_agent(agent)
     return app
+
+
+class _FakeTask(TaskBase):
+    """Concrete TaskBase for testing AgentTask wiring."""
+
+    def __init__(self, task_id: int = 1):
+        super().__init__(task_id, [])
+        self._set_is_scheduled(False)
+        self.action_repr = []
+        self.state = TaskState.RUNNING
+
+
+def _create_entity_task(task_id: int = 1) -> TaskBase:
+    """Create a minimal TaskBase instance for AgentTask tests."""
+    return _FakeTask(task_id)
+
+
+class TestAgentResponseHelpers:
+    """Tests for helper utilities that prepare AgentRunResponse values."""
+
+    @staticmethod
+    def _create_agent_task() -> AgentTask:
+        entity_task = _create_entity_task()
+        return AgentTask(entity_task, None, "correlation-id")
+
+    def test_load_agent_response_from_instance(self) -> None:
+        task = self._create_agent_task()
+        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"foo": "bar"}')])
+
+        loaded = task._load_agent_response(response)
+
+        assert loaded is response
+        assert loaded.value is None
+
+    def test_load_agent_response_from_serialized(self) -> None:
+        task = self._create_agent_task()
+        serialized = AgentRunResponse(messages=[ChatMessage(role="assistant", text="structured")]).to_dict()
+        serialized["value"] = {"answer": 42}
+
+        loaded = task._load_agent_response(serialized)
+
+        assert loaded is not None
+        assert loaded.value == {"answer": 42}
+        loaded_dict = loaded.to_dict()
+        assert loaded_dict["type"] == "agent_run_response"
+
+    def test_load_agent_response_rejects_none(self) -> None:
+        task = self._create_agent_task()
+
+        with pytest.raises(ValueError):
+            task._load_agent_response(None)
+
+    def test_load_agent_response_rejects_unsupported_type(self) -> None:
+        task = self._create_agent_task()
+
+        with pytest.raises(TypeError, match="Unsupported type"):
+            task._load_agent_response(["invalid", "list"])  # type: ignore[arg-type]
+
+    def test_try_set_value_success(self) -> None:
+        """Test try_set_value correctly processes successful task completion."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate successful entity task completion
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")]).to_dict()
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task completed successfully with AgentRunResponse
+        assert task.state == TaskState.SUCCEEDED
+        assert isinstance(task.result, AgentRunResponse)
+        assert task.result.text == "Test response"
+
+    def test_try_set_value_failure(self) -> None:
+        """Test try_set_value correctly handles failed task completion."""
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, None, "correlation-id")
+
+        # Simulate failed entity task
+        entity_task.state = TaskState.FAILED
+        entity_task.result = Exception("Entity call failed")
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task failed with the error
+        assert task.state == TaskState.FAILED
+        assert isinstance(task.result, Exception)
+        assert str(task.result) == "Entity call failed"
+
+    def test_try_set_value_with_response_format(self) -> None:
+        """Test try_set_value parses structured output when response_format is provided."""
+        from pydantic import BaseModel
+
+        class TestSchema(BaseModel):
+            answer: str
+
+        entity_task = _create_entity_task()
+        task = AgentTask(entity_task, TestSchema, "correlation-id")
+
+        # Simulate successful entity task with JSON response
+        entity_task.state = TaskState.SUCCEEDED
+        entity_task.result = AgentRunResponse(
+            messages=[ChatMessage(role="assistant", text='{"answer": "42"}')]
+        ).to_dict()
+
+        # Clear pending_tasks to simulate that parent has processed the child
+        task.pending_tasks.clear()
+
+        # Call try_set_value
+        task.try_set_value(entity_task)
+
+        # Verify task completed and value was parsed
+        assert task.state == TaskState.SUCCEEDED
+        assert isinstance(task.result, AgentRunResponse)
+        assert isinstance(task.result.value, TestSchema)
+        assert task.result.value.answer == "42"
+
+    def test_ensure_response_format_parses_value(self) -> None:
+        """Test _ensure_response_format correctly parses response value."""
+        from pydantic import BaseModel
+
+        class SampleSchema(BaseModel):
+            name: str
+
+        task = self._create_agent_task()
+        response = AgentRunResponse(messages=[ChatMessage(role="assistant", text='{"name": "test"}')])
+
+        # Value should be None initially
+        assert response.value is None
+
+        # Parse the value
+        task._ensure_response_format(SampleSchema, "test-correlation", response)
+
+        # Value should now be parsed
+        assert isinstance(response.value, SampleSchema)
+        assert response.value.name == "test"
+
+    def test_ensure_response_format_skips_if_already_parsed(self) -> None:
+        """Test _ensure_response_format does not re-parse if value already matches format."""
+        from pydantic import BaseModel
+
+        class SampleSchema(BaseModel):
+            name: str
+
+        task = self._create_agent_task()
+        existing_value = SampleSchema(name="existing")
+        response = AgentRunResponse(
+            messages=[ChatMessage(role="assistant", text='{"name": "new"}')],
+            value=existing_value,
+        )
+
+        # Call _ensure_response_format
+        task._ensure_response_format(SampleSchema, "test-correlation", response)
+
+        # Value should remain unchanged (not re-parsed)
+        assert response.value is existing_value
+        assert response.value.name == "existing"
 
 
 class TestDurableAIAgent:
@@ -111,22 +276,19 @@ class TestDurableAIAgent:
         mock_context.instance_id = "test-instance-001"
         mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
 
-        # Mock call_entity to return a Task-like object
-        mock_task = Mock()
-        mock_task._is_scheduled = False  # Task attribute that orchestration checks
-
-        mock_context.call_entity = Mock(return_value=mock_task)
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
 
         agent = DurableAIAgent(mock_context, "TestAgent")
 
         # Create thread
         thread = agent.get_new_thread()
 
-        # Call run() - it should return the Task directly
+        # Call run() - returns AgentTask directly
         task = agent.run(messages="Test message", thread=thread, enable_tool_calls=True)
 
-        # Verify run() returns the Task from call_entity
-        assert task == mock_task
+        assert isinstance(task, AgentTask)
+        assert task.children[0] == entity_task
 
         # Verify call_entity was called with correct parameters
         assert mock_context.call_entity.called
@@ -136,35 +298,56 @@ class TestDurableAIAgent:
         assert operation == "run_agent"
         assert request["message"] == "Test message"
         assert request["enable_tool_calls"] is True
-        assert "correlation_id" in request
-        assert request["correlation_id"] == "correlation-guid"
+        assert "correlationId" in request
+        assert request["correlationId"] == "correlation-guid"
         assert "thread_id" in request
         assert request["thread_id"] == "thread-guid"
+        # Verify orchestration ID is set from context.instance_id
+        assert "orchestrationId" in request
+        assert request["orchestrationId"] == "test-instance-001"
+
+    def test_run_sets_orchestration_id(self) -> None:
+        """Test that run() sets the orchestration_id from context.instance_id."""
+        mock_context = Mock()
+        mock_context.instance_id = "my-orchestration-123"
+        mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
+
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
+
+        agent = DurableAIAgent(mock_context, "TestAgent")
+        thread = agent.get_new_thread()
+
+        agent.run(messages="Test", thread=thread)
+
+        call_args = mock_context.call_entity.call_args
+        request = call_args[0][2]
+
+        assert request["orchestrationId"] == "my-orchestration-123"
 
     def test_run_without_thread(self) -> None:
         """Test that run() works without explicit thread (creates unique session key)."""
         mock_context = Mock()
         mock_context.instance_id = "test-instance-002"
-        # Two calls to new_uuid: one for session_key, one for correlation_id
         mock_context.new_uuid = Mock(side_effect=["auto-generated-guid", "correlation-guid"])
 
-        mock_task = Mock()
-        mock_task._is_scheduled = False
-        mock_context.call_entity = Mock(return_value=mock_task)
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
 
         agent = DurableAIAgent(mock_context, "TestAgent")
 
         # Call without thread
         task = agent.run(messages="Test message")
 
-        assert task == mock_task
+        assert isinstance(task, AgentTask)
+        assert task.children[0] == entity_task
 
         # Verify the entity ID uses the auto-generated GUID with dafx- prefix
         call_args = mock_context.call_entity.call_args
         entity_id = call_args[0][0]
         assert entity_id.name == "dafx-TestAgent"
         assert entity_id.key == "auto-generated-guid"
-        # Should be called twice: once for session_key, once for correlation_id
+        # Should be called twice: once for session_key, once for correlationId
         assert mock_context.new_uuid.call_count == 2
 
     def test_run_with_response_format(self) -> None:
@@ -172,9 +355,8 @@ class TestDurableAIAgent:
         mock_context = Mock()
         mock_context.instance_id = "test-instance-003"
 
-        mock_task = Mock()
-        mock_task._is_scheduled = False
-        mock_context.call_entity = Mock(return_value=mock_task)
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
 
         agent = DurableAIAgent(mock_context, "TestAgent")
 
@@ -188,7 +370,8 @@ class TestDurableAIAgent:
 
         task = agent.run(messages="Test message", thread=thread, response_format=SampleSchema)
 
-        assert task == mock_task
+        assert isinstance(task, AgentTask)
+        assert task.children[0] == entity_task
 
         # Verify schema was passed in the call_entity arguments
         call_args = mock_context.call_entity.call_args
@@ -221,8 +404,8 @@ class TestDurableAIAgent:
 
         mock_context = Mock()
         mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
-        mock_task = Mock()
-        mock_context.call_entity = Mock(return_value=mock_task)
+        entity_task = _create_entity_task()
+        mock_context.call_entity = Mock(return_value=entity_task)
 
         agent = DurableAIAgent(mock_context, "TestAgent")
         thread = agent.get_new_thread()
@@ -231,7 +414,8 @@ class TestDurableAIAgent:
         msg = ChatMessage(role="user", text="Hello")
         task = agent.run(messages=msg, thread=thread)
 
-        assert task == mock_task
+        assert isinstance(task, AgentTask)
+        assert task.children[0] == entity_task
 
         # Verify message was converted to string
         call_args = mock_context.call_entity.call_args
@@ -255,7 +439,7 @@ class TestDurableAIAgent:
 
         mock_context = Mock()
         mock_context.new_uuid = Mock(return_value="test-guid-789")
-        mock_context.call_entity = Mock(return_value=Mock())
+        mock_context.call_entity = Mock(return_value=_create_entity_task())
 
         agent = DurableAIAgent(mock_context, "WriterAgent")
         thread = agent.get_new_thread()
@@ -307,20 +491,16 @@ class TestOrchestrationIntegration:
         mock_context.instance_id = "test-orchestration-001"
         # new_uuid will be called 3 times:
         # 1. thread creation
-        # 2. correlation_id for first call
-        # 3. correlation_id for second call
+        # 2. correlationId for first call
+        # 3. correlationId for second call
         mock_context.new_uuid = Mock(side_effect=["deterministic-guid-001", "corr-1", "corr-2"])
 
         # Track entity calls
         entity_calls: list[dict[str, Any]] = []
 
-        def mock_call_entity_side_effect(entity_id: Any, operation: str, input_data: dict[str, Any]) -> Mock:
+        def mock_call_entity_side_effect(entity_id: Any, operation: str, input_data: dict[str, Any]) -> TaskBase:
             entity_calls.append({"entity_id": str(entity_id), "operation": operation, "input": input_data})
-
-            # Return a mock Task
-            mock_task = Mock()
-            mock_task._is_scheduled = False
-            return mock_task
+            return _create_entity_task()
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
@@ -330,13 +510,13 @@ class TestOrchestrationIntegration:
         # Create thread
         thread = agent.get_new_thread()
 
-        # First call - returns Task
+        # First call - returns AgentTask
         task1 = agent.run("Write something", thread=thread)
-        assert hasattr(task1, "_is_scheduled")
+        assert isinstance(task1, AgentTask)
 
-        # Second call - returns Task
+        # Second call - returns AgentTask
         task2 = agent.run("Improve: something", thread=thread)
-        assert hasattr(task2, "_is_scheduled")
+        assert isinstance(task2, AgentTask)
 
         # Verify both calls used the same entity (same session key)
         assert len(entity_calls) == 2
@@ -356,11 +536,9 @@ class TestOrchestrationIntegration:
 
         entity_calls: list[str] = []
 
-        def mock_call_entity_side_effect(entity_id: Any, operation: str, input_data: dict[str, Any]) -> Mock:
+        def mock_call_entity_side_effect(entity_id: Any, operation: str, input_data: dict[str, Any]) -> TaskBase:
             entity_calls.append(str(entity_id))
-            mock_task = Mock()
-            mock_task._is_scheduled = False
-            return mock_task
+            return _create_entity_task()
 
         mock_context.call_entity = Mock(side_effect=mock_call_entity_side_effect)
 
@@ -371,12 +549,12 @@ class TestOrchestrationIntegration:
         writer_thread = writer.get_new_thread()
         editor_thread = editor.get_new_thread()
 
-        # Call both agents - returns Tasks
+        # Call both agents - returns AgentTasks
         writer_task = writer.run("Write", thread=writer_thread)
         editor_task = editor.run("Edit", thread=editor_thread)
 
-        assert hasattr(writer_task, "_is_scheduled")
-        assert hasattr(editor_task, "_is_scheduled")
+        assert isinstance(writer_task, AgentTask)
+        assert isinstance(editor_task, AgentTask)
 
         # Verify different entity IDs were used
         assert len(entity_calls) == 2

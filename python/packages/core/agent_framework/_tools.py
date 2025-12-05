@@ -614,6 +614,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             **kwargs,
         )
         self.func = func
+        self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
@@ -626,11 +627,46 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.invocation_exception_count = 0
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
+        self._forward_runtime_kwargs: bool = False
 
     @property
     def declaration_only(self) -> bool:
         """Indicate whether the function is declaration only (i.e., has no implementation)."""
+        # Check for explicit _declaration_only attribute first (used in tests)
+        if hasattr(self, "_declaration_only") and self._declaration_only:
+            return True
         return self.func is None
+
+    def __get__(self, obj: Any, objtype: type | None = None) -> "AIFunction[ArgsT, ReturnT]":
+        """Implement the descriptor protocol to support bound methods.
+
+        When an AIFunction is accessed as an attribute of a class instance,
+        this method is called to bind the instance to the function.
+
+        Args:
+            obj: The instance that owns the descriptor, or None for class access.
+            objtype: The type that owns the descriptor.
+
+        Returns:
+            A new AIFunction with the instance bound to the wrapped function.
+        """
+        if obj is None:
+            # Accessed from the class, not an instance
+            return self
+
+        # Check if the wrapped function is a method (has 'self' parameter)
+        if self.func is not None:
+            sig = inspect.signature(self.func)
+            params = list(sig.parameters.keys())
+            if params and params[0] in {"self", "cls"}:
+                # Create a new AIFunction with the bound method
+                import copy
+
+                bound_func = copy.copy(self)
+                bound_func._instance = obj
+                return bound_func
+
+        return self
 
     def _resolve_input_model(self, input_model: type[ArgsT] | Mapping[str, Any] | None) -> type[ArgsT]:
         """Resolve the input model for the function."""
@@ -646,7 +682,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
     def __call__(self, *args: Any, **kwargs: Any) -> ReturnT | Awaitable[ReturnT]:
         """Call the wrapped function with the provided arguments."""
-        if self.func is None:
+        if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         if self.max_invocations is not None and self.invocation_count >= self.max_invocations:
             raise ToolException(
@@ -662,7 +698,10 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
             )
         self.invocation_count += 1
         try:
-            return self.func(*args, **kwargs)
+            # If we have a bound instance, call the function with self
+            if self._instance is not None:
+                return self.func(self._instance, *args, **kwargs)
+            return self.func(*args, **kwargs)  # type:ignore[misc]
         except Exception:
             self.invocation_exception_count += 1
             raise
@@ -690,11 +729,16 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         global OBSERVABILITY_SETTINGS
         from .observability import OBSERVABILITY_SETTINGS
 
-        tool_call_id = kwargs.pop("tool_call_id", None)
+        original_kwargs = dict(kwargs)
+        tool_call_id = original_kwargs.pop("tool_call_id", None)
         if arguments is not None:
             if not isinstance(arguments, self.input_model):
                 raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
             kwargs = arguments.model_dump(exclude_none=True)
+            if getattr(self, "_forward_runtime_kwargs", False) and original_kwargs:
+                kwargs.update(original_kwargs)
+        else:
+            kwargs = original_kwargs
         if not OBSERVABILITY_SETTINGS.ENABLED:  # type: ignore[name-defined]
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {kwargs}")
@@ -858,6 +902,12 @@ def _parse_annotation(annotation: Any) -> Any:
 
 def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[BaseModel]:
     """Create a Pydantic model from a function's signature."""
+    # Unwrap AIFunction objects to get the underlying function
+    from agent_framework._tools import AIFunction
+
+    if isinstance(func, AIFunction):
+        func = func.func  # type: ignore[assignment]
+
     sig = inspect.signature(func)
     fields = {
         pname: (
@@ -1228,15 +1278,20 @@ async def _auto_invoke_function(
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
-    # Merge with user-supplied args; right-hand side dominates, so parsed args win on conflicts.
-    merged_args: dict[str, Any] = (custom_args or {}) | parsed_args
+    # Filter out internal framework kwargs before passing to tools.
+    runtime_kwargs: dict[str, Any] = {
+        key: value
+        for key, value in (custom_args or {}).items()
+        if key not in {"_function_middleware_pipeline", "middleware"}
+    }
     try:
-        args = tool.input_model.model_validate(merged_args)
+        args = tool.input_model.model_validate(parsed_args)
     except ValidationError as exc:
         message = "Error: Argument parsing failed."
         if config.include_detailed_errors:
             message = f"{message} Exception: {exc}"
         return FunctionResultContent(call_id=function_call_content.call_id, result=message, exception=exc)
+
     if not middleware_pipeline or (
         not hasattr(middleware_pipeline, "has_middlewares") and not middleware_pipeline.has_middlewares
     ):
@@ -1245,7 +1300,8 @@ async def _auto_invoke_function(
             function_result = await tool.invoke(
                 arguments=args,
                 tool_call_id=function_call_content.call_id,
-            )  # type: ignore[arg-type]
+                **runtime_kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
+            )
             return FunctionResultContent(
                 call_id=function_call_content.call_id,
                 result=function_result,
@@ -1261,13 +1317,14 @@ async def _auto_invoke_function(
     middleware_context = FunctionInvocationContext(
         function=tool,
         arguments=args,
-        kwargs=custom_args or {},
+        kwargs=runtime_kwargs.copy(),
     )
 
     async def final_function_handler(context_obj: Any) -> Any:
         return await tool.invoke(
             arguments=context_obj.arguments,
             tool_call_id=function_call_content.call_id,
+            **context_obj.kwargs if getattr(tool, "_forward_runtime_kwargs", False) else {},
         )
 
     try:

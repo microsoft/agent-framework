@@ -2,8 +2,6 @@
 
 """Agent Framework entity discovery implementation."""
 
-from __future__ import annotations
-
 import ast
 import importlib
 import importlib.util
@@ -231,6 +229,15 @@ class EntityDiscovery:
         Args:
             entity_id: Entity identifier to invalidate
         """
+        # Check if entity is in-memory - these cannot be invalidated
+        entity_info = self._entities.get(entity_id)
+        if entity_info and entity_info.source == "in_memory":
+            logger.warning(
+                f"Attempted to invalidate in-memory entity {entity_id} - ignoring "
+                f"(in-memory entities cannot be reloaded)"
+            )
+            return
+
         # Remove from loaded objects cache
         if entity_id in self._loaded_objects:
             del self._loaded_objects[entity_id]
@@ -368,6 +375,7 @@ class EntityDiscovery:
             description=description,
             type=entity_type,
             framework="agent_framework",
+            source=source,  # IMPORTANT: Pass the source parameter
             tools=[str(tool) for tool in (tools_list or [])],
             instructions=instructions,
             model_id=model,

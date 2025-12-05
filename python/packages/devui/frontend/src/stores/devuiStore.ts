@@ -59,6 +59,7 @@ interface DevUIState {
   debugPanelWidth: number;
   debugEvents: ExtendedResponseStreamEvent[];
   isResizing: boolean;
+  showToolCalls: boolean; // UI setting to show/hide tool calls in chat
 
   // Modal Slice
   showAboutModal: boolean;
@@ -86,6 +87,7 @@ interface DevUIState {
     deployment: boolean;
   };
   authRequired: boolean;
+  serverVersion: string | null;
 
   // Deployment Slice
   isDeploying: boolean;
@@ -143,6 +145,7 @@ interface DevUIActions {
   addDebugEvent: (event: ExtendedResponseStreamEvent) => void;
   clearDebugEvents: () => void;
   setIsResizing: (resizing: boolean) => void;
+  setShowToolCalls: (show: boolean) => void;
 
   // Modal Actions
   setShowAboutModal: (show: boolean) => void;
@@ -163,7 +166,7 @@ interface DevUIActions {
   toggleOAIMode: () => void;
 
   // Server Meta Actions
-  setServerMeta: (meta: { uiMode: "developer" | "user"; runtime: "python" | "dotnet"; capabilities: { tracing: boolean; openai_proxy: boolean; deployment: boolean }; authRequired: boolean }) => void;
+  setServerMeta: (meta: { uiMode: "developer" | "user"; runtime: "python" | "dotnet"; capabilities: { tracing: boolean; openai_proxy: boolean; deployment: boolean }; authRequired: boolean; version?: string }) => void;
 
   // Deployment Actions
   startDeployment: () => void;
@@ -224,6 +227,7 @@ export const useDevUIStore = create<DevUIStore>()(
         debugPanelWidth: 320,
         debugEvents: [],
         isResizing: false,
+        showToolCalls: true, // Default to showing tool calls
 
         // Modal State
         showAboutModal: false,
@@ -249,6 +253,7 @@ export const useDevUIStore = create<DevUIStore>()(
           deployment: false,
         },
         authRequired: false,
+        serverVersion: null,
 
         // Deployment State
         isDeploying: false,
@@ -365,6 +370,7 @@ export const useDevUIStore = create<DevUIStore>()(
         setShowDebugPanel: (show) => set({ showDebugPanel: show }),
         setDebugPanelMinimized: (minimized) => set({ debugPanelMinimized: minimized }),
         setDebugPanelWidth: (width) => set({ debugPanelWidth: width }),
+        setShowToolCalls: (show) => set({ showToolCalls: show }),
         addDebugEvent: (event) =>
           set((state) => {
             // Generate unique timestamp for each event
@@ -512,6 +518,7 @@ export const useDevUIStore = create<DevUIStore>()(
             runtime: meta.runtime,
             serverCapabilities: meta.capabilities,
             authRequired: meta.authRequired,
+            serverVersion: meta.version || null,
           }),
 
         // ========================================
@@ -597,6 +604,7 @@ export const useDevUIStore = create<DevUIStore>()(
           showDebugPanel: state.showDebugPanel,
           debugPanelMinimized: state.debugPanelMinimized,
           debugPanelWidth: state.debugPanelWidth,
+          showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
         }),

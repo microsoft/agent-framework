@@ -38,7 +38,7 @@ static Task<IEnumerable<TextSearchProvider.TextSearchResult>> MockSearchAsync(st
 {
     // The mock search inspects the user's question and returns pre-defined snippets
     // that resemble documents stored in an external knowledge source.
-    List<TextSearchProvider.TextSearchResult> results = new();
+    List<TextSearchProvider.TextSearchResult> results = [];
 
     if (query.Contains("return", StringComparison.OrdinalIgnoreCase) || query.Contains("refund", StringComparison.OrdinalIgnoreCase))
     {

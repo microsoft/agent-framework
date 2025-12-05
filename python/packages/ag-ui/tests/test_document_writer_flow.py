@@ -2,7 +2,7 @@
 
 """Tests for document writer predictive state flow with confirm_changes."""
 
-from ag_ui.core import EventType
+from ag_ui.core import EventType, StateDeltaEvent, ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
 from agent_framework import FunctionCallContent, FunctionResultContent, TextContent
 from agent_framework._types import AgentRunResponseUpdate
 
@@ -35,16 +35,12 @@ async def test_streaming_document_with_state_deltas():
     assert any(e.type == EventType.TOOL_CALL_ARGS for e in events1)
 
     # Second chunk - incomplete JSON, should try partial extraction
-    tool_call_chunk2 = FunctionCallContent(
-        call_id="call_123",
-        name=None,  # Name only in first chunk
-        arguments=" upon a time",
-    )
+    tool_call_chunk2 = FunctionCallContent(call_id="call_123", name="write_document_local", arguments=" upon a time")
     update2 = AgentRunResponseUpdate(contents=[tool_call_chunk2])
     events2 = await bridge.from_agent_run_update(update2)
 
     # Should emit StateDeltaEvent with partial document
-    state_deltas = [e for e in events2 if e.type == EventType.STATE_DELTA]
+    state_deltas = [e for e in events2 if isinstance(e, StateDeltaEvent)]
     assert len(state_deltas) >= 1
 
     # Check JSON Patch format
@@ -62,7 +58,7 @@ async def test_confirm_changes_emission():
         "document": {"tool": "write_document_local", "tool_argument": "document"},
     }
 
-    current_state = {}
+    current_state: dict[str, str] = {}
 
     bridge = AgentFrameworkEventBridge(
         run_id="test_run",
@@ -90,15 +86,13 @@ async def test_confirm_changes_emission():
     assert any(e.type == EventType.STATE_SNAPSHOT for e in events)
 
     # Check for confirm_changes tool call
-    confirm_starts = [
-        e for e in events if e.type == EventType.TOOL_CALL_START and e.tool_call_name == "confirm_changes"
-    ]
+    confirm_starts = [e for e in events if isinstance(e, ToolCallStartEvent) and e.tool_call_name == "confirm_changes"]
     assert len(confirm_starts) == 1
 
-    confirm_args = [e for e in events if e.type == EventType.TOOL_CALL_ARGS and e.delta == "{}"]
+    confirm_args = [e for e in events if isinstance(e, ToolCallArgsEvent) and e.delta == "{}"]
     assert len(confirm_args) >= 1
 
-    confirm_ends = [e for e in events if e.type == EventType.TOOL_CALL_END]
+    confirm_ends = [e for e in events if isinstance(e, ToolCallEndEvent)]
     # At least 2: one for write_document_local, one for confirm_changes
     assert len(confirm_ends) >= 2
 
@@ -141,7 +135,7 @@ async def test_no_confirm_for_non_predictive_tools():
         "document": {"tool": "write_document_local", "tool_argument": "document"},
     }
 
-    current_state = {}
+    current_state: dict[str, str] = {}
 
     bridge = AgentFrameworkEventBridge(
         run_id="test_run",
@@ -162,9 +156,7 @@ async def test_no_confirm_for_non_predictive_tools():
     events = await bridge.from_agent_run_update(update)
 
     # Should NOT have confirm_changes
-    confirm_starts = [
-        e for e in events if e.type == EventType.TOOL_CALL_START and e.tool_call_name == "confirm_changes"
-    ]
+    confirm_starts = [e for e in events if isinstance(e, ToolCallStartEvent) and e.tool_call_name == "confirm_changes"]
     assert len(confirm_starts) == 0
 
     # Stop flag should NOT be set
@@ -193,14 +185,14 @@ async def test_state_delta_deduplication():
     events1 = await bridge.from_agent_run_update(update1)
 
     # Count state deltas
-    state_deltas_1 = [e for e in events1 if e.type == EventType.STATE_DELTA]
+    state_deltas_1 = [e for e in events1 if isinstance(e, StateDeltaEvent)]
     assert len(state_deltas_1) >= 1
 
     # Second tool call with SAME document (shouldn't emit new delta)
     bridge.current_tool_call_name = "write_document_local"
     tool_call2 = FunctionCallContent(
         call_id="call_2",
-        name=None,
+        name="write_document_local",
         arguments='{"document":"Same text"}',  # Identical content
     )
     update2 = AgentRunResponseUpdate(contents=[tool_call2])
@@ -234,7 +226,7 @@ async def test_predict_state_config_multiple_fields():
     events = await bridge.from_agent_run_update(update)
 
     # Should emit StateDeltaEvent for both fields
-    state_deltas = [e for e in events if e.type == EventType.STATE_DELTA]
+    state_deltas = [e for e in events if isinstance(e, StateDeltaEvent)]
     assert len(state_deltas) >= 2
 
     # Check both fields are present

@@ -4,7 +4,7 @@ description = "OpenAI ChatKit integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251114"
+version = "1.0.0b251204"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "openai-chatkit>=1.1.0,<2.0.0",
+    "openai-chatkit>=1.4.0,<2.0.0",
 ]
 
 [tool.uv]

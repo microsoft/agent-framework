@@ -15,7 +15,7 @@ This sample demonstrates how to use the computer use tool with AI agents. The co
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure Foundry service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
@@ -24,8 +24,8 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="computer-use-preview"  # Optional, defaults to computer-use-preview
+$env:AZURE_FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project" # Replace with your Azure Foundry resource endpoint
+$env:AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME="computer-use-preview"  # Optional, defaults to computer-use-preview
 ```
 
 ## Run the sample

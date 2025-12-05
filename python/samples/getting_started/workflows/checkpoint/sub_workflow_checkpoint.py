@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, override
 
 from agent_framework import (
     Executor,
@@ -205,6 +206,8 @@ class LaunchCoordinator(Executor):
 
     def __init__(self) -> None:
         super().__init__(id="launch_coordinator")
+        # Track pending requests to match responses
+        self._pending_requests: dict[str, SubWorkflowRequestMessage] = {}
 
     @handler
     async def kick_off(self, topic: str, ctx: WorkflowContext[DraftTask]) -> None:
@@ -244,11 +247,9 @@ class LaunchCoordinator(Executor):
         if not isinstance(request.source_event.data, ReviewRequest):
             raise TypeError(f"Expected 'ReviewRequest', got {type(request.source_event.data)}")
 
-        # Record the request to response matching
+        # Record the request for response matching
         review_request = request.source_event.data
-        executor_state = await ctx.get_executor_state() or {}
-        executor_state[review_request.id] = request
-        await ctx.set_executor_state(executor_state)
+        self._pending_requests[review_request.id] = request
 
         # Send the request without modification
         await ctx.request_info(request_data=review_request, response_type=str)
@@ -265,16 +266,24 @@ class LaunchCoordinator(Executor):
         Note that the response must be sent back using SubWorkflowResponseMessage to route
         the response back to the sub-workflow.
         """
-        executor_state = await ctx.get_executor_state() or {}
-        request_message = executor_state.pop(original_request.id, None)
-
-        # Save the executor state back to the context
-        await ctx.set_executor_state(executor_state)
+        request_message = self._pending_requests.pop(original_request.id, None)
 
         if request_message is None:
             raise ValueError("No matching pending request found for the resource response")
 
         await ctx.send_message(request_message.create_response(response))
+
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Capture any additional state needed for checkpointing."""
+        return {
+            "pending_requests": self._pending_requests,
+        }
+
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Restore any additional state needed from checkpointing."""
+        self._pending_requests = state.get("pending_requests", {})
 
 
 # ---------------------------------------------------------------------------
@@ -283,16 +292,16 @@ class LaunchCoordinator(Executor):
 
 
 def build_sub_workflow() -> WorkflowExecutor:
-    writer = DraftWriter()
-    router = DraftReviewRouter()
-    finaliser = DraftFinaliser()
-
+    """Assemble the sub-workflow used by the parent workflow executor."""
     sub_workflow = (
         WorkflowBuilder()
-        .set_start_executor(writer)
-        .add_edge(writer, router)
-        .add_edge(router, finaliser)
-        .add_edge(finaliser, writer)  # permits revision loops
+        .register_executor(DraftWriter, name="writer")
+        .register_executor(DraftReviewRouter, name="router")
+        .register_executor(DraftFinaliser, name="finaliser")
+        .set_start_executor("writer")
+        .add_edge("writer", "router")
+        .add_edge("router", "finaliser")
+        .add_edge("finaliser", "writer")  # permits revision loops
         .build()
     )
 
@@ -300,14 +309,14 @@ def build_sub_workflow() -> WorkflowExecutor:
 
 
 def build_parent_workflow(storage: FileCheckpointStorage) -> Workflow:
-    coordinator = LaunchCoordinator()
-    sub_executor = build_sub_workflow()
-
+    """Assemble the parent workflow that embeds the sub-workflow."""
     return (
         WorkflowBuilder()
-        .set_start_executor(coordinator)
-        .add_edge(coordinator, sub_executor)
-        .add_edge(sub_executor, coordinator)
+        .register_executor(LaunchCoordinator, name="coordinator")
+        .register_executor(build_sub_workflow, name="sub_executor")
+        .set_start_executor("coordinator")
+        .add_edge("coordinator", "sub_executor")
+        .add_edge("sub_executor", "coordinator")
         .with_checkpointing(storage)
         .build()
     )
@@ -356,9 +365,7 @@ async def main() -> None:
     workflow2 = build_parent_workflow(storage)
 
     request_info_event: RequestInfoEvent | None = None
-    async for event in workflow2.run_stream(
-        resume_checkpoint.checkpoint_id,
-    ):
+    async for event in workflow2.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
         if isinstance(event, RequestInfoEvent):
             request_info_event = event
 

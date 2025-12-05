@@ -112,11 +112,7 @@ public static class PurviewExtensions
     /// <param name="userId">The id of the owner of the message.</param>
     public static void SetUserId(this ChatMessage message, Guid userId)
     {
-        if (message.AdditionalProperties == null)
-        {
-            message.AdditionalProperties = new AdditionalPropertiesDictionary();
-        }
-
+        message.AdditionalProperties ??= [];
         message.AdditionalProperties[Constants.UserId] = userId.ToString();
     }
 }

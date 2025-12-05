@@ -3,13 +3,13 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, override
 
 # NOTE: the Azure client imports above are real dependencies. When running this
 # sample outside of Azure-enabled environments you may wish to swap in the
 # `agent_framework.builtin` chat client or mock the writer executor. We keep the
 # concrete import here so readers can see an end-to-end configuration.
 from agent_framework import (
-    AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
     ChatMessage,
@@ -116,19 +116,19 @@ class ReviewGateway(Executor):
     def __init__(self, id: str, writer_id: str) -> None:
         super().__init__(id=id)
         self._writer_id = writer_id
+        self._iteration = 0
 
     @handler
     async def on_agent_response(self, response: AgentExecutorResponse, ctx: WorkflowContext) -> None:
         # Capture the agent output so we can surface it to the reviewer and persist iterations.
-        draft = response.agent_run_response.text or ""
-        iteration = int((await ctx.get_executor_state() or {}).get("iteration", 0)) + 1
-        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
+        self._iteration += 1
+
         # Emit a human approval request.
         await ctx.request_info(
             request_data=HumanApprovalRequest(
                 prompt="Review the draft. Reply 'approve' or provide edit instructions.",
-                draft=draft,
-                iteration=iteration,
+                draft=response.agent_run_response.text,
+                iteration=self._iteration,
             ),
             response_type=str,
         )
@@ -142,50 +142,55 @@ class ReviewGateway(Executor):
     ) -> None:
         # The `original_request` is the request we sent earlier that is now being answered.
         reply = feedback.strip()
-        state = await ctx.get_executor_state() or {}
-        draft = state.get("last_draft") or (original_request.draft or "")
 
-        if reply.lower() == "approve":
+        if len(reply) == 0 or reply.lower() == "approve":
             # Workflow is completed when the human approves.
-            await ctx.yield_output(draft)
+            await ctx.yield_output(original_request.draft)
             return
 
         # Any other response loops us back to the writer with fresh guidance.
-        guidance = reply or "Tighten the copy and emphasise customer benefit."
-        iteration = int(state.get("iteration", 1)) + 1
-        await ctx.set_executor_state({"iteration": iteration, "last_draft": draft})
         prompt = (
             "Revise the launch note. Respond with the new copy only.\n\n"
-            f"Previous draft:\n{draft}\n\n"
-            f"Human guidance: {guidance}"
+            f"Previous draft:\n{original_request.draft}\n\n"
+            f"Human guidance: {reply}"
         )
         await ctx.send_message(
             AgentExecutorRequest(messages=[ChatMessage(Role.USER, text=prompt)], should_respond=True),
             target_id=self._writer_id,
         )
 
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        # Save the current iteration count in executor state for checkpointing.
+        return {"iteration": self._iteration}
+
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        # Restore the iteration count from executor state during checkpoint recovery.
+        self._iteration = state.get("iteration", 0)
+
 
 def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     """Assemble the workflow graph used by both the initial run and resume."""
-
-    # The Azure client is created once so our agent executor can issue calls to the hosted
-    # model. The agent id is stable across runs which keeps checkpoints deterministic.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    agent = chat_client.create_agent(instructions="Write concise, warm release notes that sound human and helpful.")
-
-    writer = AgentExecutor(agent, id="writer")
-    gateway = ReviewGateway(id="review_gateway", writer_id=writer.id)
-    prepare = BriefPreparer(id="prepare_brief", agent_id=writer.id)
-
     # Wire the workflow DAG. Edges mirror the numbered steps described in the
     # module docstring. Because `WorkflowBuilder` is declarative, reading these
     # edges is often the quickest way to understand execution order.
     workflow_builder = (
         WorkflowBuilder(max_iterations=6)
-        .set_start_executor(prepare)
-        .add_edge(prepare, writer)
-        .add_edge(writer, gateway)
-        .add_edge(gateway, writer)  # revisions loop
+        .register_agent(
+            lambda: AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+                instructions="Write concise, warm release notes that sound human and helpful.",
+                # The agent name is stable across runs which keeps checkpoints deterministic.
+                name="writer",
+            ),
+            name="writer",
+        )
+        .register_executor(lambda: ReviewGateway(id="review_gateway", writer_id="writer"), name="review_gateway")
+        .register_executor(lambda: BriefPreparer(id="prepare_brief", agent_id="writer"), name="prepare_brief")
+        .set_start_executor("prepare_brief")
+        .add_edge("prepare_brief", "writer")
+        .add_edge("writer", "review_gateway")
+        .add_edge("review_gateway", "writer")  # revisions loop
         .with_checkpointing(checkpoint_storage=checkpoint_storage)
     )
 
@@ -247,10 +252,10 @@ async def run_interactive_session(
         else:
             if initial_message:
                 print(f"\nStarting workflow with brief: {initial_message}\n")
-                event_stream = workflow.run_stream(initial_message)
+                event_stream = workflow.run_stream(message=initial_message)
             elif checkpoint_id:
                 print("\nStarting workflow from checkpoint...\n")
-                event_stream = workflow.run_stream(checkpoint_id)
+                event_stream = workflow.run_stream(checkpoint_id=checkpoint_id)
             else:
                 raise ValueError("Either initial_message or checkpoint_id must be provided")
 

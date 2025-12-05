@@ -63,7 +63,11 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             return ValueTask.FromResult<ResponseError?>(new ResponseError
             {
                 Code = "agent_not_found",
-                Message = $"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent()."
+                Message = $"""
+                    Agent '{agentName}' not found.
+                    Ensure the agent is registered with '{agentName}' name in the dependency injection container.
+                    We recommend using 'builder.AddAIAgent()' for simplicity.
+                """
             });
         }
 

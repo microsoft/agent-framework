@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251114"
+version = "1.0.0b251204"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,19 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
-    "agent-framework-a2a",
-    "agent-framework-ag-ui",
-    "agent-framework-anthropic",
-    "agent-framework-azure-ai",
-    "agent-framework-azurefunctions",
-    "agent-framework-chatkit",
-    "agent-framework-copilotstudio",
-    "agent-framework-devui",
-    "agent-framework-lab",
-    "agent-framework-mem0",
-    "agent-framework-purview",
-    "agent-framework-redis",
+    "agent-framework-core[all]==1.0.0b251204",
 ]
 
 [dependency-groups]
@@ -83,6 +71,11 @@ override-dependencies = [
   "uvicorn==0.38.0",
   # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
   "websockets==15.0.1",
+  # grpcio 1.67.x has no Python 3.14 wheels; grpcio 1.76.0+ supports Python 3.14
+  # litellm constrains grpcio<1.68.0 due to resource exhaustion bug (https://github.com/grpc/grpc/issues/38290)
+  # Use version-specific overrides to satisfy both constraints
+  "grpcio>=1.76.0; python_version >= '3.14'",
+  "grpcio>=1.62.3,<1.68.0; python_version < '3.14'",
 ]
 
 [tool.uv.workspace]
@@ -93,16 +86,18 @@ agent-framework = { workspace = true }
 agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
+agent-framework-azure-ai-search = { workspace = true }
+agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
+agent-framework-declarative = { workspace = true }
+agent-framework-devui = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
-agent-framework-redis = { workspace = true }
-agent-framework-devui = { workspace = true }
 agent-framework-purview = { workspace = true }
-agent-framework-anthropic = { workspace = true }
+agent-framework-redis = { workspace = true }
 
 [tool.ruff]
 line-length = 120

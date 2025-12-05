@@ -2,6 +2,7 @@
 
 """Unit tests for AgentFunctionApp."""
 
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 from unittest.mock import ANY, AsyncMock, Mock, patch
@@ -9,11 +10,17 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import azure.durable_functions as df
 import azure.functions as func
 import pytest
-from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
 
 from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
-from agent_framework_azurefunctions._entities import AgentEntity, AgentState, create_agent_entity
+from agent_framework_azurefunctions._constants import (
+    MIMETYPE_APPLICATION_JSON,
+    MIMETYPE_TEXT_PLAIN,
+    THREAD_ID_HEADER,
+)
+from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
+from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 
@@ -81,7 +88,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent, callback=specific_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is specific_callback
         assert enable_http_endpoint is True
 
@@ -97,7 +104,7 @@ class TestAgentFunctionAppInit:
             app.add_agent(mock_agent)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -112,7 +119,7 @@ class TestAgentFunctionAppInit:
             AgentFunctionApp(agents=[mock_agent], default_callback=default_callback)
 
         setup_mock.assert_called_once()
-        _, _, passed_callback, enable_http_endpoint = setup_mock.call_args[0]
+        _, _, passed_callback, enable_http_endpoint, enable_mcp_tool_trigger = setup_mock.call_args[0]
         assert passed_callback is default_callback
         assert enable_http_endpoint is True
 
@@ -233,7 +240,7 @@ class TestAgentFunctionAppSetup:
 
         http_route_mock.assert_called_once_with("OverrideAgent")
         agent_entity_mock.assert_called_once_with(mock_agent, "OverrideAgent", ANY)
-        assert app.agent_http_endpoint_flags["OverrideAgent"] is True
+        assert app._agent_metadata["OverrideAgent"].http_endpoint_enabled is True
 
     def test_agent_override_disables_http_route_when_app_enabled(self) -> None:
         """Agent-level override should disable HTTP route even when app enables it."""
@@ -250,7 +257,7 @@ class TestAgentFunctionAppSetup:
 
         http_route_mock.assert_not_called()
         agent_entity_mock.assert_called_once_with(mock_agent, "DisabledOverride", ANY)
-        assert app.agent_http_endpoint_flags["DisabledOverride"] is False
+        assert app._agent_metadata["DisabledOverride"].http_endpoint_enabled is False
 
     def test_multiple_apps_independent(self) -> None:
         """Test that multiple AgentFunctionApp instances are independent."""
@@ -333,14 +340,12 @@ class TestAgentEntityOperations:
 
         result = await entity.run_agent(
             mock_context,
-            {"message": "Test message", "thread_id": "test-conv-123", "correlation_id": "corr-app-entity-1"},
+            {"message": "Test message", "thread_id": "test-conv-123", "correlationId": "corr-app-entity-1"},
         )
 
-        assert result["status"] == "success"
-        assert result["response"] == "Test response"
-        assert result["message"] == "Test message"
-        assert result["thread_id"] == "test-conv-123"
-        assert entity.state.message_count == 1
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Test response"
+        assert entity.state.message_count == 2
 
     async def test_entity_stores_conversation_history(self) -> None:
         """Test that the entity stores conversation history."""
@@ -354,18 +359,29 @@ class TestAgentEntityOperations:
 
         # Send first message
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-2"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-2"}
         )
 
-        history = entity.state.conversation_history
-        assert len(history) == 2  # User + assistant
+        # Each conversation turn creates 2 entries: request and response
+        history = entity.state.data.conversation_history[0].messages  # Request entry
+        assert len(history) == 1  # Just the user message
+
+        # Send second message
+        await entity.run_agent(
+            mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2b"}
+        )
+
+        # Now we have 4 entries total (2 requests + 2 responses)
+        # Access the first request entry
+        history2 = entity.state.data.conversation_history[2].messages  # Second request entry
+        assert len(history2) == 1  # Just the user message
 
         user_msg = history[0]
         user_role = getattr(user_msg.role, "value", user_msg.role)
         assert user_role == "user"
         assert user_msg.text == "Message 1"
 
-        assistant_msg = history[1]
+        assistant_msg = entity.state.data.conversation_history[1].messages[0]
         assistant_role = getattr(assistant_msg.role, "value", assistant_msg.role)
         assert assistant_role == "assistant"
         assert assistant_msg.text == "Response 1"
@@ -380,17 +396,17 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        assert entity.state.message_count == 0
+        assert len(entity.state.data.conversation_history) == 0
 
         await entity.run_agent(
-            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3a"}
+            mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-3a"}
         )
-        assert entity.state.message_count == 1
+        assert len(entity.state.data.conversation_history) == 2
 
         await entity.run_agent(
-            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlation_id": "corr-app-entity-3b"}
+            mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"}
         )
-        assert entity.state.message_count == 2
+        assert len(entity.state.data.conversation_history) == 4
 
     def test_entity_reset(self) -> None:
         """Test that entity reset clears state."""
@@ -398,19 +414,13 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
 
         # Set some state
-        entity.state.message_count = 10
-        entity.state.last_response = "Some response"
-        entity.state.conversation_history = [
-            ChatMessage(role="user", text="test", additional_properties={"timestamp": "2024-01-01T00:00:00Z"})
-        ]
+        entity.state = DurableAgentState()
 
         # Reset
         mock_context = Mock()
         entity.reset(mock_context)
 
-        assert entity.state.message_count == 0
-        assert entity.state.last_response is None
-        assert len(entity.state.conversation_history) == 0
+        assert len(entity.state.data.conversation_history) == 0
 
 
 class TestAgentEntityFactory:
@@ -438,7 +448,7 @@ class TestAgentEntityFactory:
         mock_context.get_input.return_value = {
             "message": "Test message",
             "thread_id": "conv-123",
-            "correlation_id": "corr-app-factory-1",
+            "correlationId": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
 
@@ -458,9 +468,27 @@ class TestAgentEntityFactory:
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = {
-            "message_count": 5,
-            "conversation_history": [{"role": "user", "content": "test"}],
-            "last_response": "Test",
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [
+                    {
+                        "$type": "request",
+                        "correlationId": "corr-reset-test",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "test",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
         }
 
         # Execute entity function
@@ -497,19 +525,53 @@ class TestAgentEntityFactory:
 
         # Mock context with existing state
         existing_state = {
-            "message_count": 3,
-            "conversation_history": [{"role": "user", "content": "msg1"}, {"role": "assistant", "content": "resp1"}],
-            "last_response": "resp1",
+            "schemaVersion": "1.0.0",
+            "data": {
+                "conversationHistory": [
+                    {
+                        "$type": "request",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "msg1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "$type": "response",
+                        "correlationId": "corr-existing-1",
+                        "createdAt": "2024-01-01T00:05:00Z",
+                        "messages": [
+                            {
+                                "role": "assistant",
+                                "contents": [
+                                    {
+                                        "$type": "text",
+                                        "text": "resp1",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            },
         }
 
         mock_context = Mock()
         mock_context.operation_name = "reset"
         mock_context.get_state.return_value = existing_state
 
-        with patch.object(AgentState, "restore_state") as restore_state_mock:
+        with patch.object(DurableAgentState, "from_dict", wraps=DurableAgentState.from_dict) as from_dict_mock:
             entity_function(mock_context)
 
-        restore_state_mock.assert_called_once_with(existing_state)
+        from_dict_mock.assert_called_once_with(existing_state)
 
 
 class TestErrorHandling:
@@ -524,13 +586,15 @@ class TestErrorHandling:
         mock_context = Mock()
 
         result = await entity.run_agent(
-            mock_context, {"message": "Test message", "thread_id": "conv-1", "correlation_id": "corr-app-error-1"}
+            mock_context, {"message": "Test message", "thread_id": "conv-1", "correlationId": "corr-app-error-1"}
         )
 
-        assert result["status"] == "error"
-        assert "error" in result
-        assert "Agent error" in result["error"]
-        assert result["error_type"] == "Exception"
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        content = result.messages[0].contents[0]
+        assert isinstance(content, ErrorContent)
+        assert "Agent error" in (content.message or "")
+        assert content.error_code == "Exception"
 
     def test_entity_function_handles_exception(self) -> None:
         """Test that the entity function handles exceptions gracefully."""
@@ -600,7 +664,7 @@ class TestIncomingRequestParsing:
         app = self._create_app()
 
         request = Mock()
-        request.headers = {"accept": "application/json"}
+        request.headers = {"accept": MIMETYPE_APPLICATION_JSON}
         request.params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
         request.get_body.return_value = b"Plain text message"
@@ -674,8 +738,8 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 202
-        assert response.mimetype == "text/plain"
-        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.mimetype == MIMETYPE_TEXT_PLAIN
+        assert response.headers.get(THREAD_ID_HEADER) is not None
         assert response.get_body().decode("utf-8") == "Agent request accepted"
 
         signal_args = client.signal_entity.call_args[0]
@@ -693,7 +757,7 @@ class TestHttpRunRoute:
         handler = self._get_run_handler(mock_agent)
 
         request = Mock()
-        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": "application/json"}
+        request.headers = {WAIT_FOR_RESPONSE_HEADER: "false", "Accept": MIMETYPE_APPLICATION_JSON}
         request.params = {}
         request.route_params = {}
         request.get_json.side_effect = ValueError("Invalid JSON")
@@ -704,8 +768,8 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 202
-        assert response.mimetype == "application/json"
-        assert response.headers.get("x-ms-thread-id") is None
+        assert response.mimetype == MIMETYPE_APPLICATION_JSON
+        assert response.headers.get(THREAD_ID_HEADER) is None
         body = response.get_body().decode("utf-8")
         assert '"status": "accepted"' in body
 
@@ -728,10 +792,276 @@ class TestHttpRunRoute:
         response = await handler(request, client)
 
         assert response.status_code == 400
-        assert response.mimetype == "text/plain"
-        assert response.headers.get("x-ms-thread-id") is not None
+        assert response.mimetype == MIMETYPE_TEXT_PLAIN
+        assert response.headers.get(THREAD_ID_HEADER) is not None
         assert response.get_body().decode("utf-8") == "Message is required"
         client.signal_entity.assert_not_called()
+
+
+class TestMCPToolEndpoint:
+    """Test suite for MCP tool endpoint functionality."""
+
+    def test_init_with_mcp_tool_endpoint_enabled(self) -> None:
+        """Test initialization with MCP tool endpoint enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_trigger=True)
+
+        assert app.enable_mcp_tool_trigger is True
+
+    def test_init_with_mcp_tool_endpoint_disabled(self) -> None:
+        """Test initialization with MCP tool endpoint disabled (default)."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+
+        assert app.enable_mcp_tool_trigger is False
+
+    def test_add_agent_with_mcp_tool_trigger_enabled(self) -> None:
+        """Test adding an agent with MCP tool trigger explicitly enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "MCPAgent"
+        mock_agent.description = "Test MCP Agent"
+
+        with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
+            app = AgentFunctionApp()
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=True)
+
+        setup_mock.assert_called_once()
+        _, _, _, _, enable_mcp = setup_mock.call_args[0]
+        assert enable_mcp is True
+
+    def test_add_agent_with_mcp_tool_trigger_disabled(self) -> None:
+        """Test adding an agent with MCP tool trigger explicitly disabled."""
+        mock_agent = Mock()
+        mock_agent.name = "NoMCPAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_agent_functions") as setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_trigger=True)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=False)
+
+        setup_mock.assert_called_once()
+        _, _, _, _, enable_mcp = setup_mock.call_args[0]
+        assert enable_mcp is False
+
+    def test_agent_override_enables_mcp_when_app_disabled(self) -> None:
+        """Test that per-agent override can enable MCP when app-level is disabled."""
+        mock_agent = Mock()
+        mock_agent.name = "OverrideAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_trigger=False)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=True)
+
+        mcp_setup_mock.assert_called_once()
+
+    def test_agent_override_disables_mcp_when_app_enabled(self) -> None:
+        """Test that per-agent override can disable MCP when app-level is enabled."""
+        mock_agent = Mock()
+        mock_agent.name = "NoOverrideAgent"
+
+        with patch.object(AgentFunctionApp, "_setup_mcp_tool_trigger") as mcp_setup_mock:
+            app = AgentFunctionApp(enable_mcp_tool_trigger=True)
+            app.add_agent(mock_agent, enable_mcp_tool_trigger=False)
+
+        mcp_setup_mock.assert_not_called()
+
+    def test_setup_mcp_tool_trigger_registers_decorators(self) -> None:
+        """Test that _setup_mcp_tool_trigger registers the correct decorators."""
+        mock_agent = Mock()
+        mock_agent.name = "MCPToolAgent"
+        mock_agent.description = "Test MCP Tool"
+
+        app = AgentFunctionApp()
+
+        # Mock the decorators
+        with (
+            patch.object(app, "function_name") as func_name_mock,
+            patch.object(app, "mcp_tool_trigger") as mcp_trigger_mock,
+            patch.object(app, "durable_client_input") as client_mock,
+        ):
+            # Setup mock decorator chain
+            func_name_mock.return_value = lambda f: f
+            mcp_trigger_mock.return_value = lambda f: f
+            client_mock.return_value = lambda f: f
+
+            app._setup_mcp_tool_trigger(mock_agent.name, mock_agent.description)
+
+            # Verify decorators were called with correct parameters
+            func_name_mock.assert_called_once()
+            mcp_trigger_mock.assert_called_once_with(
+                arg_name="context",
+                tool_name=mock_agent.name,
+                description=mock_agent.description,
+                tool_properties=ANY,
+                data_type=func.DataType.UNDEFINED,
+            )
+            client_mock.assert_called_once_with(client_name="client")
+
+    def test_setup_mcp_tool_trigger_uses_default_description(self) -> None:
+        """Test that _setup_mcp_tool_trigger uses default description when none provided."""
+        mock_agent = Mock()
+        mock_agent.name = "NoDescAgent"
+
+        app = AgentFunctionApp()
+
+        with (
+            patch.object(app, "function_name", return_value=lambda f: f),
+            patch.object(app, "mcp_tool_trigger") as mcp_trigger_mock,
+            patch.object(app, "durable_client_input", return_value=lambda f: f),
+        ):
+            mcp_trigger_mock.return_value = lambda f: f
+
+            app._setup_mcp_tool_trigger(mock_agent.name, None)
+
+            # Verify default description was used
+            call_args = mcp_trigger_mock.call_args
+            assert call_args[1]["description"] == f"Interact with {mock_agent.name} agent"
+
+    async def test_handle_mcp_tool_invocation_with_json_string(self) -> None:
+        """Test _handle_mcp_tool_invocation with JSON string context."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Create JSON string context
+        context = '{"arguments": {"query": "test query", "threadId": "test-thread"}}'
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            result = await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            assert result == "Test response"
+            get_response_mock.assert_called_once()
+
+    async def test_handle_mcp_tool_invocation_with_json_context(self) -> None:
+        """Test _handle_mcp_tool_invocation with JSON string context."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        # Create JSON string context
+        context = json.dumps({"arguments": {"query": "test query", "threadId": "test-thread"}})
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "success", "response": "Test response"}
+
+            result = await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+            assert result == "Test response"
+            get_response_mock.assert_called_once()
+
+    async def test_handle_mcp_tool_invocation_missing_query(self) -> None:
+        """Test _handle_mcp_tool_invocation raises ValueError when query is missing."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Context missing query (as JSON string)
+        context = json.dumps({"arguments": {}})
+
+        with pytest.raises(ValueError, match="missing required 'query' argument"):
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    async def test_handle_mcp_tool_invocation_invalid_json(self) -> None:
+        """Test _handle_mcp_tool_invocation raises ValueError for invalid JSON."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Invalid JSON string
+        context = "not valid json"
+
+        with pytest.raises(ValueError, match="Invalid MCP context format"):
+            await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    async def test_handle_mcp_tool_invocation_runtime_error(self) -> None:
+        """Test _handle_mcp_tool_invocation raises RuntimeError when agent fails."""
+        mock_agent = Mock()
+        mock_agent.name = "TestAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent])
+        client = AsyncMock()
+
+        # Mock the entity response
+        mock_state = Mock()
+        mock_state.entity_state = {
+            "schemaVersion": "1.0.0",
+            "data": {"conversationHistory": []},
+        }
+        client.read_entity_state.return_value = mock_state
+
+        context = '{"arguments": {"query": "test query"}}'
+
+        with patch.object(app, "_get_response_from_entity") as get_response_mock:
+            get_response_mock.return_value = {"status": "failed", "error": "Agent error"}
+
+            with pytest.raises(RuntimeError, match="Agent execution failed"):
+                await app._handle_mcp_tool_invocation("TestAgent", context, client)
+
+    def test_health_check_includes_mcp_tool_enabled(self) -> None:
+        """Test that health check endpoint includes mcp_tool_enabled field."""
+        mock_agent = Mock()
+        mock_agent.name = "HealthAgent"
+
+        app = AgentFunctionApp(agents=[mock_agent], enable_mcp_tool_trigger=True)
+
+        # Capture the health check handler function
+        captured_handler = None
+
+        def capture_decorator(*args, **kwargs):
+            def decorator(func):
+                nonlocal captured_handler
+                captured_handler = func
+                return func
+
+            return decorator
+
+        with patch.object(app, "route", side_effect=capture_decorator):
+            app._setup_health_route()
+
+        # Verify we captured the handler
+        assert captured_handler is not None
+
+        # Call the health handler
+        request = Mock()
+        response = captured_handler(request)
+
+        # Verify response includes mcp_tool_enabled
+        import json
+
+        body = json.loads(response.get_body().decode("utf-8"))
+        assert "agents" in body
+        assert len(body["agents"]) == 1
+        assert "mcp_tool_enabled" in body["agents"][0]
+        assert body["agents"][0]["mcp_tool_enabled"] is True
 
 
 if __name__ == "__main__":

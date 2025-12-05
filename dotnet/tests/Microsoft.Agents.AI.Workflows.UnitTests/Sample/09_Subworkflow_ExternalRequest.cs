@@ -79,7 +79,7 @@ internal static class Step9EntryPoint
 
     public static WorkflowBuilder AddExternalRequest<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, out RequestPort<TRequest, TResponse> inputPort, string? id = null)
     {
-        id = id ?? $"{source.Id}.Requests[{typeof(TRequest).Name}=>{typeof(TResponse).Name}]";
+        id ??= $"{source.Id}.Requests[{typeof(TRequest).Name}=>{typeof(TResponse).Name}]";
 
         inputPort = RequestPort.Create<TRequest, TResponse>(id);
 

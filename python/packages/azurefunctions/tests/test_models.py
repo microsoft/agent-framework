@@ -7,7 +7,7 @@ import pytest
 from agent_framework import Role
 from pydantic import BaseModel
 
-from agent_framework_azurefunctions._models import AgentResponse, AgentSessionId, RunRequest
+from agent_framework_azurefunctions._models import AgentSessionId, RunRequest
 
 
 class ModuleStructuredResponse(BaseModel):
@@ -295,32 +295,32 @@ class TestRunRequest:
         restored = RunRequest.from_dict(data)
         assert restored.response_format is ModuleStructuredResponse
 
-    def test_init_with_correlation_id(self) -> None:
-        """Test RunRequest initialization with correlation_id."""
+    def test_init_with_correlationId(self) -> None:
+        """Test RunRequest initialization with correlationId."""
         request = RunRequest(message="Test message", thread_id="thread-corr-init", correlation_id="corr-123")
 
         assert request.message == "Test message"
         assert request.correlation_id == "corr-123"
 
-    def test_to_dict_with_correlation_id(self) -> None:
-        """Test to_dict includes correlation_id."""
+    def test_to_dict_with_correlationId(self) -> None:
+        """Test to_dict includes correlationId."""
         request = RunRequest(message="Test", thread_id="thread-corr-to-dict", correlation_id="corr-456")
         data = request.to_dict()
 
         assert data["message"] == "Test"
-        assert data["correlation_id"] == "corr-456"
+        assert data["correlationId"] == "corr-456"
 
-    def test_from_dict_with_correlation_id(self) -> None:
-        """Test from_dict with correlation_id."""
-        data = {"message": "Test", "correlation_id": "corr-789", "thread_id": "thread-corr-from-dict"}
+    def test_from_dict_with_correlationId(self) -> None:
+        """Test from_dict with correlationId."""
+        data = {"message": "Test", "correlationId": "corr-789", "thread_id": "thread-corr-from-dict"}
         request = RunRequest.from_dict(data)
 
         assert request.message == "Test"
         assert request.correlation_id == "corr-789"
         assert request.thread_id == "thread-corr-from-dict"
 
-    def test_round_trip_with_correlation_id(self) -> None:
-        """Test round-trip to_dict and from_dict with correlation_id."""
+    def test_round_trip_with_correlationId(self) -> None:
+        """Test round-trip to_dict and from_dict with correlationId."""
         original = RunRequest(
             message="Test message",
             thread_id="thread-123",
@@ -336,106 +336,70 @@ class TestRunRequest:
         assert restored.correlation_id == original.correlation_id
         assert restored.thread_id == original.thread_id
 
-
-class TestAgentResponse:
-    """Test suite for AgentResponse."""
-
-    def test_init_with_required_fields(self) -> None:
-        """Test AgentResponse initialization with required fields."""
-        response = AgentResponse(
-            response="Test response", message="Test message", thread_id="thread-123", status="success"
+    def test_init_with_orchestration_id(self) -> None:
+        """Test RunRequest initialization with orchestration_id."""
+        request = RunRequest(
+            message="Test message",
+            thread_id="thread-orch-init",
+            orchestration_id="orch-123",
         )
 
-        assert response.response == "Test response"
-        assert response.message == "Test message"
-        assert response.thread_id == "thread-123"
-        assert response.status == "success"
-        assert response.message_count == 0
-        assert response.error is None
-        assert response.error_type is None
-        assert response.structured_response is None
+        assert request.message == "Test message"
+        assert request.orchestration_id == "orch-123"
 
-    def test_init_with_all_fields(self) -> None:
-        """Test AgentResponse initialization with all fields."""
-        structured = {"answer": "42"}
-        response = AgentResponse(
-            response=None,
-            message="What is the answer?",
-            thread_id="thread-456",
-            status="success",
-            message_count=5,
-            error=None,
-            error_type=None,
-            structured_response=structured,
+    def test_to_dict_with_orchestration_id(self) -> None:
+        """Test to_dict includes orchestrationId."""
+        request = RunRequest(
+            message="Test",
+            thread_id="thread-orch-to-dict",
+            orchestration_id="orch-456",
+        )
+        data = request.to_dict()
+
+        assert data["message"] == "Test"
+        assert data["orchestrationId"] == "orch-456"
+
+    def test_to_dict_excludes_orchestration_id_when_none(self) -> None:
+        """Test to_dict excludes orchestrationId when not set."""
+        request = RunRequest(
+            message="Test",
+            thread_id="thread-orch-none",
+        )
+        data = request.to_dict()
+
+        assert "orchestrationId" not in data
+
+    def test_from_dict_with_orchestration_id(self) -> None:
+        """Test from_dict with orchestrationId."""
+        data = {
+            "message": "Test",
+            "orchestrationId": "orch-789",
+            "thread_id": "thread-orch-from-dict",
+        }
+        request = RunRequest.from_dict(data)
+
+        assert request.message == "Test"
+        assert request.orchestration_id == "orch-789"
+        assert request.thread_id == "thread-orch-from-dict"
+
+    def test_round_trip_with_orchestration_id(self) -> None:
+        """Test round-trip to_dict and from_dict with orchestration_id."""
+        original = RunRequest(
+            message="Test message",
+            thread_id="thread-123",
+            role=Role.SYSTEM,
+            correlation_id="corr-123",
+            orchestration_id="orch-123",
         )
 
-        assert response.response is None
-        assert response.structured_response == structured
-        assert response.message_count == 5
+        data = original.to_dict()
+        restored = RunRequest.from_dict(data)
 
-    def test_to_dict_with_text_response(self) -> None:
-        """Test to_dict with text response."""
-        response = AgentResponse(
-            response="Text response", message="Message", thread_id="thread-1", status="success", message_count=3
-        )
-        data = response.to_dict()
-
-        assert data["response"] == "Text response"
-        assert data["message"] == "Message"
-        assert data["thread_id"] == "thread-1"
-        assert data["status"] == "success"
-        assert data["message_count"] == 3
-        assert "structured_response" not in data
-        assert "error" not in data
-        assert "error_type" not in data
-
-    def test_to_dict_with_structured_response(self) -> None:
-        """Test to_dict with structured response."""
-        structured = {"answer": 42, "confidence": 0.95}
-        response = AgentResponse(
-            response=None,
-            message="Question",
-            thread_id="thread-2",
-            status="success",
-            structured_response=structured,
-        )
-        data = response.to_dict()
-
-        assert data["structured_response"] == structured
-        assert "response" not in data
-
-    def test_to_dict_with_error(self) -> None:
-        """Test to_dict with error."""
-        response = AgentResponse(
-            response=None,
-            message="Failed message",
-            thread_id="thread-3",
-            status="error",
-            error="Something went wrong",
-            error_type="ValueError",
-        )
-        data = response.to_dict()
-
-        assert data["status"] == "error"
-        assert data["error"] == "Something went wrong"
-        assert data["error_type"] == "ValueError"
-
-    def test_to_dict_prefers_structured_over_text(self) -> None:
-        """Test to_dict prefers structured_response over response."""
-        structured = {"result": "structured"}
-        response = AgentResponse(
-            response="Text response",
-            message="Message",
-            thread_id="thread-4",
-            status="success",
-            structured_response=structured,
-        )
-        data = response.to_dict()
-
-        assert "structured_response" in data
-        assert data["structured_response"] == structured
-        # Text response should not be included when structured is present
-        assert "response" not in data
+        assert restored.message == original.message
+        assert restored.role == original.role
+        assert restored.correlation_id == original.correlation_id
+        assert restored.orchestration_id == original.orchestration_id
+        assert restored.thread_id == original.thread_id
 
 
 class TestModelIntegration:
@@ -449,21 +413,6 @@ class TestModelIntegration:
         assert request.thread_id is not None
         assert request.thread_id == str(session_id)
         assert request.thread_id.startswith("@AgentEntity@")
-
-    def test_response_from_run_request(self) -> None:
-        """Test creating AgentResponse from RunRequest."""
-        request = RunRequest(message="What is 2+2?", thread_id="thread-123", role=Role.USER)
-
-        response = AgentResponse(
-            response="4",
-            message=request.message,
-            thread_id=request.thread_id,
-            status="success",
-            message_count=1,
-        )
-
-        assert response.message == request.message
-        assert response.thread_id == request.thread_id
 
 
 if __name__ == "__main__":

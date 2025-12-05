@@ -44,4 +44,4 @@ app.MapAGUI("/predictive_state_updates", ChatClientAgentFactory.CreatePredictive
 
 await app.RunAsync();
 
-public partial class Program { }
+public partial class Program;

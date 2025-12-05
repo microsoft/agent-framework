@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origi
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
-from typing_extensions import Never, TypeVar
+from typing_extensions import Never, TypeVar, deprecated
 
 from ..observability import OtelAttr, create_workflow_span
 from ._const import EXECUTOR_STATE_KEY
@@ -287,6 +287,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         self._runner_context = runner_context
         self._shared_state = shared_state
 
+        # Track messages sent via send_message() for ExecutorCompletedEvent
+        self._sent_messages: list[Any] = []
+
         # Store trace contexts and source span IDs for linking (supporting multiple sources)
         self._trace_contexts = trace_contexts or []
         self._source_span_ids = source_span_ids or []
@@ -312,6 +315,9 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN, attributes, kind=SpanKind.PRODUCER) as span:
             # Create Message wrapper
             msg = Message(data=message, source_id=self._executor_id, target_id=target_id)
+
+            # Track sent message for ExecutorCompletedEvent
+            self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
             if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
@@ -410,6 +416,19 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         """Get the shared state."""
         return self._shared_state
 
+    def get_sent_messages(self) -> list[Any]:
+        """Get all messages sent via send_message() during this handler execution.
+
+        Returns:
+            A list of messages that were sent to downstream executors.
+        """
+        return self._sent_messages.copy()
+
+    @deprecated(
+        "Override `on_checkpoint_save()` methods instead. "
+        "For cross-executor state sharing, use set_shared_state() instead. "
+        "This API will be removed after 12/01/2025."
+    )
     async def set_executor_state(self, state: dict[str, Any]) -> None:
         """Store executor state in shared state under a reserved key.
 
@@ -428,6 +447,11 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         existing_states[self._executor_id] = state
         await self._shared_state.set(EXECUTOR_STATE_KEY, existing_states)
 
+    @deprecated(
+        "Override `on_checkpoint_restore()` methods instead. "
+        "For cross-executor state sharing, use get_shared_state() instead. "
+        "This API will be removed after 12/01/2025."
+    )
     async def get_executor_state(self) -> dict[str, Any] | None:
         """Retrieve previously persisted state for this executor, if any."""
         has_existing_states = await self._shared_state.has(EXECUTOR_STATE_KEY)
@@ -438,7 +462,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         if not isinstance(existing_states, dict):
             raise ValueError("Existing executor states in shared state is not a dictionary.")
 
-        return existing_states.get(self._executor_id)
+        return existing_states.get(self._executor_id)  # type: ignore
 
     def is_streaming(self) -> bool:
         """Check if the workflow is running in streaming mode.

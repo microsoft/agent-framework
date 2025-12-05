@@ -71,7 +71,7 @@ internal sealed class Mem0Client
         var response = await responseMessage.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
         var searchResponseItems = JsonSerializer.Deserialize(response, Mem0SourceGenerationContext.Default.SearchResponseItemArray);
-        return searchResponseItems?.Select(item => item.Memory) ?? Array.Empty<string>();
+        return searchResponseItems?.Select(item => item.Memory) ?? [];
     }
 
     /// <summary>
@@ -94,14 +94,14 @@ internal sealed class Mem0Client
             AgentId = agentId,
             RunId = threadId,
             UserId = userId,
-            Messages = new[]
-            {
+            Messages =
+            [
                 new CreateMemoryMessage
                 {
                     Content = messageContent,
                     Role = messageRole.ToLowerInvariant()
                 }
-            }
+            ]
         };
 #pragma warning restore CA1308
 

@@ -166,10 +166,10 @@ async def main() -> None:
         .add_handoff(triage, [replacement, delivery, billing])  # Triage can route to any specialist
         .add_handoff(replacement, [delivery, billing])  # Replacement can delegate to delivery or billing
         .add_handoff(delivery, billing)  # Delivery can escalate to billing
-        # Termination condition: Stop when more than 4 user messages exist.
-        # This allows agents to respond to the 4th user message before the 5th triggers termination.
-        # In this sample: initial message + 3 scripted responses = 4 messages, then 5th message ends workflow.
-        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") > 4)
+        # Termination condition: Stop when more than 3 user messages exist.
+        # This allows agents to respond to the 3rd user message before the 4th triggers termination.
+        # In this sample: initial message + 3 scripted responses = 4 messages, then workflow ends.
+        .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role.value == "user") > 3)
         .build()
     )
 
@@ -192,14 +192,12 @@ async def main() -> None:
     print("=" * 80 + "\n")
 
     # Start workflow with initial message
-    print("[User]: I need help with order 12345. I want a replacement and need to know when it will arrive.\n")
-    events = await _drain(
-        workflow.run_stream("I need help with order 12345. I want a replacement and need to know when it will arrive.")
-    )
+    print(f"[User]: {scripted_responses[0]}\n")
+    events = await _drain(workflow.run_stream(scripted_responses[0]))
     pending_requests = _handle_events(events)
 
     # Process scripted responses
-    response_index = 0
+    response_index = 1
     while pending_requests and response_index < len(scripted_responses):
         user_response = scripted_responses[response_index]
         print(f"\n[User]: {user_response}\n")
@@ -227,23 +225,10 @@ async def main() -> None:
     === User Input Requested ===
     Last 5 messages in conversation:
     user: I need help with order 12345. I want a replacement and need to know when it will arrive.
-    triage_agent: I'm connecting you to our replacement team to assist with your request, and to our delivery team for...
-    replacement_agent: To assist with your replacement for order 12345 and provide tracking details for delivery, I've reac...
-    delivery_agent: I'm handing over your request for a replacement of order 12345, as well as your inquiry about estima...
-    billing_agent: I handle billing and payment questions. For replacement and delivery details for order 12345, please...
-    ============================
-    [status] IDLE_WITH_PENDING_REQUESTS
-
-    [User]: I need help with order 12345. I want a replacement and need to know when it will arrive.
-
-
-    === User Input Requested ===
-    Last 7 messages in conversation:
-    replacement_agent: To assist with your replacement for order 12345 and provide tracking details for delivery, I've reac...
-    delivery_agent: I'm handing over your request for a replacement of order 12345, as well as your inquiry about estima...
-    billing_agent: I handle billing and payment questions. For replacement and delivery details for order 12345, please...
-    user: I need help with order 12345. I want a replacement and need to know when it will arrive.
-    triage_agent: I'm connecting you with our replacement team to help with your request, and our delivery team for in...
+    triage_agent: I am connecting you to our replacement agent to assist with your replacement request and to our deli...
+    replacement_agent: I have connected you to our agents who will assist with your replacement request for order 12345 and...
+    delivery_agent: For your replacement request and delivery details regarding order 12345, I'll connect you to the app...
+    billing_agent: I don’t have access to order details. Please contact the seller or customer service directly for rep...
     ============================
     [status] IDLE_WITH_PENDING_REQUESTS
 
@@ -251,32 +236,45 @@ async def main() -> None:
 
 
     === User Input Requested ===
-    Last 12 messages in conversation:
+    Last 8 messages in conversation:
+    delivery_agent: For your replacement request and delivery details regarding order 12345, I'll connect you to the app...
+    billing_agent: I don’t have access to order details. Please contact the seller or customer service directly for rep...
     user: The item arrived damaged. I'd like a replacement shipped to the same address.
-    triage_agent: Thank you for letting us know your item from order 12345 arrived damaged. Im connecting you to our ...
-    replacement_agent: Your replacement request for order 12345 (damaged item) will be processed, and shipped to your curre...
-    delivery_agent: I've forwarded your request for a replacement of the damaged item from order 12345 to our team and a...
-    billing_agent: Thank you for the information. I've forwarded your request to our support team to arrange a replacem...
+    triage_agent: I'm connecting you to our replacement agent who will assist you with getting a replacement shipped t...
+    replacement_agent: Thank you for the info. I'll start the replacement process for your damaged item on order 12345 and ...
     ============================
     [status] IDLE_WITH_PENDING_REQUESTS
 
     [User]: Great! Can you confirm the shipping cost won't be charged again?
 
 
+    === User Input Requested ===
+    Last 11 messages in conversation:
+    triage_agent: I'm connecting you to our replacement agent who will assist you with getting a replacement shipped t...
+    replacement_agent: Thank you for the info. I'll start the replacement process for your damaged item on order 12345 and ...
+    user: Great! Can you confirm the shipping cost won't be charged again?
+    triage_agent: I'm connecting you to our billing agent who can confirm whether the shipping cost will be charged ag...
+    billing_agent: Replacements for damaged items are typically shipped at no extra shipping cost. I recommend confirmi...
+    ============================
+    [status] IDLE_WITH_PENDING_REQUESTS
+
+    [User]: Thank you!
+
+
     === Final Conversation ===
     - user: I need help with order 12345. I want a replacement and need to know when it will arrive.
-    - triage_agent: I'm connecting you to our replacement team to assist with your request, and to our delivery team for updates on when your replacement will arrive. They'll help you shortly!
-    - replacement_agent: To assist with your replacement for order 12345 and provide tracking details for delivery, I've reached out to our teams. Can you please provide the reason for your replacement request? This will help to process things faster.
-    - delivery_agent: I'm handing over your request for a replacement of order 12345, as well as your inquiry about estimated delivery timing, to the appropriate team. They'll assist you further with the replacement and delivery details very soon.
-    - billing_agent: I handle billing and payment questions. For replacement and delivery details for order 12345, please contact our support team or the order department. Is there a billing or payment issue I can help you with?
-    - user: I need help with order 12345. I want a replacement and need to know when it will arrive.
-    - triage_agent: I'm connecting you with our replacement team to help with your request, and our delivery team for information about when your replacement will arrive. They'll assist you shortly!
+    - triage_agent: I am connecting you to our replacement agent to assist with your replacement request and to our delivery agent who can provide information on the arrival of your replacement. They will help you shortly!
+    - replacement_agent: I have connected you to our agents who will assist with your replacement request for order 12345 and provide shipping and delivery information. They will help you with the details shortly. If you have any other questions, feel free to ask!
+    - delivery_agent: For your replacement request and delivery details regarding order 12345, I'll connect you to the appropriate agent who can assist with both billing and delivery concerns. They will provide you with the estimated arrival date and replacement process. Is there anything else you'd like to know meanwhile?
+    - billing_agent: I don’t have access to order details. Please contact the seller or customer service directly for replacement and delivery info on order 12345. If you need help with billing, refunds, or payments, I can assist!
     - user: The item arrived damaged. I'd like a replacement shipped to the same address.
-    - triage_agent: Thank you for letting us know your item from order 12345 arrived damaged. I'm connecting you to our replacement team to arrange a replacement shipped to your address, and to our delivery team to update you on the arrival date of your replacement. They'll assist you shortly!
-    - replacement_agent: Your replacement request for order 12345 (damaged item) will be processed, and shipped to your current address. The delivery team will also provide tracking and estimated arrival details for your new item soon.
-    - delivery_agent: I've forwarded your request for a replacement of the damaged item from order 12345 to our team and asked them to ship it to your current address. You'll also receive tracking information and an estimated delivery date for the replacement soon.
-    - billing_agent: Thank you for the information. I've forwarded your request to our support team to arrange a replacement for the damaged item from order 12345. Your replacement will be shipped to the same address, and you'll receive delivery updates soon. If you need a refund instead or have any billing questions, please let me know.
+    - triage_agent: I'm connecting you to our replacement agent who will assist you with getting a replacement shipped to the same address for the damaged item. They will help you shortly!
+    - replacement_agent: Thank you for the info. I'll start the replacement process for your damaged item on order 12345 and arrange to ship it to the same address. Please hold on a moment while I proceed.
+    Thank you for providing the reason. I will process a replacement for the damaged item from order 12345 and arrange the shipment to the same address. Please hold on a moment while I take care of this.
     - user: Great! Can you confirm the shipping cost won't be charged again?
+    - triage_agent: I'm connecting you to our billing agent who can confirm whether the shipping cost will be charged again for the replacement of your damaged item. They will assist you shortly!
+    - billing_agent: Replacements for damaged items are typically shipped at no extra shipping cost. I recommend confirming with the replacements or billing department to be sure. Let me know if you’d like me to connect you!
+    - user: Thank you!
     ==========================
     [status] IDLE
     """  # noqa: E501

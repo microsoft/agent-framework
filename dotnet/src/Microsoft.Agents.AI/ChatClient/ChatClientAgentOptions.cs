@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
@@ -15,37 +14,8 @@ namespace Microsoft.Agents.AI;
 /// identifier, display name, operational instructions, and a descriptive summary. It can be used to store and transfer
 /// agent-related metadata within a chat application.
 /// </remarks>
-public class ChatClientAgentOptions
+public sealed class ChatClientAgentOptions
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentOptions"/> class.
-    /// </summary>
-    public ChatClientAgentOptions()
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ChatClientAgentOptions"/> class with the specified parameters.
-    /// </summary>
-    /// <remarks>If <paramref name="tools"/> is provided, a new <see cref="ChatOptions"/> instance is created
-    /// with the specified instructions and tools.</remarks>
-    /// <param name="instructions">The instructions or guidelines for the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="name">The name of the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="description">The description of the chat client agent. Can be <see langword="null"/> if not specified.</param>
-    /// <param name="tools">A list of <see cref="AITool"/> instances available to the chat client agent. Can be <see langword="null"/> if no
-    /// tools are specified.</param>
-    public ChatClientAgentOptions(string? instructions, string? name = null, string? description = null, IList<AITool>? tools = null)
-    {
-        this.Name = name;
-        this.Instructions = instructions;
-        this.Description = description;
-
-        if (tools is not null)
-        {
-            (this.ChatOptions ??= new()).Tools = tools;
-        }
-    }
-
     /// <summary>
     /// Gets or sets the agent id.
     /// </summary>
@@ -55,11 +25,6 @@ public class ChatClientAgentOptions
     /// Gets or sets the agent name.
     /// </summary>
     public string? Name { get; set; }
-
-    /// <summary>
-    /// Gets or sets the agent instructions.
-    /// </summary>
-    public string? Instructions { get; set; }
 
     /// <summary>
     /// Gets or sets the agent description.
@@ -106,7 +71,6 @@ public class ChatClientAgentOptions
         {
             Id = this.Id,
             Name = this.Name,
-            Instructions = this.Instructions,
             Description = this.Description,
             ChatOptions = this.ChatOptions?.Clone(),
             ChatMessageStoreFactory = this.ChatMessageStoreFactory,

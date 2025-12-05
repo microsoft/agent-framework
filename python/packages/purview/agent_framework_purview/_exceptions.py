@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Purview specific exceptions (minimal error shaping)."""
 
-from __future__ import annotations
-
 from agent_framework.exceptions import ServiceResponseException
 
 __all__ = [

@@ -752,7 +752,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -775,7 +775,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
         TestChatClient? testChatClient = null;
 
@@ -803,7 +803,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -826,7 +826,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
         TestChatClient? testChatClient = null;
 
@@ -1575,8 +1575,8 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Custom instructions",
-            Description = "Custom description"
+            Description = "Custom description",
+            ChatOptions = new ChatOptions { Instructions = "Custom instructions" }
         };
 
         // Act
@@ -1610,8 +1610,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
-            Instructions = "Test",
-            ChatOptions = new ChatOptions { Tools = tools }
+            ChatOptions = new ChatOptions { Instructions = "Test", Tools = tools }
         };
 
         // Act
@@ -2736,7 +2735,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             {
                 if (this._headers.TryGetValue(name, out var value))
                 {
-                    values = new[] { value };
+                    values = [value];
                     return true;
                 }
 

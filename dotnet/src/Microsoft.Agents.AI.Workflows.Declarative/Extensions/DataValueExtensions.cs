@@ -117,7 +117,7 @@ internal static class DataValueExtensions
 
     public static IList<TElement>? AsList<TElement>(this DataValue? value)
     {
-        if (value is null || value is BlankDataValue)
+        if (value is null or BlankDataValue)
         {
             return null;
         }

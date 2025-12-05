@@ -100,7 +100,12 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
         thread=writer_thread,
         response_format=GeneratedContent,
     )
-    content = _coerce_generated_content(initial_raw)
+
+    content = initial_raw.value
+    logger.info("Type of content after extraction: %s", type(content))
+
+    if content is None or not isinstance(content, GeneratedContent):
+        raise ValueError("Agent returned no content after extraction.")
 
     attempt = 0
     while attempt < payload.max_review_attempts:
@@ -142,7 +147,12 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext):
                 thread=writer_thread,
                 response_format=GeneratedContent,
             )
-            content = _coerce_generated_content(rewritten_raw)
+
+            rewritten_value = rewritten_raw.value
+            if rewritten_value is None or not isinstance(rewritten_value, GeneratedContent):
+                raise ValueError("Agent returned no content after rewrite.")
+
+            content = rewritten_value
         else:
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
@@ -275,7 +285,7 @@ async def get_orchestration_status(
         show_history_output=False,
         show_input=True,
     )
-    
+
     # Check if status is None or if the instance doesn't exist (runtime_status is None)
     if status is None or getattr(status, "runtime_status", None) is None:
         return func.HttpResponse(
@@ -315,23 +325,6 @@ def _build_status_url(request_url: str, instance_id: str, *, route: str) -> str:
     if not base_url:
         base_url = request_url.rstrip("/")
     return f"{base_url}/api/{route}/status/{instance_id}"
-
-
-def _coerce_generated_content(result: Mapping[str, Any]) -> GeneratedContent:
-    structured = result.get("structured_response") if isinstance(result, Mapping) else None
-    if structured is not None:
-        return GeneratedContent.model_validate(structured)
-
-    response_text = result.get("response") if isinstance(result, Mapping) else None
-    if isinstance(response_text, str) and response_text.strip():
-        try:
-            parsed = json.loads(response_text)
-            if isinstance(parsed, Mapping):
-                return GeneratedContent.model_validate(parsed)
-        except json.JSONDecodeError:
-            logger.warning("[HITL] Failed to parse agent JSON response; falling back to defaults.")
-
-    raise ValueError("Agent response could not be parsed as GeneratedContent.")
 
 
 def _parse_human_approval(raw: Any) -> HumanApproval:

@@ -1,6 +1,6 @@
 # Azure AI Agent Examples
 
-This folder contains examples demonstrating different ways to create and use agents with the Azure AI chat client from the `agent_framework.azure` package.
+This folder contains examples demonstrating different ways to create and use agents with the Azure AI chat client from the `agent_framework.azure` package. These examples use the `AzureAIAgentClient` with the `azure-ai-agents` 1.x (V1) API surface. For updated V2 (`azure-ai-projects` 2.x) samples, see the [Azure AI V2 examples folder](../azure_ai/).
 
 ## Examples
 

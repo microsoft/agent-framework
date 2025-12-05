@@ -46,6 +46,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
     private readonly VectorStoreCollection<object, Dictionary<string, object?>> _collection;
     private readonly int _maxResults;
     private readonly string _contextPrompt;
+    private readonly bool _enableSensitiveTelemetryData;
     private readonly ChatHistoryMemoryProviderOptions.SearchBehavior _searchTime;
     private readonly AITool[] _tools;
     private readonly ILogger<ChatHistoryMemoryProvider>? _logger;
@@ -130,6 +131,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         options ??= new ChatHistoryMemoryProviderOptions();
         this._maxResults = options.MaxResults.HasValue ? Throw.IfLessThanOrEqual(options.MaxResults.Value, 0) : DefaultMaxResults;
         this._contextPrompt = options.ContextPrompt ?? DefaultContextPrompt;
+        this._enableSensitiveTelemetryData = options.EnableSensitiveTelemetryData;
         this._searchTime = options.SearchTime;
         this._logger = loggerFactory?.CreateLogger<ChatHistoryMemoryProvider>();
 
@@ -153,8 +155,8 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         // Create a definition so that we can use the dimensions provided at runtime.
         var definition = new VectorStoreCollectionDefinition
         {
-            Properties = new List<VectorStoreProperty>
-            {
+            Properties =
+            [
                 new VectorStoreKeyProperty("Key", typeof(Guid)),
                 new VectorStoreDataProperty("Role", typeof(string)) { IsIndexed = true },
                 new VectorStoreDataProperty("MessageId", typeof(string)) { IsIndexed = true },
@@ -166,7 +168,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 new VectorStoreDataProperty("Content", typeof(string)) { IsFullTextIndexed = true },
                 new VectorStoreDataProperty("CreatedAt", typeof(string)) { IsIndexed = true },
                 new VectorStoreVectorProperty("ContentEmbedding", typeof(string), Throw.IfLessThan(vectorDimensions, 1))
-            }
+            ]
         };
 
         this._collection = this._vectorStore.GetDynamicCollection(Throw.IfNullOrWhitespace(collectionName), definition);
@@ -216,7 +218,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 this._searchScope.ApplicationId,
                 this._searchScope.AgentId,
                 this._searchScope.ThreadId,
-                this._searchScope.UserId);
+                this.SanitizeLogData(this._searchScope.UserId));
             return new AIContext();
         }
     }
@@ -268,7 +270,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
                 this._searchScope.ApplicationId,
                 this._searchScope.AgentId,
                 this._searchScope.ThreadId,
-                this._searchScope.UserId);
+                this.SanitizeLogData(this._searchScope.UserId));
         }
     }
 
@@ -302,12 +304,12 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
         this._logger?.LogTrace(
             "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-            userQuestion,
-            formatted,
+            this.SanitizeLogData(userQuestion),
+            this.SanitizeLogData(formatted),
             this._searchScope.ApplicationId,
             this._searchScope.AgentId,
             this._searchScope.ThreadId,
-            this._searchScope.UserId);
+            this.SanitizeLogData(this._searchScope.UserId));
         return formatted;
     }
 
@@ -387,7 +389,7 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             this._searchScope.ApplicationId,
             this._searchScope.AgentId,
             this._searchScope.ThreadId,
-            this._searchScope.UserId);
+            this.SanitizeLogData(this._searchScope.UserId));
 
         return results;
     }
@@ -474,6 +476,8 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         var jso = jsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
         return serializedState.Deserialize(jso.GetTypeInfo(typeof(ChatHistoryMemoryProviderState))) as ChatHistoryMemoryProviderState;
     }
+
+    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
 
     internal sealed class ChatHistoryMemoryProviderState
     {

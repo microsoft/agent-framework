@@ -1,6 +1,6 @@
 # Azure AI Agent Examples
 
-This folder contains examples demonstrating different ways to create and use agents with the Azure AI client from the `agent_framework.azure` package.
+This folder contains examples demonstrating different ways to create and use agents with the Azure AI client from the `agent_framework.azure` package. These examples use the `AzureAIClient` with the `azure-ai-projects` 2.x (V2) API surface (see [changelog](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/CHANGELOG.md#200b1-2025-11-11)). For V1 (`azure-ai-agents` 1.x) samples using `AzureAIAgentClient`, see the [Azure AI V1 examples folder](../azure_ai_agent/).
 
 ## Examples
 
@@ -8,6 +8,7 @@ This folder contains examples demonstrating different ways to create and use age
 |------|-------------|
 | [`azure_ai_basic.py`](azure_ai_basic.py) | The simplest way to create an agent using `AzureAIClient`. Demonstrates both streaming and non-streaming responses with function tools. Shows automatic agent creation and basic weather functionality. |
 | [`azure_ai_use_latest_version.py`](azure_ai_use_latest_version.py) | Demonstrates how to reuse the latest version of an existing agent instead of creating a new agent version on each instantiation using the `use_latest_version=True` parameter. |
+| [`azure_ai_with_agent_to_agent.py`](azure_ai_with_agent_to_agent.py) | Shows how to use Agent-to-Agent (A2A) capabilities with Azure AI agents to enable communication with other agents using the A2A protocol. Requires an A2A connection configured in your Azure AI project. |
 | [`azure_ai_with_azure_ai_search.py`](azure_ai_with_azure_ai_search.py) | Shows how to use Azure AI Search with Azure AI agents to search through indexed data and answer user questions with proper citations. Requires an Azure AI Search connection and index configured in your Azure AI project. |
 | [`azure_ai_with_bing_grounding.py`](azure_ai_with_bing_grounding.py) | Shows how to use Bing Grounding search with Azure AI agents to search the web for current information and provide grounded responses with citations. Requires a Bing connection configured in your Azure AI project. |
 | [`azure_ai_with_bing_custom_search.py`](azure_ai_with_bing_custom_search.py) | Shows how to use Bing Custom Search with Azure AI agents to search custom search instances and provide responses with relevant results. Requires a Bing Custom Search connection and instance configured in your Azure AI project. |
@@ -15,13 +16,21 @@ This folder contains examples demonstrating different ways to create and use age
 | [`azure_ai_with_code_interpreter.py`](azure_ai_with_code_interpreter.py) | Shows how to use the `HostedCodeInterpreterTool` with Azure AI agents to write and execute Python code for mathematical problem solving and data analysis. |
 | [`azure_ai_with_existing_agent.py`](azure_ai_with_existing_agent.py) | Shows how to work with a pre-existing agent by providing the agent name and version to the Azure AI client. Demonstrates agent reuse patterns for production scenarios. |
 | [`azure_ai_with_existing_conversation.py`](azure_ai_with_existing_conversation.py) | Demonstrates how to use an existing conversation created on the service side with Azure AI agents. Shows two approaches: specifying conversation ID at the client level and using AgentThread with an existing conversation ID. |
+| [`azure_ai_with_application_endpoint.py`](azure_ai_with_application_endpoint.py) | Demonstrates calling the Azure AI application-scoped endpoint. |
 | [`azure_ai_with_explicit_settings.py`](azure_ai_with_explicit_settings.py) | Shows how to create an agent with explicitly configured `AzureAIClient` settings, including project endpoint, model deployment, and credentials rather than relying on environment variable defaults. |
 | [`azure_ai_with_file_search.py`](azure_ai_with_file_search.py) | Shows how to use the `HostedFileSearchTool` with Azure AI agents to upload files, create vector stores, and enable agents to search through uploaded documents to answer user questions. |
 | [`azure_ai_with_hosted_mcp.py`](azure_ai_with_hosted_mcp.py) | Shows how to integrate hosted Model Context Protocol (MCP) tools with Azure AI Agent. |
+| [`azure_ai_with_local_mcp.py`](azure_ai_with_local_mcp.py) | Shows how to integrate local Model Context Protocol (MCP) tools with Azure AI agents. |
 | [`azure_ai_with_response_format.py`](azure_ai_with_response_format.py) | Shows how to use structured outputs (response format) with Azure AI agents using Pydantic models to enforce specific response schemas. |
+| [`azure_ai_with_runtime_json_schema.py`](azure_ai_with_runtime_json_schema.py) | Shows how to use structured outputs (response format) with Azure AI agents using a JSON schema to enforce specific response schemas. |
+| [`azure_ai_with_search_context_agentic.py`](../../context_providers/azure_ai_search/azure_ai_with_search_context_agentic.py) | Shows how to use AzureAISearchContextProvider with agentic mode. Uses Knowledge Bases for multi-hop reasoning across documents with query planning. Recommended for most scenarios - slightly slower with more token consumption for query planning, but more accurate results. |
+| [`azure_ai_with_search_context_semantic.py`](../../context_providers/azure_ai_search/azure_ai_with_search_context_semantic.py) | Shows how to use AzureAISearchContextProvider with semantic mode. Fast hybrid search with vector + keyword search and semantic ranking for RAG. Best for simple queries where speed is critical. |
+| [`azure_ai_with_sharepoint.py`](azure_ai_with_sharepoint.py) | Shows how to use SharePoint grounding with Azure AI agents to search through SharePoint content and answer user questions with proper citations. Requires a SharePoint connection configured in your Azure AI project. |
 | [`azure_ai_with_thread.py`](azure_ai_with_thread.py) | Demonstrates thread management with Azure AI agents, including automatic thread creation for stateless conversations and explicit thread management for maintaining conversation context across multiple interactions. |
 | [`azure_ai_with_image_generation.py`](azure_ai_with_image_generation.py) | Shows how to use the `ImageGenTool` with Azure AI agents to generate images based on text prompts. |
+| [`azure_ai_with_memory_search.py`](azure_ai_with_memory_search.py) | Shows how to use memory search functionality with Azure AI agents for conversation persistence. Demonstrates creating memory stores and enabling agents to search through conversation history. |
 | [`azure_ai_with_microsoft_fabric.py`](azure_ai_with_microsoft_fabric.py) | Shows how to use Microsoft Fabric with Azure AI agents to query Fabric data sources and provide responses based on data analysis. Requires a Microsoft Fabric connection configured in your Azure AI project. |
+| [`azure_ai_with_openapi.py`](azure_ai_with_openapi.py) | Shows how to integrate OpenAPI specifications with Azure AI agents using dictionary-based tool configuration. Demonstrates using external REST APIs for dynamic data lookup. |
 | [`azure_ai_with_web_search.py`](azure_ai_with_web_search.py) | Shows how to use the `HostedWebSearchTool` with Azure AI agents to perform web searches and retrieve up-to-date information from the internet. |
 
 ## Environment Variables

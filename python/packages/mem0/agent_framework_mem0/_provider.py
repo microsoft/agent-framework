@@ -146,6 +146,10 @@ class Mem0Provider(ContextProvider):
         messages_list = [messages] if isinstance(messages, ChatMessage) else list(messages)
         input_text = "\n".join(msg.text for msg in messages_list if msg and msg.text and msg.text.strip())
 
+        # Validate input text is not empty before searching (possible for function approval responses)
+        if not input_text.strip():
+            return Context(messages=None)
+
         search_response: MemorySearchResponse_v1_1 | MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
             user_id=self.user_id,

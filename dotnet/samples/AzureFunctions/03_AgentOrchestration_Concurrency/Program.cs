@@ -36,8 +36,9 @@ using IHost app = FunctionsApplication
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableAgents(options =>
     {
-        options.AddAIAgent(physicistAgent);
-        options.AddAIAgent(chemistAgent);
+        options
+            .AddAIAgent(physicistAgent)
+            .AddAIAgent(chemistAgent);
     })
     .Build();
 

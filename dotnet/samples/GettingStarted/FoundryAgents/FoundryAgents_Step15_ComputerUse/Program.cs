@@ -15,8 +15,8 @@ internal sealed class Program
 {
     private static async Task Main(string[] args)
     {
-        string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "computer-use-preview";
+        string endpoint = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_FOUNDRY_PROJECT_ENDPOINT is not set.");
+        string deploymentName = Environment.GetEnvironmentVariable("AZURE_FOUNDRY_PROJECT_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
         // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());

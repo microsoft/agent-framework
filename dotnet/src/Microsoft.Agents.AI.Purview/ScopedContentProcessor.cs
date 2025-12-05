@@ -101,7 +101,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <returns>A list of process content requests.</returns>
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? threadId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
-        List<ProcessContentRequest> pcRequests = new();
+        List<ProcessContentRequest> pcRequests = [];
         TokenInfo? tokenInfo = null;
 
         bool needUserId = userId == null && TryGetUserIdFromPayload(messages, out userId);
@@ -162,7 +162,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
                     OperatingSystemVersion = "Unknown"
                 }
             };
-            ContentToProcess contentToProcess = new(new List<ProcessContentMetadataBase> { conversationmetadata }, activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
+            ContentToProcess contentToProcess = new([conversationmetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
             if (userId == null &&
                 tokenInfo?.UserId != null)
@@ -279,7 +279,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         string locationType = locationSegments.Length > 0 ? locationSegments[locationSegments.Length - 1] : pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation.Value;
 
         string locationValue = pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation.Value;
-        List<DlpActionInfo> dlpActions = new();
+        List<DlpActionInfo> dlpActions = [];
         bool shouldProcess = false;
         ExecutionMode executionMode = ExecutionMode.EvaluateOffline;
 
@@ -325,7 +325,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         return new ProtectionScopesRequest(userId, tenantId)
         {
             Activities = TranslateActivity(pcRequest.ContentToProcess.ActivityMetadata.Activity),
-            Locations = new List<PolicyLocation> { pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation },
+            Locations = [pcRequest.ContentToProcess.ProtectedAppMetadata.ApplicationLocation],
             DeviceMetadata = pcRequest.ContentToProcess.DeviceMetadata,
             IntegratedAppMetadata = pcRequest.ContentToProcess.IntegratedAppMetadata,
             CorrelationId = correlationId
