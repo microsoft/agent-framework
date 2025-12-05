@@ -169,19 +169,18 @@ def build_resource_request_distribution_workflow() -> Workflow:
             elif len(self._responses) > self._request_count:
                 raise ValueError("Received more responses than expected")
 
-    orchestrator = RequestDistribution("orchestrator")
-    resource_requester = ResourceRequester("resource_requester")
-    policy_checker = PolicyChecker("policy_checker")
-    result_collector = ResultCollector("result_collector")
-
     return (
         WorkflowBuilder()
-        .set_start_executor(orchestrator)
-        .add_edge(orchestrator, resource_requester)
-        .add_edge(orchestrator, policy_checker)
-        .add_edge(resource_requester, result_collector)
-        .add_edge(policy_checker, result_collector)
-        .add_edge(orchestrator, result_collector)  # For request count
+        .register_executor(lambda: RequestDistribution("orchestrator"), name="orchestrator")
+        .register_executor(lambda: ResourceRequester("resource_requester"), name="resource_requester")
+        .register_executor(lambda: PolicyChecker("policy_checker"), name="policy_checker")
+        .register_executor(lambda: ResultCollector("result_collector"), name="result_collector")
+        .set_start_executor("orchestrator")
+        .add_edge("orchestrator", "resource_requester")
+        .add_edge("orchestrator", "policy_checker")
+        .add_edge("resource_requester", "result_collector")
+        .add_edge("policy_checker", "result_collector")
+        .add_edge("orchestrator", "result_collector")  # For request count
         .build()
     )
 
@@ -288,29 +287,27 @@ class PolicyEngine(Executor):
 
 
 async def main() -> None:
-    # Create executors in the main workflow
-    sub_workflow = build_resource_request_distribution_workflow()
-    resource_allocator = ResourceAllocator("resource_allocator")
-    policy_engine = PolicyEngine("policy_engine")
-
-    # Create the WorkflowExecutor for the sub-workflow
-    # Setting allow_direct_output=True to let the sub-workflow output directly.
-    # This is because the sub-workflow is the both the entry point and the exit
-    # point of the main workflow.
-    sub_workflow_executor = WorkflowExecutor(
-        sub_workflow,
-        "sub_workflow_executor",
-        allow_direct_output=True,
-    )
-
     # Build the main workflow
     main_workflow = (
         WorkflowBuilder()
-        .set_start_executor(sub_workflow_executor)
-        .add_edge(sub_workflow_executor, resource_allocator)
-        .add_edge(resource_allocator, sub_workflow_executor)
-        .add_edge(sub_workflow_executor, policy_engine)
-        .add_edge(policy_engine, sub_workflow_executor)
+        .register_executor(lambda: ResourceAllocator("resource_allocator"), name="resource_allocator")
+        .register_executor(lambda: PolicyEngine("policy_engine"), name="policy_engine")
+        .register_executor(
+            lambda: WorkflowExecutor(
+                build_resource_request_distribution_workflow(),
+                "sub_workflow_executor",
+                # Setting allow_direct_output=True to let the sub-workflow output directly.
+                # This is because the sub-workflow is the both the entry point and the exit
+                # point of the main workflow.
+                allow_direct_output=True,
+            ),
+            name="sub_workflow_executor",
+        )
+        .set_start_executor("sub_workflow_executor")
+        .add_edge("sub_workflow_executor", "resource_allocator")
+        .add_edge("resource_allocator", "sub_workflow_executor")
+        .add_edge("sub_workflow_executor", "policy_engine")
+        .add_edge("policy_engine", "sub_workflow_executor")
         .build()
     )
 

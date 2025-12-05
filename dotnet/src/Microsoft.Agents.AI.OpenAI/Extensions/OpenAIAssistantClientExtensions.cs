@@ -29,6 +29,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         ClientResult<Assistant> assistantClientResult,
@@ -53,6 +54,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         Assistant assistantMetadata,
@@ -101,6 +103,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         string agentId,
@@ -133,6 +136,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AssistantClient assistantClient,
         string agentId,
@@ -165,6 +169,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClientResult"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         ClientResult<Assistant> assistantClientResult,
@@ -190,6 +195,7 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantMetadata"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         Assistant assistantMetadata,
@@ -251,6 +257,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="agentId"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         string agentId,
@@ -290,6 +297,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="agentId"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AssistantClient assistantClient,
         string agentId,
@@ -332,6 +340,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent CreateAIAgent(
         this AssistantClient client,
         string model,
@@ -370,6 +379,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent CreateAIAgent(
         this AssistantClient client,
         string model,
@@ -436,6 +446,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AssistantClient client,
         string model,
@@ -476,6 +487,7 @@ public static class OpenAIAssistantClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AssistantClient client,
         string model,
