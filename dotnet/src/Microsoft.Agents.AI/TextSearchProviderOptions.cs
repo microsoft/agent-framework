@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.Data;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Options controlling the behavior of <see cref="TextSearchProvider"/>.
