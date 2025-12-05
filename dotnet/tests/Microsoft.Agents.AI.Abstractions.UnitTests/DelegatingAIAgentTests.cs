@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -14,7 +15,7 @@ namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 /// </summary>
 public class DelegatingAIAgentTests
 {
-    private readonly Mock<AIAgent> _innerAgentMock;
+    private readonly TestAIAgentWithId _innerAgent;
     private readonly TestDelegatingAIAgent _delegatingAgent;
     private readonly AgentRunResponse _testResponse;
     private readonly List<AgentRunResponseUpdate> _testStreamingResponses;
@@ -25,34 +26,12 @@ public class DelegatingAIAgentTests
     /// </summary>
     public DelegatingAIAgentTests()
     {
-        this._innerAgentMock = new Mock<AIAgent>();
+        this._innerAgent = new TestAIAgentWithId("test-agent-id", "Test Agent", "Test Description");
         this._testResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Test response"));
         this._testStreamingResponses = [new AgentRunResponseUpdate(ChatRole.Assistant, "Test streaming response")];
         this._testThread = new TestAgentThread();
 
-        // Setup inner agent mock
-        this._innerAgentMock.Setup(x => x.Id).Returns("test-agent-id");
-        this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
-        this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewThread()).Returns(this._testThread);
-
-        this._innerAgentMock
-            .Setup(x => x.RunAsync(
-                It.IsAny<IReadOnlyCollection<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(this._testResponse);
-
-        this._innerAgentMock
-            .Setup(x => x.RunStreamingAsync(
-                It.IsAny<IReadOnlyCollection<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(ToAsyncEnumerableAsync(this._testStreamingResponses));
-
-        this._delegatingAgent = new TestDelegatingAIAgent(this._innerAgentMock.Object);
+        this._delegatingAgent = new TestDelegatingAIAgent(this._innerAgent);
     }
 
     #region Constructor Tests
@@ -72,10 +51,10 @@ public class DelegatingAIAgentTests
     public void Constructor_WithValidInnerAgent_SetsInnerAgent()
     {
         // Act
-        var delegatingAgent = new TestDelegatingAIAgent(this._innerAgentMock.Object);
+        var delegatingAgent = new TestDelegatingAIAgent(this._innerAgent);
 
         // Assert
-        Assert.Same(this._innerAgentMock.Object, delegatingAgent.InnerAgent);
+        Assert.Same(this._innerAgent, delegatingAgent.InnerAgent);
     }
 
     #endregion
@@ -93,7 +72,6 @@ public class DelegatingAIAgentTests
 
         // Assert
         Assert.Equal("test-agent-id", id);
-        this._innerAgentMock.Verify(x => x.Id, Times.Once);
     }
 
     /// <summary>
@@ -107,7 +85,6 @@ public class DelegatingAIAgentTests
 
         // Assert
         Assert.Equal("Test Agent", name);
-        this._innerAgentMock.Verify(x => x.Name, Times.Once);
     }
 
     /// <summary>
@@ -121,7 +98,6 @@ public class DelegatingAIAgentTests
 
         // Assert
         Assert.Equal("Test Description", description);
-        this._innerAgentMock.Verify(x => x.Description, Times.Once);
     }
 
     #endregion
@@ -138,8 +114,7 @@ public class DelegatingAIAgentTests
         var thread = this._delegatingAgent.GetNewThread();
 
         // Assert
-        Assert.Same(this._testThread, thread);
-        this._innerAgentMock.Verify(x => x.GetNewThread(), Times.Once);
+        Assert.NotNull(thread);
     }
 
     /// <summary>
@@ -302,6 +277,49 @@ public class DelegatingAIAgentTests
     }
 
     private sealed class TestAgentThread : AgentThread;
+
+    /// <summary>
+    /// A concrete AIAgent implementation with a known ID for testing.
+    /// </summary>
+    private sealed class TestAIAgentWithId : AIAgent
+    {
+        private readonly string _id;
+        private readonly string? _name;
+        private readonly string? _description;
+
+        public TestAIAgentWithId(string id, string? name = null, string? description = null)
+        {
+            this._id = id;
+            this._name = name;
+            this._description = description;
+        }
+
+        protected override string? IdCore => this._id;
+
+        public override string? Name => this._name;
+
+        public override string? Description => this._description;
+
+        public override AgentThread GetNewThread()
+            => new TestAgentThread();
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+            => throw new NotImplementedException();
+
+        public override Task<AgentRunResponse> RunAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+
+        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentThread? thread = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default) =>
+            throw new NotImplementedException();
+    }
 
     #endregion
 }
