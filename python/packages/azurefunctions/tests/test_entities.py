@@ -1002,5 +1002,40 @@ class TestDurableAgentStateRequestOrchestrationId:
         assert durable_request.orchestration_id is None
 
 
+class TestDurableAgentStateMessageCreatedAt:
+    """Test suite for DurableAgentStateMessage created_at field handling."""
+
+    def test_message_from_run_request_without_created_at_preserves_none(self) -> None:
+        """Test from_run_request preserves None created_at instead of defaulting to current time.
+
+        When a RunRequest has no created_at value, the resulting DurableAgentStateMessage
+        should also have None for created_at, not default to current UTC time.
+        """
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+            created_at=None,  # Explicitly None
+        )
+
+        durable_message = DurableAgentStateMessage.from_run_request(run_request)
+
+        assert durable_message.created_at is None
+
+    def test_message_from_run_request_with_created_at_parses_correctly(self) -> None:
+        """Test from_run_request correctly parses a valid created_at timestamp."""
+        run_request = RunRequest(
+            message="test message",
+            correlation_id="corr-run",
+            created_at="2024-01-15T10:30:00Z",
+        )
+
+        durable_message = DurableAgentStateMessage.from_run_request(run_request)
+
+        assert durable_message.created_at is not None
+        assert durable_message.created_at.year == 2024
+        assert durable_message.created_at.month == 1
+        assert durable_message.created_at.day == 15
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
