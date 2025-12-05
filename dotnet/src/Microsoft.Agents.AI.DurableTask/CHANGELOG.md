@@ -6,7 +6,7 @@
 
 ## v1.0.0-preview.251125.1
 
-- Added support for .NET 10 ([#2214](https://github.com/microsoft/agent-framework/pull/2128))
+- Added support for .NET 10 ([#2128](https://github.com/microsoft/agent-framework/pull/2128))
 
 ## v1.0.0-preview.251114.1
 
