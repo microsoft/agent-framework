@@ -73,7 +73,7 @@ class Evaluator(Executor):
 async def main():
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential) as chat_client,
+        AzureAIAgentClient(credential=credential) as chat_client,
     ):
         # Create an agent with code interpretation capabilities
         agent = chat_client.create_agent(

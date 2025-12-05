@@ -37,7 +37,7 @@ async def create_azure_ai_agent() -> tuple[Callable[..., Awaitable[Any]], Callab
     stack = AsyncExitStack()
     cred = await stack.enter_async_context(AzureCliCredential())
 
-    client = await stack.enter_async_context(AzureAIAgentClient(async_credential=cred))
+    client = await stack.enter_async_context(AzureAIAgentClient(credential=cred))
 
     async def agent(**kwargs: Any) -> Any:
         return await stack.enter_async_context(client.create_agent(**kwargs))
@@ -67,12 +67,7 @@ async def main() -> None:
         )
         # Build the workflow by adding agents directly as edges.
         # Agents adapt to workflow mode: run_stream() for incremental updates, run() for complete responses.
-        workflow = (
-            WorkflowBuilder()
-            .set_start_executor(writer)
-            .add_edge(writer, reviewer)
-            .build()
-        )
+        workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
 
         last_executor_id: str | None = None
 

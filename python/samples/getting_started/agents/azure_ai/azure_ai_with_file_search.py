@@ -32,7 +32,7 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AgentsClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as agents_client,
-        AzureAIClient(async_credential=credential) as client,
+        AzureAIClient(credential=credential) as client,
     ):
         try:
             # 1. Upload file and create vector store

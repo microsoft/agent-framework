@@ -30,10 +30,13 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Support",
-        instructions="Answer customer questions in one paragraph.",
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).create_agent(
+            name="Support",
+            instructions="Answer customer questions in one paragraph.",
+        ) as agent,
+    ):
         # AF client returns an asynchronous context manager for remote agents.
         reply = await agent.run("How do I upgrade my plan?")
         print("[AF]", reply.text)
