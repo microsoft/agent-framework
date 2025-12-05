@@ -2132,7 +2132,7 @@ def prepare_messages(
 
     Args:
         messages: The input messages in various supported formats.
-        system_instructions: The system instructions
+        system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
         A list of ChatMessage objects.
