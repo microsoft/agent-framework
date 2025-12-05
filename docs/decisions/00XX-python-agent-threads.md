@@ -1,7 +1,7 @@
 ---
 status: Proposed
 contact: eavanvalkenburg
-date: 2025-11-24
+date: 2025-12-05
 deciders: markwallace-microsoft, dmytrostruk, taochenosu, alliscode, moonbox3
 consulted: sergeymenshykh, rbarreto, dmytrostruk, westey-m
 ---
@@ -236,7 +236,7 @@ group.run("Hello everyone, let's discuss AI.")
     1. Remove `ContextProvider` from the thread itself, replace with `context_data/state` on the thread, which the agent uses to get context from the providers when running in that thread.
     1. Replace `ChatMessageStore` with a list of ChatMessages.
 1. Local threads only, adding a abstraction on ChatClient to load a thread by id, so that the local thread can always be synced with the service side thread, and the agent can then run with just the new messages compared to the last known state.
-1. Using a Context Provider to handle local message storage and context generation for local threads.
+1. Using a Context Provider to handle local message storage and context generation.
     1. Variant with a special Context Provider that handles local storage and generates a thread id for local threads, so that the agent only deals with thread ids.
     1. Variant with a default Context Provider that can store messages, that can be overridden by other context providers
 1. Rename `Thread` for clarity.
@@ -279,7 +279,7 @@ This approach would mean:
 - Adding an abstraction on ChatClient to load a thread by id from the service and cast the messages to our types, so that the local thread can always be synced with the service side thread, and the agent can then run with just the new messages compared to the last known state. This will make supporting cross-agent threads easier.
 - The additional latency of reading the service side thread, and the fact that adding a thread reading abstraction to existing ChatClients is a breaking change, means that this option is excluded and will not be further investigated.
 
-### 5. Context Provider to handle local message storage and context generation for local threads.
+### 5. Context Provider to handle local message storage and context generation.
 - The contract of a ChatMessageStore is already quite similar to a Context Provider, so we could create a Context Provider that handles local message storage and context generation for local threads.
 - One note is that potentially, something like `Context Manager` would be a more accurate name for such a Context Provider, as it would manage the context (messages) for the thread, but for consistency we will keep using Context Provider here.
 - There are two variants to consider here:
