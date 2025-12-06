@@ -4,6 +4,7 @@ using System.ComponentModel;
 using AGUIServer;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -47,5 +48,17 @@ var agent = new AzureOpenAIClient(
 
 // Map the AG-UI agent endpoint
 app.MapAGUI("/", agent);
+
+// Map an AG-UI agent endpoint with per-request agent selection based on route parameter
+app.MapAGUI("/agents/{agentId}", (context) =>
+{
+    string agentId = context.Request.RouteValues["agentId"]?.ToString() ?? string.Empty;
+    AIAgent selectedAgent = agentId switch
+    {
+        "0" => agent,
+        _ => throw new ArgumentException($"Unknown agent ID: {agentId}"),
+    };
+    return ValueTask.FromResult(selectedAgent);
+});
 
 await app.RunAsync();

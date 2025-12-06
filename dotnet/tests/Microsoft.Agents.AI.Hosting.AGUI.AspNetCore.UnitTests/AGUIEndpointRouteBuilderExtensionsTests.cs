@@ -45,6 +45,26 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
+    public void MapAGUIAgent_MapsEndpoint_WithOnDemandAgentSelection()
+    {
+        // Arrange
+        Mock<IEndpointRouteBuilder> endpointsMock = new();
+        Mock<IServiceProvider> serviceProviderMock = new();
+
+        endpointsMock.Setup(e => e.ServiceProvider).Returns(serviceProviderMock.Object);
+        endpointsMock.Setup(e => e.DataSources).Returns([]);
+
+        const string Pattern = "/api/agent";
+        AIAgent agent = new TestAgent();
+
+        // Act
+        IEndpointConventionBuilder? result = AGUIEndpointRouteBuilderExtensions.MapAGUI(endpointsMock.Object, Pattern, (httpContext) => ValueTask.FromResult(agent));
+
+        // Assert
+        Assert.NotNull(result);
+    }
+
+    [Fact]
     public async Task MapAGUIAgent_WithNullOrInvalidInput_Returns400BadRequestAsync()
     {
         // Arrange
