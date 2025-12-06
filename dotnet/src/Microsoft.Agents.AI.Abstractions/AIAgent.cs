@@ -37,7 +37,19 @@ public abstract class AIAgent
     /// agent instances in multi-agent scenarios. They should remain stable for the lifetime
     /// of the agent instance.
     /// </remarks>
-    public virtual string Id => this._id;
+    public string Id => this.IdCore ?? this._id;
+
+    /// <summary>
+    /// Gets the core identifier for the agent, which can be overridden by derived classes.
+    /// </summary>
+    /// <value>
+    /// A string representing the agent's identifier, or <see langword="null"/> if the default ID should be used.
+    /// </value>
+    /// <remarks>
+    /// Derived classes can override this property to provide a custom identifier.
+    /// When <see langword="null"/> is returned, the <see cref="Id"/> property will use the default randomly-generated identifier.
+    /// </remarks>
+    protected virtual string? IdCore => null;
 
     /// <summary>
     /// Gets the human-readable name of the agent.
@@ -61,7 +73,7 @@ public abstract class AIAgent
     /// This property provides a guaranteed non-null string suitable for display in user interfaces,
     /// logs, or other contexts where a readable identifier is needed.
     /// </remarks>
-    public virtual string DisplayName => this.Name ?? this.Id ?? this._id; // final fallback to _id in case Id override returns null
+    public virtual string DisplayName => this.Name ?? this.Id;
 
     /// <summary>
     /// Gets a description of the agent's purpose, capabilities, or behavior.

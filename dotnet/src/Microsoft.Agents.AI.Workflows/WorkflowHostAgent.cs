@@ -39,7 +39,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         this._describeTask = this._workflow.DescribeProtocolAsync().AsTask();
     }
 
-    public override string Id => this._id ?? base.Id;
+    protected override string? IdCore => this._id;
     public override string? Name { get; }
     public override string? Description { get; }
 
