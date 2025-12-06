@@ -15,7 +15,7 @@ async def main():
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,
-        AgentFactory(client_kwargs={"async_credential": credential}).create_agent_from_yaml_path(yaml_path) as agent,
+        AgentFactory(client_kwargs={"credential": credential}).create_agent_from_yaml_path(yaml_path) as agent,
     ):
         response = await agent.run("How do I create a storage account with private endpoint using bicep?")
         print("Agent response:", response.text)

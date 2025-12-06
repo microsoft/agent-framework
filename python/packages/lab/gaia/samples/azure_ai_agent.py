@@ -49,7 +49,7 @@ async def create_gaia_agent() -> AsyncIterator[ChatAgent]:
     """
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="GaiaAgent",
             instructions="Solve tasks to your best ability. Use Bing Search to find "
             "information and Code Interpreter to perform calculations and data analysis.",

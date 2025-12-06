@@ -24,7 +24,7 @@ USER_INPUTS = [
 
 async def main() -> None:
     """Main function demonstrating Azure AI agent with file search capabilities."""
-    client = AzureAIAgentClient(async_credential=AzureCliCredential())
+    client = AzureAIAgentClient(credential=AzureCliCredential())
     file: FileInfo | None = None
     vector_store: VectorStore | None = None
 
@@ -74,7 +74,7 @@ async def main() -> None:
         # 6. Cleanup: Delete the vector store and file in case of earlier failure to prevent orphaned resources.
 
         # Refreshing the client is required since chat agent closes it
-        client = AzureAIAgentClient(async_credential=AzureCliCredential())
+        client = AzureAIAgentClient(credential=AzureCliCredential())
         try:
             if vector_store:
                 await client.agents_client.vector_stores.delete(vector_store.id)

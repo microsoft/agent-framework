@@ -110,7 +110,7 @@ async def main() -> None:
         AzureAIAgentClient(
             project_endpoint=project_endpoint,
             model_deployment_name=model_deployment,
-            async_credential=AzureCliCredential(),
+            credential=AzureCliCredential(),
         ) as client,
         ChatAgent(
             chat_client=client,

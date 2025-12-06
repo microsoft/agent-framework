@@ -35,7 +35,7 @@ async def main() -> None:
     local_mem0_client = AsyncMemory()
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,

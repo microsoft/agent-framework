@@ -30,7 +30,7 @@ async def example_with_automatic_thread_creation() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -59,7 +59,7 @@ async def example_with_thread_persistence_in_memory() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -100,7 +100,7 @@ async def example_with_existing_thread_id() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="BasicWeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -122,7 +122,7 @@ async def example_with_existing_thread_id() -> None:
             print("\n--- Continuing with the same thread ID in a new agent instance ---")
 
             async with (
-                AzureAIClient(async_credential=credential).create_agent(
+                AzureAIClient(credential=credential).create_agent(
                     name="BasicWeatherAgent",
                     instructions="You are a helpful weather agent.",
                     tools=get_weather,

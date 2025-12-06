@@ -24,7 +24,7 @@ async def main() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
             tools=MCPStreamableHTTPTool(

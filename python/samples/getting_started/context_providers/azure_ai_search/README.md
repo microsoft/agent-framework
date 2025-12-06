@@ -140,7 +140,7 @@ search_provider = AzureAISearchContextProvider(
 )
 
 # Create agent with search context
-async with AzureAIAgentClient(async_credential=DefaultAzureCredential()) as client:
+async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
     async with ChatAgent(
         chat_client=client,
         model=model_deployment,

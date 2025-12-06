@@ -32,7 +32,7 @@ async def main() -> None:
     # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,

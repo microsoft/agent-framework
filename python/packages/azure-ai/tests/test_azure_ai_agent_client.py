@@ -170,7 +170,7 @@ def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
                 agent_id=None,
                 project_endpoint=None,  # Missing endpoint
                 model_deployment_name="test-model",
-                async_credential=AsyncMock(spec=AsyncTokenCredential),
+                credential=AsyncMock(spec=AsyncTokenCredential),
             )
 
 
@@ -190,7 +190,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
                 agent_id=None,  # No existing agent
                 project_endpoint="https://test.com",
                 model_deployment_name=None,  # Missing for agent creation
-                async_credential=AsyncMock(spec=AsyncTokenCredential),
+                credential=AsyncMock(spec=AsyncTokenCredential),
             )
 
 
@@ -223,7 +223,7 @@ def test_azure_ai_chat_client_from_dict(mock_agents_client: MagicMock) -> None:
 
 
 def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
-    """Test AzureAIAgentClient.__init__ when async_credential is missing and no agents_client provided."""
+    """Test AzureAIAgentClient.__init__ when credential is missing and no agents_client provided."""
     with pytest.raises(
         ServiceInitializationError, match="Azure credential is required when agents_client is not provided"
     ):
@@ -232,7 +232,7 @@ def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: di
             agent_id="existing-agent",
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            async_credential=None,  # Missing credential
+            credential=None,  # Missing credential
         )
 
 
@@ -246,7 +246,7 @@ def test_azure_ai_chat_client_init_validation_error(mock_azure_credential: Magic
             AzureAIAgentClient(
                 project_endpoint="https://test.com",
                 model_deployment_name="test-model",
-                async_credential=mock_azure_credential,
+                credential=mock_azure_credential,
             )
 
 
@@ -1373,7 +1373,7 @@ def get_weather(
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
         assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1398,7 +1398,7 @@ async def test_azure_ai_chat_client_get_response() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
         assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1420,7 +1420,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
         assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1451,7 +1451,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as azure_ai_chat_client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
         assert isinstance(azure_ai_chat_client, ChatClientProtocol)
 
         messages: list[ChatMessage] = []
@@ -1479,7 +1479,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
     """Test ChatAgent basic run functionality with AzureAIAgentClient."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run a simple query
         response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
@@ -1496,7 +1496,7 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     """Test ChatAgent basic streaming functionality with AzureAIAgentClient."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
     ) as agent:
         # Run streaming query
         full_message: str = ""
@@ -1516,7 +1516,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
     """Test ChatAgent thread persistence across runs with AzureAIAgentClient."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as agent:
         # Create a new thread that will be reused
@@ -1542,7 +1542,7 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
     """Test ChatAgent existing thread ID functionality with AzureAIAgentClient."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as first_agent:
         # Start a conversation and get the thread ID
@@ -1559,7 +1559,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
 
     # Now continue with the same thread ID in a new agent instance
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(thread_id=existing_thread_id, async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
         instructions="You are a helpful assistant with good memory.",
     ) as second_agent:
         # Create a thread with the existing ID
@@ -1581,7 +1581,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
     """Test ChatAgent with code interpreter through AzureAIAgentClient."""
 
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can write and execute Python code.",
         tools=[HostedCodeInterpreterTool()],
     ) as agent:
@@ -1600,7 +1600,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
 async def test_azure_ai_chat_client_agent_file_search():
     """Test ChatAgent with file search through AzureAIAgentClient."""
 
-    client = AzureAIAgentClient(async_credential=AzureCliCredential())
+    client = AzureAIAgentClient(credential=AzureCliCredential())
     file: FileInfo | None = None
     vector_store: VectorStore | None = None
 
@@ -1655,7 +1655,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
     )
 
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=[mcp_tool],
     ) as agent:
@@ -1682,7 +1682,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant that uses available tools.",
         tools=[get_weather],
     ) as agent:
@@ -1707,7 +1707,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
 async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     """Test ChatOptions parameter coverage at run level."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     ) as agent:
         response = await agent.run(
@@ -1737,7 +1737,7 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
 async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     """Test ChatOptions parameter coverage agent level."""
     async with ChatAgent(
-        chat_client=AzureAIAgentClient(async_credential=AzureCliCredential()),
+        chat_client=AzureAIAgentClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         max_tokens=100,
         temperature=0.7,
@@ -1963,7 +1963,7 @@ def test_azure_ai_chat_client_init_with_auto_created_agents_client(
             agent_id="test-agent",
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            async_credential=mock_azure_credential,
+            credential=mock_azure_credential,
         )
 
         # Verify AgentsClient was created with correct parameters

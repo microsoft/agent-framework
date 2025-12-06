@@ -29,7 +29,7 @@ async def main() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyOpenAPIAgent",
             instructions="""You are a helpful assistant that can use country APIs to provide information.
             Use the available OpenAPI tools to answer questions about countries, currencies, and demographics.""",

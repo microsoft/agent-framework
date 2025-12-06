@@ -93,7 +93,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="UtilityAgent",
             instructions="You are a helpful assistant that can provide weather information and current time.",
             tools=[get_weather, get_time],

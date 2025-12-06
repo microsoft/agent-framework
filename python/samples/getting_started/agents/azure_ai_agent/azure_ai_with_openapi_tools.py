@@ -41,7 +41,7 @@ async def main() -> None:
     weather_openapi_spec, countries_openapi_spec = load_openapi_specs()
 
     # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as client:
         # 3. Create OpenAPI tools using Azure AI's OpenApiTool
         auth = OpenApiAnonymousAuthDetails()
 

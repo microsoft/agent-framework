@@ -92,7 +92,7 @@ def create_coding_agent(client: AzureAIAgentClient) -> ChatAgent:
 async def main():
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential) as chat_client,
+        AzureAIAgentClient(credential=credential) as chat_client,
     ):
         # Build a workflow: Agent generates code -> Evaluator assesses results
         # The agent will be wrapped in a special agent executor which produces AgentExecutorResponse

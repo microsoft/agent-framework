@@ -28,7 +28,7 @@ async def mcp_tools_on_run_level() -> None:
             url="https://learn.microsoft.com/api/mcp",
         ) as mcp_server,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         ) as agent,
@@ -55,7 +55,7 @@ async def mcp_tools_on_agent_level() -> None:
     # The agent will connect to the MCP server through its context manager.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="DocsAgent",
             instructions="You are a helpful assistant that can help with microsoft documentation questions.",
             tools=MCPStreamableHTTPTool(  # Tools defined at agent creation

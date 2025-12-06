@@ -110,7 +110,7 @@ async def pre_termination_middleware() -> None:
     print("\n--- Example 1: Pre-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,
@@ -137,7 +137,7 @@ async def post_termination_middleware() -> None:
     print("\n--- Example 2: Post-termination Middleware ---")
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather assistant.",
             tools=get_weather,

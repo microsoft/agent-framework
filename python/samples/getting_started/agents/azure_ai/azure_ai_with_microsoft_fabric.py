@@ -21,7 +21,7 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyFabricAgent",
             instructions="You are a helpful assistant.",
             tools={
