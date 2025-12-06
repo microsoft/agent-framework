@@ -1422,7 +1422,7 @@ def _capture_messages(
     """Log messages with extra information."""
     from ._types import prepare_messages
 
-    prepped = prepare_messages(messages)
+    prepped = prepare_messages(messages, system_instructions=system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         otel_messages.append(_to_otel_message(message))
