@@ -19,6 +19,8 @@ internal static class TestHelpers
     {
         private readonly string _responseText;
 
+        public ChatOptions? LastChatOptions { get; private set; }
+
         public SimpleMockChatClient(string responseText = "Test response")
         {
             this._responseText = responseText;
@@ -31,6 +33,11 @@ internal static class TestHelpers
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
         {
+            if (options is not null)
+            {
+                this.LastChatOptions = options;
+            }
+
             // Count input messages to simulate context size
             int messageCount = messages.Count();
             ChatMessage message = new(ChatRole.Assistant, this._responseText);
@@ -53,6 +60,11 @@ internal static class TestHelpers
             ChatOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            if (options is not null)
+            {
+                this.LastChatOptions = options;
+            }
+
             await Task.Delay(1, cancellationToken);
 
             // Count input messages to simulate context size

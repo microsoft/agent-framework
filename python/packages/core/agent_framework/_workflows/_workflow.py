@@ -180,7 +180,7 @@ class Workflow(DictConvertible):
         self,
         edge_groups: list[EdgeGroup],
         executors: dict[str, Executor],
-        start_executor: Executor | str,
+        start_executor: Executor,
         runner_context: RunnerContext,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         name: str | None = None,
@@ -192,19 +192,16 @@ class Workflow(DictConvertible):
         Args:
             edge_groups: A list of EdgeGroup instances that define the workflow edges.
             executors: A dictionary mapping executor IDs to Executor instances.
-            start_executor: The starting executor for the workflow, which can be an Executor instance or its ID.
+            start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
             name: Optional human-readable name for the workflow.
             description: Optional description of what the workflow does.
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
-        # Convert start_executor to string ID if it's an Executor instance
-        start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
-
         self.edge_groups = list(edge_groups)
         self.executors = dict(executors)
-        self.start_executor_id = start_executor_id
+        self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
         self.id = str(uuid.uuid4())
         self.name = name
