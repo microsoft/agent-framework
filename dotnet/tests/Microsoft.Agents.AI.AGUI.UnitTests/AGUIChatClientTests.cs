@@ -919,7 +919,7 @@ public sealed class AGUIAgentTests
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Test")];
 
         // Act - First turn
-        List<ChatMessage> conversation = new(messages);
+        List<ChatMessage> conversation = [.. messages];
         string? conversationId = null;
         await foreach (var update in chatClient.GetStreamingResponseAsync(conversation, options))
         {

@@ -242,23 +242,16 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// </summary>
     /// <param name="pcResponse">The process content response which may contain DLP actions.</param>
     /// <param name="actionInfos">DLP actions returned from protection scopes.</param>
-    /// <returns>The process content response with the protection scopes DLP actions added. Actions are deduplicated.</returns>
+    /// <returns>The process content response with the protection scopes DLP actions added.</returns>
     private static ProcessContentResponse CombinePolicyActions(ProcessContentResponse pcResponse, List<DlpActionInfo>? actionInfos)
     {
-        if (actionInfos == null || actionInfos.Count == 0)
+        if (actionInfos?.Count > 0)
         {
-            return pcResponse;
+            pcResponse.PolicyActions = pcResponse.PolicyActions is null ?
+                actionInfos :
+                [.. pcResponse.PolicyActions, .. actionInfos];
         }
 
-        if (pcResponse.PolicyActions == null)
-        {
-            pcResponse.PolicyActions = actionInfos;
-            return pcResponse;
-        }
-
-        List<DlpActionInfo> pcActionInfos = new(pcResponse.PolicyActions);
-        pcActionInfos.AddRange(actionInfos);
-        pcResponse.PolicyActions = pcActionInfos;
         return pcResponse;
     }
 
@@ -339,20 +332,14 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <returns>The protection scopes activity.</returns>
     private static ProtectionScopeActivities TranslateActivity(Activity activity)
     {
-        switch (activity)
+        return activity switch
         {
-            case Activity.Unknown:
-                return ProtectionScopeActivities.None;
-            case Activity.UploadText:
-                return ProtectionScopeActivities.UploadText;
-            case Activity.UploadFile:
-                return ProtectionScopeActivities.UploadFile;
-            case Activity.DownloadText:
-                return ProtectionScopeActivities.DownloadText;
-            case Activity.DownloadFile:
-                return ProtectionScopeActivities.DownloadFile;
-            default:
-                return ProtectionScopeActivities.UnknownFutureValue;
-        }
+            Activity.Unknown => ProtectionScopeActivities.None,
+            Activity.UploadText => ProtectionScopeActivities.UploadText,
+            Activity.UploadFile => ProtectionScopeActivities.UploadFile,
+            Activity.DownloadText => ProtectionScopeActivities.DownloadText,
+            Activity.DownloadFile => ProtectionScopeActivities.DownloadFile,
+            _ => ProtectionScopeActivities.UnknownFutureValue,
+        };
     }
 }

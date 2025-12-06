@@ -281,7 +281,7 @@ internal sealed class A2AAgent : AIAgent
 
     private static A2AContinuationToken? CreateContinuationToken(string taskId, TaskState state)
     {
-        if (state == TaskState.Submitted || state == TaskState.Working)
+        if (state is TaskState.Submitted or TaskState.Working)
         {
             return new A2AContinuationToken(taskId);
         }

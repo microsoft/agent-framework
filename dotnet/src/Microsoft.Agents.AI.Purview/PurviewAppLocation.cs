@@ -38,16 +38,12 @@ public class PurviewAppLocation
     /// <exception cref="InvalidOperationException">Thrown when an invalid location type is provided.</exception>
     internal PolicyLocation GetPolicyLocation()
     {
-        switch (this.LocationType)
+        return this.LocationType switch
         {
-            case PurviewLocationType.Application:
-                return new PolicyLocation($"{Constants.ODataGraphNamespace}.policyLocationApplication", this.LocationValue);
-            case PurviewLocationType.Uri:
-                return new PolicyLocation($"{Constants.ODataGraphNamespace}.policyLocationUrl", this.LocationValue);
-            case PurviewLocationType.Domain:
-                return new PolicyLocation($"{Constants.ODataGraphNamespace}.policyLocationDomain", this.LocationValue);
-            default:
-                throw new InvalidOperationException("Invalid location type.");
-        }
+            PurviewLocationType.Application => new($"{Constants.ODataGraphNamespace}.policyLocationApplication", this.LocationValue),
+            PurviewLocationType.Uri => new($"{Constants.ODataGraphNamespace}.policyLocationUrl", this.LocationValue),
+            PurviewLocationType.Domain => new($"{Constants.ODataGraphNamespace}.policyLocationDomain", this.LocationValue),
+            _ => throw new InvalidOperationException("Invalid location type."),
+        };
     }
 }

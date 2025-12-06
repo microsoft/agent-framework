@@ -41,8 +41,8 @@ public sealed class EdgeConnection : IEquatable<EdgeConnection>
     /// contains duplicate values.</exception>
     public static EdgeConnection CreateChecked(List<string> sourceIds, List<string> sinkIds)
     {
-        HashSet<string> sourceSet = new(Throw.IfNull(sourceIds));
-        HashSet<string> sinkSet = new(Throw.IfNull(sinkIds));
+        HashSet<string> sourceSet = [.. Throw.IfNull(sourceIds)];
+        HashSet<string> sinkSet = [.. Throw.IfNull(sinkIds)];
 
         if (sourceSet.Count != sourceIds.Count)
         {

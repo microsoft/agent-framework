@@ -57,7 +57,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     protected virtual IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
     {
-        return Enumerable.Empty<ChatMessage>();
+        return [];
     }
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

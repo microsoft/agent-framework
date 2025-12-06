@@ -274,7 +274,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
         }
 
-        var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
+        var state = serializedStoreState.Deserialize<StoreState>(jsonSerializerOptions);
         if (state?.ConversationIdentifier is not { } conversationId)
         {
             throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));

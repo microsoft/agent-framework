@@ -212,13 +212,17 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         }
         catch (Exception ex)
         {
-            this._logger?.LogError(
-                ex,
-                "ChatHistoryMemoryProvider: Failed to search for chat history due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.ThreadId,
-                this.SanitizeLogData(this._searchScope.UserId));
+            if (this._logger?.IsEnabled(LogLevel.Error) is true)
+            {
+                this._logger.LogError(
+                    ex,
+                    "ChatHistoryMemoryProvider: Failed to search for chat history due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    this._searchScope.ApplicationId,
+                    this._searchScope.AgentId,
+                    this._searchScope.ThreadId,
+                    this.SanitizeLogData(this._searchScope.UserId));
+            }
+
             return new AIContext();
         }
     }
@@ -264,13 +268,16 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
         }
         catch (Exception ex)
         {
-            this._logger?.LogError(
-                ex,
-                "ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.ThreadId,
-                this.SanitizeLogData(this._searchScope.UserId));
+            if (this._logger?.IsEnabled(LogLevel.Error) is true)
+            {
+                this._logger.LogError(
+                    ex,
+                    "ChatHistoryMemoryProvider: Failed to add messages to chat history vector store due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    this._searchScope.ApplicationId,
+                    this._searchScope.AgentId,
+                    this._searchScope.ThreadId,
+                    this.SanitizeLogData(this._searchScope.UserId));
+            }
         }
     }
 
@@ -302,14 +309,18 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
 
         var formatted = $"{this._contextPrompt}\n{outputResultsText}";
 
-        this._logger?.LogTrace(
-            "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-            this.SanitizeLogData(userQuestion),
-            this.SanitizeLogData(formatted),
-            this._searchScope.ApplicationId,
-            this._searchScope.AgentId,
-            this._searchScope.ThreadId,
-            this.SanitizeLogData(this._searchScope.UserId));
+        if (this._logger?.IsEnabled(LogLevel.Trace) is true)
+        {
+            this._logger.LogTrace(
+                "ChatHistoryMemoryProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\n ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                this.SanitizeLogData(userQuestion),
+                this.SanitizeLogData(formatted),
+                this._searchScope.ApplicationId,
+                this._searchScope.AgentId,
+                this._searchScope.ThreadId,
+                this.SanitizeLogData(this._searchScope.UserId));
+        }
+
         return formatted;
     }
 
@@ -383,13 +394,16 @@ public sealed class ChatHistoryMemoryProvider : AIContextProvider, IDisposable
             results.Add(result.Record);
         }
 
-        this._logger?.LogInformation(
-            "ChatHistoryMemoryProvider: Retrieved {Count} search results. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-            results.Count,
-            this._searchScope.ApplicationId,
-            this._searchScope.AgentId,
-            this._searchScope.ThreadId,
-            this.SanitizeLogData(this._searchScope.UserId));
+        if (this._logger?.IsEnabled(LogLevel.Information) is true)
+        {
+            this._logger.LogInformation(
+                "ChatHistoryMemoryProvider: Retrieved {Count} search results. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                results.Count,
+                this._searchScope.ApplicationId,
+                this._searchScope.AgentId,
+                this._searchScope.ThreadId,
+                this.SanitizeLogData(this._searchScope.UserId));
+        }
 
         return results;
     }

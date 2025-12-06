@@ -2684,13 +2684,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     private sealed class MockPipelineResponse : PipelineResponse
     {
         private readonly int _status;
-        private readonly BinaryData _content;
         private readonly MockPipelineResponseHeaders _headers;
 
         public MockPipelineResponse(int status, BinaryData? content = null)
         {
             this._status = status;
-            this._content = content ?? BinaryData.Empty;
+            this.Content = content ?? BinaryData.Empty;
             this._headers = new MockPipelineResponseHeaders();
         }
 
@@ -2704,7 +2703,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             set { }
         }
 
-        public override BinaryData Content => this._content;
+        public override BinaryData Content { get; }
 
         protected override PipelineResponseHeaders HeadersCore => this._headers;
 
