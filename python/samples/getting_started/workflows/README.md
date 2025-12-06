@@ -78,9 +78,22 @@ Once comfortable with these, explore the rest of the samples below.
 
 | Sample | File | Concepts |
 |---|---|---|
-| Human-In-The-Loop (Guessing Game) | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human |
-| Azure Agents Tool Feedback Loop | [agents/azure_chat_agents_tool_calls_with_feedback.py](./agents/azure_chat_agents_tool_calls_with_feedback.py) | Two-agent workflow that streams tool calls and pauses for human guidance between passes |
+| Human-In-The-Loop (Guessing Game) | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human via `ctx.request_info()` |
 | Agents with Approval Requests in Workflows | [human-in-the-loop/agents_with_approval_requests.py](./human-in-the-loop/agents_with_approval_requests.py) | Agents that create approval requests during workflow execution and wait for human approval to proceed |
+| SequentialBuilder Human Input Hook | [human-in-the-loop/sequential_human_input_hook.py](./human-in-the-loop/sequential_human_input_hook.py) | Request arbitrary human feedback mid-workflow using `.with_human_input_hook()` on SequentialBuilder |
+| ConcurrentBuilder Human Input Hook | [human-in-the-loop/concurrent_human_input_hook.py](./human-in-the-loop/concurrent_human_input_hook.py) | Review concurrent agent outputs before aggregation using `.with_human_input_hook()` on ConcurrentBuilder |
+| GroupChatBuilder Human Input Hook | [human-in-the-loop/group_chat_human_input_hook.py](./human-in-the-loop/group_chat_human_input_hook.py) | Steer group discussions with periodic human guidance using `.with_human_input_hook()` on GroupChatBuilder |
+
+
+### tool-approval
+
+Tool approval samples demonstrate using `@ai_function(approval_mode="always_require")` to gate sensitive tool executions with human approval. These work with the high-level builder APIs.
+
+| Sample | File | Concepts |
+|---|---|---|
+| SequentialBuilder Tool Approval | [tool-approval/sequential_builder_tool_approval.py](./tool-approval/sequential_builder_tool_approval.py) | Sequential workflow with tool approval gates for sensitive operations |
+| ConcurrentBuilder Tool Approval | [tool-approval/concurrent_builder_tool_approval.py](./tool-approval/concurrent_builder_tool_approval.py) | Concurrent workflow with tool approvals across parallel agents |
+| GroupChatBuilder Tool Approval | [tool-approval/group_chat_builder_tool_approval.py](./tool-approval/group_chat_builder_tool_approval.py) | Group chat workflow with tool approval for multi-agent collaboration |
 
 ### observability
 

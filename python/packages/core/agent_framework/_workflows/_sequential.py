@@ -51,6 +51,7 @@ from ._executor import (
     Executor,
     handler,
 )
+from ._human_input import HumanInputHookMixin
 from ._message_utils import normalize_messages_input
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
@@ -100,7 +101,7 @@ class _EndWithConversation(Executor):
         await ctx.yield_output(list(conversation))
 
 
-class SequentialBuilder:
+class SequentialBuilder(HumanInputHookMixin):
     r"""High-level builder for sequential agent/executor workflows with shared context.
 
     - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor
@@ -119,6 +120,16 @@ class SequentialBuilder:
 
         # Enable checkpoint persistence
         workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
+
+
+        # Enable human input hook for mid-workflow feedback
+        def request_review(conversation, agent_id):
+            if "review" in conversation[-1].text.lower():
+                return HumanInputRequest(prompt="Please review:", conversation=conversation)
+            return None
+
+
+        workflow = SequentialBuilder().participants([agent1, agent2]).with_human_input_hook(request_review).build()
     """
 
     def __init__(self) -> None:
@@ -163,8 +174,9 @@ class SequentialBuilder:
         Wiring pattern:
         - _InputToConversation normalizes the initial input into list[ChatMessage]
         - For each participant in order:
-            - If Agent (or AgentExecutor): pass conversation to the agent, then convert response
-              to conversation via _ResponseToConversation
+            - If Agent (or AgentExecutor): pass conversation to the agent, then optionally
+              route through human input interceptor, then convert response to conversation
+              via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
@@ -184,13 +196,24 @@ class SequentialBuilder:
         for p in self._participants:
             # Agent-like branch: either explicitly an AgentExecutor or any non-AgentExecutor
             if not (isinstance(p, Executor) and not isinstance(p, AgentExecutor)):
-                # input conversation -> (agent) -> response -> conversation
+                # input conversation -> (agent) -> [human_input_interceptor] -> response -> conversation
                 builder.add_edge(prior, p)
+
                 # Give the adapter a deterministic, self-describing id
                 label: str
                 label = p.id if isinstance(p, Executor) else getattr(p, "name", None) or p.__class__.__name__
                 resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
-                builder.add_edge(p, resp_to_conv)
+
+                if self._human_input_hook is not None:
+                    # Insert human input interceptor between agent and response converter
+                    # Create a dedicated interceptor per agent to avoid ID conflicts
+                    interceptor = self._create_human_input_executor(f"human_input_interceptor:{label}")
+                    if interceptor is not None:
+                        builder.add_edge(p, interceptor)
+                        builder.add_edge(interceptor, resp_to_conv)
+                else:
+                    builder.add_edge(p, resp_to_conv)
+
                 prior = resp_to_conv
             elif isinstance(p, Executor):
                 # Custom executor operates on list[ChatMessage]

@@ -13,6 +13,7 @@ from agent_framework import AgentProtocol, ChatMessage, Role
 from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
+from ._human_input import HumanInputHookMixin
 from ._message_utils import normalize_messages_input
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
@@ -184,7 +185,7 @@ class _CallbackAggregator(Executor):
             await ctx.yield_output(ret)
 
 
-class ConcurrentBuilder:
+class ConcurrentBuilder(HumanInputHookMixin):
     r"""High-level builder for concurrent agent workflows.
 
     - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor.
@@ -212,6 +213,16 @@ class ConcurrentBuilder:
 
         # Enable checkpoint persistence so runs can resume
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
+
+
+        # Enable human input hook for review before aggregation
+        def request_review(conversation, agent_id):
+            # For concurrent workflows, agent_id is None and conversation contains
+            # merged outputs from all parallel agents
+            return HumanInputRequest(prompt="Review all outputs:", conversation=conversation)
+
+
+        workflow = ConcurrentBuilder().participants([agent1, agent2]).with_human_input_hook(request_review).build()
     """
 
     def __init__(self) -> None:
@@ -301,7 +312,9 @@ class ConcurrentBuilder:
 
         Wiring pattern:
         - Dispatcher (internal) fans out the input to all `participants`
-        - Fan-in aggregator collects `AgentExecutorResponse` objects
+        - Fan-in collects `AgentExecutorResponse` objects from all participants
+        - If human input hook is configured, the interceptor executor checks for input
+          before passing results to the aggregator
         - Aggregator yields output and the workflow becomes idle. The output is either:
           - list[ChatMessage] (default aggregator: one user + one assistant per agent)
           - custom payload from the provided callback/executor
@@ -324,10 +337,21 @@ class ConcurrentBuilder:
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
         aggregator = self._aggregator or _AggregateAgentConversations(id="aggregator")
 
+        # Create human input interceptor if hook is configured
+        human_input_interceptor = self._create_human_input_executor()
+
         builder = WorkflowBuilder()
         builder.set_start_executor(dispatcher)
         builder.add_fan_out_edges(dispatcher, list(self._participants))
-        builder.add_fan_in_edges(list(self._participants), aggregator)
+
+        if human_input_interceptor is not None:
+            # Insert interceptor between fan-in and aggregator
+            # participants -> fan-in -> interceptor -> aggregator
+            builder.add_fan_in_edges(list(self._participants), human_input_interceptor)
+            builder.add_edge(human_input_interceptor, aggregator)
+        else:
+            # Direct fan-in to aggregator
+            builder.add_fan_in_edges(list(self._participants), aggregator)
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)

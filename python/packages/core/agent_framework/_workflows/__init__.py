@@ -65,6 +65,12 @@ from ._group_chat import (
     ManagerSelectionResponse,
 )
 from ._handoff import HandoffBuilder, HandoffUserInputRequest
+from ._human_input import (
+    HumanInputHook,
+    HumanInputHookMixin,
+    HumanInputHookResult,
+    HumanInputRequest,
+)
 from ._magentic import (
     MAGENTIC_EVENT_TYPE_AGENT_DELTA,
     MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
@@ -145,6 +151,10 @@ __all__ = [
     "GroupChatStateSnapshot",
     "HandoffBuilder",
     "HandoffUserInputRequest",
+    "HumanInputHook",
+    "HumanInputHookMixin",
+    "HumanInputHookResult",
+    "HumanInputRequest",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     "MagenticBuilder",

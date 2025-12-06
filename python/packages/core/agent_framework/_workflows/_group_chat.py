@@ -36,6 +36,7 @@ from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage
 from ._conversation_history import ensure_author, latest_user_message
 from ._executor import Executor, handler
+from ._human_input import HumanInputHookMixin, _HumanInputInterceptor  # type: ignore
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, wrap_participant
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
@@ -562,14 +563,36 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         participant_name: str,
         message: ChatMessage,
         ctx: WorkflowContext[AgentExecutorRequest | _GroupChatRequestMessage, list[ChatMessage]],
+        trailing_messages: list[ChatMessage] | None = None,
     ) -> None:
-        """Common response ingestion logic shared by agent and custom participants."""
+        """Common response ingestion logic shared by agent and custom participants.
+
+        Args:
+            participant_name: Name of the participant who sent the message
+            message: The participant's response message
+            ctx: Workflow context for routing and output
+            trailing_messages: Optional list of messages to inject after the participant's
+                message (e.g., human input from the human input hook)
+        """
         if participant_name not in self._participants:
             raise ValueError(f"Received response from unknown participant '{participant_name}'.")
 
         message = ensure_author(message, participant_name)
         self._conversation.extend((message,))
         self._history.append(_GroupChatTurn(participant_name, "agent", message))
+
+        # Inject any trailing messages (e.g., human input) into the conversation
+        if trailing_messages:
+            for trailing_msg in trailing_messages:
+                self._conversation.extend((trailing_msg,))
+                # Record as user input in history
+                author = trailing_msg.author_name or "human"
+                self._history.append(_GroupChatTurn(author, "user", trailing_msg))
+                logger.debug(
+                    f"Injected human input into group chat conversation: "
+                    f"{trailing_msg.text[:50] if trailing_msg.text else '(empty)'}..."
+                )
+
         self._pending_agent = None
 
         if await self._complete_on_termination(ctx):
@@ -685,14 +708,18 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         to the selected participant. This method implements the core orchestration
         logic for agent-based managers.
 
+        Also handles any human input that was injected into the response's full_conversation
+        by the human input hook interceptor.
+
         Args:
             response: AgentExecutor response from manager agent
             ctx: Workflow context for routing and output
 
         Behavior:
+            - Extracts any human input from the response
             - Parses manager selection from response
             - If finish=True: yields final message and completes workflow
-            - If participant selected: routes request to that participant
+            - If participant selected: routes request to that participant with human input included
             - Validates selected participant exists
             - Enforces round limits if configured
 
@@ -700,6 +727,9 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
             ValueError: If manager selects invalid/unknown participant
             RuntimeError: If manager response cannot be parsed
         """
+        # Extract any human input that was injected by the human input hook
+        trailing_user_messages = self._extract_trailing_user_messages(response)
+
         selection = self._parse_manager_selection(response)
 
         if self._pending_finalization:
@@ -752,6 +782,19 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
             conversation.append(manager_message)
             self._conversation.append(manager_message)
             self._history.append(_GroupChatTurn(self._manager_name, "manager", manager_message))
+
+        # Inject any human input that was attached to the manager's response
+        # This ensures the next participant sees the human's guidance
+        if trailing_user_messages:
+            for human_msg in trailing_user_messages:
+                conversation.append(human_msg)
+                self._conversation.append(human_msg)
+                author = human_msg.author_name or "human"
+                self._history.append(_GroupChatTurn(author, "user", human_msg))
+                logger.debug(
+                    f"Injected human input after manager selection: "
+                    f"{human_msg.text[:50] if human_msg.text else '(empty)'}..."
+                )
 
         if await self._complete_on_termination(ctx):
             return
@@ -807,6 +850,41 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
                 reason="empty response",
             )
         return ensure_author(final_message, participant_name)
+
+    @staticmethod
+    def _extract_trailing_user_messages(response: AgentExecutorResponse) -> list[ChatMessage]:
+        """Extract any user messages that appear after the last assistant message.
+
+        This is used to capture human input that was injected by the human input hook
+        interceptor. The hook adds user messages to full_conversation after the agent's
+        response, so they appear at the end of the sequence.
+
+        Args:
+            response: AgentExecutor response that may contain trailing user messages
+
+        Returns:
+            List of user messages that appear after the last assistant message,
+            or empty list if none found
+        """
+        if not response.full_conversation:
+            return []
+
+        # Find index of last assistant message
+        last_assistant_idx = -1
+        for i, msg in enumerate(response.full_conversation):
+            if msg.role == Role.ASSISTANT:
+                last_assistant_idx = i
+
+        if last_assistant_idx < 0:
+            return []
+
+        # Collect any user messages after the last assistant message
+        trailing_user: list[ChatMessage] = []
+        for msg in response.full_conversation[last_assistant_idx + 1 :]:
+            if msg.role == Role.USER:
+                trailing_user.append(msg)
+
+        return trailing_user
 
     async def _handle_task_message(
         self,
@@ -979,6 +1057,9 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         Routes responses based on whether they come from the manager or a participant:
         - Manager responses: parsed for speaker selection decisions
         - Participant responses: ingested as conversation messages
+
+        Also handles any human input that was injected into the response's full_conversation
+        by the human input hook interceptor.
         """
         participant_name = self._registry.get_participant_name(response.executor_id)
         if participant_name is None:
@@ -994,7 +1075,13 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         else:
             # Regular participant response
             message = self._extract_agent_message(response, participant_name)
-            await self._ingest_participant_message(participant_name, message, ctx)
+
+            # Check for human input injected by human input hook
+            # Human input appears as user messages at the end of full_conversation
+            # after the agent's assistant message
+            trailing_user_messages = self._extract_trailing_user_messages(response)
+
+            await self._ingest_participant_message(participant_name, message, ctx, trailing_user_messages)
 
 
 def _default_orchestrator_factory(wiring: _GroupChatConfig) -> Executor:
@@ -1149,7 +1236,7 @@ def assemble_group_chat_workflow(
 # region Builder
 
 
-class GroupChatBuilder:
+class GroupChatBuilder(HumanInputHookMixin):
     r"""High-level builder for manager-directed group chat workflows with dynamic orchestration.
 
     GroupChat coordinates multi-agent conversations using a manager that selects which participant
@@ -1210,6 +1297,31 @@ class GroupChatBuilder:
             .set_manager(manager_agent, display_name="Coordinator")
             .participants([researcher, writer])  # Or use dict: researcher=r, writer=w
             .with_max_rounds(10)
+            .build()
+        )
+
+    *Pattern 3: Human input hook for mid-conversation feedback*
+
+    .. code-block:: python
+
+        from agent_framework import GroupChatBuilder, HumanInputRequest
+
+
+        def request_review(conversation, agent_id):
+            if "review" in conversation[-1].text.lower():
+                return HumanInputRequest(
+                    prompt="Please review and provide feedback:",
+                    conversation=conversation,
+                    source_agent_id=agent_id,
+                )
+            return None
+
+
+        workflow = (
+            GroupChatBuilder()
+            .set_select_speakers_func(select_next_speaker)
+            .participants([researcher, writer])
+            .with_human_input_hook(request_review)
             .build()
         )
 
@@ -1754,9 +1866,32 @@ class GroupChatBuilder:
             participant_executors=metadata["executors"],
         )
 
+        # Determine participant factory - wrap if human input hook is configured
+        participant_factory = self._participant_factory
+        if self._human_input_hook is not None:
+            # Create a wrapper factory that adds human input interceptor to each pipeline
+            base_factory = participant_factory
+            hook = self._human_input_hook
+
+            def _factory_with_human_input(
+                spec: GroupChatParticipantSpec,
+                config: _GroupChatConfig,
+            ) -> _GroupChatParticipantPipeline:
+                pipeline = list(base_factory(spec, config))
+                if pipeline:
+                    # Add interceptor executor after the participant
+                    interceptor = _HumanInputInterceptor(
+                        hook,
+                        executor_id=f"human_input_interceptor:{spec.name}",
+                    )
+                    pipeline.append(interceptor)
+                return tuple(pipeline)
+
+            participant_factory = _factory_with_human_input
+
         result = assemble_group_chat_workflow(
             wiring=wiring,
-            participant_factory=self._participant_factory,
+            participant_factory=participant_factory,
             orchestrator_factory=self._orchestrator_factory,
             interceptors=self._interceptors,
             checkpoint_storage=self._checkpoint_storage,

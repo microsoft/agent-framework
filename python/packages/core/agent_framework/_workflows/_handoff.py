@@ -45,8 +45,10 @@ from ._executor import Executor, handler
 from ._group_chat import (
     _default_participant_factory,  # type: ignore[reportPrivateUsage]
     _GroupChatConfig,  # type: ignore[reportPrivateUsage]
+    _GroupChatParticipantPipeline,  # type: ignore[reportPrivateUsage]
     assemble_group_chat_workflow,
 )
+from ._human_input import HumanInputHookMixin, _HumanInputInterceptor
 from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, sanitize_identifier
 from ._request_info_mixin import response_handler
@@ -315,6 +317,25 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """Get the coordinator name for orchestrator-generated messages."""
         return "handoff_coordinator"
 
+    def _extract_agent_id_from_source(self, source: str | None) -> str | None:
+        """Extract the original agent ID from the source executor ID.
+
+        When a human input interceptor is in the pipeline, the source will be
+        like 'human_input_interceptor:agent_name'. This method extracts the
+        actual agent ID.
+
+        Args:
+            source: The source executor ID from the workflow context
+
+        Returns:
+            The actual agent ID, or the original source if not an interceptor
+        """
+        if source is None:
+            return None
+        if source.startswith("human_input_interceptor:"):
+            return source[len("human_input_interceptor:") :]
+        return source
+
     @handler
     async def handle_agent_response(
         self,
@@ -322,7 +343,8 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         ctx: WorkflowContext[AgentExecutorRequest | list[ChatMessage], list[ChatMessage] | _ConversationForUserInput],
     ) -> None:
         """Process an agent's response and determine whether to route, request input, or terminate."""
-        source = ctx.get_source_executor_id()
+        raw_source = ctx.get_source_executor_id()
+        source = self._extract_agent_id_from_source(raw_source)
         is_starting_agent = source == self._starting_agent_id
 
         # On first turn of a run, conversation is empty
@@ -400,8 +422,8 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         cleaned_for_display = clean_conversation_for_handoff(conversation)
 
         # The awaiting_agent_id is the agent that just responded and is awaiting user input
-        # This is the source of the current response
-        next_agent_id = source
+        # This is the source of the current response (fallback to starting agent if source is unknown)
+        next_agent_id = source or self._starting_agent_id
 
         message_to_gateway = _ConversationForUserInput(conversation=cleaned_for_display, next_agent_id=next_agent_id)
         await ctx.send_message(message_to_gateway, target_id=self._input_gateway_id)  # type: ignore[arg-type]
@@ -636,7 +658,7 @@ def _default_termination_condition(conversation: list[ChatMessage]) -> bool:
     return user_message_count >= 10
 
 
-class HandoffBuilder:
+class HandoffBuilder(HumanInputHookMixin):
     r"""Fluent builder for conversational handoff workflows with coordinator and specialist agents.
 
     The handoff pattern enables a coordinator agent to route requests to specialist agents.
@@ -1562,9 +1584,33 @@ class HandoffBuilder:
             participant_executors=self._executors,
         )
 
+        # Determine participant factory - wrap with human input interceptor if hook is configured
+        participant_factory: Callable[[GroupChatParticipantSpec, _GroupChatConfig], _GroupChatParticipantPipeline] = (
+            _default_participant_factory
+        )
+        hook = self._human_input_hook
+        if hook is not None:
+            base_factory = _default_participant_factory
+
+            def _factory_with_human_input(
+                spec: GroupChatParticipantSpec,
+                config: _GroupChatConfig,
+            ) -> _GroupChatParticipantPipeline:
+                pipeline = list(base_factory(spec, config))
+                if pipeline:
+                    # Add interceptor executor after the participant
+                    interceptor = _HumanInputInterceptor(
+                        hook,
+                        executor_id=f"human_input_interceptor:{spec.name}",
+                    )
+                    pipeline.append(interceptor)
+                return tuple(pipeline)
+
+            participant_factory = _factory_with_human_input
+
         result = assemble_group_chat_workflow(
             wiring=wiring,
-            participant_factory=_default_participant_factory,
+            participant_factory=participant_factory,
             orchestrator_factory=_handoff_orchestrator_factory,
             interceptors=(),
             checkpoint_storage=self._checkpoint_storage,

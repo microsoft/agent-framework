@@ -687,6 +687,63 @@ async def test_tool_choice_preserved_from_agent_config():
     assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
 
 
+async def test_handoff_builder_with_human_input_hook():
+    """Test that HandoffBuilder supports human input hook via HumanInputHookMixin."""
+    from agent_framework import HumanInputRequest
+
+    # Create test agents
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    hook_calls: list[tuple[list[ChatMessage], str | None]] = []
+
+    def test_hook(
+        conversation: list[ChatMessage],
+        agent_id: str | None,
+    ) -> HumanInputRequest | None:
+        hook_calls.append((list(conversation), agent_id))
+        # Return None to continue without requesting input
+        return None
+
+    # Build workflow with human input hook
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
+        .with_human_input_hook(test_hook)
+        .build()
+    )
+
+    # Run workflow
+    events = [e async for e in workflow.run_stream("Hello")]
+
+    # Verify the hook was called (at least once for the coordinator's response)
+    assert len(hook_calls) > 0, "Human input hook should have been called"
+
+    # Verify we got output events
+    output_events = [e for e in events if isinstance(e, WorkflowOutputEvent)]
+    assert len(output_events) > 0, "Should produce output events"
+
+
+async def test_handoff_builder_mixin_method_chaining():
+    """Test that with_human_input_hook returns self for method chaining."""
+    from agent_framework import HumanInputRequest
+
+    coordinator = _RecordingAgent(name="coordinator")
+
+    def test_hook(
+        conversation: list[ChatMessage],
+        agent_id: str | None,
+    ) -> HumanInputRequest | None:
+        return None
+
+    builder = HandoffBuilder(participants=[coordinator])
+    result = builder.with_human_input_hook(test_hook)
+
+    assert result is builder, "with_human_input_hook should return self for chaining"
+    assert builder._human_input_hook is test_hook  # type: ignore
+
+
 async def test_return_to_previous_state_serialization():
     """Test that return_to_previous state is properly serialized/deserialized for checkpointing."""
     from agent_framework._workflows._handoff import _HandoffCoordinator  # type: ignore[reportPrivateUsage]

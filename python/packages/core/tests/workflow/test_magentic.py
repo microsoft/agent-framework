@@ -857,3 +857,22 @@ async def test_magentic_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
+
+
+def test_magentic_builder_does_not_have_human_input_hook():
+    """Test that MagenticBuilder does not expose with_human_input_hook (uses specialized HITL instead).
+
+    Magentic uses specialized human intervention mechanisms:
+    - with_plan_review() for plan approval
+    - with_human_input_on_stall() for stall intervention
+    - Tool approval via FunctionApprovalRequestContent
+
+    These emit MagenticHumanInterventionRequest events with structured decision options.
+    """
+    builder = MagenticBuilder()
+
+    # MagenticBuilder should NOT have the generic human input hook mixin
+    assert not hasattr(builder, "with_human_input_hook"), (
+        "MagenticBuilder should not have with_human_input_hook - "
+        "use with_plan_review() or with_human_input_on_stall() instead"
+    )

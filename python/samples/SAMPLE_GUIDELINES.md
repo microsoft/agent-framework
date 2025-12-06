@@ -33,7 +33,7 @@ Try to over-document the samples. This includes comments in the code, README.md 
 For the getting started samples and the concept samples, we should have the following:
 
 1. A README.md file is included in each set of samples that explains the purpose of the samples and the setup required to run them.
-2. A summary should be included at the top of the file that explains the purpose of the sample and required components/concepts to understand the sample. For example:
+2. A summary should be included underneath the imports that explains the purpose of the sample and required components/concepts to understand the sample. For example:
 
     ```python
     '''
