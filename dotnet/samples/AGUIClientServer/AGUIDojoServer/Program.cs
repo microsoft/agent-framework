@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using AGUIDojoServer;
-using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.Options;
 
@@ -27,18 +26,18 @@ app.UseHttpLogging();
 ChatClientAgentFactory.Initialize(app.Configuration);
 
 // Map the AG-UI agent endpoints for different scenarios
-app.MapAGUI("/agentic_chat", ChatClientAgentFactory.CreateAgenticChat());
+app.MapAGUI(ChatClientAgentFactory.CreateAgenticChat(), "/agentic_chat");
 
-app.MapAGUI("/backend_tool_rendering", ChatClientAgentFactory.CreateBackendToolRendering());
+app.MapAGUI(ChatClientAgentFactory.CreateBackendToolRendering(), "/backend_tool_rendering");
 
-app.MapAGUI("/human_in_the_loop", ChatClientAgentFactory.CreateHumanInTheLoop());
+app.MapAGUI(ChatClientAgentFactory.CreateHumanInTheLoop(), "/human_in_the_loop");
 
-app.MapAGUI("/tool_based_generative_ui", ChatClientAgentFactory.CreateToolBasedGenerativeUI());
+app.MapAGUI(ChatClientAgentFactory.CreateToolBasedGenerativeUI(), "/tool_based_generative_ui");
 
-app.MapAGUI("/agentic_generative_ui", ChatClientAgentFactory.CreateAgenticUI());
+app.MapAGUI(ChatClientAgentFactory.CreateAgenticUI(), "/agentic_generative_ui");
 
 var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
-app.MapAGUI("/shared_state", ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions));
+app.MapAGUI(ChatClientAgentFactory.CreateSharedState(jsonOptions.Value.SerializerOptions), "/shared_state");
 
 await app.RunAsync();
 

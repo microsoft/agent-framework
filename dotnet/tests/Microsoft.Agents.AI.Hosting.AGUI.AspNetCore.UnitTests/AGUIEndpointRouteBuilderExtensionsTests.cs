@@ -20,7 +20,7 @@ using Moq;
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AGUIEndpointRouteBuilderExtensions"/> class.
+/// Unit tests for the <see cref="MicrosoftAgentAIHostingAGUIEndpointRouteBuilderExtensions"/> class.
 /// </summary>
 public sealed class AGUIEndpointRouteBuilderExtensionsTests
 {
@@ -38,7 +38,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
         AIAgent agent = new TestAgent();
 
         // Act
-        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(Pattern, agent);
+        IEndpointConventionBuilder? result = endpointsMock.Object.MapAGUI(agent, Pattern);
 
         // Assert
         Assert.NotNull(result);
@@ -423,6 +423,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     {
         public override string Id => "multi-response-agent";
 
+        public override string Name => "multi-response-agent";
+
         public override string? Description => "Agent that produces multiple text chunks";
 
         public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
@@ -511,6 +513,8 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     private sealed class TestAgent : AIAgent
     {
         public override string Id => "test-agent";
+
+        public override string Name => "test-agent";
 
         public override string? Description => "Test agent";
 

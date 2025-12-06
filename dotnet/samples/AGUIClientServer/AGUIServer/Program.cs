@@ -4,7 +4,6 @@ using System.ComponentModel;
 using AGUIServer;
 using Azure.AI.OpenAI;
 using Azure.Identity;
-using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
 using OpenAI;
 
@@ -46,6 +45,6 @@ var agent = new AzureOpenAIClient(
         ]);
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/", agent);
+app.MapAGUI(agent, "/");
 
 await app.RunAsync();

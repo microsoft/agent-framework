@@ -252,7 +252,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
             : this._app.Services.GetRequiredService<FakeChatClientAgent>();
 
-        this._app.MapAGUI("/agent", agent);
+        this._app.MapAGUI(agent, "/agent");
 
         await this._app.StartAsync();
 
