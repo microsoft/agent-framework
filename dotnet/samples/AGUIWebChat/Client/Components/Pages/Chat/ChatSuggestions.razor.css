@@ -1,0 +1,9 @@
+.suggestions {
+    text-align: right;
+    white-space: nowrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    display: flex;
+    margin-bottom: 0.75rem;
+}

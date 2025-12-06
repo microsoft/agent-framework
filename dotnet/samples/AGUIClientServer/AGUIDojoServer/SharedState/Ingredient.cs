@@ -2,7 +2,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace AGUIDojoServer;
+namespace AGUIDojoServer.SharedState;
 
 internal sealed class Ingredient
 {
