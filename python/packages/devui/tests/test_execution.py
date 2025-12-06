@@ -10,22 +10,48 @@ Tests include:
 """
 
 import asyncio
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from agent_framework import AgentExecutor, ChatAgent, FunctionExecutor, WorkflowBuilder
 
-# Import MockBaseChatClient using proper path for pytest discovery
-sys.path.insert(0, str(Path(__file__).parent))
-from conftest import MockBaseChatClient
+# Import test utilities
+from test_helpers import (
+    MockBaseChatClient,
+    create_concurrent_workflow,
+    create_executor_with_real_agent,
+    create_sequential_workflow,
+)
 
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import AgentFrameworkRequest
+
+# =============================================================================
+# Local Fixtures (async factory-based)
+# =============================================================================
+
+
+@pytest_asyncio.fixture
+async def executor_with_real_agent():
+    """Create an executor with a REAL ChatAgent using mock chat client."""
+    return await create_executor_with_real_agent()
+
+
+@pytest_asyncio.fixture
+async def sequential_workflow_fixture():
+    """Create a realistic sequential workflow (Writer -> Reviewer)."""
+    return await create_sequential_workflow()
+
+
+@pytest_asyncio.fixture
+async def concurrent_workflow_fixture():
+    """Create a realistic concurrent workflow (Researcher | Analyst | Summarizer)."""
+    return await create_concurrent_workflow()
 
 
 @pytest.fixture

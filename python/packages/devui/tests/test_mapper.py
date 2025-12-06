@@ -28,12 +28,14 @@ from agent_framework._workflows._events import (
     WorkflowStatusEvent,
 )
 
-# Import test utilities from conftest
-from conftest import (
+# Import test utilities
+from test_helpers import (
     create_agent_run_response,
     create_executor_completed_event,
     create_executor_failed_event,
     create_executor_invoked_event,
+    create_mapper,
+    create_test_request,
 )
 
 from agent_framework_devui._mapper import MessageMapper
@@ -43,6 +45,23 @@ from agent_framework_devui.models._openai_custom import (
     AgentFrameworkRequest,
     AgentStartedEvent,
 )
+
+# =============================================================================
+# Local Fixtures (to replace conftest.py fixtures)
+# =============================================================================
+
+
+@pytest.fixture
+def mapper() -> MessageMapper:
+    """Create a fresh MessageMapper for each test."""
+    return create_mapper()
+
+
+@pytest.fixture
+def test_request() -> AgentFrameworkRequest:
+    """Create a standard test request."""
+    return create_test_request()
+
 
 # =============================================================================
 # Test Helpers
