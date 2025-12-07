@@ -367,6 +367,7 @@ public sealed class A2AAgentTests : IDisposable
         // Act & Assert
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages))
         {
+            // Just iterate through to trigger the logic
         }
     }
 
@@ -396,14 +397,489 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("https://example.com/file.pdf", ((FilePart)message.Parts[1]).File.Uri?.ToString());
     }
 
+    [Fact]
+    public async Task RunAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
+    }
+
+    [Fact]
+    public async Task RunAsync_WithContinuationToken_CallsGetTaskAsyncAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123"
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act
+        await this._agent.RunAsync([], options: options);
+
+        // Assert
+        Assert.Equal("tasks/get", this._handler.CapturedJsonRpcRequest?.Method);
+        Assert.Equal("task-123", this._handler.CapturedTaskIdParams?.Id);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithTaskInThreadAndMessage_AddTaskAsReferencesToMessageAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response to task" }]
+        };
+
+        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        thread.TaskId = "task-123";
+
+        var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
+
+        // Act
+        await this._agent.RunAsync(inputMessage, thread);
+
+        // Assert
+        var message = this._handler.CapturedMessageSendParams?.Message;
+        Assert.Null(message?.TaskId);
+        Assert.NotNull(message?.ReferenceTaskIds);
+        Assert.Contains("task-123", message.ReferenceTaskIds);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentTask_UpdatesThreadTaskIdAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-456",
+            ContextId = "context-789",
+            Status = new() { State = TaskState.Submitted }
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        await this._agent.RunAsync("Start a task", thread);
+
+        // Assert
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("task-456", a2aThread.TaskId);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAgentTaskResponse_ReturnsTaskResponseCorrectlyAsync()
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-789",
+            ContextId = "context-456",
+            Status = new() { State = TaskState.Submitted },
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                { "key1", JsonSerializer.SerializeToElement("value1") },
+                { "count", JsonSerializer.SerializeToElement(42) }
+            }
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        var result = await this._agent.RunAsync("Start a long-running task", thread);
+
+        // Assert - verify task is converted correctly
+        Assert.NotNull(result);
+        Assert.Equal(this._agent.Id, result.AgentId);
+        Assert.Equal("task-789", result.ResponseId);
+
+        Assert.NotNull(result.RawRepresentation);
+        Assert.IsType<AgentTask>(result.RawRepresentation);
+        Assert.Equal("task-789", ((AgentTask)result.RawRepresentation).Id);
+
+        // Assert - verify continuation token is set for submitted task
+        Assert.NotNull(result.ContinuationToken);
+        Assert.IsType<A2AContinuationToken>(result.ContinuationToken);
+        Assert.Equal("task-789", ((A2AContinuationToken)result.ContinuationToken).TaskId);
+
+        // Assert - verify thread is updated with context and task IDs
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("context-456", a2aThread.ContextId);
+        Assert.Equal("task-789", a2aThread.TaskId);
+
+        // Assert - verify metadata is preserved
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.NotNull(result.AdditionalProperties["key1"]);
+        Assert.Equal("value1", ((JsonElement)result.AdditionalProperties["key1"]!).GetString());
+        Assert.NotNull(result.AdditionalProperties["count"]);
+        Assert.Equal(42, ((JsonElement)result.AdditionalProperties["count"]!).GetInt32());
+    }
+
+    [Theory]
+    [InlineData(TaskState.Submitted)]
+    [InlineData(TaskState.Working)]
+    [InlineData(TaskState.Completed)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Canceled)]
+    public async Task RunAsync_WithVariousTaskStates_ReturnsCorrectTokenAsync(TaskState taskState)
+    {
+        // Arrange
+        this._handler.ResponseToReturn = new AgentTask
+        {
+            Id = "task-123",
+            ContextId = "context-123",
+            Status = new() { State = taskState }
+        };
+
+        // Act
+        var result = await this._agent.RunAsync("Test message");
+
+        // Assert
+        if (taskState == TaskState.Submitted || taskState == TaskState.Working)
+        {
+            Assert.NotNull(result.ContinuationToken);
+        }
+        else
+        {
+            Assert.Null(result.ContinuationToken);
+        }
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithContinuationTokenAndMessages_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-123") };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+            {
+                // Just iterate through to trigger the exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskInThreadAndMessage_AddTaskAsReferencesToMessageAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = "response-123",
+            Role = MessageRole.Agent,
+            Parts = [new TextPart { Text = "Response to task" }]
+        };
+
+        var thread = (A2AAgentThread)this._agent.GetNewThread();
+        thread.TaskId = "task-123";
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync("Please make the background transparent", thread))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert
+        var message = this._handler.CapturedMessageSendParams?.Message;
+        Assert.Null(message?.TaskId);
+        Assert.NotNull(message?.ReferenceTaskIds);
+        Assert.Contains("task-123", message.ReferenceTaskIds);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentTask_UpdatesThreadTaskIdAsync()
+    {
+        // Arrange
+        this._handler.StreamingResponseToReturn = new AgentTask
+        {
+            Id = "task-456",
+            ContextId = "context-789",
+            Status = new() { State = TaskState.Submitted }
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        await foreach (var _ in this._agent.RunStreamingAsync("Start a task", thread))
+        {
+            // Just iterate through to trigger the logic
+        }
+
+        // Assert
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal("task-456", a2aThread.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentMessage_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string MessageId = "msg-123";
+        const string ContextId = "ctx-456";
+        const string MessageText = "Hello from agent!";
+
+        this._handler.StreamingResponseToReturn = new AgentMessage
+        {
+            MessageId = MessageId,
+            Role = MessageRole.Agent,
+            ContextId = ContextId,
+            Parts =
+            [
+                new TextPart { Text = MessageText }
+            ]
+        };
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Test message"))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(MessageId, update0.MessageId);
+        Assert.Equal(MessageId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Equal(MessageText, update0.Text);
+        Assert.IsType<AgentMessage>(update0.RawRepresentation);
+        Assert.Equal(MessageId, ((AgentMessage)update0.RawRepresentation!).MessageId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAgentTask_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-789";
+        const string ContextId = "ctx-012";
+
+        this._handler.StreamingResponseToReturn = new AgentTask
+        {
+            Id = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Submitted },
+            Artifacts = [
+                new()
+                {
+                    ArtifactId = "art-123",
+                    Parts = [new TextPart { Text = "Task artifact content" }]
+                }
+            ]
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Start long-running task", thread))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded from artifact
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<AgentTask>(update0.RawRepresentation);
+        Assert.Equal(TaskId, ((AgentTask)update0.RawRepresentation!).Id);
+
+        // Assert - thread should be updated with context and task IDs
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal(ContextId, a2aThread.ContextId);
+        Assert.Equal(TaskId, a2aThread.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskStatusUpdateEvent_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-status-123";
+        const string ContextId = "ctx-status-456";
+
+        this._handler.StreamingResponseToReturn = new TaskStatusUpdateEvent
+        {
+            TaskId = TaskId,
+            ContextId = ContextId,
+            Status = new() { State = TaskState.Working }
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Check task status", thread))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
+
+        // Assert - thread should be updated with context and task IDs
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal(ContextId, a2aThread.ContextId);
+        Assert.Equal(TaskId, a2aThread.TaskId);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskArtifactUpdateEvent_YieldsResponseUpdateAsync()
+    {
+        // Arrange
+        const string TaskId = "task-artifact-123";
+        const string ContextId = "ctx-artifact-456";
+        const string ArtifactContent = "Task artifact data";
+
+        this._handler.StreamingResponseToReturn = new TaskArtifactUpdateEvent
+        {
+            TaskId = TaskId,
+            ContextId = ContextId,
+            Artifact = new()
+            {
+                ArtifactId = "artifact-789",
+                Parts = [new TextPart { Text = ArtifactContent }]
+            }
+        };
+
+        var thread = this._agent.GetNewThread();
+
+        // Act
+        var updates = new List<AgentRunResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync("Process artifact", thread))
+        {
+            updates.Add(update);
+        }
+
+        // Assert - one update should be yielded
+        Assert.Single(updates);
+
+        var update0 = updates[0];
+        Assert.Equal(ChatRole.Assistant, update0.Role);
+        Assert.Equal(TaskId, update0.ResponseId);
+        Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.IsType<TaskArtifactUpdateEvent>(update0.RawRepresentation);
+
+        // Assert - artifact content should be in the update
+        Assert.NotEmpty(update0.Contents);
+        Assert.Equal(ArtifactContent, update0.Text);
+
+        // Assert - thread should be updated with context and task IDs
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal(ContextId, a2aThread.ContextId);
+        Assert.Equal(TaskId, a2aThread.TaskId);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithAllowBackgroundResponsesAndNoThread_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(inputMessages, null, options));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithAllowBackgroundResponsesAndNoThread_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        var options = new AgentRunOptions { AllowBackgroundResponses = true };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, null, options))
+            {
+                // Just iterate through to trigger the exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task RunAsync_WithInvalidThreadType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        // Create a thread from a different agent type
+        var invalidThread = new CustomAgentThread();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => this._agent.RunAsync(invalidThread));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithInvalidThreadType_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var inputMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Test message")
+        };
+
+        // Create a thread from a different agent type
+        var invalidThread = new CustomAgentThread();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await this._agent.RunStreamingAsync(inputMessages, invalidThread).ToListAsync());
+    }
+
     public void Dispose()
     {
         this._handler.Dispose();
         this._httpClient.Dispose();
     }
+
+    /// <summary>
+    /// Custom agent thread class for testing invalid thread type scenario.
+    /// </summary>
+    private sealed class CustomAgentThread : AgentThread;
+
     internal sealed class A2AClientHttpMessageHandlerStub : HttpMessageHandler
     {
+        public JsonRpcRequest? CapturedJsonRpcRequest { get; set; }
+
         public MessageSendParams? CapturedMessageSendParams { get; set; }
+
+        public TaskIdParams? CapturedTaskIdParams { get; set; }
 
         public A2AEvent? ResponseToReturn { get; set; }
 
@@ -416,9 +892,19 @@ public sealed class A2AAgentTests : IDisposable
             var content = await request.Content!.ReadAsStringAsync();
 #pragma warning restore CA2016
 
-            var jsonRpcRequest = JsonSerializer.Deserialize<JsonRpcRequest>(content)!;
+            this.CapturedJsonRpcRequest = JsonSerializer.Deserialize<JsonRpcRequest>(content);
 
-            this.CapturedMessageSendParams = jsonRpcRequest.Params?.Deserialize<MessageSendParams>();
+            try
+            {
+                this.CapturedMessageSendParams = this.CapturedJsonRpcRequest?.Params?.Deserialize<MessageSendParams>();
+            }
+            catch { /* Ignore deserialization errors for non-MessageSendParams requests */ }
+
+            try
+            {
+                this.CapturedTaskIdParams = this.CapturedJsonRpcRequest?.Params?.Deserialize<TaskIdParams>();
+            }
+            catch { /* Ignore deserialization errors for non-TaskIdParams requests */ }
 
             // Return the pre-configured non-streaming response
             if (this.ResponseToReturn is not null)

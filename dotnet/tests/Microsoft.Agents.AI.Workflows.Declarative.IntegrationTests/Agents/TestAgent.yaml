@@ -1,5 +1,0 @@
-type: foundry_agent
-name: BasicAgent
-description: Basic agent for integration tests
-model:
-  id: ${FOUNDRY_MEDIA_DEPLOYMENT_NAME}

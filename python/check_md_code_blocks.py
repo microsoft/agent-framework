@@ -33,13 +33,20 @@ def with_color(text: str, color: Colors) -> str:
     return f"{color.value}{text}{Colors.CEND.value}"
 
 
-def expand_file_patterns(patterns: list[str]) -> list[str]:
+def expand_file_patterns(patterns: list[str], skip_glob: bool = False) -> list[str]:
     """Expand glob patterns to actual file paths."""
     all_files: list[str] = []
     for pattern in patterns:
-        # Handle both relative and absolute paths
-        matches = glob.glob(pattern, recursive=True)
-        all_files.extend(matches)
+        if skip_glob:
+            # When skip_glob is True, treat patterns as literal file paths
+            # Only include if it's a markdown file
+            if pattern.endswith('.md'):
+                matches = glob.glob(pattern, recursive=False)
+                all_files.extend(matches)
+        else:
+            # Handle both relative and absolute paths with glob expansion
+            matches = glob.glob(pattern, recursive=True)
+            all_files.extend(matches)
     return sorted(set(all_files))  # Remove duplicates and sort
 
 
@@ -126,8 +133,9 @@ if __name__ == "__main__":
     # Argument is a list of markdown files containing glob patterns
     parser.add_argument("markdown_files", nargs="+", help="Markdown files to check (supports glob patterns).")
     parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
+    parser.add_argument("--no-glob", action="store_true", help="Treat file arguments as literal paths (no glob expansion).")
     args = parser.parse_args()
-    
-    # Expand glob patterns to actual file paths
-    expanded_files = expand_file_patterns(args.markdown_files)
+
+    # Expand glob patterns to actual file paths (or skip if --no-glob)
+    expanded_files = expand_file_patterns(args.markdown_files, skip_glob=args.no_glob)
     check_code_blocks(expanded_files, args.exclude)

@@ -91,8 +91,8 @@ public sealed class Mem0ProviderTests : IDisposable
             ThreadId = "thread",
             UserId = "user"
         };
-        var sut = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "What is my name?") });
+        var sut = new Mem0Provider(this._httpClient, storageScope, options: new() { EnableSensitiveTelemetryData = true }, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "What is my name?")]);
 
         // Act
         var aiContext = await sut.InvokingAsync(invokingContext);
@@ -128,6 +128,60 @@ public sealed class Mem0ProviderTests : IDisposable
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false, false, 2)]
+    [InlineData(true, false, 2)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 1)]
+    public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    {
+        // Arrange
+        if (requestThrows)
+        {
+            this._handler.EnqueueEmptyInternalServerError();
+        }
+        else
+        {
+            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
+        }
+
+        var storageScope = new Mem0ProviderScope
+        {
+            ApplicationId = "app",
+            AgentId = "agent",
+            ThreadId = "thread",
+            UserId = "user"
+        };
+        var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
+
+        var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
+        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Who am I?") });
+
+        // Act
+        await sut.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user" : "<redacted>", userIdValue);
+
+            var inputValue = state.FirstOrDefault(kvp => kvp.Key == "Input").Value;
+            if (inputValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : "<redacted>", inputValue);
+            }
+
+            var messageTextValue = state.FirstOrDefault(kvp => kvp.Key == "MessageText").Value;
+            if (messageTextValue != null)
+            {
+                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : "<redacted>", messageTextValue);
+            }
+        }
     }
 
     [Fact]
@@ -216,6 +270,55 @@ public sealed class Mem0ProviderTests : IDisposable
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false, false, 0)]
+    [InlineData(true, false, 0)]
+    [InlineData(false, true, 1)]
+    [InlineData(true, true, 1)]
+    public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogCount)
+    {
+        // Arrange
+        if (requestThrows)
+        {
+            this._handler.EnqueueEmptyInternalServerError();
+        }
+        else
+        {
+            this._handler.EnqueueJsonResponse("[ { \"id\": \"1\", \"memory\": \"Name is Caoimhe\", \"hash\": \"h\", \"metadata\": null, \"score\": 0.9, \"created_at\": \"2023-01-01T00:00:00Z\", \"updated_at\": null, \"user_id\": \"u\", \"app_id\": null, \"agent_id\": \"agent\", \"session_id\": \"thread\" } ]");
+        }
+
+        var storageScope = new Mem0ProviderScope
+        {
+            ApplicationId = "app",
+            AgentId = "agent",
+            ThreadId = "thread",
+            UserId = "user"
+        };
+
+        var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
+        var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
+        var requestMessages = new List<ChatMessage>
+        {
+            new(ChatRole.User, "User text")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
+            new(ChatRole.Assistant, "Assistant text")
+        };
+
+        // Act
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext(requestMessages, aiContextProviderMessages: null) { ResponseMessages = responseMessages });
+
+        // Assert
+        Assert.Equal(expectedLogCount, this._loggerMock.Invocations.Count);
+        foreach (var logInvocation in this._loggerMock.Invocations)
+        {
+            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
+            Assert.Equal(enableSensitiveTelemetryData ? "user" : "<redacted>", userIdValue);
+        }
     }
 
     [Fact]
@@ -316,7 +419,7 @@ public sealed class Mem0ProviderTests : IDisposable
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses = new();
-        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = new();
+        public List<(HttpRequestMessage RequestMessage, string RequestBody)> Requests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

@@ -4,6 +4,7 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 namespace AgentConformance.IntegrationTests;
@@ -16,6 +17,8 @@ namespace AgentConformance.IntegrationTests;
 public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> createAgentFixture) : AgentTests<TAgentFixture>(createAgentFixture)
     where TAgentFixture : IAgentFixture
 {
+    public virtual Func<Task<AgentRunOptions?>> AgentRunOptionsFactory { get; set; } = () => Task.FromResult(default(AgentRunOptions));
+
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public virtual async Task RunWithNoMessageDoesNotFailAsync()
     {
@@ -25,7 +28,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var chatResponses = await agent.RunStreamingAsync(thread).ToListAsync();
+        var chatResponses = await agent.RunStreamingAsync(thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
     }
 
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
@@ -37,7 +40,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", thread).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync("What is the capital of France.", thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -53,7 +56,7 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread).ToListAsync();
+        var responseUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "What is the capital of France."), thread, await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -74,7 +77,8 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
                 new ChatMessage(ChatRole.User, "Hello."),
                 new ChatMessage(ChatRole.User, "What is the capital of France.")
             ],
-            thread).ToListAsync();
+            thread,
+            await this.AgentRunOptionsFactory.Invoke()).ToListAsync();
 
         // Assert
         var chatResponseText = string.Concat(responseUpdates.Select(x => x.Text));
@@ -92,8 +96,9 @@ public abstract class RunStreamingTests<TAgentFixture>(Func<TAgentFixture> creat
         await using var cleanup = new ThreadCleanup(thread, this.Fixture);
 
         // Act
-        var responseUpdates1 = await agent.RunStreamingAsync(Q1, thread).ToListAsync();
-        var responseUpdates2 = await agent.RunStreamingAsync(Q2, thread).ToListAsync();
+        var options = await this.AgentRunOptionsFactory.Invoke();
+        var responseUpdates1 = await agent.RunStreamingAsync(Q1, thread, options).ToListAsync();
+        var responseUpdates2 = await agent.RunStreamingAsync(Q2, thread, options).ToListAsync();
 
         // Assert
         var response1Text = string.Concat(responseUpdates1.Select(x => x.Text));

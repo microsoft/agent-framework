@@ -13,9 +13,6 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 
 internal abstract class CodeTemplate
 {
-    private StringBuilder? _generationEnvironmentField;
-    private CompilerErrorCollection? _errorsField;
-    private List<int>? _indentLengthsField;
     private bool _endsWithNewline;
 
     private string CurrentIndentField { get; set; } = string.Empty;
@@ -146,22 +143,19 @@ internal abstract class CodeTemplate
     {
         get
         {
-            return this._generationEnvironmentField ??= new StringBuilder();
+            return field ??= new StringBuilder();
         }
-        set
-        {
-            this._generationEnvironmentField = value;
-        }
+        set;
     }
     /// <summary>
     /// The error collection for the generation process
     /// </summary>
-    public CompilerErrorCollection Errors => this._errorsField ??= [];
+    public CompilerErrorCollection Errors => field ??= [];
 
     /// <summary>
     /// A list of the lengths of each indent that was added with PushIndent
     /// </summary>
-    private List<int> indentLengths => this._indentLengthsField ??= [];
+    private List<int> IndentLengths { get => field ??= []; }
 
     /// <summary>
     /// Gets the current indent we use when adding lines to the output
@@ -288,7 +282,7 @@ internal abstract class CodeTemplate
             throw new ArgumentNullException(nameof(indent));
         }
         this.CurrentIndentField += indent;
-        this.indentLengths.Add(indent.Length);
+        this.IndentLengths.Add(indent.Length);
     }
 
     /// <summary>
@@ -297,10 +291,10 @@ internal abstract class CodeTemplate
     public string PopIndent()
     {
         string returnValue = string.Empty;
-        if (this.indentLengths.Count > 0)
+        if (this.IndentLengths.Count > 0)
         {
-            int indentLength = this.indentLengths[this.indentLengths.Count - 1];
-            this.indentLengths.RemoveAt(this.indentLengths.Count - 1);
+            int indentLength = this.IndentLengths[this.IndentLengths.Count - 1];
+            this.IndentLengths.RemoveAt(this.IndentLengths.Count - 1);
             if (indentLength > 0)
             {
                 returnValue = this.CurrentIndentField.Substring(this.CurrentIndentField.Length - indentLength);
@@ -315,7 +309,7 @@ internal abstract class CodeTemplate
     /// </summary>
     public void ClearIndent()
     {
-        this.indentLengths.Clear();
+        this.IndentLengths.Clear();
         this.CurrentIndentField = string.Empty;
     }
 

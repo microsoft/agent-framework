@@ -1,0 +1,14 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+  
+    - kind: RequestExternalInput
+      id: get_input
+      variable: Local.MyInput
+
+    - kind: SendMessage
+      id: show_input
+      message: "You provided: {Local.MyInput}"

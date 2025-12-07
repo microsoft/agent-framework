@@ -10,12 +10,12 @@ Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
-import azure.durable_functions as df
+from agent_framework import AgentRunResponse
 import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.durable_functions import DurableOrchestrationContext
+from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 
 logger = logging.getLogger(__name__)
@@ -64,14 +64,19 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
     physicist_thread = physicist.get_new_thread()
     chemist_thread = chemist.get_new_thread()
 
+    # Create tasks from agent.run() calls
     physicist_task = physicist.run(messages=str(prompt), thread=physicist_thread)
     chemist_task = chemist.run(messages=str(prompt), thread=chemist_thread)
 
-    results = yield context.task_all([physicist_task, chemist_task])
+    # Execute both tasks concurrently using task_all
+    task_results = yield context.task_all([physicist_task, chemist_task])
+
+    physicist_result = cast(AgentRunResponse, task_results[0])
+    chemist_result = cast(AgentRunResponse, task_results[1])
 
     return {
-        "physicist": results[0].get("response", ""),
-        "chemist": results[1].get("response", ""),
+        "physicist": physicist_result.text,
+        "chemist": chemist_result.text,
     }
 
 
@@ -80,7 +85,7 @@ def multi_agent_concurrent_orchestration(context: DurableOrchestrationContext):
 @app.durable_client_input(client_name="client")
 async def start_multi_agent_concurrent_orchestration(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     """Kick off the orchestration with a plain text prompt."""
 
@@ -121,7 +126,7 @@ async def start_multi_agent_concurrent_orchestration(
 @app.durable_client_input(client_name="client")
 async def get_orchestration_status(
     req: func.HttpRequest,
-    client: df.DurableOrchestrationClient,
+    client: DurableOrchestrationClient,
 ) -> func.HttpResponse:
     instance_id = req.route_params.get("instanceId")
     if not instance_id:

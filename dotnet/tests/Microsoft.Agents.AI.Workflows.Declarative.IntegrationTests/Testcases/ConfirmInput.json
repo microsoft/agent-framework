@@ -1,0 +1,29 @@
+﻿{
+  "description": "Human in the loop sample - RequestExternalInput.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "1234"
+    },
+    "responses": [
+      {
+        "type": "String",
+        "value": "1234"
+      }
+    ]
+  },
+  "validation": {
+    "conversation_count": 1,
+    "min_action_count": 4,
+    "max_action_count": -1,
+    "min_response_count": 0,
+    "actions": {
+      "start": [
+        "set_project"
+      ],
+      "final": [
+        "sendActivity_confirmed"
+      ]
+    }
+  }
+}

@@ -9,7 +9,7 @@ trigger:
       id: invoke_vision
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_TEST
+        name: TestAgent
       input:
         additionalInstructions: |-
           Describe the image contained in the user request, if any;

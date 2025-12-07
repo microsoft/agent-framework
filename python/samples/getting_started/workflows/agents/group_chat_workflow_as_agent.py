@@ -38,7 +38,7 @@ async def main() -> None:
 
     workflow = (
         GroupChatBuilder()
-        .set_prompt_based_manager(chat_client=OpenAIChatClient(), display_name="Coordinator")
+        .set_manager(manager=OpenAIChatClient().create_agent(), display_name="Coordinator")
         .participants(researcher=researcher, writer=writer)
         .build()
     )

@@ -38,7 +38,11 @@ internal static class RecalcEngineFactory
             }
 
             config.EnableSetFunction();
+            config.AddFunction(new AgentMessage());
             config.AddFunction(new UserMessage());
+            config.AddFunction(new MessageText.StringInput());
+            config.AddFunction(new MessageText.RecordInput());
+            config.AddFunction(new MessageText.TableInput());
 
             return config;
         }

@@ -20,6 +20,7 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
     {
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
         IEnumerable<ChatMessage>? inputMessages = this.GetInputMessages();
 
@@ -28,6 +29,11 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
             foreach (ChatMessage message in inputMessages)
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (isWorkflowConversation)
+            {
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentRunResponse([.. inputMessages])), cancellationToken).ConfigureAwait(false);
             }
         }
 

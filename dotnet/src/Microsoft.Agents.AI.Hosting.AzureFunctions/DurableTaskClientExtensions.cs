@@ -21,6 +21,12 @@ public static class DurableTaskClientExtensions
     /// <returns>A durable agent proxy.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="durableClient"/> or <paramref name="context"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="agentName"/> is null or empty.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when durable agents have not been configured on the service collection.
+    /// </exception>
+    /// <exception cref="AgentNotRegisteredException">
+    /// Thrown when the agent has not been registered.
+    /// </exception>
     public static AIAgent AsDurableAgentProxy(
         this DurableTaskClient durableClient,
         FunctionContext context,
@@ -29,6 +35,9 @@ public static class DurableTaskClientExtensions
         ArgumentNullException.ThrowIfNull(durableClient);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrEmpty(agentName);
+
+        // Validate that the agent is registered
+        DurableTask.ServiceCollectionExtensions.ValidateAgentIsRegistered(context.InstanceServices, agentName);
 
         DefaultDurableAgentClient agentClient = ActivatorUtilities.CreateInstance<DefaultDurableAgentClient>(
             context.InstanceServices,

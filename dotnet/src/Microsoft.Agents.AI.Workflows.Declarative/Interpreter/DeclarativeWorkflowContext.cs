@@ -77,7 +77,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         this.State.Bind();
     }
 
-    private bool IsManagedScope(string? scopeName) => scopeName is not null && VariableScopeNames.IsValidName(scopeName);
+    private static bool IsManagedScope(string? scopeName) => scopeName is not null && VariableScopeNames.IsValidName(scopeName);
 
     /// <inheritdoc/>
     public async ValueTask<TValue?> ReadStateAsync<TValue>(string key, string? scopeName = null, CancellationToken cancellationToken = default)
@@ -86,7 +86,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
-            _ when !this.IsManagedScope(scopeName) => await this.Source.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false),
+            _ when !IsManagedScope(scopeName) => await this.Source.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false),
             // Retrieve formula values directly from the managed state to avoid conversion.
             _ when typeof(TValue) == typeof(FormulaValue) => (TValue?)(object?)this.State.Get(key, scopeName),
             // Retrieve native types from the source context to avoid conversion.
@@ -100,7 +100,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         {
             // Not a managed scope, just pass through.  This is valid when a declarative
             // workflow has been ejected to code (where DeclarativeWorkflowContext is also utilized).
-            _ when !this.IsManagedScope(scopeName) => await this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false),
+            _ when !IsManagedScope(scopeName) => await this.Source.ReadOrInitStateAsync(key, initialStateFactory, scopeName, cancellationToken).ConfigureAwait(false),
             // Retrieve formula values directly from the managed state to avoid conversion.
             _ when typeof(TValue) == typeof(FormulaValue) => await EnsureFormulaValueAsync().ConfigureAwait(false),
             // Retrieve native types from the source context to avoid conversion.

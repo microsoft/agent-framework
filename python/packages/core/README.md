@@ -213,7 +213,10 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Note**: Advanced orchestration patterns like GroupChat, Sequential, and Concurrent orchestrations are coming soon.
+**Note**: GroupChat, Sequential, and Concurrent orchestrations are available today. See examples in:
+- [python/samples/getting_started/workflows/orchestration/](https://github.com/microsoft/agent-framework/tree/main/python/samples/getting_started/workflows/orchestration)
+- [group_chat_simple_selector.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_simple_selector.py)
+- [group_chat_prompt_based_manager.py](https://github.com/microsoft/agent-framework/blob/main/python/samples/getting_started/workflows/orchestration/group_chat_prompt_based_manager.py)
 
 ## More Examples & Samples
 
@@ -228,4 +231,4 @@ if __name__ == "__main__":
 - [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
 - [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
 - [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
-- Learn docs are coming soon.
+- [Learn Documentation](https://learn.microsoft.com/en-us/agent-framework/user-guide/workflows/orchestrations/overview)

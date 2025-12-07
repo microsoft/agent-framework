@@ -17,7 +17,7 @@ public class AgentRunOptionsTests
         // Arrange
         var options = new AgentRunOptions
         {
-            ContinuationToken = new object(),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
             AllowBackgroundResponses = true,
             AdditionalProperties = new AdditionalPropertiesDictionary
             {

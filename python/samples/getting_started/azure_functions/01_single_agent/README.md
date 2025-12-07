@@ -18,20 +18,40 @@ Follow the common setup steps in `../README.md` to install tooling, configure Az
 
 Send a prompt to the Joker agent:
 
+Bash (Linux/macOS/WSL):
+
 ```bash
-curl -X POST http://localhost:7071/api/agents/Joker/run \
-     -H "Content-Type: text/plain" \
+curl -i -X POST http://localhost:7071/api/agents/Joker/run \
      -d "Tell me a short joke about cloud computing."
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:7071/api/agents/Joker/run `
+    -Body "Tell me a short joke about cloud computing."
 ```
 
 The agent responds with a JSON payload that includes the generated joke.
 
-> **Note:** To return immediately with an HTTP 202 response instead of waiting for the agent output, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body. The default behavior waits for the response.
+> [!TIP]
+> To return immediately with an HTTP 202 response instead of waiting for the agent output, set the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body. The default behavior waits for the response.
 
 ## Expected Output
 
-When you send a POST request with plain-text input, the Functions host responds with an HTTP 202 and queues the request for the durable agent entity. A typical response body looks like the following:
-Expected HTTP 202 payload:
+The default plain-text response looks like the following:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+x-ms-thread-id: 4f205157170244bfbd80209df383757e
+
+Why did the cloud break up with the server?
+
+Because it found someone more "uplifting"!
+```
+
+When you specify the `x-ms-wait-for-response` header or include `"wait_for_response": false` in the request body, the Functions host responds with an HTTP 202 and queues the request to run in the background. A typical response body looks like the following:
 
 ```json
 {

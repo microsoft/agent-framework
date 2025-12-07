@@ -5,6 +5,7 @@ using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
@@ -20,6 +21,13 @@ builder.Services.AddProblemDetails();
 
 // Configure the chat model and our agent.
 builder.AddKeyedChatClient("chat-model");
+
+// Add DevUI services
+builder.AddDevUI();
+
+// Add OpenAI services
+builder.AddOpenAIChatCompletions();
+builder.AddOpenAIResponses();
 
 var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
@@ -95,8 +103,48 @@ var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow
     return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
 }).AddAsAIAgent();
 
-builder.AddOpenAIChatCompletions();
-builder.AddOpenAIResponses();
+builder.AddWorkflow("nonAgentWorkflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [pirateAgentBuilder, chemistryAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+});
+
+builder.Services.AddKeyedSingleton("NonAgentAndNonmatchingDINameWorkflow", (sp, key) =>
+{
+    List<IHostedAgentBuilder> usedAgents = [pirateAgentBuilder, chemistryAgent];
+    var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+    return AgentWorkflowBuilder.BuildSequential(workflowName: "random-name", agents: agents);
+});
+
+builder.Services.AddSingleton<AIAgent>(sp =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(chatClient, name: "default-agent", instructions: "you are a default agent.");
+});
+
+builder.Services.AddKeyedSingleton<AIAgent>("my-di-nonmatching-agent", (sp, name) =>
+{
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(
+        chatClient,
+        name: "some-random-name", // demonstrating registration can be different for DI and actual agent
+        instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
+});
+
+builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, name) =>
+{
+    if (name is not string nameStr)
+    {
+        throw new NotSupportedException("Name should be passed as a key");
+    }
+
+    var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
+    return new ChatClientAgent(
+        chatClient,
+        name: nameStr, // demonstrating registration with the same name
+        instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
+});
 
 var app = builder.Build();
 
@@ -118,7 +166,10 @@ app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard
     // Url = "http://localhost:5390/a2a/knights-and-knaves"
 });
 
+app.MapDevUI();
+
 app.MapOpenAIResponses();
+app.MapOpenAIConversations();
 
 app.MapOpenAIChatCompletions(pirateAgentBuilder);
 app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);

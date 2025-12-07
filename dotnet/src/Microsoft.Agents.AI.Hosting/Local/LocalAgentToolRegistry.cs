@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Hosting.Local;
 
 internal sealed class LocalAgentToolRegistry
 {
-    private readonly Dictionary<string, List<AITool>> _toolsByAgentName = new();
+    private readonly Dictionary<string, List<AITool>> _toolsByAgentName = [];
 
     public void AddTool(string agentName, AITool tool)
     {

@@ -3,11 +3,17 @@
 """Tests for structured output handling in _agent.py."""
 
 import json
+import sys
+from collections.abc import AsyncIterator, MutableSequence
+from pathlib import Path
 from typing import Any
 
-from agent_framework import ChatAgent, ChatOptions, TextContent
+from agent_framework import ChatAgent, ChatMessage, ChatOptions, TextContent
 from agent_framework._types import ChatResponseUpdate
 from pydantic import BaseModel
+
+sys.path.insert(0, str(Path(__file__).parent))
+from test_helpers_ag_ui import StreamingChatClientStub, stream_from_updates
 
 
 class RecipeOutput(BaseModel):
@@ -32,16 +38,16 @@ class GenericOutput(BaseModel):
 
 async def test_structured_output_with_recipe():
     """Test structured output processing with recipe state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            # Simulate structured output
-            yield ChatResponseUpdate(
-                contents=[TextContent(text='{"recipe": {"name": "Pasta"}, "message": "Here is your recipe"}')]
-            )
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[TextContent(text='{"recipe": {"name": "Pasta"}, "message": "Here is your recipe"}')]
+        )
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
     agent.chat_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -51,7 +57,7 @@ async def test_structured_output_with_recipe():
 
     input_data = {"messages": [{"role": "user", "content": "Make pasta"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -70,19 +76,20 @@ async def test_structured_output_with_recipe():
 
 async def test_structured_output_with_steps():
     """Test structured output processing with steps state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            steps_data = {
-                "steps": [
-                    {"id": "1", "description": "Step 1", "status": "pending"},
-                    {"id": "2", "description": "Step 2", "status": "pending"},
-                ]
-            }
-            yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(steps_data))])
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        steps_data = {
+            "steps": [
+                {"id": "1", "description": "Step 1", "status": "pending"},
+                {"id": "2", "description": "Step 2", "status": "pending"},
+            ]
+        }
+        yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(steps_data))])
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
     agent.chat_options = ChatOptions(response_format=StepsOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -92,7 +99,7 @@ async def test_structured_output_with_steps():
 
     input_data = {"messages": [{"role": "user", "content": "Do steps"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -109,14 +116,15 @@ async def test_structured_output_with_steps():
 
 async def test_structured_output_with_no_schema_match():
     """Test structured output when response fields don't match state_schema keys."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            # Response has "data" field but schema expects "result" field
-            yield ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}}')])
+    updates = [
+        ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}}')]),
+    ]
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(
+        name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_from_updates(updates))
+    )
     agent.chat_options = ChatOptions(response_format=GenericOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -126,7 +134,7 @@ async def test_structured_output_with_no_schema_match():
 
     input_data = {"messages": [{"role": "user", "content": "Generate data"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -138,7 +146,7 @@ async def test_structured_output_with_no_schema_match():
 
 async def test_structured_output_without_schema():
     """Test structured output without state_schema treats all fields as state."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
     class DataOutput(BaseModel):
         """Output with data and info fields."""
@@ -146,11 +154,12 @@ async def test_structured_output_without_schema():
         data: dict[str, Any]
         info: str
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            yield ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}, "info": "processed"}')])
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[TextContent(text='{"data": {"key": "value"}, "info": "processed"}')])
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
     agent.chat_options = ChatOptions(response_format=DataOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -160,7 +169,7 @@ async def test_structured_output_without_schema():
 
     input_data = {"messages": [{"role": "user", "content": "Generate data"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -175,20 +184,22 @@ async def test_structured_output_without_schema():
 
 async def test_no_structured_output_when_no_response_format():
     """Test that structured output path is skipped when no response_format."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            yield ChatResponseUpdate(contents=[TextContent(text="Regular text")])
+    updates = [ChatResponseUpdate(contents=[TextContent(text="Regular text")])]
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(
+        name="test",
+        instructions="Test",
+        chat_client=StreamingChatClientStub(stream_from_updates(updates)),
+    )
     # No response_format set
 
     wrapper = AgentFrameworkAgent(agent=agent)
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -200,14 +211,15 @@ async def test_no_structured_output_when_no_response_format():
 
 async def test_structured_output_with_message_field():
     """Test structured output that includes a message field."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            output_data = {"recipe": {"name": "Salad"}, "message": "Fresh salad recipe ready"}
-            yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(output_data))])
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        output_data = {"recipe": {"name": "Salad"}, "message": "Fresh salad recipe ready"}
+        yield ChatResponseUpdate(contents=[TextContent(text=json.dumps(output_data))])
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
     agent.chat_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(
@@ -217,7 +229,7 @@ async def test_structured_output_with_message_field():
 
     input_data = {"messages": [{"role": "user", "content": "Make salad"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
@@ -234,22 +246,22 @@ async def test_structured_output_with_message_field():
 
 async def test_empty_updates_no_structured_processing():
     """Test that empty updates don't trigger structured output processing."""
-    from agent_framework_ag_ui import AgentFrameworkAgent
+    from agent_framework.ag_ui import AgentFrameworkAgent
 
-    class MockChatClient:
-        async def get_streaming_response(self, messages, chat_options, **kwargs):
-            # Return nothing
-            if False:
-                yield
+    async def stream_fn(
+        messages: MutableSequence[ChatMessage], chat_options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if False:
+            yield ChatResponseUpdate(contents=[])
 
-    agent = ChatAgent(name="test", instructions="Test", chat_client=MockChatClient())
+    agent = ChatAgent(name="test", instructions="Test", chat_client=StreamingChatClientStub(stream_fn))
     agent.chat_options = ChatOptions(response_format=RecipeOutput)
 
     wrapper = AgentFrameworkAgent(agent=agent)
 
     input_data = {"messages": [{"role": "user", "content": "Test"}]}
 
-    events = []
+    events: list[Any] = []
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 

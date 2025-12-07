@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - This is intentional as we are testing deprecated methods
+
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -91,7 +94,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
@@ -222,7 +225,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -249,7 +252,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -298,7 +301,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -325,7 +328,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -456,6 +459,162 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        const string ModelId = "test-model";
+
+        // Act
+        var agent = assistantClient.CreateAIAgent(
+            ModelId,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options and services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithOptionsAndServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        const string ModelId = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new() { Instructions = "Test instructions" }
+        };
+
+        // Act
+        var agent = assistantClient.CreateAIAgent(ModelId, options, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void GetAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent"}"""))!;
+
+        // Act
+        var agent = assistantClient.GetAIAgent(assistant, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+
+        // Act
+        var agent = await assistantClient.GetAIAgentAsync("asst_abc123", services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with both clientFactory and services works correctly.
+    /// </summary>
+    [Fact]
+    public void CreateAIAgent_WithClientFactoryAndServices_AppliesBothCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        var testChatClient = new TestChatClient(assistantClient.AsIChatClient("test-model"));
+        const string ModelId = "test-model";
+
+        // Act
+        var agent = assistantClient.CreateAIAgent(
+            ModelId,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            clientFactory: (innerClient) => testChatClient,
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the custom chat client was applied
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+
+        // Verify the IServiceProvider was passed through
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Uses reflection to access the FunctionInvocationServices property which is not public.
+    /// </summary>
+    private static IServiceProvider? GetFunctionInvocationServices(FunctionInvokingChatClient client)
+    {
+        var property = typeof(FunctionInvokingChatClient).GetProperty(
+            "FunctionInvocationServices",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(client) as IServiceProvider;
+    }
+
+    /// <summary>
     /// Creates a test AssistantClient implementation for testing.
     /// </summary>
     private sealed class TestAssistantClient : AssistantClient
@@ -486,6 +645,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
         public TestChatClient(IChatClient innerClient) : base(innerClient)
         {
         }
+    }
+
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     private sealed class FakePipelineResponse : PipelineResponse

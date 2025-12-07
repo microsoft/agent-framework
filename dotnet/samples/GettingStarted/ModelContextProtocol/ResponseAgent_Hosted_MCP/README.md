@@ -2,7 +2,7 @@
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.

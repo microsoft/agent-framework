@@ -45,7 +45,7 @@ async def approval_example() -> None:
     # Check for approval requests
     if result.user_input_requests:
         for request in result.user_input_requests:
-            print(f"\nApproval needed:")
+            print("\nApproval needed:")
             print(f"  Function: {request.function_call.name}")
             print(f"  Arguments: {request.function_call.arguments}")
 
@@ -79,12 +79,12 @@ async def rejection_example() -> None:
 
     if result.user_input_requests:
         for request in result.user_input_requests:
-            print(f"\nApproval needed:")
+            print("\nApproval needed:")
             print(f"  Function: {request.function_call.name}")
             print(f"  Arguments: {request.function_call.arguments}")
 
             # User rejects
-            print(f"  Decision: Rejected")
+            print("  Decision: Rejected")
 
             # Send rejection response
             rejection_response = request.create_response(approved=False)

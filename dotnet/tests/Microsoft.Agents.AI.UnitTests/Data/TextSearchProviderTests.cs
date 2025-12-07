@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Data;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -60,11 +59,11 @@ public sealed class TextSearchProviderTests
         };
         var provider = new TextSearchProvider(SearchDelegateAsync, default, null, options, withLogging ? this._loggerFactoryMock.Object : null);
 
-        var invokingContext = new AIContextProvider.InvokingContext(new[]
-        {
+        var invokingContext = new AIContextProvider.InvokingContext(
+        [
             new ChatMessage(ChatRole.User, "Sample user question?"),
             new ChatMessage(ChatRole.User, "Additional part")
-        });
+        ]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
@@ -441,7 +440,7 @@ public sealed class TextSearchProviderTests
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             RecentMessageMemoryLimit = 4,
-            RecentMessageRolesIncluded = new List<ChatRole> { ChatRole.Assistant } // Only retain assistant messages.
+            RecentMessageRolesIncluded = [ChatRole.Assistant] // Only retain assistant messages.
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)

@@ -32,7 +32,7 @@ string tempFilePath = Path.GetTempFileName();
 await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedThread));
 
 // Load the serialized thread from the temporary file (for demonstration purposes).
-JsonElement reloadedSerializedThread = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(tempFilePath));
+JsonElement reloadedSerializedThread = JsonElement.Parse(await File.ReadAllTextAsync(tempFilePath));
 
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = agent.DeserializeThread(reloadedSerializedThread);

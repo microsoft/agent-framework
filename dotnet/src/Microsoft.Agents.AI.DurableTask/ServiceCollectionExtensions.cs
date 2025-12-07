@@ -80,7 +80,7 @@ public static class ServiceCollectionExtensions
         DurableAgentsOptions options = new();
         configure(options);
 
-        var agents = options.GetAgentFactories();
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents = options.GetAgentFactories();
 
         // The agent dictionary contains the real agent factories, which is used by the agent entities.
         services.AddSingleton(agents);
@@ -96,6 +96,30 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<DataConverter, DefaultDataConverter>();
 
         return options;
+    }
+
+    /// <summary>
+    /// Validates that an agent with the specified name has been registered.
+    /// </summary>
+    /// <param name="services">The service provider.</param>
+    /// <param name="agentName">The name of the agent to validate.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the agent dictionary is not registered in the service provider.
+    /// </exception>
+    /// <exception cref="AgentNotRegisteredException">
+    /// Thrown when the agent with the specified name has not been registered.
+    /// </exception>
+    internal static void ValidateAgentIsRegistered(IServiceProvider services, string agentName)
+    {
+        IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>? agents =
+            services.GetService<IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>>>()
+            ?? throw new InvalidOperationException(
+                $"Durable agents have not been configured. Ensure {nameof(ConfigureDurableAgents)} has been called on the service collection.");
+
+        if (!agents.ContainsKey(agentName))
+        {
+            throw new AgentNotRegisteredException(agentName);
+        }
     }
 
     private sealed class DefaultDataConverter : DataConverter

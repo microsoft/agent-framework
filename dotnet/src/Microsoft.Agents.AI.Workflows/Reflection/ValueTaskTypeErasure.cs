@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.Workflows.Reflection;
 
 internal static class ValueTaskReflection
 {
-    private const string Nameof_AsTask = nameof(ValueTask<object>.AsTask);
+    private const string Nameof_AsTask = nameof(ValueTask<>.AsTask);
     internal static readonly MethodInfo AsTask = typeof(ValueTask<>).GetMethod(Nameof_AsTask, BindingFlags.Public | BindingFlags.Instance)!;
 
     internal static MethodInfo ReflectAsTask(this Type specializedType)
@@ -25,7 +25,7 @@ internal static class ValueTaskReflection
 
 internal static class TaskReflection
 {
-    private const string Nameof_Result = nameof(Task<object>.Result);
+    private const string Nameof_Result = nameof(Task<>.Result);
     internal static readonly MethodInfo Result_get = typeof(Task<>).GetProperty(Nameof_Result)!.GetMethod!;
 
     internal static MethodInfo ReflectResult_get(this Type specializedType)

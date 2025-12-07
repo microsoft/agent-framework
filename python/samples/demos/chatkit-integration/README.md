@@ -138,6 +138,31 @@ async for event in stream_widget(thread_id=thread.id, widget=widget):
 - Azure OpenAI service configured
 - Azure CLI for authentication (`az login`)
 
+### Network Requirements
+
+> **Important:** This sample uses the OpenAI ChatKit frontend, which requires internet connectivity to OpenAI services.
+
+The frontend makes outbound requests to:
+
+- `cdn.platform.openai.com` - ChatKit UI library (required)
+- `chatgpt.com` - Configuration endpoint
+- `api-js.mixpanel.com` - Telemetry
+
+**This sample is not suitable for air-gapped or network-restricted environments.** The ChatKit frontend library cannot be self-hosted. See [Limitations](#limitations) for details.
+
+### Domain Key Configuration
+
+For **local development**, the sample uses a default domain key (`domain_pk_localhost_dev`).
+
+For **production deployment**:
+
+1. Register your domain at [platform.openai.com](https://platform.openai.com/settings/organization/security/domain-allowlist)
+2. Create a `.env` file in the `frontend` directory:
+
+   ```
+   VITE_CHATKIT_API_DOMAIN_KEY=your_domain_key_here
+   ```
+
 ### Backend Setup
 
 1. **Install Python packages:**
@@ -260,6 +285,31 @@ Try these example queries:
 - "Show me available cities" (displays interactive city selector)
 - "What's the current time?"
 - Upload an image and ask "What do you see in this image?"
+
+## Limitations
+
+### Air-Gapped / Regulated Environments
+
+The ChatKit frontend (`chatkit.js`) is loaded from OpenAI's CDN and cannot be self-hosted. This means:
+
+- **Not suitable for air-gapped environments** where `*.openai.com` is blocked
+- **Not suitable for regulated environments** that prohibit external telemetry
+- **Requires domain registration** with OpenAI for production use
+
+**What you CAN self-host:**
+
+- The Python backend (FastAPI server, `ChatKitServer`, stores)
+- The `agent-framework-chatkit` integration layer
+- Your LLM infrastructure (Azure OpenAI, local models, etc.)
+
+**What you CANNOT self-host:**
+
+- The ChatKit frontend UI library
+
+For more details, see:
+
+- [openai/chatkit-js#57](https://github.com/openai/chatkit-js/issues/57) - Self-hosting feature request
+- [openai/chatkit-js#76](https://github.com/openai/chatkit-js/issues/76) - Domain key requirements
 
 ## Learn More
 

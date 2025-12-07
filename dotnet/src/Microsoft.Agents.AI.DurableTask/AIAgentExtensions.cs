@@ -17,10 +17,14 @@ public static class AIAgentExtensions
     /// <param name="services">The service provider.</param>
     /// <returns>The durable agent proxy.</returns>
     /// <exception cref="ArgumentException">
-    /// Thrown when the agent is a DurableAIAgent instance or if the agent has no name.
+    /// Thrown when the agent is a <see cref="DurableAIAgent"/> instance or if the agent has no name.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// Thrown if <paramref name="services"/> does not contain an <see cref="IDurableAgentClient"/>.
+    /// Thrown if <paramref name="services"/> does not contain an <see cref="IDurableAgentClient"/>
+    /// or if durable agents have not been configured on the service collection.
+    /// </exception>
+    /// <exception cref="AgentNotRegisteredException">
+    /// Thrown when the agent with the specified name has not been registered.
     /// </exception>
     public static AIAgent AsDurableAgentProxy(this AIAgent agent, IServiceProvider services)
     {
@@ -33,6 +37,10 @@ public static class AIAgentExtensions
         }
 
         string agentName = agent.Name ?? throw new ArgumentException("Agent must have a name.", nameof(agent));
+
+        // Validate that the agent is registered
+        ServiceCollectionExtensions.ValidateAgentIsRegistered(services, agentName);
+
         IDurableAgentClient agentClient = services.GetRequiredService<IDurableAgentClient>();
         return new DurableAIAgentProxy(agentName, agentClient);
     }

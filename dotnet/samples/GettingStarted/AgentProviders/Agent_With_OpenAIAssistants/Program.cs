@@ -5,6 +5,8 @@
 // WARNING: The Assistants API is deprecated and will be shut down.
 // For more information see the OpenAI documentation: https://platform.openai.com/docs/assistants/migration
 
+#pragma warning disable CS0618 // Type or member is obsolete - OpenAI Assistants API is deprecated but still used in this sample
+
 using Microsoft.Agents.AI;
 using OpenAI;
 

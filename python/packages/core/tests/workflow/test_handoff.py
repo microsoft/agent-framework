@@ -23,7 +23,23 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._workflows import AgentRunEvent
+from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
+from agent_framework._workflows._workflow_builder import WorkflowBuilder
+
+
+class _CountingWorkflowBuilder(WorkflowBuilder):
+    created: list["_CountingWorkflowBuilder"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.start_calls = 0
+        _CountingWorkflowBuilder.created.append(self)
+
+    def set_start_executor(self, executor: Any) -> "_CountingWorkflowBuilder":  # type: ignore[override]
+        self.start_calls += 1
+        return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
 
 
 @dataclass
@@ -209,12 +225,12 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     # Initial run should preserve complex metadata in the triage response
     events = await _drain(workflow.run_stream("Need help with a return"))
-    agent_events = [ev for ev in events if hasattr(ev, "data") and hasattr(ev.data, "messages")]
+    agent_events = [ev for ev in events if isinstance(ev, AgentRunEvent)]
     if agent_events:
         first_agent_event = agent_events[0]
         first_agent_event_data = first_agent_event.data
-        if first_agent_event_data and hasattr(first_agent_event_data, "messages"):
-            first_agent_message = first_agent_event_data.messages[0]  # type: ignore[attr-defined]
+        if first_agent_event_data and first_agent_event_data.messages:
+            first_agent_message = first_agent_event_data.messages[0]
             assert "complex" in first_agent_message.additional_properties, "Agent event lost complex metadata"
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests, "Workflow should request additional user input"
@@ -273,6 +289,140 @@ async def test_tool_call_handoff_detection_with_text_hint():
     assert len(specialist.calls[0]) >= 2
 
 
+async def test_autonomous_interaction_mode_yields_output_without_user_request():
+    """Ensure autonomous interaction mode yields output without requesting user input."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist])
+        .set_coordinator("triage")
+        .with_interaction_mode("autonomous", autonomous_turn_limit=1)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Package arrived broken"))
+    assert len(triage.calls) == 1
+    assert len(specialist.calls) == 1
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request additional user input"
+
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Autonomous mode should yield a workflow output"
+
+    final_conversation = outputs[-1].data
+    assert isinstance(final_conversation, list)
+    conversation_list = cast(list[ChatMessage], final_conversation)
+    assert any(
+        msg.role == Role.ASSISTANT and (msg.text or "").startswith("specialist reply") for msg in conversation_list
+    )
+
+
+async def test_autonomous_continues_without_handoff_until_termination():
+    """Autonomous mode should keep invoking the same agent when no handoff occurs."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Autonomous mode should yield output after termination condition"
+    assert len(worker.calls) == 3, "Worker should be invoked multiple times without user input"
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request user input"
+
+
+async def test_autonomous_turn_limit_stops_loop():
+    """Autonomous mode should stop when the configured turn limit is reached."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Turn limit should force a workflow output"
+    assert len(worker.calls) == 2, "Worker should stop after reaching the turn limit"
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request user input"
+
+
+async def test_autonomous_routes_back_to_coordinator_when_specialist_stops():
+    """Specialist without handoff should route back to coordinator in autonomous mode."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist])
+        .set_coordinator(triage)
+        .add_handoff(triage, specialist)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_termination_condition(lambda conv: len(conv) >= 4)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Issue"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Workflow should complete without user input"
+    assert len(specialist.calls) >= 1, "Specialist should run without handoff"
+
+
+async def test_autonomous_mode_with_inline_turn_limit():
+    """Autonomous mode should respect turn limit passed via with_interaction_mode."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Turn limit should force a workflow output"
+    assert len(worker.calls) == 2, "Worker should stop after reaching the inline turn limit"
+
+
+def test_autonomous_turn_limit_ignored_in_human_in_loop_mode(caplog):
+    """Verify that autonomous_turn_limit logs a warning when mode is human_in_loop."""
+    worker = _RecordingAgent(name="worker")
+
+    # Should not raise, but should log a warning
+    HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+        "human_in_loop", autonomous_turn_limit=10
+    )
+
+    assert "autonomous_turn_limit=10 was provided but interaction_mode is 'human_in_loop'; ignoring." in caplog.text
+
+
+def test_autonomous_turn_limit_must_be_positive():
+    """Verify that autonomous_turn_limit raises an error when <= 0."""
+    worker = _RecordingAgent(name="worker")
+
+    with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
+        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+            "autonomous", autonomous_turn_limit=0
+        )
+
+    with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
+        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+            "autonomous", autonomous_turn_limit=-5
+        )
+
+
 def test_build_fails_without_coordinator():
     """Verify that build() raises ValueError when set_coordinator() was not called."""
     triage = _RecordingAgent(name="triage")
@@ -286,57 +436,6 @@ def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
     with pytest.raises(ValueError, match="No participants provided"):
         HandoffBuilder().build()
-
-
-async def test_multiple_runs_dont_leak_conversation():
-    """Verify that running the same workflow multiple times doesn't leak conversation history."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist")
-    specialist = _RecordingAgent(name="specialist")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
-        .build()
-    )
-
-    # First run
-    events = await _drain(workflow.run_stream("First run message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Second message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "First run should emit output"
-
-    first_run_conversation = outputs[-1].data
-    assert isinstance(first_run_conversation, list)
-    first_run_conv_list = cast(list[ChatMessage], first_run_conversation)
-    first_run_user_messages = [msg for msg in first_run_conv_list if msg.role == Role.USER]
-    assert len(first_run_user_messages) == 2
-    assert any("First run message" in msg.text for msg in first_run_user_messages if msg.text)
-
-    # Second run - should start fresh, not include first run's messages
-    triage.calls.clear()
-    specialist.calls.clear()
-
-    events = await _drain(workflow.run_stream("Second run different message"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Another message"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs, "Second run should emit output"
-
-    second_run_conversation = outputs[-1].data
-    assert isinstance(second_run_conversation, list)
-    second_run_conv_list = cast(list[ChatMessage], second_run_conversation)
-    second_run_user_messages = [msg for msg in second_run_conv_list if msg.role == Role.USER]
-    assert len(second_run_user_messages) == 2, (
-        "Second run should have exactly 2 user messages, not accumulate first run"
-    )
-    assert any("Second run different message" in msg.text for msg in second_run_user_messages if msg.text)
-    assert not any("First run message" in msg.text for msg in second_run_user_messages if msg.text), (
-        "Second run should NOT contain first run's messages"
-    )
 
 
 async def test_handoff_async_termination_condition() -> None:
@@ -529,6 +628,27 @@ async def test_return_to_previous_enabled():
     assert len(specialist_a.calls) == 2, "Specialist A should handle follow-up with return_to_previous enabled"
 
 
+def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure HandoffBuilder.build sets the start executor only once when assembling the workflow."""
+    _CountingWorkflowBuilder.created.clear()
+    monkeypatch.setattr(handoff_module, "WorkflowBuilder", _CountingWorkflowBuilder)
+
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len(conv) > 0)
+        .build()
+    )
+
+    assert workflow is not None
+    assert _CountingWorkflowBuilder.created, "Expected CountingWorkflowBuilder to be instantiated"
+    builder = _CountingWorkflowBuilder.created[-1]
+    assert builder.start_calls == 1, "set_start_executor should be invoked exactly once"
+
+
 async def test_tool_choice_preserved_from_agent_config():
     """Verify that agent-level tool_choice configuration is preserved and not overridden."""
     from unittest.mock import AsyncMock
@@ -585,7 +705,7 @@ async def test_return_to_previous_state_serialization():
     coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
 
     # Snapshot the state
-    state = coordinator.snapshot_state()
+    state = await coordinator.on_checkpoint_save()
 
     # Verify pattern metadata includes current_agent_id
     assert "metadata" in state
@@ -603,7 +723,7 @@ async def test_return_to_previous_state_serialization():
     )
 
     # Restore state
-    coordinator2.restore_state(state)
+    await coordinator2.on_checkpoint_restore(state)
 
     # Verify current_agent_id was restored
     assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]

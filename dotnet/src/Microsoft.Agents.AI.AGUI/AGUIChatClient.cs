@@ -82,7 +82,7 @@ public sealed class AGUIChatClient : DelegatingChatClient
             .ToChatResponseAsync(cancellationToken);
 
     /// <inheritdoc />
-    public async override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages,
         ChatOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)

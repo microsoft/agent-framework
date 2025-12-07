@@ -52,7 +52,7 @@ The response will be a text string that looks something like the following, indi
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/plain
-x-ms-thread-id: @publisher@351ec855-7f4d-4527-a60d-498301ced36d
+x-ms-thread-id: 351ec855-7f4d-4527-a60d-498301ced36d
 
 The content generation workflow for the topic "The Future of Artificial Intelligence" has been successfully started, and the instance ID is **6a04276e8d824d8d941e1dc4142cc254**. If you need any further assistance or updates on the workflow, feel free to ask!
 ```

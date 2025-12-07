@@ -20,7 +20,7 @@ internal static class ChatMessageExtensions
 
     public static IEnumerable<ChatMessage>? ToChatMessages(this DataValue? messages)
     {
-        if (messages is null || messages is BlankDataValue)
+        if (messages is null or BlankDataValue)
         {
             return null;
         }

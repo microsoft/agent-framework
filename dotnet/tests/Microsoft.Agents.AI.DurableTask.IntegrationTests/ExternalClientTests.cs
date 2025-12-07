@@ -212,4 +212,26 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.NotEmpty(response.Text);
         Assert.Contains("John Doe", response.Text);
     }
+
+    [Fact]
+    public void AsDurableAgentProxy_ThrowsWhenAgentNotRegistered()
+    {
+        // Setup: Register one agent but try to use a different one
+        AIAgent registeredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+            instructions: "You are a helpful assistant.",
+            name: "RegisteredAgent");
+
+        using TestHelper testHelper = TestHelper.Start([registeredAgent], this._outputHelper);
+
+        // Create an agent with a different name that isn't registered
+        AIAgent unregisteredAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+            instructions: "You are a helpful assistant.",
+            name: "UnregisteredAgent");
+
+        // Act & Assert: Should throw AgentNotRegisteredException
+        AgentNotRegisteredException exception = Assert.Throws<AgentNotRegisteredException>(
+            () => unregisteredAgent.AsDurableAgentProxy(testHelper.Services));
+
+        Assert.Equal("UnregisteredAgent", exception.AgentName);
+    }
 }

@@ -1,7 +1,0 @@
-type: foundry_agent
-name: ResearchCoder
-description: Demo agent for DeepResearch workflow
-model:
-  id: ${FOUNDRY_MODEL_DEPLOYMENT_NAME}
-tools:
-  - type: code_interpreter

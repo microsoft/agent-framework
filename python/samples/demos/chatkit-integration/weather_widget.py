@@ -29,7 +29,6 @@ POPULAR_CITIES = [
 CITY_VALUE_TO_NAME = {city["value"]: city["label"] for city in POPULAR_CITIES}
 
 
-
 def _sun_svg() -> str:
     """Generate SVG for sunny weather icon."""
     color = WEATHER_ICON_COLOR

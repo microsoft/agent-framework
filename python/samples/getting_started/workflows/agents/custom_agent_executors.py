@@ -41,9 +41,9 @@ class Writer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "writer"):
+    def __init__(self, id: str = "writer"):
         # Create a domain specific agent using your configured AzureOpenAIChatClient.
-        self.agent = chat_client.create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -83,9 +83,9 @@ class Reviewer(Executor):
 
     agent: ChatAgent
 
-    def __init__(self, chat_client: AzureOpenAIChatClient, id: str = "reviewer"):
+    def __init__(self, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = chat_client.create_agent(
+        self.agent = AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),
@@ -105,16 +105,17 @@ class Reviewer(Executor):
 
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
-    # Create the Azure chat client. AzureCliCredential uses your current az login.
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    # Instantiate the two agent backed executors.
-    writer = Writer(chat_client)
-    reviewer = Reviewer(chat_client)
 
     # Build the workflow using the fluent builder.
     # Set the start node and connect an edge from writer to reviewer.
-    workflow = WorkflowBuilder().set_start_executor(writer).add_edge(writer, reviewer).build()
+    workflow = (
+        WorkflowBuilder()
+        .register_executor(Writer, name="writer")
+        .register_executor(Reviewer, name="reviewer")
+        .set_start_executor("writer")
+        .add_edge("writer", "reviewer")
+        .build()
+    )
 
     # Run the workflow with the user's initial message.
     # For foundational clarity, use run (non streaming) and print the workflow output.

@@ -283,8 +283,62 @@ def extract_text_from_contents(contents: list[Any]) -> str:
     return "".join(text_parts)
 
 
+def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize AG-UI messages for MessagesSnapshotEvent.
+
+    Converts AG-UI input format (with 'input_text' type) to snapshot format (with 'text' type).
+
+    Args:
+        messages: List of AG-UI messages in input format
+
+    Returns:
+        List of normalized messages suitable for MessagesSnapshotEvent
+    """
+    from ._utils import generate_event_id
+
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        normalized_msg = msg.copy()
+
+        # Ensure ID exists
+        if "id" not in normalized_msg:
+            normalized_msg["id"] = generate_event_id()
+
+        # Normalize content field
+        content = normalized_msg.get("content")
+        if isinstance(content, list):
+            # Convert content array format to simple string
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    # Convert 'input_text' to 'text' type
+                    if item.get("type") == "input_text":
+                        text_parts.append(item.get("text", ""))
+                    elif item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    else:
+                        # Other types - just extract text field if present
+                        text_parts.append(item.get("text", ""))
+            normalized_msg["content"] = "".join(text_parts)
+        elif content is None:
+            normalized_msg["content"] = ""
+
+        # Normalize tool_call_id to toolCallId for tool messages
+        if normalized_msg.get("role") == "tool":
+            if "tool_call_id" in normalized_msg:
+                normalized_msg["toolCallId"] = normalized_msg["tool_call_id"]
+                del normalized_msg["tool_call_id"]
+            elif "toolCallId" not in normalized_msg:
+                normalized_msg["toolCallId"] = ""
+
+        result.append(normalized_msg)
+
+    return result
+
+
 __all__ = [
     "agui_messages_to_agent_framework",
     "agent_framework_messages_to_agui",
+    "agui_messages_to_snapshot_format",
     "extract_text_from_contents",
 ]

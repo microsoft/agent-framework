@@ -47,7 +47,6 @@ repos:
         entry: uv --directory ./python run poe pre-commit-check
         language: system
         files: ^python/
-        pass_filenames: false
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18

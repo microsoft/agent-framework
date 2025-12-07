@@ -14,8 +14,8 @@ public sealed class TemplateExtensionsTests
     {
         // Arrange
         RecalcEngine engine = new();
-        IEnumerable<TemplateLine> template = new List<TemplateLine>
-        {
+        IEnumerable<TemplateLine> template =
+        [
             new TemplateLine.Builder
             {
                 Segments =
@@ -24,7 +24,7 @@ public sealed class TemplateExtensionsTests
                     new TextSegment.Builder { Value = "World" }
                 }
             }.Build()
-        };
+        ];
 
         // Act
         string result = engine.Format(template);
@@ -38,8 +38,8 @@ public sealed class TemplateExtensionsTests
     {
         // Arrange
         RecalcEngine engine = new();
-        IEnumerable<TemplateLine> template = new List<TemplateLine>
-        {
+        IEnumerable<TemplateLine> template =
+        [
             new TemplateLine.Builder
             {
                 Segments =
@@ -54,7 +54,7 @@ public sealed class TemplateExtensionsTests
                     new TextSegment.Builder { Value = "Line 2" }
                 }
             }.Build()
-        };
+        ];
 
         // Act
         string result = engine.Format(template);

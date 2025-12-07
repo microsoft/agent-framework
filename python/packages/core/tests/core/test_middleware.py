@@ -1693,7 +1693,7 @@ def mock_function() -> AIFunction[Any, Any]:
 @pytest.fixture
 def mock_chat_client() -> Any:
     """Mock chat client for testing."""
-    from agent_framework._clients import ChatClientProtocol
+    from agent_framework import ChatClientProtocol
 
     client = MagicMock(spec=ChatClientProtocol)
     client.service_url = MagicMock(return_value="mock://test")

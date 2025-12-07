@@ -63,7 +63,11 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
             return ValueTask.FromResult<ResponseError?>(new ResponseError
             {
                 Code = "agent_not_found",
-                Message = $"Agent '{agentName}' not found. Ensure the agent is registered with AddAIAgent()."
+                Message = $"""
+                    Agent '{agentName}' not found.
+                    Ensure the agent is registered with '{agentName}' name in the dependency injection container.
+                    We recommend using 'builder.AddAIAgent()' for simplicity.
+                """
             });
         }
 
@@ -78,9 +82,16 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     {
         string agentName = GetAgentName(request)!;
         AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+
         var chatOptions = new ChatOptions
         {
-            ConversationId = request.Conversation?.Id,
+            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
+            // The conversation ID from the client request is used by the hosting layer
+            // to manage conversation storage, but should not be forwarded to the underlying
+            // IChatClient as it has its own concept of conversations (or none at all).
+            // ---
+            // ConversationId = request.Conversation?.Id,
+
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
             MaxOutputTokens = request.MaxOutputTokens,

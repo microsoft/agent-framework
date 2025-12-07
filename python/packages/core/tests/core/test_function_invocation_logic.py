@@ -3,6 +3,7 @@
 import pytest
 
 from agent_framework import (
+    ChatAgent,
     ChatClientProtocol,
     ChatMessage,
     ChatOptions,
@@ -124,6 +125,148 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Cha
     assert updates[1].contents[0].call_id == "1"
     assert updates[2].contents[0].call_id == "1"
     assert updates[3].text == "Processed value1"
+    assert exec_counter == 1
+
+
+async def test_function_invocation_inside_aiohttp_server(chat_client_base: ChatClientProtocol):
+    import aiohttp
+    from aiohttp import web
+
+    exec_counter = 0
+
+    @ai_function(name="start_todo_investigation")
+    def ai_func(user_query: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Investigated {user_query}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(
+                        call_id="1",
+                        name="start_todo_investigation",
+                        arguments='{"user_query": "issue"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_func])
+
+    async def handler(request: web.Request) -> web.Response:
+        thread = agent.get_new_thread()
+        result = await agent.run("Fix issue", thread=thread)
+        return web.Response(text=result.text or "")
+
+    app = web.Application()
+    app.add_routes([web.post("/run", handler)])
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        port = site._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session, session.post(f"http://127.0.0.1:{port}/run") as response:
+            assert response.status == 200
+            await response.text()
+    finally:
+        await runner.cleanup()
+
+    assert exec_counter == 1
+
+
+async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: ChatClientProtocol):
+    import asyncio
+    import threading
+    from queue import Queue
+
+    import aiohttp
+    from aiohttp import web
+
+    exec_counter = 0
+
+    @ai_function(name="start_threaded_investigation")
+    def ai_func(user_query: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Threaded {user_query}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(
+                        call_id="thread-1",
+                        name="start_threaded_investigation",
+                        arguments='{"user_query": "issue"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    agent = ChatAgent(chat_client=chat_client_base, tools=[ai_func])
+
+    ready_event = threading.Event()
+    port_queue: Queue[int] = Queue()
+    shutdown_queue: Queue[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = Queue()
+
+    async def init_app() -> web.Application:
+        async def handler(request: web.Request) -> web.Response:
+            thread = agent.get_new_thread()
+            result = await agent.run("Fix issue", thread=thread)
+            return web.Response(text=result.text or "")
+
+        app = web.Application()
+        app.add_routes([web.post("/run", handler)])
+        return app
+
+    def server_thread() -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def runner_main() -> None:
+            app = await init_app()
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            shutdown_event = asyncio.Event()
+            shutdown_queue.put((loop, shutdown_event))
+            port = site._server.sockets[0].getsockname()[1]
+            port_queue.put(port)
+            ready_event.set()
+            try:
+                await shutdown_event.wait()
+            finally:
+                await runner.cleanup()
+
+        try:
+            loop.run_until_complete(runner_main())
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=server_thread, daemon=True)
+    thread.start()
+    ready_event.wait(timeout=5)
+    assert ready_event.is_set()
+    loop_ref, shutdown_event = shutdown_queue.get(timeout=2)
+    port = port_queue.get(timeout=2)
+
+    async with aiohttp.ClientSession() as session, session.post(f"http://127.0.0.1:{port}/run") as response:
+        assert response.status == 200
+        await response.text()
+
+    loop_ref.call_soon_threadsafe(shutdown_event.set)
+    thread.join(timeout=5)
     assert exec_counter == 1
 
 
@@ -1305,26 +1448,20 @@ async def test_approved_function_call_successful_execution(chat_client_base: Cha
     assert success_result.result == "Success value1"
 
 
-async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientProtocol):
-    """Test that declaration_only tools are not executed."""
-    exec_counter = 0
-
-    @ai_function(name="declaration_func")
-    def declaration_func_inner(arg1: str) -> str:
-        nonlocal exec_counter
-        exec_counter += 1
-        return f"Result {arg1}"
-
-    # Create a new AIFunction with declaration_only set
+async def test_declaration_only_tool(chat_client_base: ChatClientProtocol):
+    """Test that declaration_only tools without implementation (func=None) are not executed."""
     from agent_framework import AIFunction
 
+    # Create a truly declaration-only function with no implementation
     declaration_func = AIFunction(
         name="declaration_func",
-        func=declaration_func_inner,
-        additional_properties={"declaration_only": True},
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
     )
-    # Set declaration_only on the instance
-    object.__setattr__(declaration_func, "_declaration_only", True)
+
+    # Verify it's marked as declaration_only
+    assert declaration_func.declaration_only is True
 
     chat_client_base.run_responses = [
         ChatResponse(
@@ -1338,8 +1475,6 @@ async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientPr
 
     response = await chat_client_base.get_response("hello", tool_choice="auto", tools=[declaration_func])
 
-    # Function should NOT be executed
-    assert exec_counter == 0
     # Should have the function call in messages but not a result
     function_calls = [
         content
@@ -1348,6 +1483,15 @@ async def test_declaration_only_tool_not_executed(chat_client_base: ChatClientPr
         if isinstance(content, FunctionCallContent) and content.name == "declaration_func"
     ]
     assert len(function_calls) >= 1
+
+    # Should not have a function result
+    function_results = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, FunctionResultContent) and content.call_id == "1"
+    ]
+    assert len(function_results) == 0
 
 
 async def test_multiple_function_calls_parallel_execution(chat_client_base: ChatClientProtocol):

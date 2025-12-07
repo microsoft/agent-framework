@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Agents.AI.Hosting.Local;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -126,29 +125,7 @@ public static class AgentHostingServiceCollectionExtensions
             return agent;
         });
 
-        // Register the agent by name for discovery.
-        var agentHostBuilder = GetAgentRegistry(services);
-        agentHostBuilder.AgentNames.Add(name);
-
         return new HostedAgentBuilder(name, services);
-    }
-
-    private static LocalAgentRegistry GetAgentRegistry(IServiceCollection services)
-    {
-        var descriptor = services.FirstOrDefault(s => !s.IsKeyedService && s.ServiceType.Equals(typeof(LocalAgentRegistry)));
-        if (descriptor?.ImplementationInstance is not LocalAgentRegistry instance)
-        {
-            instance = new LocalAgentRegistry();
-            ConfigureHostBuilder(services, instance);
-        }
-
-        return instance;
-    }
-
-    private static void ConfigureHostBuilder(IServiceCollection services, LocalAgentRegistry agentHostBuilderContext)
-    {
-        services.Add(ServiceDescriptor.Singleton(agentHostBuilderContext));
-        services.AddSingleton<AgentCatalog, LocalAgentCatalog>();
     }
 
     private static IList<AITool> GetRegisteredToolsForAgent(IServiceProvider serviceProvider, string agentName)

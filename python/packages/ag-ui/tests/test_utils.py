@@ -20,8 +20,8 @@ def test_generate_event_id():
 
 def test_merge_state():
     """Test state merging."""
-    current = {"a": 1, "b": 2}
-    update = {"b": 3, "c": 4}
+    current: dict[str, int] = {"a": 1, "b": 2}
+    update: dict[str, int] = {"b": 3, "c": 4}
 
     result = merge_state(current, update)
 
@@ -32,8 +32,8 @@ def test_merge_state():
 
 def test_merge_state_empty_update():
     """Test merging with empty update."""
-    current = {"x": 10, "y": 20}
-    update = {}
+    current: dict[str, int] = {"x": 10, "y": 20}
+    update: dict[str, int] = {}
 
     result = merge_state(current, update)
 
@@ -43,8 +43,8 @@ def test_merge_state_empty_update():
 
 def test_merge_state_empty_current():
     """Test merging with empty current state."""
-    current = {}
-    update = {"a": 1, "b": 2}
+    current: dict[str, int] = {}
+    update: dict[str, int] = {"a": 1, "b": 2}
 
     result = merge_state(current, update)
 
@@ -53,8 +53,8 @@ def test_merge_state_empty_current():
 
 def test_merge_state_deep_copy():
     """Test that merge_state creates a deep copy preventing mutation of original."""
-    current = {"recipe": {"name": "Cake", "ingredients": ["flour", "sugar"]}}
-    update = {"other": "value"}
+    current: dict[str, dict[str, object]] = {"recipe": {"name": "Cake", "ingredients": ["flour", "sugar"]}}
+    update: dict[str, str] = {"other": "value"}
 
     result = merge_state(current, update)
 

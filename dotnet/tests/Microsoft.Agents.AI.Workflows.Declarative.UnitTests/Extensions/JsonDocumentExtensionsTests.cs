@@ -59,6 +59,38 @@ public sealed class JsonDocumentExtensionsTests
     }
 
     [Fact]
+    public void ParseRecord_Object_NoSchema_Succeeds()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(
+            """
+            {
+              "text": "hello",
+              "numberInt": 7,
+              "numberLong": 9223372036854775807,
+              "numberDecimal": 12.5,
+              "numberDouble": 3.99E99,
+              "flag": true,
+              "date": "2024-10-01T12:34:56Z",
+              "time": "12:34:56"
+            }
+            """);
+
+        // Act
+        Dictionary<string, object?> result = document.ParseRecord(VariableType.RecordType);
+
+        // Assert
+        Assert.Equal("hello", result["text"]);
+        Assert.Equal(7, result["numberInt"]);
+        Assert.Equal(9223372036854775807L, result["numberLong"]);
+        Assert.Equal(12.5m, result["numberDecimal"]);
+        Assert.Equal(3.99E99, result["numberDouble"]);
+        Assert.Equal(true, result["flag"]);
+        Assert.Equal("2024-10-01T12:34:56Z", result["date"]);
+        Assert.Equal("12:34:56", result["time"]);
+    }
+
+    [Fact]
     public void ParseRecord_Object_NestedRecord_Succeeds()
     {
         // Arrange

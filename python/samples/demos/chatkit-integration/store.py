@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from typing import Any
 
-from chatkit.store import Store, NotFoundError
+from chatkit.store import NotFoundError, Store
 from chatkit.types import (
     Attachment,
     Page,
@@ -22,16 +22,19 @@ from pydantic import BaseModel
 
 class ThreadData(BaseModel):
     """Model for serializing thread data to SQLite."""
+
     thread: ThreadMetadata
 
 
 class ItemData(BaseModel):
     """Model for serializing thread item data to SQLite."""
+
     item: ThreadItem
 
 
 class AttachmentData(BaseModel):
     """Model for serializing attachment data to SQLite."""
+
     attachment: Attachment
 
 
@@ -185,19 +188,13 @@ class SQLiteStore(Store[dict[str, Any]]):
             params.append(limit + 1)
 
             items_cursor = conn.execute(query, params).fetchall()
-            items = [
-                ItemData.model_validate_json(row[0]).item for row in items_cursor
-            ]
+            items = [ItemData.model_validate_json(row[0]).item for row in items_cursor]
 
             has_more = len(items) > limit
             if has_more:
                 items = items[:limit]
 
-            return Page[ThreadItem](
-                data=items,
-                has_more=has_more,
-                after=items[-1].id if items else None
-            )
+            return Page[ThreadItem](data=items, has_more=has_more, after=items[-1].id if items else None)
 
     async def save_attachment(self, attachment: Attachment, context: dict[str, Any]) -> None:
         user_id = context.get("user_id", "demo_user")
@@ -270,23 +267,15 @@ class SQLiteStore(Store[dict[str, Any]]):
             params.append(limit + 1)
 
             threads_cursor = conn.execute(query, params).fetchall()
-            threads = [
-                ThreadData.model_validate_json(row[0]).thread for row in threads_cursor
-            ]
+            threads = [ThreadData.model_validate_json(row[0]).thread for row in threads_cursor]
 
             has_more = len(threads) > limit
             if has_more:
                 threads = threads[:limit]
 
-            return Page[ThreadMetadata](
-                data=threads,
-                has_more=has_more,
-                after=threads[-1].id if threads else None
-            )
+            return Page[ThreadMetadata](data=threads, has_more=has_more, after=threads[-1].id if threads else None)
 
-    async def add_thread_item(
-        self, thread_id: str, item: ThreadItem, context: dict[str, Any]
-    ) -> None:
+    async def add_thread_item(self, thread_id: str, item: ThreadItem, context: dict[str, Any]) -> None:
         user_id = context.get("user_id", "demo_user")
 
         with self._create_connection() as conn:
@@ -348,9 +337,7 @@ class SQLiteStore(Store[dict[str, Any]]):
             )
             conn.commit()
 
-    async def delete_thread_item(
-        self, thread_id: str, item_id: str, context: dict[str, Any]
-    ) -> None:
+    async def delete_thread_item(self, thread_id: str, item_id: str, context: dict[str, Any]) -> None:
         user_id = context.get("user_id", "demo_user")
 
         with self._create_connection() as conn:

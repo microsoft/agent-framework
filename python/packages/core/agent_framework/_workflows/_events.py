@@ -294,6 +294,36 @@ class WorkflowOutputEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
 
 
+class SuperStepEvent(WorkflowEvent):
+    """Event triggered when a superstep starts or ends."""
+
+    def __init__(self, iteration: int, data: Any | None = None):
+        """Initialize the superstep event.
+
+        Args:
+            iteration: The number of the superstep (1-based index).
+            data: Optional data associated with the superstep event.
+        """
+        super().__init__(data)
+        self.iteration = iteration
+
+    def __repr__(self) -> str:
+        """Return a string representation of the superstep event."""
+        return f"{self.__class__.__name__}(iteration={self.iteration}, data={self.data})"
+
+
+class SuperStepStartedEvent(SuperStepEvent):
+    """Event triggered when a superstep starts."""
+
+    ...
+
+
+class SuperStepCompletedEvent(SuperStepEvent):
+    """Event triggered when a superstep ends."""
+
+    ...
+
+
 class ExecutorEvent(WorkflowEvent):
     """Base class for executor events."""
 
@@ -310,17 +340,13 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokedEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler invoke event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler complete event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorFailedEvent(ExecutorEvent):
@@ -341,6 +367,8 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
+    data: AgentRunResponseUpdate | None
+
     def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
@@ -352,6 +380,8 @@ class AgentRunUpdateEvent(ExecutorEvent):
 
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
+
+    data: AgentRunResponse | None
 
     def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
         """Initialize the agent run event."""

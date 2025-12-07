@@ -54,6 +54,13 @@ public sealed class PortableValueExtensionsTests
     public void ChatMessageType() => TestValidType(new ChatMessage(ChatRole.User, "input"), RecordType.Empty());
 
     [Fact]
+    public void ListEmptyType()
+    {
+        TableValue convertedValue = (TableValue)TestValidType(Array.Empty<int>(), TableType.Empty());
+        Assert.Equal(0, convertedValue.Count());
+    }
+
+    [Fact]
     public void ListSimpleType()
     {
         TableValue convertedValue = (TableValue)TestValidType(new List<int> { 1, 2, 3 }, TableType.Empty());

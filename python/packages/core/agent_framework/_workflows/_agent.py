@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
@@ -236,14 +236,15 @@ class WorkflowAgent(BaseAgent):
     ) -> AgentRunResponseUpdate | None:
         """Convert a workflow event to an AgentRunResponseUpdate.
 
-        Only AgentRunUpdateEvent and RequestInfoEvent are processed and the rest
-        are not relevant. Returns None if the event is not relevant.
+        Only AgentRunUpdateEvent and RequestInfoEvent are processed.
+        Other workflow events are ignored as they are workflow-internal and should
+        have corresponding AgentRunUpdateEvent emissions if relevant to agent consumers.
         """
         match event:
             case AgentRunUpdateEvent(data=update):
                 # Direct pass-through of update in an agent streaming event
                 if update:
-                    return cast(AgentRunResponseUpdate, update)
+                    return update
                 return None
 
             case RequestInfoEvent(request_id=request_id):
@@ -268,12 +269,11 @@ class WorkflowAgent(BaseAgent):
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
-                    created_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 )
             case _:
-                # Ignore non-agent workflow events
+                # Ignore workflow-internal events
                 pass
-        # We only care about the above two events and discard the rest.
         return None
 
     def _extract_function_responses(self, input_messages: list[ChatMessage]) -> dict[str, Any]:
