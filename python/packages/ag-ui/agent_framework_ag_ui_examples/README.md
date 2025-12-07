@@ -9,6 +9,13 @@ pip install agent-framework-ag-ui
 ```
 
 ## Quick Start
+Chris Start
+```
+chris@Belfast:~/repo/workflow-management/ag-ui/apps/dojo$ pnpm run dev
+
+(agent) chris@Belfast:~/repo/workflow-management/agent-framework/python/packages/ag-ui$ UVICORN_HOST=0.0.0.0 UVICORN_PORT=8888 python -m agent_framework_ag_ui_examples
+```
+
 
 ### Using Example Agents with Any Chat Client
 
