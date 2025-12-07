@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework._types import (
