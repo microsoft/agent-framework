@@ -113,11 +113,12 @@ The example server demonstrates all 7 AG-UI features:
 
 ```bash
 # Install the package
-pip install agent-framework-ag-ui
+uv pip install agent-framework
+uv pip install agent-framework-ag-ui
 
 # Run the example server
 python -m agent_framework_ag_ui_examples
-
+UVICORN_HOST=0.0.0.0 UVICORN_PORT=8000 python -m agent_framework_ag_ui_examples
 # Or with debug logging
 ENABLE_DEBUG_LOGGING=1 python -m agent_framework_ag_ui_examples
 ```
@@ -179,6 +180,187 @@ The package uses a clean, orchestrator-based architecture:
 - **Strategy Pattern**: Pluggable confirmation message strategies
 - **Context Object**: Lazy-loaded execution context passed to orchestrators
 - **Event Bridge**: Stateless translation of Agent Framework events to AG-UI events
+
+### Component Architecture Diagram
+
+```mermaid
+classDiagram
+    class ChatClientProtocol {
+        <<interface>>
+        +chat_client_call()
+    }
+
+    class ChatAgent {
+        -name: str
+        -instructions: str
+        -chat_client: ChatClientProtocol
+        -tools: list[ai_function]
+        +run()
+    }
+
+    class AgentFrameworkAgent {
+        -agent: ChatAgent
+        -name: str
+        -description: str
+        -state_schema: dict
+        -predict_state_config: dict
+        -confirmation_strategy: ConfirmationStrategy
+        -orchestrators: list[Orchestrator]
+    }
+
+    class FastAPI {
+        -app: FastAPI
+    }
+
+    class Uvicorn {
+        -server: Uvicorn
+    }
+
+    class AGUIProtocol {
+        -streaming_endpoint: str
+        -SSE_protocol: ServerSentEvents
+    }
+
+    class Orchestrator {
+        <<abstract>>
+        +can_handle(ExecutionContext): bool
+        +run(ExecutionContext): async Generator
+    }
+
+    class DefaultOrchestrator {
+        +can_handle(ExecutionContext): bool
+        +run(ExecutionContext): async Generator
+    }
+
+    class HumanInLoopOrchestrator {
+        +can_handle(ExecutionContext): bool
+        +run(ExecutionContext): async Generator
+    }
+
+    class ConfirmationStrategy {
+        <<abstract>>
+        +on_approval_accepted(steps: list[dict]): str
+        +on_approval_rejected(steps: list[dict]): str
+        +on_state_confirmed(): str
+        +on_state_rejected(): str
+    }
+
+    class TaskPlannerConfirmationStrategy {
+        +on_approval_accepted(steps: list[dict]): str
+        +on_approval_rejected(steps: list[dict]): str
+        +on_state_confirmed(): str
+        +on_state_rejected(): str
+    }
+
+    class RecipeConfirmationStrategy {
+        +on_approval_accepted(steps: list[dict]): str
+        +on_approval_rejected(steps: list[dict]): str
+        +on_state_confirmed(): str
+        +on_state_rejected(): str
+    }
+
+    class MessageAdapter {
+        +ag_ui_to_agent(msg: dict): dict
+        +agent_to_ag_ui(msg: dict): dict
+    }
+
+    class EventBridge {
+        +agent_run_response_to_ag_ui_event(response: dict): dict
+    }
+
+    ChatClientProtocol <|-- AzureOpenAIChatClient
+    ChatClientProtocol <|-- OpenAIChatClient
+
+    AgentFrameworkAgent --> ChatAgent
+    AgentFrameworkAgent --> Orchestrator
+    AgentFrameworkAgent --> ConfirmationStrategy
+    AgentFrameworkAgent --> EventBridge
+
+    ChatAgent --> ChatClientProtocol
+
+    Orchestrator <|-- DefaultOrchestrator
+    Orchestrator <|-- HumanInLoopOrchestrator
+
+    ConfirmationStrategy <|-- TaskPlannerConfirmationStrategy
+    ConfirmationStrategy <|-- RecipeConfirmationStrategy
+
+    FastAPI --> AgentFrameworkAgent
+    FastAPI --> AGUIProtocol
+
+    AGUIProtocol --> AgentFrameworkAgent
+    AGUIProtocol --> MessageAdapter
+    EventBridge --> AGUIProtocol
+```
+
+#### Architecture Components Explanation
+
+- **ChatClientProtocol**: An interface that abstracts different LLM providers (Azure OpenAI, OpenAI, etc.), allowing the framework to be provider-agnostic
+- **ChatAgent**: Core component that holds the agent's identity (name, instructions) and tools, executes conversation logic
+- **AgentFrameworkAgent**: Wrapper that connects the core agent with AG-UI protocol features like state management, confirmation strategies, and event streaming
+- **Orchestrators**: Handle different execution flows depending on the agent's needs (default execution, human-in-the-loop workflows, etc.)
+- **ConfirmationStrategy**: Provides domain-specific confirmation messages for different agent types (task planning, recipe management, etc.)
+- **EventBridge**: Transforms Agent Framework events into AG-UI compatible events for streaming to the frontend
+- **AGUIProtocol**: Handles the streaming protocol communication with the AG-UI frontend via Server-Sent Events (SSE)
+
+### Sequence Diagram
+
+The following sequence diagram shows the interaction flow between components when processing an AG-UI request:
+
+```mermaid
+sequenceDiagram
+    participant User as User/Browser
+    participant FastAPI as FastAPI Server
+    participant AgentFramework as AgentFrameworkAgent
+    participant Agent as ChatAgent
+    participant ChatClient as ChatClientProtocol
+    participant LLM as LLM (Azure/OpenAI)
+    participant Tools as Agent Tools
+    participant Confirmation as Confirmation Strategy
+    participant State as State Management
+
+    User->>FastAPI: HTTP POST /agentic_chat
+    FastAPI->>AgentFramework: Receive request
+    AgentFramework->>Agent: Execute agent.run()
+    Agent->>ChatClient: Process input
+    ChatClient->>LLM: Send prompt to LLM
+    LLM-->>ChatClient: Return response
+    ChatClient-->>Agent: Process LLM response
+    Agent-->>AgentFramework: Return agent response
+
+    alt Tool execution required
+        AgentFramework->>Tools: Execute tool function
+        Tools-->>AgentFramework: Return tool result
+        AgentFramework->>Agent: Include tool result
+        Agent->>ChatClient: Continue conversation
+    end
+
+    alt State update needed
+        AgentFramework->>State: Update state via predict_state_config
+        State-->>AgentFramework: State changed notification
+        AgentFramework->>User: Send StateDeltaEvent via SSE
+    end
+
+    alt Human confirmation required
+        AgentFramework->>Confirmation: Request approval
+        Confirmation-->>User: Send approval request via SSE
+        User->>FastAPI: User approval/rejection
+        FastAPI->>AgentFramework: Forward approval decision
+        AgentFramework->>Agent: Continue with approval decision
+    end
+
+    AgentFramework-->>FastAPI: Send streaming response via SSE
+    FastAPI-->>User: Stream AG-UI events (ChatMessage, ToolCallResult, etc.)
+```
+
+#### Interaction Flow Explanation
+
+1. **Request Initiation**: User sends a request to the FastAPI server endpoint
+2. **Agent Execution**: AgentFrameworkAgent orchestrates the agent execution, passing the request to the underlying ChatAgent
+3. **LLM Communication**: The ChatAgent processes the request using the ChatClientProtocol, which communicates with the LLM
+4. **Tool Execution** (Optional): If tools are required, the framework executes them and incorporates the results back into the conversation
+5. **State Management** (Optional): For agents with state requirements, changes are propagated to the frontend via StateDeltaEvents
+6. **Human Confirmation** (Optional): For agents requiring approval, the confirmation strategy prompts the user for approval before proceeding
+7. **Response Streaming**: The framework streams AG-UI events back to the user via Server-Sent Events (SSE)
 
 ## Advanced Usage
 
