@@ -36,7 +36,13 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         // Create options with properties from the request
         var chatOptions = new ChatOptions
         {
-            ConversationId = request.Conversation?.Id,
+            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
+            // The conversation ID from the client request is used by the hosting layer
+            // to manage conversation storage, but should not be forwarded to the underlying
+            // IChatClient as it has its own concept of conversations (or none at all).
+            // ---
+            // ConversationId = request.Conversation?.Id,
+
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
             MaxOutputTokens = request.MaxOutputTokens,
