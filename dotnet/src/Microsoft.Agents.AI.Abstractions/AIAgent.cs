@@ -22,9 +22,6 @@ namespace Microsoft.Agents.AI;
 [DebuggerDisplay("{DisplayName,nq}")]
 public abstract class AIAgent
 {
-    /// <summary>Default ID of this agent instance.</summary>
-    private readonly string _id = Guid.NewGuid().ToString("N");
-
     /// <summary>
     /// Gets the unique identifier for this agent instance.
     /// </summary>
@@ -37,7 +34,7 @@ public abstract class AIAgent
     /// agent instances in multi-agent scenarios. They should remain stable for the lifetime
     /// of the agent instance.
     /// </remarks>
-    public string Id => this.IdCore ?? this._id;
+    public string Id => this.IdCore ?? Guid.NewGuid().ToString("N");
 
     /// <summary>
     /// Gets the core identifier for the agent, which can be overridden by derived classes.
