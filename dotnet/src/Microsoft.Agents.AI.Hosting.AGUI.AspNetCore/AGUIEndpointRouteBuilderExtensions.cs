@@ -85,7 +85,12 @@ public static class AGUIEndpointRouteBuilderExtensions
         });
     }
 
-    private static void FixToolMessageOrdering(List<AGUIMessage> messages)
+    /// <summary>
+    /// Ensures that tool result messages appear immediately after their corresponding assistant messages
+    /// that contain matching tool call IDs. Any unmatched tool messages are appended at the end.
+    /// </summary>
+    /// <param name="messages">The AG-UI messages to reorder in-place.</param>
+    internal static void FixToolMessageOrdering(List<AGUIMessage> messages)
     {
         if (messages == null || messages.Count == 0)
         {
