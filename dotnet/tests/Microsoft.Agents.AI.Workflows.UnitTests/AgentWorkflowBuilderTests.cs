@@ -199,7 +199,7 @@ public class AgentWorkflowBuilderTests
             Assert.Equal("abc", Assert.IsType<TextContent>(Assert.Single(message.Contents)).Text);
 
             return new(new ChatMessage(ChatRole.Assistant, "Hello from agent1"));
-        }), new ChatClientAgentOptions { Id = "initial-agent" });
+        }));
 
         var workflow =
             AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
@@ -207,7 +207,7 @@ public class AgentWorkflowBuilderTests
             {
                 Assert.Fail("Should never be invoked.");
                 return new();
-            }), new ChatClientAgentOptions { Id = "second-agent", Description = "nop" }))
+            }), description: "nop"))
             .Build();
 
         (string updateText, List<ChatMessage>? result) = await RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
@@ -236,11 +236,12 @@ public class AgentWorkflowBuilderTests
             Assert.NotNull(transferFuncName);
 
             return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
-        }), new ChatClientAgentOptions { Id = "initial-agent", Name = "initialAgent" });
+        }), name: "initialAgent");
 
         var nextAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
             new(new ChatMessage(ChatRole.Assistant, "Hello from agent2"))),
-            new ChatClientAgentOptions { Id = "next-agent", Name = "nextAgent", Description = "The second agent" });
+            name: "nextAgent",
+            description: "The second agent");
 
         var workflow =
             AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
@@ -282,7 +283,7 @@ public class AgentWorkflowBuilderTests
 
             // Only a handoff function call.
             return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
-        }), new ChatClientAgentOptions { Id = "initial-agent", Name = "initialAgent" });
+        }), name: "initialAgent");
 
         var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
         {
@@ -291,11 +292,12 @@ public class AgentWorkflowBuilderTests
             Assert.NotNull(transferFuncName);
 
             return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call2", transferFuncName)]));
-        }), new ChatClientAgentOptions { Id = "second-agent", Name = "secondAgent", Description = "The second agent" });
+        }), name: "secondAgent", description: "The second agent");
 
         var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
             new(new ChatMessage(ChatRole.Assistant, "Hello from agent3"))),
-            new ChatClientAgentOptions { Id = "third-agent", Name = "thirdAgent", Description = "The third / final agent" });
+            name: "thirdAgent",
+            description: "The third / final agent");
 
         var workflow =
             AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)

@@ -212,26 +212,13 @@ public class AIAgentTests
     }
 
     [Fact]
-    public void ValidateAgentIdGeneratesNewGuidWhenIdCoreNotOverridden()
+    public void ValidateAgentIDIsIdempotent()
     {
         var agent = new MockAgent();
-
-        string id1 = agent.Id;
-        string id2 = agent.Id;
-        Assert.NotNull(id1);
-        Assert.NotNull(id2);
-        Assert.NotEqual(id1, id2);
-    }
-
-    [Fact]
-    public void ValidateAgentIDIsIdempotentWhenIdCoreIsOverridden()
-    {
-        var agent = new MockAgentWithId("test-agent-id");
 
         string id = agent.Id;
         Assert.NotNull(id);
         Assert.Equal(id, agent.Id);
-        Assert.Equal("test-agent-id", id);
     }
 
     #region GetService Method Tests
@@ -357,31 +344,6 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public override AgentThread GetNewThread()
-            => throw new NotImplementedException();
-
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
-            => throw new NotImplementedException();
-
-        public override Task<AgentRunResponse> RunAsync(
-            IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
-            AgentRunOptions? options = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
-
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-            IEnumerable<ChatMessage> messages,
-            AgentThread? thread = null,
-            AgentRunOptions? options = null,
-            CancellationToken cancellationToken = default) =>
-            throw new NotImplementedException();
-    }
-
-    private sealed class MockAgentWithId(string id) : AIAgent
-    {
-        protected override string? IdCore => id;
-
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();
 

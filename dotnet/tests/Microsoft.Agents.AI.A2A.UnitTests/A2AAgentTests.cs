@@ -26,14 +26,13 @@ public sealed class A2AAgentTests : IDisposable
     private readonly A2AClientHttpMessageHandlerStub _handler;
     private readonly A2AClient _a2aClient;
     private readonly A2AAgent _agent;
-    private const string TestAgentId = "test-agent-id";
 
     public A2AAgentTests()
     {
         this._handler = new A2AClientHttpMessageHandlerStub();
         this._httpClient = new HttpClient(this._handler, false);
         this._a2aClient = new A2AClient(new Uri("http://test-endpoint"), this._httpClient);
-        this._agent = new A2AAgent(this._a2aClient, id: TestAgentId);
+        this._agent = new A2AAgent(this._a2aClient);
     }
 
     [Fact]
@@ -66,13 +65,12 @@ public sealed class A2AAgentTests : IDisposable
         // Act
         var agent = new A2AAgent(this._a2aClient);
 
-        // Assert - Id and DisplayName will be generated GUIDs, not necessarily equal
+        // Assert
         Assert.NotNull(agent.Id);
         Assert.NotEmpty(agent.Id);
         Assert.Null(agent.Name);
         Assert.Null(agent.Description);
-        Assert.NotNull(agent.DisplayName);
-        Assert.NotEmpty(agent.DisplayName);
+        Assert.Equal(agent.Id, agent.DisplayName);
     }
 
     [Fact]

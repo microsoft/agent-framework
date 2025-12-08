@@ -24,8 +24,6 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        protected override string? IdCore => "test-agent-id";
-
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();
 
