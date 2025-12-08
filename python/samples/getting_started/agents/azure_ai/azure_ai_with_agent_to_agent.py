@@ -21,7 +21,7 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyA2AAgent",
             instructions="""You are a helpful assistant that can communicate with other agents.
             Use the A2A tool when you need to interact with other agents to complete tasks
