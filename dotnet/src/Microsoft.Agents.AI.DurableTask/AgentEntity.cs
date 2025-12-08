@@ -124,7 +124,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                 // CheckAndDeleteIfExpiredAsync will reschedule itself if the entity hasn't expired.
                 if (isFirstInteraction)
                 {
-                    await this.ScheduleDeletionCheckAsync(sessionId, logger, timeToLive.Value);
+                    this.ScheduleDeletionCheck(sessionId, logger, timeToLive.Value);
                 }
             }
 
@@ -140,7 +140,10 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
     /// <summary>
     /// Checks if the entity has expired and deletes it if so, otherwise reschedules the deletion check.
     /// </summary>
-    public Task CheckAndDeleteIfExpiredAsync()
+    /// <remarks>
+    /// This method is called by the durable task runtime when a <c>CheckAndDeleteIfExpired</c> signal is received.
+    /// </remarks>
+    public void CheckAndDeleteIfExpired()
     {
         AgentSessionId sessionId = this.Context.Id;
         AIAgent agent = this.GetAgent(sessionId);
@@ -151,34 +154,33 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
 
         logger.LogTTLDeletionCheck(sessionId, expirationTime, currentTime);
 
-        if (expirationTime.HasValue && currentTime >= expirationTime.Value)
-        {
-            // Entity has expired, delete it
-            logger.LogTTLEntityExpired(sessionId, expirationTime.Value);
-            this.State = null!;
-            return Task.CompletedTask;
-        }
-
-        // Entity hasn't expired yet, reschedule the deletion check
         if (expirationTime.HasValue)
         {
-            TimeSpan? timeToLive = this._options.GetTimeToLive(sessionId.Name);
-            if (timeToLive.HasValue)
+            if (currentTime >= expirationTime.Value)
             {
-                return this.ScheduleDeletionCheckAsync(sessionId, logger, timeToLive.Value);
+                // Entity has expired, delete it
+                logger.LogTTLEntityExpired(sessionId, expirationTime.Value);
+                this.State = null!;
+            }
+            else
+            {
+                // Entity hasn't expired yet, reschedule the deletion check
+                TimeSpan? timeToLive = this._options.GetTimeToLive(sessionId.Name);
+                if (timeToLive.HasValue)
+                {
+                    this.ScheduleDeletionCheck(sessionId, logger, timeToLive.Value);
+                }
             }
         }
-
-        return Task.CompletedTask;
     }
 
-    private async Task ScheduleDeletionCheckAsync(AgentSessionId sessionId, ILogger logger, TimeSpan timeToLive)
+    private void ScheduleDeletionCheck(AgentSessionId sessionId, ILogger logger, TimeSpan timeToLive)
     {
         DateTime currentTime = DateTime.UtcNow;
         DateTime expirationTime = this.State.Data.ExpirationTime ?? currentTime.Add(timeToLive);
         TimeSpan minimumDelay = this._options.MinimumTimeToLiveSignalDelay;
 
-        // Calculate when to schedule the signal: max of expiration time and current time + minimum delay
+        // To avoid excessive scheduling, we schedule the deletion check for no less than the minimum delay.
         DateTime scheduledTime = expirationTime > currentTime.Add(minimumDelay)
             ? expirationTime
             : currentTime.Add(minimumDelay);
@@ -188,7 +190,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         // Schedule a signal to self to check for expiration
         this.Context.SignalEntity(
             this.Context.Id,
-            nameof(CheckAndDeleteIfExpiredAsync),
+            nameof(CheckAndDeleteIfExpired), // self-signal
             options: new SignalEntityOptions { SignalTime = scheduledTime });
     }
 
