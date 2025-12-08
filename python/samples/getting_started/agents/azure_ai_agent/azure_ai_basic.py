@@ -34,7 +34,7 @@ async def non_streaming_example() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,
@@ -56,7 +56,7 @@ async def streaming_example() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=get_weather,

@@ -33,11 +33,14 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient, HostedCodeInterpreterTool
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Analyst",
-        instructions="Use the code interpreter for numeric work.",
-        tools=[HostedCodeInterpreterTool()],
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).create_agent(
+            name="Analyst",
+            instructions="Use the code interpreter for numeric work.",
+            tools=[HostedCodeInterpreterTool()],
+        ) as agent,
+    ):
         # HostedCodeInterpreterTool mirrors the built-in Azure AI capability.
         reply = await agent.run(
             "Use Python to compute 42 ** 2 and explain the result.",
