@@ -21,7 +21,7 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyBrowserAutomationAgent",
             instructions="""You are an Agent helping with browser automation tasks.
             You can answer questions, provide information, and assist with various tasks
