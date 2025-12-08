@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to maintain conversation state using the OpenAIChatClientAgent
+// This sample demonstrates how to maintain conversation state using the OpenAIResponseClientAgent
 // and AgentThread. By passing the same thread to multiple agent invocations, the agent
 // automatically maintains the conversation history, allowing the AI model to understand
 // context from previous exchanges.
@@ -17,11 +17,11 @@ using OpenAI.Conversations;
 string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-// Create a ChatClient directly from OpenAIClient
+// Create a ConversationClient directly from OpenAIClient
 OpenAIClient openAIClient = new(apiKey);
 ConversationClient conversationClient = openAIClient.GetConversationClient();
 
-// Create an agent directly from the ChatClient using OpenAIChatClientAgent
+// Create an agent directly from the OpenAIResponseClient using OpenAIResponseClientAgent
 OpenAIResponseClientAgent agent = new(openAIClient.GetOpenAIResponseClient(model), instructions: "You are a helpful assistant.", name: "ConversationAgent");
 
 ClientResult createConversationResult = await conversationClient.CreateConversationAsync(BinaryContent.Create(BinaryData.FromString("{}")));
