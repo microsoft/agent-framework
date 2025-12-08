@@ -5,7 +5,8 @@ AG-UI protocol integration for Agent Framework, enabling seamless integration wi
 ## Installation
 
 ```bash
-pip install agent-framework-ag-ui
+uv pip install agent-framework-ag-ui
+./run_examples.sh
 ```
 
 ## Quick Start
