@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from agent_framework import (  # Core chat primitives to build LLM requests
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
-    AgentRunEvent,
     ChatAgent,  # Tracing event for agent execution steps
     ChatMessage,  # Chat message structure
     Executor,  # Base class for custom Python executors
+    ExecutorCompletedEvent,
+    ExecutorInvokedEvent,
     Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowContext,  # Per run context and event bus
@@ -141,9 +142,11 @@ async def main() -> None:
 
     # 3) Run with a single prompt and print progress plus the final consolidated output
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
-        if isinstance(event, AgentRunEvent):
+        if isinstance(event, ExecutorInvokedEvent):
             # Show which agent ran and what step completed for lightweight observability.
-            print(event)
+            print(f"{event.executor_id} invoked")
+        elif isinstance(event, ExecutorCompletedEvent):
+            print(f"{event.executor_id} completed")
         elif isinstance(event, WorkflowOutputEvent):
             print("===== Final Aggregated Output =====")
             print(event.data)
