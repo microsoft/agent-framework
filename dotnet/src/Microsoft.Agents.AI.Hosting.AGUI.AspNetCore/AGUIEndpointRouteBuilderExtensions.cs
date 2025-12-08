@@ -149,10 +149,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                             reordered.Add(toolMsg);
                         }
 
-                        if (queue.Count == 0)
-                        {
-                            toolsByCallId.Remove(toolCall.Id);
-                        }
+                        toolsByCallId.Remove(toolCall.Id);
                     }
                 }
             }
