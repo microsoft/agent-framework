@@ -143,7 +143,7 @@ async def main() -> None:
     # 3) Run with a single prompt and print progress plus the final consolidated output
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
         if isinstance(event, ExecutorInvokedEvent):
-            # Show which agent ran and what step completed for lightweight observability.
+            # Show when executors are invoked and completed for lightweight observability.
             print(f"{event.executor_id} invoked")
         elif isinstance(event, ExecutorCompletedEvent):
             print(f"{event.executor_id} completed")
