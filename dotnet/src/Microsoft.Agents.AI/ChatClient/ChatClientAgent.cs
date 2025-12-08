@@ -218,50 +218,53 @@ public sealed partial class ChatClientAgent : AIAgent
 
         IAsyncEnumerator<ChatResponseUpdate> responseUpdatesEnumerator;
 
-        try
+        using (AgentContext.SetCurrentThread(safeThread))
         {
-            // Using the enumerator to ensure we consider the case where no updates are returned for notification.
-            responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(inputMessagesForChatClient, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, aiContextProviderMessages, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
-
-        bool hasUpdates;
-        try
-        {
-            // Ensure we start the streaming request
-            hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, aiContextProviderMessages, cancellationToken).ConfigureAwait(false);
-            throw;
-        }
-
-        while (hasUpdates)
-        {
-            var update = responseUpdatesEnumerator.Current;
-            if (update is not null)
-            {
-                update.AuthorName ??= this.Name;
-
-                responseUpdates.Add(update);
-                yield return new(update) { AgentId = this.Id };
-            }
-
             try
             {
+                // Using the enumerator to ensure we consider the case where no updates are returned for notification.
+                responseUpdatesEnumerator = chatClient.GetStreamingResponseAsync(inputMessagesForChatClient, chatOptions, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, aiContextProviderMessages, cancellationToken).ConfigureAwait(false);
+                throw;
+            }
+
+            this._logger.LogAgentChatClientInvokedStreamingAgent(nameof(RunStreamingAsync), this.Id, loggingAgentName, this._chatClientType);
+
+            bool hasUpdates;
+            try
+            {
+                // Ensure we start the streaming request
                 hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, aiContextProviderMessages, cancellationToken).ConfigureAwait(false);
                 throw;
+            }
+
+            while (hasUpdates)
+            {
+                var update = responseUpdatesEnumerator.Current;
+                if (update is not null)
+                {
+                    update.AuthorName ??= this.Name;
+
+                    responseUpdates.Add(update);
+                    yield return new(update) { AgentId = this.Id };
+                }
+
+                try
+                {
+                    hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    await NotifyAIContextProviderOfFailureAsync(safeThread, ex, inputMessages, aiContextProviderMessages, cancellationToken).ConfigureAwait(false);
+                    throw;
+                }
             }
         }
 
@@ -394,7 +397,10 @@ public sealed partial class ChatClientAgent : AIAgent
         TChatClientResponse chatResponse;
         try
         {
-            chatResponse = await chatClientRunFunc.Invoke(chatClient, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
+            using (AgentContext.SetCurrentThread(safeThread))
+            {
+                chatResponse = await chatClientRunFunc.Invoke(chatClient, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {

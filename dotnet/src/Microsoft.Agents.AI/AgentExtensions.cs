@@ -73,7 +73,9 @@ public static partial class AIAgentExtensions
             [Description("Input query to invoke the agent.")] string query,
             CancellationToken cancellationToken)
         {
-            var response = await agent.RunAsync(query, thread: thread, cancellationToken: cancellationToken).ConfigureAwait(false);
+            // If no thread was provided at creation time, try to use the current ambient thread context.
+            var effectiveThread = thread ?? AgentContext.CurrentThread;
+            var response = await agent.RunAsync(query, thread: effectiveThread, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 
