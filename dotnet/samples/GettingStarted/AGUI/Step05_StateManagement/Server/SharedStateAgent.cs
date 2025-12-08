@@ -1,14 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace AGUIDojoServer;
+namespace RecipeAssistant;
 
-[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated by ChatClientAgentFactory.CreateSharedState")]
 internal sealed class SharedStateAgent : DelegatingAIAgent
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions;
@@ -19,9 +17,14 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override Task<AgentRunResponse> RunAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentThread? thread = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
+            .ToAgentRunResponseAsync(cancellationToken);
     }
 
     public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
@@ -30,9 +33,13 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // Check if the client sent state in the request
         if (options is not ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } chatRunOptions ||
-            !properties.TryGetValue("ag_ui_state", out JsonElement state))
+            !properties.TryGetValue("ag_ui_state", out object? stateObj) ||
+            stateObj is not JsonElement state ||
+            state.ValueKind != JsonValueKind.Object)
         {
+            // No state management requested, pass through to inner agent
             await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
@@ -40,6 +47,25 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             yield break;
         }
 
+        // Check if state has properties (not empty {})
+        bool hasProperties = false;
+        foreach (JsonProperty _ in state.EnumerateObject())
+        {
+            hasProperties = true;
+            break;
+        }
+
+        if (!hasProperties)
+        {
+            // Empty state - treat as no state
+            await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, thread, options, cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+            yield break;
+        }
+
+        // First run: Generate structured state update
         var firstRunOptions = new ChatClientAgentRunOptions
         {
             ChatOptions = chatRunOptions.ChatOptions.Clone(),
@@ -49,20 +75,22 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         };
 
         // Configure JSON schema response format for structured state output
-        firstRunOptions.ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<RecipeResponse>(
-            schemaName: "RecipeResponse",
-            schemaDescription: "A response containing a recipe with title, skill level, cooking time, preferences, ingredients, and instructions");
+        firstRunOptions.ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<AgentState>(
+            schemaName: "AgentState",
+            schemaDescription: "A response containing a recipe with title, skill level, cooking time, ingredients, and instructions");
 
+        // Add current state to the conversation - state is already a JsonElement
         ChatMessage stateUpdateMessage = new(
             ChatRole.System,
             [
                 new TextContent("Here is the current state in JSON format:"),
-                    new TextContent(state.GetRawText()),
-                    new TextContent("The new state is:")
+                new TextContent(JsonSerializer.Serialize(state, this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)))),
+                new TextContent("The new state is:")
             ]);
 
         var firstRunMessages = messages.Append(stateUpdateMessage);
 
+        // Collect all updates from first run
         var allUpdates = new List<AgentRunResponseUpdate>();
         await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, thread, firstRunOptions, cancellationToken).ConfigureAwait(false))
         {
@@ -78,8 +106,10 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
 
         var response = allUpdates.ToAgentRunResponse();
 
+        // Try to deserialize the structured state response
         if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
         {
+            // Serialize and emit as STATE_SNAPSHOT via DataContent
             byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
                 stateSnapshot,
                 this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
@@ -93,6 +123,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             yield break;
         }
 
+        // Second run: Generate user-friendly summary
         var secondRunMessages = messages.Concat(response.Messages).Append(
             new ChatMessage(
                 ChatRole.System,
