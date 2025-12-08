@@ -62,6 +62,8 @@ def update_recipe(recipe: Recipe) -> str:
     Returns:
         Confirmation that the recipe was updated
     """
+    # In a real implementation, this would save the recipe
+    # For now, just return confirmation
     return "Recipe updated."
 
 
@@ -91,6 +93,12 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
       * Professional techniques
       * Adjust skill_level if complexity changes
       * Add relevant special_preferences
+
+    IMPORTANT for special_preferences:
+    - When user says "no X", "remove X", or "without X", EXCLUDE X from special_preferences
+    - When user says "add X" or "include X", include X in special_preferences
+    - When user says "X only" or "just X", include X but exclude other conflicting preferences
+    - Common dietary preferences: High Protein, Low Carb, Spicy, Budget-Friendly, One-Pot Meal, Vegetarian, Vegan
 
     Example improvements:
     - Upgrade "chicken" → "organic free-range chicken breast"
