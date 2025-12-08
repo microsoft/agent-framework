@@ -45,7 +45,7 @@ agent = ChatAgent(
     chat_client=AzureAIAgentClient(
         project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
         model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
-        async_credential=AzureCliCredential(),
+        credential=AzureCliCredential(),
     ),
     instructions="""
     You are a weather assistant using Azure AI Foundry models. You can provide
