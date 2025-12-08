@@ -145,74 +145,93 @@ def _parse_contents(data: dict[str, Any]) -> list[DurableAgentStateContent]:
     contents: list[DurableAgentStateContent] = []
     raw_contents: list[Any] = data.get(DurableStateFields.CONTENTS, [])
     for raw_content in raw_contents:
-        if isinstance(raw_content, dict):
+        if isinstance(raw_content, DurableAgentStateContent):
+            contents.append(raw_content)
+
+        elif isinstance(raw_content, dict):
             content_dict = cast(dict[str, Any], raw_content)
             content_type: str | None = content_dict.get(DurableStateFields.TYPE_DISCRIMINATOR)
-            if content_type == ContentTypes.TEXT:
-                contents.append(DurableAgentStateTextContent(text=content_dict.get(DurableStateFields.TEXT)))
-            elif content_type == ContentTypes.DATA:
-                contents.append(
-                    DurableAgentStateDataContent(
-                        uri=str(content_dict.get(DurableStateFields.URI, "")),
-                        media_type=content_dict.get(DurableStateFields.MEDIA_TYPE),
-                    )
-                )
-            elif content_type == ContentTypes.ERROR:
-                contents.append(
-                    DurableAgentStateErrorContent(
-                        message=content_dict.get(DurableStateFields.MESSAGE),
-                        error_code=content_dict.get(DurableStateFields.ERROR_CODE),
-                        details=content_dict.get(DurableStateFields.DETAILS),
-                    )
-                )
-            elif content_type == ContentTypes.FUNCTION_CALL:
-                contents.append(
-                    DurableAgentStateFunctionCallContent(
-                        call_id=str(content_dict.get(DurableStateFields.CALL_ID, "")),
-                        name=str(content_dict.get(DurableStateFields.NAME, "")),
-                        arguments=content_dict.get(DurableStateFields.ARGUMENTS, {}),
-                    )
-                )
-            elif content_type == ContentTypes.FUNCTION_RESULT:
-                contents.append(
-                    DurableAgentStateFunctionResultContent(
-                        call_id=str(content_dict.get(DurableStateFields.CALL_ID, "")),
-                        result=content_dict.get(DurableStateFields.RESULT),
-                    )
-                )
-            elif content_type == ContentTypes.HOSTED_FILE:
-                contents.append(
-                    DurableAgentStateHostedFileContent(file_id=str(content_dict.get(DurableStateFields.FILE_ID, "")))
-                )
-            elif content_type == ContentTypes.HOSTED_VECTOR_STORE:
-                contents.append(
-                    DurableAgentStateHostedVectorStoreContent(
-                        vector_store_id=str(content_dict.get(DurableStateFields.VECTOR_STORE_ID, ""))
-                    )
-                )
-            elif content_type == ContentTypes.REASONING:
-                contents.append(DurableAgentStateTextReasoningContent(text=content_dict.get(DurableStateFields.TEXT)))
-            elif content_type == ContentTypes.URI:
-                contents.append(
-                    DurableAgentStateUriContent(
-                        uri=str(content_dict.get(DurableStateFields.URI, "")),
-                        media_type=str(content_dict.get(DurableStateFields.MEDIA_TYPE, "")),
-                    )
-                )
-            elif content_type == ContentTypes.USAGE:
-                usage_data = content_dict.get(DurableStateFields.USAGE)
-                if usage_data and isinstance(usage_data, dict):
+
+            match content_type:
+                case ContentTypes.TEXT:
+                    contents.append(DurableAgentStateTextContent(text=content_dict.get(DurableStateFields.TEXT)))
+
+                case ContentTypes.DATA:
                     contents.append(
-                        DurableAgentStateUsageContent(
-                            usage=DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_data))
+                        DurableAgentStateDataContent(
+                            uri=str(content_dict.get(DurableStateFields.URI, "")),
+                            media_type=content_dict.get(DurableStateFields.MEDIA_TYPE),
                         )
                     )
-            elif content_type == ContentTypes.UNKNOWN:
-                contents.append(
-                    DurableAgentStateUnknownContent(content=content_dict.get(DurableStateFields.CONTENT, {}))
-                )
-        elif isinstance(raw_content, DurableAgentStateContent):
-            contents.append(raw_content)
+
+                case ContentTypes.ERROR:
+                    contents.append(
+                        DurableAgentStateErrorContent(
+                            message=content_dict.get(DurableStateFields.MESSAGE),
+                            error_code=content_dict.get(DurableStateFields.ERROR_CODE),
+                            details=content_dict.get(DurableStateFields.DETAILS),
+                        )
+                    )
+
+                case ContentTypes.FUNCTION_CALL:
+                    contents.append(
+                        DurableAgentStateFunctionCallContent(
+                            call_id=str(content_dict.get(DurableStateFields.CALL_ID, "")),
+                            name=str(content_dict.get(DurableStateFields.NAME, "")),
+                            arguments=content_dict.get(DurableStateFields.ARGUMENTS, {}),
+                        )
+                    )
+
+                case ContentTypes.FUNCTION_RESULT:
+                    contents.append(
+                        DurableAgentStateFunctionResultContent(
+                            call_id=str(content_dict.get(DurableStateFields.CALL_ID, "")),
+                            result=content_dict.get(DurableStateFields.RESULT),
+                        )
+                    )
+
+                case ContentTypes.HOSTED_FILE:
+                    contents.append(
+                        DurableAgentStateHostedFileContent(
+                            file_id=str(content_dict.get(DurableStateFields.FILE_ID, ""))
+                        )
+                    )
+
+                case ContentTypes.HOSTED_VECTOR_STORE:
+                    contents.append(
+                        DurableAgentStateHostedVectorStoreContent(
+                            vector_store_id=str(content_dict.get(DurableStateFields.VECTOR_STORE_ID, ""))
+                        )
+                    )
+
+                case ContentTypes.REASONING:
+                    contents.append(
+                        DurableAgentStateTextReasoningContent(text=content_dict.get(DurableStateFields.TEXT))
+                    )
+
+                case ContentTypes.URI:
+                    contents.append(
+                        DurableAgentStateUriContent(
+                            uri=str(content_dict.get(DurableStateFields.URI, "")),
+                            media_type=str(content_dict.get(DurableStateFields.MEDIA_TYPE, "")),
+                        )
+                    )
+
+                case ContentTypes.USAGE:
+                    usage_data = content_dict.get(DurableStateFields.USAGE)
+                    if usage_data and isinstance(usage_data, dict):
+                        contents.append(
+                            DurableAgentStateUsageContent(
+                                usage=DurableAgentStateUsage.from_dict(cast(dict[str, Any], usage_data))
+                            )
+                        )
+
+                case ContentTypes.UNKNOWN | _:
+                    # Handle UNKNOWN type or any unexpected content types (including None)
+                    contents.append(
+                        DurableAgentStateUnknownContent(content=content_dict.get(DurableStateFields.CONTENT, {}))
+                    )
+
     return contents
 
 

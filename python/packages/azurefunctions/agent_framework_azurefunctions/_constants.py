@@ -35,6 +35,8 @@ DEFAULT_POLL_INTERVAL_SECONDS: float = 1.0
 # These constants ensure consistent camelCase field names in JSON serialization.
 # Use these in both to_dict() and from_dict() methods to prevent mismatches.
 
+# NOTE: Changing these constants is a breaking change and might require a schema version bump.
+
 
 class DurableStateFields:
     """JSON field name constants for durable agent state serialization.

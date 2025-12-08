@@ -21,8 +21,7 @@ Complete the shared environment setup steps in `../README.md`, including creatin
 
 > **Note:** This is a streaming example that currently uses a local in-memory store for simplicity.
 > For distributed environments, consider using Redis, Service Bus, or another pub/sub mechanism for
-> callback coordination. For production scenarios you should also persist events to Application
-> Insights, Azure Storage, Cosmos DB, or another durable store.
+> callback coordination.
 
 ## Running the Sample
 
