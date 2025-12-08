@@ -662,12 +662,15 @@ OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
 def setup_observability(
+    *,
     enable_sensitive_data: bool | None = None,
     otlp_endpoint: str | list[str] | None = None,
     applicationinsights_connection_string: str | list[str] | None = None,
     credential: "TokenCredential | None" = None,
     exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
     vs_code_extension_port: int | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
 ) -> None:
     """Setup observability for the application with OpenTelemetry.
 
@@ -682,7 +685,7 @@ def setup_observability(
         have any effect. The reverse is also true - if you call this method first,
         subsequent provider configurations will not take effect.
 
-    Args:
+    Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable if set. Default is None.
         otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Will be used
@@ -698,6 +701,10 @@ def setup_observability(
             extensions are listening on. When set, additional OTEL exporters will be
             created with endpoint `http://localhost:{vs_code_extension_port}` unless
             already configured. Overrides the environment variable if set. Default is None.
+        env_file_path: An optional path to a .env file to load environment variables from.
+            Default is None.
+        env_file_encoding: The encoding to use when loading the .env file. Default is None
+            which uses the system default encoding.
 
     Examples:
         .. code-block:: python
@@ -740,12 +747,23 @@ def setup_observability(
             )
     """
     global OBSERVABILITY_SETTINGS
-    # Update the observability settings with the provided values
-    OBSERVABILITY_SETTINGS.enable_otel = True
-    if enable_sensitive_data is not None:
-        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-    if vs_code_extension_port is not None:
-        OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
+    if env_file_path:
+        OBSERVABILITY_SETTINGS = ObservabilitySettings(
+            enable_otel=True,
+            enable_sensitive_data=enable_sensitive_data,
+            otlp_endpoint=otlp_endpoint,
+            applicationinsights_connection_string=applicationinsights_connection_string,
+            vs_code_extension_port=vs_code_extension_port,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+    else:
+        # Update the observability settings with the provided values
+        OBSERVABILITY_SETTINGS.enable_otel = True
+        if enable_sensitive_data is not None:
+            OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+        if vs_code_extension_port is not None:
+            OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 
     # Create exporters, after checking if they are already configured through the env.
     new_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = exporters or []
