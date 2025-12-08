@@ -122,7 +122,7 @@ class AzureAIAgentClient(BaseChatClient):
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        async_credential: AsyncTokenCredential | None = None,
+        credential: AsyncTokenCredential | None = None,
         should_cleanup_agent: bool = True,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -144,7 +144,7 @@ class AzureAIAgentClient(BaseChatClient):
                 Ignored when a agents_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            async_credential: Azure async credential to use for authentication.
+            credential: Azure async credential to use for authentication.
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
@@ -162,17 +162,17 @@ class AzureAIAgentClient(BaseChatClient):
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
                 # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
-                client = AzureAIAgentClient(async_credential=credential)
+                client = AzureAIAgentClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIAgentClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
                     model_deployment_name="gpt-4",
-                    async_credential=credential,
+                    credential=credential,
                 )
 
                 # Or loading from a .env file
-                client = AzureAIAgentClient(async_credential=credential, env_file_path="path/to/.env")
+                client = AzureAIAgentClient(credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -200,11 +200,11 @@ class AzureAIAgentClient(BaseChatClient):
                 )
 
             # Use provided credential
-            if not async_credential:
+            if not credential:
                 raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
             agents_client = AgentsClient(
                 endpoint=azure_ai_settings.project_endpoint,
-                credential=async_credential,
+                credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -214,7 +214,7 @@ class AzureAIAgentClient(BaseChatClient):
 
         # Initialize instance variables
         self.agents_client = agents_client
-        self.credential = async_credential
+        self.credential = credential
         self.agent_id = agent_id
         self.agent_name = agent_name
         self.agent_description = agent_description
