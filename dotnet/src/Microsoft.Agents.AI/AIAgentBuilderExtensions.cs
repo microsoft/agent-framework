@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace Microsoft.Agents.AI;
 
@@ -115,9 +116,9 @@ public static class AIAgentBuilderExtensions
     /// <exception cref="ArgumentNullException"><paramref name="builder"/> is <see langword="null"/>.</exception>
     /// <remarks>
     /// <para>
-    /// When the employed <see cref="ILogger"/> enables <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/>, the contents of
+    /// When the employed <see cref="ILogger"/> enables <see cref="LogLevel.Trace"/>, the contents of
     /// messages, options, and responses are logged. These may contain sensitive application data.
-    /// <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/> is disabled by default and should never be enabled in a production environment.
+    /// <see cref="LogLevel.Trace"/> is disabled by default and should never be enabled in a production environment.
     /// Messages and options are not logged at other logging levels.
     /// </para>
     /// </remarks>
@@ -139,7 +140,7 @@ public static class AIAgentBuilderExtensions
                 return innerAgent;
             }
 
-            LoggingAgent agent = new LoggingAgent(innerAgent, loggerFactory.CreateLogger(typeof(LoggingAgent)));
+            LoggingAgent agent = new(innerAgent, loggerFactory.CreateLogger(nameof(LoggingAgent)));
             configure?.Invoke(agent);
             return agent;
         });

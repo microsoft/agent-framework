@@ -51,7 +51,7 @@ public class LoggingAgentTests
         // Arrange
         var mockLogger = new Mock<ILogger>();
         var agent = new LoggingAgent(new TestAIAgent(), mockLogger.Object);
-        JsonSerializerOptions options = new JsonSerializerOptions();
+        JsonSerializerOptions options = new();
 
         // Act
         agent.JsonSerializerOptions = options;
@@ -72,7 +72,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_LogsAtDebugLevel()
+    public async Task RunAsync_LogsAtDebugLevelAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -115,7 +115,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_LogsAtTraceLevel_IncludesSensitiveData()
+    public async Task RunAsync_LogsAtTraceLevel_IncludesSensitiveDataAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -158,7 +158,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_OnCancellation_LogsCanceled()
+    public async Task RunAsync_OnCancellation_LogsCanceledAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -187,7 +187,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunAsync_OnException_LogsFailed()
+    public async Task RunAsync_OnException_LogsFailedAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -217,7 +217,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_LogsAtDebugLevel()
+    public async Task RunStreamingAsync_LogsAtDebugLevelAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -266,7 +266,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_LogsUpdatesAtTraceLevel()
+    public async Task RunStreamingAsync_LogsUpdatesAtTraceLevelAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -307,7 +307,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_OnCancellation_LogsCanceled()
+    public async Task RunStreamingAsync_OnCancellation_LogsCanceledAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();
@@ -353,7 +353,7 @@ public class LoggingAgentTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_OnException_LogsFailed()
+    public async Task RunStreamingAsync_OnException_LogsFailedAsync()
     {
         // Arrange
         var mockLogger = new Mock<ILogger>();

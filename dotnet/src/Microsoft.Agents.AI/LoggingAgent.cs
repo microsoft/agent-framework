@@ -1,4 +1,4 @@
-﻿﻿// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace Microsoft.Agents.AI;
 
@@ -21,9 +22,9 @@ namespace Microsoft.Agents.AI;
 /// <see cref="ILogger"/> employed is also thread-safe for concurrent use.
 /// </para>
 /// <para>
-/// When the employed <see cref="ILogger"/> enables <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/>, the contents of
+/// When the employed <see cref="ILogger"/> enables <see cref="LogLevel.Trace"/>, the contents of
 /// messages, options, and responses are logged. These may contain sensitive application data.
-/// <see cref="Microsoft.Extensions.Logging.LogLevel.Trace"/> is disabled by default and should never be enabled in a production environment.
+/// <see cref="LogLevel.Trace"/> is disabled by default and should never be enabled in a production environment.
 /// Messages and options are not logged at other logging levels.
 /// </para>
 /// </remarks>
