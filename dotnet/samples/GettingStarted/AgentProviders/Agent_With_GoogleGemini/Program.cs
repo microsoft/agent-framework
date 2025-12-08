@@ -28,7 +28,7 @@ Console.WriteLine($"Google GenAI client based agent response:\n{response}");
 // Using a community driven Mscc.GenerativeAI.Microsoft package
 
 ChatClientAgent agentCommunity = new(
-    new GeminiChatClient(apiKey, model),
+    new GeminiChatClient(apiKey: apiKey, model: model),
     name: JokerName,
     instructions: JokerInstructions);
 
