@@ -21,7 +21,7 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyCustomSearchAgent",
             instructions="""You are a helpful agent that can use Bing Custom Search tools to assist users.
             Use the available Bing Custom Search tools to answer questions and perform tasks.""",

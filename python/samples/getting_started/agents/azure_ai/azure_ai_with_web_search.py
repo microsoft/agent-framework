@@ -24,7 +24,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="WebsearchAgent",
             instructions="You are a helpful assistant that can search the web",
             tools=[HostedWebSearchTool()],
