@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to maintain conversation state using the ChatClientAgent's
-// server-side conversation storage. By creating a thread with a ConversationId, subsequent
-// messages in the conversation will have access to the full conversation history without
-// needing to send previous messages with each request.
+// This sample demonstrates how to maintain conversation state using the OpenAIChatClientAgent
+// and AgentThread. By passing the same thread to multiple agent invocations, the agent
+// automatically maintains the conversation history, allowing the AI model to understand
+// context from previous exchanges.
 
 using Microsoft.Agents.AI;
 using OpenAI;
