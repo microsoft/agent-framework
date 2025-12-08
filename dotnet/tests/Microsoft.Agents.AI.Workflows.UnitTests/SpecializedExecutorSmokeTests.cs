@@ -201,10 +201,12 @@ public class SpecializedExecutorSmokeTests
     [Fact]
     public async Task Test_AIAgent_ExecutorId_Use_Agent_NameAsync()
     {
+        const string AgentAId = "agentAId";
+        const string AgentBId = "agentBId";
         const string AgentAName = "TestAgentAName";
         const string AgentBName = "TestAgentBName";
-        TestAIAgent agentA = new(name: AgentAName);
-        TestAIAgent agentB = new(name: AgentBName);
+        TestAIAgent agentA = new(id: AgentAId, name: AgentAName);
+        TestAIAgent agentB = new(id: AgentBId, name: AgentBName);
         var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
         var definition = workflow.ToWorkflowInfo();
 
@@ -225,8 +227,10 @@ public class SpecializedExecutorSmokeTests
     [Fact]
     public async Task Test_AIAgent_ExecutorId_Use_Agent_ID_When_Name_Not_ProvidedAsync()
     {
-        TestAIAgent agentA = new();
-        TestAIAgent agentB = new();
+        const string AgentAId = "agentAId";
+        const string AgentBId = "agentBId";
+        TestAIAgent agentA = new(id: AgentAId);
+        TestAIAgent agentB = new(id: AgentBId);
         var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
         var definition = workflow.ToWorkflowInfo();
 

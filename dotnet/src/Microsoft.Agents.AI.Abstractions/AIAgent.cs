@@ -37,7 +37,7 @@ public abstract class AIAgent
     public string Id => this.IdCore ?? Guid.NewGuid().ToString("N");
 
     /// <summary>
-    /// Gets the core identifier for the agent, which can be overridden by derived classes.
+    /// Gets a custom identifier for the agent, which can be overridden by derived classes.
     /// </summary>
     /// <value>
     /// A string representing the agent's identifier, or <see langword="null"/> if the default ID should be used.
