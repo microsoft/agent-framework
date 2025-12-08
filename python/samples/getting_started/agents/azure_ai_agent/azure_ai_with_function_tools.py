@@ -43,7 +43,7 @@ async def tools_on_agent_level() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a helpful assistant that can provide weather and time information.",
             tools=[get_weather, get_time],  # Tools defined at agent creation
         ) as agent,
@@ -77,7 +77,7 @@ async def tools_on_run_level() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a helpful assistant.",
             # No tools defined here
         ) as agent,
@@ -111,7 +111,7 @@ async def mixed_tools_example() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a comprehensive assistant that can help with various information requests.",
             tools=[get_weather],  # Base tool available for all queries
         ) as agent,
