@@ -2,11 +2,14 @@
 
 set -e  # Exit on any error
 
+# Activate virtual environment
+source /home/chris/repo/workflow-management/agent-framework/python/packages/ag-ui/.venv/bin/activate
+
 echo "Checking for processes on port 8888..."
 
-# Find and kill the process on port 8000
+# Find and kill the process on port 8888
 if lsof -i :8888 > /dev/null 2>&1; then
-  echo "Found process on port 8000. Killing it..."
+  echo "Found process on port 8888. Killing it..."
   lsof -ti:8888 | xargs kill -9 2>/dev/null || true
   echo "Process killed."
 else
