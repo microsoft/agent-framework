@@ -316,7 +316,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         this._app = builder.Build();
 
-        this._app.MapAGUI("/agent", fakeAgent);
+        this._app.MapAGUI(fakeAgent, "/agent");
 
         await this._app.StartAsync();
 

@@ -519,7 +519,7 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // FakeChatClient will receive options.Tools containing both server and client tools (merged by framework)
         var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions);
         AIAgent baseAgent = fakeChatClient.CreateAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
-        this._app.MapAGUI("/agent", baseAgent);
+        this._app.MapAGUI(baseAgent, "/agent");
 
         await this._app.StartAsync();
 
