@@ -142,7 +142,7 @@ public class LoggingAIAgentBuilderExtensionsTests
 
         var services = new ServiceCollection();
         using var loggerFactory = LoggerFactory.Create(builder => { });
-        services.AddSingleton<ILoggerFactory>(loggerFactory);
+        services.AddSingleton(loggerFactory);
 
         builder.Use((innerAgent, serviceProvider) =>
         {
