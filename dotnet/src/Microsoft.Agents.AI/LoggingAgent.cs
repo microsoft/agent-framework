@@ -172,7 +172,18 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
         }
     }
 
-    private string AsJson<T>(T value) => JsonSerializer.Serialize(value, this._jsonSerializerOptions.GetTypeInfo(typeof(T)));
+    private string AsJson<T>(T value)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(value, this._jsonSerializerOptions.GetTypeInfo(typeof(T)));
+        }
+        catch
+        {
+            // If serialization fails, return a simple string representation
+            return value?.ToString() ?? "null";
+        }
+    }
 
     [LoggerMessage(LogLevel.Debug, "{MethodName} invoked.")]
     private partial void LogInvoked(string methodName);
