@@ -323,6 +323,8 @@ public class LoggingAgentTests
         {
             await Task.Yield();
             throw new OperationCanceledException();
+            // The following yield statement is required for async iterator methods but is unreachable.
+            // This pattern is intentional for testing exception scenarios in async iterators.
 #pragma warning disable CS0162 // Unreachable code detected
             yield break;
 #pragma warning restore CS0162 // Unreachable code detected
@@ -368,6 +370,8 @@ public class LoggingAgentTests
         {
             await Task.Yield();
             throw new InvalidOperationException("Test exception");
+            // The following yield statement is required for async iterator methods but is unreachable.
+            // This pattern is intentional for testing exception scenarios in async iterators.
 #pragma warning disable CS0162 // Unreachable code detected
             yield break;
 #pragma warning restore CS0162 // Unreachable code detected
