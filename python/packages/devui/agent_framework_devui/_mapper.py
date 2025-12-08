@@ -953,7 +953,13 @@ class MessageMapper:
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
                 # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
                 details = getattr(event, "details", None)
-                err_msg: str | None = str(getattr(details, "message", details)) if details else None
+                if details:
+                    err_msg = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        err_msg = f"{err_msg} (extra: {extra})"
+                else:
+                    err_msg = None
 
                 # Create ExecutorActionItem with failed status
                 executor_item = ExecutorActionItem(
