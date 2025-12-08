@@ -34,7 +34,7 @@ async def main() -> None:
 
     # 2. Use AzureAIAgentClient as async context manager for automatic cleanup
     async with (
-        AzureAIAgentClient(async_credential=AzureCliCredential()) as client,
+        AzureAIAgentClient(credential=AzureCliCredential()) as client,
         ChatAgent(
             chat_client=client,
             name="BingSearchAgent",

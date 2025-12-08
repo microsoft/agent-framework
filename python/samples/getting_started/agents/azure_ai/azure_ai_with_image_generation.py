@@ -27,7 +27,7 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="ImageGenAgent",
             instructions="Generate images based on user requirements.",
             tools=[ImageGenTool(quality="low", size="1024x1024")],

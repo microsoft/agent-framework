@@ -80,6 +80,7 @@ class A2AAgent(BaseAgent):
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         auth_interceptor: AuthInterceptor | None = None,
+        timeout: float | httpx.Timeout | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -93,10 +94,14 @@ class A2AAgent(BaseAgent):
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
+            timeout: Request timeout configuration. Can be a float (applied to all timeout components),
+                httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
+                10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
+        self._timeout_config = self._create_timeout_config(timeout)
         if client is not None:
             self.client = client
             self._close_http_client = True
@@ -109,14 +114,8 @@ class A2AAgent(BaseAgent):
 
         # Create or use provided httpx client
         if http_client is None:
-            timeout = httpx.Timeout(
-                connect=10.0,  # 10 seconds to establish connection
-                read=60.0,  # 60 seconds to read response (A2A operations can take time)
-                write=10.0,  # 10 seconds to send request
-                pool=5.0,  # 5 seconds to get connection from pool
-            )
             headers = prepend_agent_framework_to_user_agent()
-            http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
+            http_client = httpx.AsyncClient(timeout=self._timeout_config, headers=headers)
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
@@ -142,6 +141,32 @@ class A2AAgent(BaseAgent):
                     f"Primary error: {transport_error}. "
                     f"Fallback error: {fallback_error}"
                 ) from transport_error
+
+    def _create_timeout_config(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
+        """Create httpx.Timeout configuration from user input.
+
+        Args:
+            timeout: User-provided timeout configuration
+
+        Returns:
+            Configured httpx.Timeout object
+        """
+        if timeout is None:
+            # Default timeout configuration (preserving original values)
+            return httpx.Timeout(
+                connect=10.0,  # 10 seconds to establish connection
+                read=60.0,  # 60 seconds to read response (A2A operations can take time)
+                write=10.0,  # 10 seconds to send request
+                pool=5.0,  # 5 seconds to get connection from pool
+            )
+        if isinstance(timeout, float):
+            # Simple timeout
+            return httpx.Timeout(timeout)
+        if isinstance(timeout, httpx.Timeout):
+            # Full timeout configuration provided by user
+            return timeout
+        msg = f"Invalid timeout type: {type(timeout)}. Expected float, httpx.Timeout, or None."
+        raise TypeError(msg)
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""

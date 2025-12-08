@@ -47,7 +47,7 @@ async def main() -> None:
             print(f"Created memory store: {memory_store.name} ({memory_store.id}): {memory_store.description}")
 
         # Then, create the agent using Agent Framework
-        async with AzureAIClient(async_credential=credential).create_agent(
+        async with AzureAIClient(credential=credential).create_agent(
             name="MyMemoryAgent",
             instructions="""You are a helpful assistant that remembers past conversations.
             Use the memory search tool to recall relevant information from previous interactions.""",

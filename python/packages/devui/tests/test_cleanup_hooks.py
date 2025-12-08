@@ -36,8 +36,7 @@ class MockAgent:
     async def run_stream(self, messages=None, *, thread=None, **kwargs):
         """Mock streaming run method."""
         yield AgentRunResponse(
-            messages=[ChatMessage(role=Role.ASSISTANT, content=[TextContent(text="Test response")])],
-            inner_messages=[],
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Test response")])],
         )
 
 

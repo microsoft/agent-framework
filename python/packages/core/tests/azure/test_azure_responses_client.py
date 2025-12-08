@@ -578,7 +578,6 @@ async def test_azure_responses_client_agent_hosted_mcp_tool() -> None:
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -586,7 +585,7 @@ async def test_azure_responses_client_file_search() -> None:
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(azure_responses_client)
-    # Test that the client will use the web search tool
+    # Test that the client will use the file search tool
     response = await azure_responses_client.get_response(
         messages=[
             ChatMessage(
@@ -605,7 +604,6 @@ async def test_azure_responses_client_file_search() -> None:
 
 @pytest.mark.flaky
 @skip_if_azure_integration_tests_disabled
-@pytest.mark.skip(reason="File search requires API key auth, subscription only allows token auth")
 async def test_azure_responses_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -613,7 +611,7 @@ async def test_azure_responses_client_file_search_streaming() -> None:
     assert isinstance(azure_responses_client, ChatClientProtocol)
 
     file_id, vector_store = await create_vector_store(azure_responses_client)
-    # Test that the client will use the web search tool
+    # Test that the client will use the file search tool
     response = azure_responses_client.get_streaming_response(
         messages=[
             ChatMessage(

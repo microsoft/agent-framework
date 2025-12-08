@@ -91,7 +91,7 @@ class UserInfoMemory(ContextProvider):
 
 async def main():
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIClient(async_credential=credential)
+        chat_client = AzureAIClient(credential=credential)
 
         # Create the memory provider
         memory_provider = UserInfoMemory(chat_client)

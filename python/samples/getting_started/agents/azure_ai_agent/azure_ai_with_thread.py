@@ -34,7 +34,7 @@ async def example_with_automatic_thread_creation() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -63,7 +63,7 @@ async def example_with_thread_persistence() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -104,7 +104,7 @@ async def example_with_existing_thread_id() -> None:
     async with (
         AzureCliCredential() as credential,
         ChatAgent(
-            chat_client=AzureAIAgentClient(async_credential=credential),
+            chat_client=AzureAIAgentClient(credential=credential),
             instructions="You are a helpful weather agent.",
             tools=get_weather,
         ) as agent,
@@ -127,7 +127,7 @@ async def example_with_existing_thread_id() -> None:
         async with (
             AzureCliCredential() as credential,
             ChatAgent(
-                chat_client=AzureAIAgentClient(thread_id=existing_thread_id, async_credential=credential),
+                chat_client=AzureAIAgentClient(thread_id=existing_thread_id, credential=credential),
                 instructions="You are a helpful weather agent.",
                 tools=get_weather,
             ) as agent,

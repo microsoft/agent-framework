@@ -21,7 +21,6 @@ def test_entities_dir():
     return str(samples_dir.resolve())
 
 
-@pytest.mark.skip("Skipping while we fix discovery")
 async def test_discover_agents(test_entities_dir):
     """Test that agent discovery works and returns valid agent entities."""
     discovery = EntityDiscovery(test_entities_dir)

@@ -918,12 +918,16 @@ class MessageMapper:
 
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
+                # Serialize the result data to ensure it's JSON-serializable
+                # (AgentExecutorResponse contains AgentRunResponse/ChatMessage which are SerializationMixin)
+                raw_result = getattr(event, "data", None)
+                serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(
                     type="executor_action",
                     id=item_id,
                     executor_id=executor_id,
                     status="completed",
-                    result=getattr(event, "data", None),
+                    result=serialized_result,
                 )
 
                 # Use our custom event type
@@ -939,7 +943,9 @@ class MessageMapper:
             if event_class == "ExecutorFailedEvent":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
-                error_info = getattr(event, "error", None)
+                # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                details = getattr(event, "details", None)
+                err_msg: str | None = str(getattr(details, "message", details)) if details else None
 
                 # Create ExecutorActionItem with failed status
                 executor_item = ExecutorActionItem(
@@ -947,7 +953,7 @@ class MessageMapper:
                     id=item_id,
                     executor_id=executor_id,
                     status="failed",
-                    error={"message": str(error_info)} if error_info else None,
+                    error={"message": err_msg} if err_msg else None,
                 )
 
                 # Use our custom event type

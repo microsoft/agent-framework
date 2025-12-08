@@ -2125,20 +2125,31 @@ class ChatMessage(SerializationMixin):
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
-def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+def prepare_messages(
+    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
     Args:
         messages: The input messages in various supported formats.
+        system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
         A list of ChatMessage objects.
     """
+    if system_instructions is not None:
+        if isinstance(system_instructions, str):
+            system_instructions = [system_instructions]
+        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+    else:
+        system_instruction_messages = []
+
     if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
+        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
     if isinstance(messages, ChatMessage):
-        return [messages]
-    return_messages: list[ChatMessage] = []
+        return [*system_instruction_messages, messages]
+
+    return_messages: list[ChatMessage] = system_instruction_messages
     for msg in messages:
         if isinstance(msg, str):
             msg = ChatMessage(role="user", text=msg)

@@ -1121,7 +1121,7 @@ class DevServer:
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming execution: {e}")
+            logger.error(f"Error in streaming execution: {e}", exc_info=True)
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
             yield f"data: {json.dumps(error_event)}\n\n"
 

@@ -27,7 +27,7 @@ To get your Bing connection ID:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyBingGroundingAgent",
             instructions="""You are a helpful assistant that can search the web for current information.
             Use the Bing search tool to find up-to-date information and provide accurate, well-sourced answers.
