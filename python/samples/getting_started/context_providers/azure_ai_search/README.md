@@ -64,7 +64,7 @@ Run `az login` if using Entra ID authentication.
 ```env
 AZURE_SEARCH_ENDPOINT=https://myservice.search.windows.net
 AZURE_SEARCH_INDEX_NAME=my-index
-AZURE_AI_PROJECT_ENDPOINT=https://myproject.api.azureml.ms
+AZURE_AI_PROJECT_ENDPOINT=https://<resource-name>.services.ai.azure.com/api/projects/<project-name>
 AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 # Optional - omit to use Entra ID
 AZURE_SEARCH_API_KEY=your-search-key
@@ -140,7 +140,7 @@ search_provider = AzureAISearchContextProvider(
 )
 
 # Create agent with search context
-async with AzureAIAgentClient(async_credential=DefaultAzureCredential()) as client:
+async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
     async with ChatAgent(
         chat_client=client,
         model=model_deployment,

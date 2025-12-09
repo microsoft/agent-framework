@@ -840,7 +840,9 @@ class MessageMapper:
 
             if event_class == "WorkflowFailedEvent":
                 workflow_id = context.get("workflow_id", str(uuid4()))
-                error_info = getattr(event, "error", None)
+                # WorkflowFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches ExecutorFailedEvent which also uses 'details'
+                details = getattr(event, "details", None)
 
                 # Import Response and ResponseError types
                 from openai.types.responses import Response, ResponseError
@@ -849,8 +851,14 @@ class MessageMapper:
                 request_obj = context.get("request")
                 model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
-                # Create error object
-                error_message = str(error_info) if error_info else "Unknown error"
+                # Extract error message from WorkflowErrorDetails
+                if details:
+                    error_message = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        error_message = f"{error_message} (extra: {extra})"
+                else:
+                    error_message = "Unknown error"
 
                 # Create ResponseError object (code must be one of the allowed values)
                 response_error = ResponseError(
@@ -918,12 +926,16 @@ class MessageMapper:
 
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
+                # Serialize the result data to ensure it's JSON-serializable
+                # (AgentExecutorResponse contains AgentRunResponse/ChatMessage which are SerializationMixin)
+                raw_result = getattr(event, "data", None)
+                serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(
                     type="executor_action",
                     id=item_id,
                     executor_id=executor_id,
                     status="completed",
-                    result=getattr(event, "data", None),
+                    result=serialized_result,
                 )
 
                 # Use our custom event type
@@ -939,7 +951,15 @@ class MessageMapper:
             if event_class == "ExecutorFailedEvent":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
-                error_info = getattr(event, "error", None)
+                # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                details = getattr(event, "details", None)
+                if details:
+                    err_msg = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        err_msg = f"{err_msg} (extra: {extra})"
+                else:
+                    err_msg = None
 
                 # Create ExecutorActionItem with failed status
                 executor_item = ExecutorActionItem(
@@ -947,7 +967,7 @@ class MessageMapper:
                     id=item_id,
                     executor_id=executor_id,
                     status="failed",
-                    error={"message": str(error_info)} if error_info else None,
+                    error={"message": err_msg} if err_msg else None,
                 )
 
                 # Use our custom event type

@@ -1,0 +1,31 @@
+{
+  "solution": {
+    "path": "agent-framework-dotnet.slnx",
+    "projects": [
+      "src\\Microsoft.Agents.AI.A2A\\Microsoft.Agents.AI.A2A.csproj",
+      "src\\Microsoft.Agents.AI.Abstractions\\Microsoft.Agents.AI.Abstractions.csproj",
+      "src\\Microsoft.Agents.AI.AGUI\\Microsoft.Agents.AI.AGUI.csproj",
+      "src\\Microsoft.Agents.AI.Anthropic\\Microsoft.Agents.AI.Anthropic.csproj",
+      "src\\Microsoft.Agents.AI.AzureAI.Persistent\\Microsoft.Agents.AI.AzureAI.Persistent.csproj",
+      "src\\Microsoft.Agents.AI.AzureAI\\Microsoft.Agents.AI.AzureAI.csproj",
+      "src\\Microsoft.Agents.AI.CopilotStudio\\Microsoft.Agents.AI.CopilotStudio.csproj",
+      "src\\Microsoft.Agents.AI.CosmosNoSql\\Microsoft.Agents.AI.CosmosNoSql.csproj",
+      "src\\Microsoft.Agents.AI.Declarative\\Microsoft.Agents.AI.Declarative.csproj",
+      "src\\Microsoft.Agents.AI.DevUI\\Microsoft.Agents.AI.DevUI.csproj",
+      "src\\Microsoft.Agents.AI.DurableTask\\Microsoft.Agents.AI.DurableTask.csproj",
+      "src\\Microsoft.Agents.AI.Hosting.A2A.AspNetCore\\Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj",
+      "src\\Microsoft.Agents.AI.Hosting.A2A\\Microsoft.Agents.AI.Hosting.A2A.csproj",
+      "src\\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore\\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj",
+      "src\\Microsoft.Agents.AI.Hosting.AzureFunctions\\Microsoft.Agents.AI.Hosting.AzureFunctions.csproj",
+      "src\\Microsoft.Agents.AI.Hosting.OpenAI\\Microsoft.Agents.AI.Hosting.OpenAI.csproj",
+      "src\\Microsoft.Agents.AI.Hosting\\Microsoft.Agents.AI.Hosting.csproj",
+      "src\\Microsoft.Agents.AI.Mem0\\Microsoft.Agents.AI.Mem0.csproj",
+      "src\\Microsoft.Agents.AI.OpenAI\\Microsoft.Agents.AI.OpenAI.csproj",
+      "src\\Microsoft.Agents.AI.Purview\\Microsoft.Agents.AI.Purview.csproj",
+      "src\\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj",
+      "src\\Microsoft.Agents.AI.Workflows.Declarative\\Microsoft.Agents.AI.Workflows.Declarative.csproj",
+      "src\\Microsoft.Agents.AI.Workflows\\Microsoft.Agents.AI.Workflows.csproj",
+      "src\\Microsoft.Agents.AI\\Microsoft.Agents.AI.csproj"
+    ]
+  }
+}

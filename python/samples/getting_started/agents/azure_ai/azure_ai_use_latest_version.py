@@ -31,7 +31,7 @@ async def main() -> None:
     async with AzureCliCredential() as credential:
         async with (
             AzureAIClient(
-                async_credential=credential,
+                credential=credential,
             ).create_agent(
                 name="MyWeatherAgent",
                 instructions="You are a helpful weather agent.",
@@ -47,7 +47,7 @@ async def main() -> None:
         # Create a new agent instance
         async with (
             AzureAIClient(
-                async_credential=credential,
+                credential=credential,
                 # This parameter will allow to re-use latest agent version
                 # instead of creating a new one
                 use_latest_version=True,
