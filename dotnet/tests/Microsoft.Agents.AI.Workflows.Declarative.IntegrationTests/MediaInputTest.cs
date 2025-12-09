@@ -28,8 +28,8 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     [InlineData(PdfReference, "application/pdf", Skip = "Not currently supported by agent service api")]
     public async Task ValidateFileUrlAsync(string fileSource, string mediaType)
     {
-        this.Output.WriteLine($"Image: {ImageReference}");
-        await this.ValidateImageAsync(new UriContent(fileSource, mediaType));
+        this.Output.WriteLine($"File: {ImageReference}");
+        await this.ValidateFileAsync(new UriContent(fileSource, mediaType));
     }
 
     [Theory]
@@ -37,25 +37,25 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     [InlineData(PdfReference, "application/pdf")]
     public async Task ValidateFileDataAsync(string fileSource, string mediaType)
     {
-        byte[] imageData = await DownloadFileAsync(fileSource);
-        string encodedData = Convert.ToBase64String(imageData);
-        string imageUrl = $"data:{mediaType};base64,{encodedData}";
-        this.Output.WriteLine($"Content: {imageUrl.Substring(0, 112)}...");
-        await this.ValidateImageAsync(new DataContent(imageUrl));
+        byte[] fileData = await DownloadFileAsync(fileSource);
+        string encodedData = Convert.ToBase64String(fileData);
+        string fileUrl = $"data:{mediaType};base64,{encodedData}";
+        this.Output.WriteLine($"Content: {fileUrl.Substring(0, 112)}...");
+        await this.ValidateFileAsync(new DataContent(fileUrl));
     }
 
     [Fact(Skip = "Not currently supported by agent service api")]
     public async Task ValidateFileUploadAsync()
     {
-        byte[] imageData = await DownloadFileAsync(PdfReference);
+        byte[] fileData = await DownloadFileAsync(PdfReference);
         AIProjectClient client = new(this.TestEndpoint, new AzureCliCredential());
-        using MemoryStream contentStream = new(imageData);
+        using MemoryStream contentStream = new(fileData);
         OpenAIFileClient fileClient = client.GetProjectOpenAIClient().GetOpenAIFileClient();
         OpenAIFile fileInfo = await fileClient.UploadFileAsync(contentStream, "basic-text.pdf", FileUploadPurpose.Assistants);
         try
         {
             this.Output.WriteLine($"File: {fileInfo.Id}");
-            await this.ValidateImageAsync(new HostedFileContent(fileInfo.Id));
+            await this.ValidateFileAsync(new HostedFileContent(fileInfo.Id));
         }
         finally
         {
@@ -70,12 +70,12 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
         return await client.GetByteArrayAsync(new Uri(uri));
     }
 
-    private async Task ValidateImageAsync(AIContent imageContent)
+    private async Task ValidateFileAsync(AIContent fileContent)
     {
         AgentProvider agentProvider = AgentProvider.Create(this.Configuration, AgentProvider.Names.Vision);
         await agentProvider.CreateAgentsAsync().ConfigureAwait(false);
 
-        ChatMessage inputMessage = new(ChatRole.User, [new TextContent("I've provided a file:"), imageContent]);
+        ChatMessage inputMessage = new(ChatRole.User, [new TextContent("I've provided a file:"), fileContent]);
 
         DeclarativeWorkflowOptions options = await this.CreateOptionsAsync();
         Workflow workflow = DeclarativeWorkflowBuilder.Build<ChatMessage>(Path.Combine(Environment.CurrentDirectory, "Workflows", WorkflowFileName), options);
