@@ -63,6 +63,24 @@ def test_sequential_builder_rejects_empty_participants() -> None:
         SequentialBuilder().participants([])
 
 
+def test_sequential_builder_rejects_empty_participant_factories() -> None:
+    with pytest.raises(ValueError):
+        SequentialBuilder().register_participants([])
+
+
+def test_sequential_builder_rejects_mixing_participants_and_factories() -> None:
+    """Test that mixing .participants() and .register_participants() raises an error."""
+    a1 = _EchoAgent(id="agent1", name="A1")
+
+    # Try .participants() then .register_participants()
+    with pytest.raises(ValueError, match="Cannot mix"):
+        SequentialBuilder().participants([a1]).register_participants([lambda: _EchoAgent(id="agent2", name="A2")])
+
+    # Try .register_participants() then .participants()
+    with pytest.raises(ValueError, match="Cannot mix"):
+        SequentialBuilder().register_participants([lambda: _EchoAgent(id="agent1", name="A1")]).participants([a1])
+
+
 async def test_sequential_agents_append_to_context() -> None:
     a1 = _EchoAgent(id="agent1", name="A1")
     a2 = _EchoAgent(id="agent2", name="A2")
@@ -91,6 +109,37 @@ async def test_sequential_agents_append_to_context() -> None:
     assert "A2 reply" in msgs[2].text
 
 
+async def test_sequential_register_participants_with_agent_factories() -> None:
+    """Test that register_participants works with agent factories."""
+
+    def create_agent1() -> _EchoAgent:
+        return _EchoAgent(id="agent1", name="A1")
+
+    def create_agent2() -> _EchoAgent:
+        return _EchoAgent(id="agent2", name="A2")
+
+    wf = SequentialBuilder().register_participants([create_agent1, create_agent2]).build()
+
+    completed = False
+    output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("hello factories"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    assert isinstance(output, list)
+    msgs: list[ChatMessage] = output
+    assert len(msgs) == 3
+    assert msgs[0].role == Role.USER and "hello factories" in msgs[0].text
+    assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
+    assert msgs[2].role == Role.ASSISTANT and "A2 reply" in msgs[2].text
+
+
 async def test_sequential_with_custom_executor_summary() -> None:
     a1 = _EchoAgent(id="agent1", name="A1")
     summarizer = _SummarizerExec(id="summarizer")
@@ -103,7 +152,7 @@ async def test_sequential_with_custom_executor_summary() -> None:
         if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif isinstance(ev, WorkflowOutputEvent):
-            output = ev.data  # type: ignore[assignment]
+            output = ev.data
         if completed and output is not None:
             break
 
@@ -113,6 +162,37 @@ async def test_sequential_with_custom_executor_summary() -> None:
     # Expect: [user, A1 reply, summary]
     assert len(msgs) == 3
     assert msgs[0].role == Role.USER
+    assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
+    assert msgs[2].role == Role.ASSISTANT and msgs[2].text.startswith("Summary of users:")
+
+
+async def test_sequential_register_participants_mixed_agents_and_executors() -> None:
+    """Test register_participants with both agent and executor factories."""
+
+    def create_agent() -> _EchoAgent:
+        return _EchoAgent(id="agent1", name="A1")
+
+    def create_summarizer() -> _SummarizerExec:
+        return _SummarizerExec(id="summarizer")
+
+    wf = SequentialBuilder().register_participants([create_agent, create_summarizer]).build()
+
+    completed = False
+    output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("topic Y"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    msgs: list[ChatMessage] = output
+    # Expect: [user, A1 reply, summary]
+    assert len(msgs) == 3
+    assert msgs[0].role == Role.USER and "topic Y" in msgs[0].text
     assert msgs[1].role == Role.ASSISTANT and "A1 reply" in msgs[1].text
     assert msgs[2].role == Role.ASSISTANT and msgs[2].text.startswith("Summary of users:")
 
@@ -229,3 +309,89 @@ async def test_sequential_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
+
+
+async def test_sequential_register_participants_with_checkpointing() -> None:
+    """Test that checkpointing works with register_participants."""
+    storage = InMemoryCheckpointStorage()
+
+    def create_agent1() -> _EchoAgent:
+        return _EchoAgent(id="agent1", name="A1")
+
+    def create_agent2() -> _EchoAgent:
+        return _EchoAgent(id="agent2", name="A2")
+
+    wf = SequentialBuilder().register_participants([create_agent1, create_agent2]).with_checkpointing(storage).build()
+
+    baseline_output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("checkpoint with factories"):
+        if isinstance(ev, WorkflowOutputEvent):
+            baseline_output = ev.data
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            break
+
+    assert baseline_output is not None
+
+    checkpoints = await storage.list_checkpoints()
+    assert checkpoints
+    checkpoints.sort(key=lambda cp: cp.timestamp)
+
+    resume_checkpoint = next(
+        (cp for cp in checkpoints if (cp.metadata or {}).get("checkpoint_type") == "superstep"),
+        checkpoints[-1],
+    )
+
+    wf_resume = (
+        SequentialBuilder().register_participants([create_agent1, create_agent2]).with_checkpointing(storage).build()
+    )
+
+    resumed_output: list[ChatMessage] | None = None
+    async for ev in wf_resume.run_stream(checkpoint_id=resume_checkpoint.checkpoint_id):
+        if isinstance(ev, WorkflowOutputEvent):
+            resumed_output = ev.data
+        if isinstance(ev, WorkflowStatusEvent) and ev.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    assert resumed_output is not None
+    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
+    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+
+
+async def test_sequential_register_participants_factories_called_on_build() -> None:
+    """Test that factories are called during build(), not during register_participants()."""
+    call_count = 0
+
+    def create_agent() -> _EchoAgent:
+        nonlocal call_count
+        call_count += 1
+        return _EchoAgent(id=f"agent{call_count}", name=f"A{call_count}")
+
+    builder = SequentialBuilder().register_participants([create_agent, create_agent])
+
+    # Factories should not be called yet
+    assert call_count == 0
+
+    wf = builder.build()
+
+    # Now factories should have been called
+    assert call_count == 2
+
+    # Run the workflow to ensure it works
+    completed = False
+    output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("test factories timing"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = ev.data  # type: ignore[assignment]
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    msgs: list[ChatMessage] = output
+    # Should have user message + 2 agent replies
+    assert len(msgs) == 3
