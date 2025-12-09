@@ -8,7 +8,6 @@ using System.Text.Json.Serialization;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI;
 using OpenAI.Chat;
 using SampleApp;
 

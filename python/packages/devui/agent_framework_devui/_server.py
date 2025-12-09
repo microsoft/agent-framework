@@ -537,9 +537,14 @@ class DevServer:
             except HTTPException:
                 raise
             except ValueError as e:
-                # ValueError from load_entity indicates entity not found or invalid
+                # ValueError from load_entity - could be "not found" or "failed to load"
+                error_str = str(e)
                 error_msg = self._format_error(e, "Entity loading")
-                raise HTTPException(status_code=404, detail=error_msg) from e
+                # Use 404 for "not found", 422 for load failures (entity exists but can't load)
+                if "not found" in error_str.lower() and "failed to load" not in error_str.lower():
+                    raise HTTPException(status_code=404, detail=error_msg) from e
+                # Entity exists but failed to load (e.g., missing env vars, import errors)
+                raise HTTPException(status_code=422, detail=error_msg) from e
             except Exception as e:
                 error_msg = self._format_error(e, "Entity info retrieval")
                 raise HTTPException(status_code=500, detail=error_msg) from e
@@ -1121,7 +1126,7 @@ class DevServer:
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming execution: {e}")
+            logger.error(f"Error in streaming execution: {e}", exc_info=True)
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
             yield f"data: {json.dumps(error_event)}\n\n"
 

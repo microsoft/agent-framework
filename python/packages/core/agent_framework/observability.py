@@ -20,7 +20,7 @@ from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
     from azure.core.credentials import TokenCredential
-    from opentelemetry.sdk._logs._internal.export import LogRecordExporter
+    from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace.export import SpanExporter
@@ -268,9 +268,9 @@ def _get_otlp_exporters(endpoints: list[str]) -> list["LogRecordExporter | SpanE
     exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
 
     for endpoint in endpoints:
-        exporters.append(OTLPLogExporter(endpoint=endpoint))  # type: ignore[arg-type]
-        exporters.append(OTLPSpanExporter(endpoint=endpoint))  # type: ignore[arg-type]
-        exporters.append(OTLPMetricExporter(endpoint=endpoint))  # type: ignore[arg-type]
+        exporters.append(OTLPLogExporter(endpoint=endpoint))
+        exporters.append(OTLPSpanExporter(endpoint=endpoint))
+        exporters.append(OTLPMetricExporter(endpoint=endpoint))
     return exporters
 
 
@@ -493,8 +493,7 @@ class ObservabilitySettings(AFBaseSettings):
         """Configure tracing, logging, events and metrics with the provided exporters."""
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs._internal.export import LogRecordExporter
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
         from opentelemetry.sdk.metrics.view import DropAggregation, View
@@ -522,7 +521,7 @@ class ObservabilitySettings(AFBaseSettings):
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
                 should_add_console_exporter = False
         if should_add_console_exporter:
-            from opentelemetry.sdk._logs._internal.export import ConsoleLogExporter
+            from opentelemetry.sdk._logs.export import ConsoleLogExporter
 
             logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
 
@@ -1423,7 +1422,7 @@ def _capture_messages(
     """Log messages with extra information."""
     from ._types import prepare_messages
 
-    prepped = prepare_messages(messages)
+    prepped = prepare_messages(messages, system_instructions=system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         otel_messages.append(_to_otel_message(message))
