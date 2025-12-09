@@ -5,7 +5,7 @@ using Microsoft.Shared.Diagnostics;
 using OpenAI.Chat;
 using OpenAI.Responses;
 
-namespace OpenAI;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides extension methods for <see cref="AgentRunResponse"/> and <see cref="AgentRunResponseUpdate"/> instances to
