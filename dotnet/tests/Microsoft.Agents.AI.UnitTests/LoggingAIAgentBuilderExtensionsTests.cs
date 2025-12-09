@@ -9,7 +9,7 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AIAgentBuilderExtensions"/> UseLogging extension method.
+/// Unit tests for the <see cref="FunctionInvocationDelegatingAgentBuilderExtensions"/> UseLogging extension method.
 /// </summary>
 public class LoggingAIAgentBuilderExtensionsTests
 {

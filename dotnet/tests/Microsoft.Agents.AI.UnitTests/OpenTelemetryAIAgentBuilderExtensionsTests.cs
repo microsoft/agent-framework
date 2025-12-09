@@ -7,7 +7,7 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="AIAgentBuilderExtensions"/> class.
+/// Unit tests for the <see cref="FunctionInvocationDelegatingAgentBuilderExtensions"/> class.
 /// </summary>
 public class OpenTelemetryAIAgentBuilderExtensionsTests
 {
