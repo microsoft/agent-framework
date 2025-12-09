@@ -230,14 +230,15 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// Executor that synchronizes agent output and prepares it for the next stage.
 /// This demonstrates how executors can process agent outputs and forward to the next agent.
 /// </summary>
-internal sealed class JailbreakSyncExecutor() : Executor<ChatMessage>("JailbreakSync")
+internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
-    public override async ValueTask HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Magenta;
 
-        string fullAgentResponse = message.Text?.Trim() ?? "UNKNOWN";
+        ChatMessage agentResponse = message.LastOrDefault(m => m.Role.Equals(ChatRole.Assistant), new (ChatRole.Assistant, "UNKNOWN"));
+        string fullAgentResponse = agentResponse.Text.Trim();
 
         Console.WriteLine($"[{this.Id}] Full Agent Response:");
         Console.WriteLine(fullAgentResponse);
@@ -278,17 +279,18 @@ internal sealed class JailbreakSyncExecutor() : Executor<ChatMessage>("Jailbreak
 /// <summary>
 /// Executor that outputs the final result and marks the end of the workflow.
 /// </summary>
-internal sealed class FinalOutputExecutor() : Executor<ChatMessage, string>("FinalOutput")
+internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string>("FinalOutput")
 {
-    public override ValueTask<string> HandleAsync(ChatMessage message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override ValueTask<string> HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        var lastMessage = message.LastOrDefault(m => m.Role.Equals(ChatRole.Assistant), new ChatMessage(ChatRole.Assistant, string.Empty));
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"\n[{this.Id}] Final Response:");
-        Console.WriteLine($"{message.Text}");
+        Console.WriteLine($"{lastMessage.Text}");
         Console.WriteLine("\n[End of Workflow]");
         Console.ResetColor();
 
-        return ValueTask.FromResult(message.Text ?? string.Empty);
+        return ValueTask.FromResult(lastMessage.Text ?? string.Empty);
     }
 }
