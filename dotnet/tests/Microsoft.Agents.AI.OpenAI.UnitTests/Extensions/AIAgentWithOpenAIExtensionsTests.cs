@@ -7,8 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
-using OpenAIChatMessage = OpenAI.Chat.ChatMessage;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
+using OpenAIChatMessage = OpenAI.Chat.ChatMessage;
 using TextContent = Microsoft.Extensions.AI.TextContent;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
