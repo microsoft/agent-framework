@@ -10,7 +10,7 @@ using Shared.Foundry;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
-internal sealed class TestAgentProvider(IConfiguration configuration) : AgentProvider(configuration)
+internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentProvider(configuration)
 {
     protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
@@ -18,11 +18,18 @@ internal sealed class TestAgentProvider(IConfiguration configuration) : AgentPro
 
         yield return
             await aiProjectClient.CreateAgentAsync(
-                agentName: "TestAgent",
+                agentName: "VisionAgent",
                 agentDefinition: this.DefineMenuAgent(),
-                agentDescription: "Basic agent");
+                agentDescription: "Use computer vision to describe an image or document.");
     }
 
     private PromptAgentDefinition DefineMenuAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull));
+        new(this.GetSetting(Settings.FoundryModelFull))
+        {
+            Instructions =
+                """
+                Describe the image or document contained in the user request, if any;
+                otherwise, suggest that the user provide an image or document.
+                """,
+        };
 }
