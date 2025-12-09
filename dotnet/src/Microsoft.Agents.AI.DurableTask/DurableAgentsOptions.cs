@@ -11,6 +11,12 @@ public sealed class DurableAgentsOptions
     private readonly Dictionary<string, Func<IServiceProvider, AIAgent>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimeSpan?> _agentTimeToLive = new(StringComparer.OrdinalIgnoreCase);
 
+    private TimeSpan _minimumTimeToLiveSignalDelay = TimeSpan.FromMinutes(5);
+
+    internal DurableAgentsOptions()
+    {
+    }
+
     /// <summary>
     /// Gets or sets the default time-to-live (TTL) for agent entities.
     /// </summary>
@@ -21,16 +27,31 @@ public sealed class DurableAgentsOptions
     public TimeSpan? DefaultTimeToLive { get; set; } = TimeSpan.FromDays(30);
 
     /// <summary>
-    /// Gets or sets the minimum delay for scheduling TTL deletion signals.
+    /// Gets or sets the minimum delay for scheduling TTL deletion signals. Defaults to 5 minutes.
     /// </summary>
     /// <remarks>
-    /// This ensures that deletion signals are not scheduled too frequently.
-    /// Defaults to 5 minutes.
+    /// This property is primarily useful for testing (where shorter delays are needed) or for
+    /// shorter-lived agents in workflows that need more rapid cleanup. The maximum allowed value is 5 minutes.
+    /// Reducing the minimum deletion delay below 5 minutes can be useful for testing or for ensuring rapid cleanup of short-lived agent sessions.
+    /// However, this can also increase the load on the system and should be used with caution.
     /// </remarks>
-    public TimeSpan MinimumTimeToLiveSignalDelay { get; set; } = TimeSpan.FromMinutes(5);
-
-    internal DurableAgentsOptions()
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the value exceeds 5 minutes.</exception>
+    public TimeSpan MinimumTimeToLiveSignalDelay
     {
+        get => this._minimumTimeToLiveSignalDelay;
+        set
+        {
+            const int MaximumDelayMinutes = 5;
+            if (value > TimeSpan.FromMinutes(MaximumDelayMinutes))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    $"The minimum time-to-live signal delay cannot exceed {MaximumDelayMinutes} minutes.");
+            }
+
+            this._minimumTimeToLiveSignalDelay = value;
+        }
     }
 
     /// <summary>

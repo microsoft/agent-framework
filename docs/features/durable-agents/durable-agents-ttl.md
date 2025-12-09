@@ -22,15 +22,15 @@ TTL can be configured at two levels:
 1. **Global default TTL**: Applies to all agent sessions unless overridden
 2. **Per-agent type TTL**: Overrides the global default for specific agent types
 
-Additionally, you can configure a **minimum deletion delay** that controls how frequently deletion operations are scheduled. This prevents excessive deletion operations for agent sessions with short TTLs.
+Additionally, you can configure a **minimum deletion delay** that controls how frequently deletion operations are scheduled. The default value is 5 minutes, and the maximum allowed value is also 5 minutes.
 
 > [!NOTE]
-> Setting the deletion delay is an advanced feature and should only be used if the default value results in excessive deletion operations (in which case you should increase the default value) or if you need to ensure that deletion operations are executed promptly (in which case you should decrease the default value).
+> Reducing the minimum deletion delay below 5 minutes can be useful for testing or for ensuring rapid cleanup of short-lived agent sessions. However, this can also increase the load on the system and should be used with caution.
 
 ### Default values
 
 - **Default TTL**: 30 days
-- **Minimum TTL deletion delay**: 5 minutes (subject to change in future releases)
+- **Minimum TTL deletion delay**: 5 minutes (maximum allowed value, subject to change in future releases)
 
 ### Configuration examples
 
@@ -43,10 +43,7 @@ services.ConfigureDurableAgents(
     {
         // Set global default TTL to 7 days
         options.DefaultTimeToLive = TimeSpan.FromDays(7);
-        
-        // Set minimum signal delay to 10 minutes
-        options.MinimumTimeToLiveSignalDelay = TimeSpan.FromMinutes(10);
-        
+
         // Add agents (will use global default TTL)
         options.AddAIAgent(myAgent);
     });
