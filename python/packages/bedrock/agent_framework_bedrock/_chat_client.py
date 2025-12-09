@@ -30,7 +30,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from agent_framework.observability import use_observability
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
@@ -217,7 +217,7 @@ class BedrockChatClient(BaseChatClient):
         pending_tool_use_ids: deque[str] = deque()
         for message in messages:
             if message.role == Role.SYSTEM:
-                text_value = self._gather_text_from_message(message)
+                text_value = message.text
                 if text_value:
                     prompts.append({"text": text_value})
                 continue
@@ -290,15 +290,7 @@ class BedrockChatClient(BaseChatClient):
                 logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
                 continue
             blocks.append(block)
-        if blocks:
-            return blocks
-
-        if not message.contents:
-            text_value = message.text
-            if text_value:
-                return [{"text": text_value}]
-
-        return []
+        return blocks
 
     def _convert_content_to_bedrock_block(self, content: Contents) -> dict[str, Any] | None:
         if isinstance(content, TextContent):
@@ -409,16 +401,6 @@ class BedrockChatClient(BaseChatClient):
                 return None
 
     @staticmethod
-    def _gather_text_from_message(message: ChatMessage) -> str:
-        text_parts: list[str] = []
-        for content in message.contents:
-            if isinstance(content, TextContent) and getattr(content, "text", None):
-                text_parts.append(content.text)
-        if not text_parts and getattr(message, "text", None):
-            text_parts.append(message.text)
-        return "\n\n".join(part for part in text_parts if part)
-
-    @staticmethod
     def _generate_tool_call_id() -> str:
         return f"tool-call-{uuid4().hex}"
 
@@ -464,10 +446,15 @@ class BedrockChatClient(BaseChatClient):
                 continue
             tool_use = block.get("toolUse")
             if isinstance(tool_use, MutableMapping):
+                tool_name = tool_use.get("name")
+                if not tool_name:
+                    raise ServiceInvalidResponseError(
+                        "Bedrock response missing required tool name in toolUse block."
+                    )
                 contents.append(
                     FunctionCallContent(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),
-                        name=tool_use.get("name", "tool"),
+                        name=tool_name,
                         arguments=tool_use.get("input"),
                         raw_representation=block,
                     )
