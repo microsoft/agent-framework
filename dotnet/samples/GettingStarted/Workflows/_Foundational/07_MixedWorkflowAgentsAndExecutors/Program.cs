@@ -237,7 +237,7 @@ internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("Jai
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Magenta;
 
-        ChatMessage agentResponse = message.LastOrDefault(m => m.Role.Equals(ChatRole.Assistant), new (ChatRole.Assistant, "UNKNOWN"));
+        ChatMessage agentResponse = message.LastOrDefault(m => m.Role.Equals(ChatRole.Assistant), new ChatMessage(ChatRole.Assistant, string.Empty));
         string fullAgentResponse = agentResponse.Text.Trim();
 
         Console.WriteLine($"[{this.Id}] Full Agent Response:");
