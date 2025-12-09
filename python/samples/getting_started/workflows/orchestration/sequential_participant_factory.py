@@ -75,22 +75,22 @@ async def main() -> None:
         lambda: Accumulate("accumulator"),
         create_agent,
     ])
-    # 3) Build workflow_a
+    # 2) Build workflow_a
     workflow_a = builder.build()
 
-    # 4) Run workflow_a
+    # 3) Run workflow_a
     # Context is maintained across runs
     print("=== First Run on workflow_a ===")
     await run_workflow(workflow_a, "Why is the sky blue?")
     print("\n=== Second Run on workflow_a ===")
     await run_workflow(workflow_a, "Repeat my previous question.")
 
-    # 5) Build workflow_b
+    # 4) Build workflow_b
     # This will create a new instance of the accumulator and content producer
     # using the same workflow builder
     workflow_b = builder.build()
 
-    # 6) Run workflow_b
+    # 5) Run workflow_b
     # Context is not maintained across instances
     print("\n=== First Run on workflow_b ===")
     await run_workflow(workflow_b, "Repeat my previous question.")

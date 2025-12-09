@@ -98,7 +98,7 @@ class SequentialBuilder:
     r"""High-level builder for sequential agent/executor workflows with shared context.
 
     - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor instances
-    - `register_participant([...])` accepts a list of factories for AgentProtocol (recommended)
+    - `register_participants([...])` accepts a list of factories for AgentProtocol (recommended)
        or Executor factories
     - Executors must define a handler that consumes list[ChatMessage] and sends out a list[ChatMessage]
     - The workflow wires participants in order, passing a list[ChatMessage] down the chain
@@ -153,7 +153,7 @@ class SequentialBuilder:
         """
         if self._participant_factories:
             raise ValueError(
-                "Cannot mix .participants([...]) and .register_participant() in the same builder instance."
+                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
 
         if not participants:
@@ -196,7 +196,7 @@ class SequentialBuilder:
         if not self._participants and not self._participant_factories:
             raise ValueError(
                 "No participants or participant factories provided to the builder. "
-                "Use .participants([...]) or .register_participants([...])."
+                "Use .participants([...]) or .ss([...])."
             )
 
         if self._participants and self._participant_factories:
