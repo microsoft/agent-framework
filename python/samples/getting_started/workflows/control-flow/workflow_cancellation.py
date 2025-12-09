@@ -12,9 +12,9 @@ A three-step workflow where each step takes 2 seconds. We cancel it after 3 seco
 to demonstrate mid-execution cancellation using asyncio tasks.
 
 Purpose:
-Show how to cancel a running workflow by wrapping workflow.run() in an asyncio.Task.
-This pattern is useful for implementing timeouts, graceful shutdown, or A2A executors
-that need cancellation support.
+Show how to cancel a running workflow by wrapping it in an asyncio.Task. This pattern
+works with both workflow.run() and workflow.run_stream(). Useful for implementing
+timeouts, graceful shutdown, or A2A executors that need cancellation support.
 
 Prerequisites:
 - No external services required.
