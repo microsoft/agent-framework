@@ -2,7 +2,7 @@
 
 // This sample demonstrates how to create an AI agent directly from an OpenAI.Chat.ChatClient instance using OpenAIChatClientAgent.
 
-using Microsoft.Agents.AI;
+using OpenAIChatClientSample;
 using OpenAI;
 using OpenAI.Chat;
 
