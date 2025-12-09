@@ -2,9 +2,9 @@
 
 // This sample demonstrates how to create OpenAIResponseClientAgent directly from an OpenAIResponseClient instance.
 
-using OpenAIResponseClientSample;
 using OpenAI;
 using OpenAI.Responses;
+using OpenAIResponseClientSample;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";

@@ -2,9 +2,9 @@
 
 // This sample demonstrates how to create an AI agent directly from an OpenAI.Chat.ChatClient instance using OpenAIChatClientAgent.
 
-using OpenAIChatClientSample;
 using OpenAI;
 using OpenAI.Chat;
+using OpenAIChatClientSample;
 
 string apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
