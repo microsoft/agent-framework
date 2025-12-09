@@ -221,6 +221,16 @@ public class AIAgentTests
         Assert.Equal(id, agent.Id);
     }
 
+    [Fact]
+    public void ValidateAgentIDCanBeProvidedByDerivedAgentClass()
+    {
+        var agent = new MockAgent(id: "test-agent-id");
+
+        string id = agent.Id;
+        Assert.NotNull(id);
+        Assert.Equal("test-agent-id", id);
+    }
+
     #region GetService Method Tests
 
     /// <summary>
@@ -344,6 +354,13 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
+        public MockAgent(string? id = null)
+        {
+            this.IdCore = id;
+        }
+
+        protected override string? IdCore { get; }
+
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();
 
