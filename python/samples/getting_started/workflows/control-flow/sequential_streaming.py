@@ -52,11 +52,18 @@ async def reverse_text(text: str, ctx: WorkflowContext[Never, str]) -> None:
 
 async def main():
     """Build a two-step sequential workflow and run it with streaming to observe events."""
-    # Step 2: Build the workflow with the defined edges.
+    # Step 1: Build the workflow with the defined edges.
     # Order matters. upper_case_executor runs first, then reverse_text_executor.
-    workflow = WorkflowBuilder().add_edge(to_upper_case, reverse_text).set_start_executor(to_upper_case).build()
+    workflow = (
+        WorkflowBuilder()
+        .register_executor(lambda: to_upper_case, name="upper_case_executor")
+        .register_executor(lambda: reverse_text, name="reverse_text_executor")
+        .add_edge("upper_case_executor", "reverse_text_executor")
+        .set_start_executor("upper_case_executor")
+        .build()
+    )
 
-    # Step 3: Run the workflow and stream events in real time.
+    # Step 2: Run the workflow and stream events in real time.
     async for event in workflow.run_stream("hello world"):
         # You will see executor invoke and completion events as the workflow progresses.
         print(f"Event: {event}")

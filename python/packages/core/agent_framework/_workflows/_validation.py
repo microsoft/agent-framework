@@ -101,21 +101,20 @@ class WorkflowGraphValidator:
     def __init__(self) -> None:
         self._edges: list[Edge] = []
         self._executors: dict[str, Executor] = {}
-        self._start_executor_ref: Executor | str | None = None
 
     # region Core Validation Methods
     def validate_workflow(
         self,
         edge_groups: Sequence[EdgeGroup],
         executors: dict[str, Executor],
-        start_executor: Executor | str,
+        start_executor: Executor,
     ) -> None:
         """Validate the entire workflow graph.
 
         Args:
             edge_groups: list of edge groups in the workflow
             executors: Map of executor IDs to executor instances
-            start_executor: The starting executor (can be instance or ID)
+            start_executor: The starting executor
 
         Raises:
             WorkflowValidationError: If any validation fails
@@ -123,22 +122,20 @@ class WorkflowGraphValidator:
         self._executors = executors
         self._edges = [edge for group in edge_groups for edge in group.edges]
         self._edge_groups = edge_groups
-        self._start_executor_ref = start_executor
 
         # If only the start executor exists, add it to the executor map
         # Handle the special case where the workflow consists of only a single executor and no edges.
         # In this scenario, the executor map will be empty because there are no edge groups to reference executors.
         # Adding the start executor to the map ensures that single-executor workflows (without any edges) are supported,
         # allowing validation and execution to proceed for workflows that do not require inter-executor communication.
-        if not self._executors and start_executor and isinstance(start_executor, Executor):
+        if not self._executors:
             self._executors[start_executor.id] = start_executor
 
         # Validate that start_executor exists in the graph
         # It should because we check for it in the WorkflowBuilder
         # but we do it here for completeness.
-        start_executor_id = start_executor.id if isinstance(start_executor, Executor) else start_executor
-        if start_executor_id not in self._executors:
-            raise GraphConnectivityError(f"Start executor '{start_executor_id}' is not present in the workflow graph")
+        if start_executor.id not in self._executors:
+            raise GraphConnectivityError(f"Start executor '{start_executor.id}' is not present in the workflow graph")
 
         # Additional presence verification:
         # A start executor that is only injected via the builder (present in the executors map)
@@ -149,19 +146,19 @@ class WorkflowGraphValidator:
         # check only when there is at least one edge group defined.
         if self._edges:  # Only evaluate when the workflow defines edges
             edge_executor_ids: set[str] = set()
-            for _e in self._edges:
-                edge_executor_ids.add(_e.source_id)
-                edge_executor_ids.add(_e.target_id)
-            if start_executor_id not in edge_executor_ids:
+            for e in self._edges:
+                edge_executor_ids.add(e.source_id)
+                edge_executor_ids.add(e.target_id)
+            if start_executor.id not in edge_executor_ids:
                 raise GraphConnectivityError(
-                    f"Start executor '{start_executor_id}' is not present in the workflow graph"
+                    f"Start executor '{start_executor.id}' is not present in the workflow graph"
                 )
 
         # Run all checks
         self._validate_edge_duplication()
         self._validate_handler_output_annotations()
         self._validate_type_compatibility()
-        self._validate_graph_connectivity(start_executor_id)
+        self._validate_graph_connectivity(start_executor.id)
         self._validate_self_loops()
         self._validate_dead_ends()
 
@@ -398,7 +395,7 @@ class WorkflowGraphValidator:
 def validate_workflow_graph(
     edge_groups: Sequence[EdgeGroup],
     executors: dict[str, Executor],
-    start_executor: Executor | str,
+    start_executor: Executor,
 ) -> None:
     """Convenience function to validate a workflow graph.
 

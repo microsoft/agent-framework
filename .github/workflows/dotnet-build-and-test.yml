@@ -79,7 +79,7 @@ jobs:
               workflow-samples
 
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v5.0.0
+        uses: actions/setup-dotnet@v5.0.1
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
       - name: Build dotnet solutions
@@ -217,7 +217,7 @@ jobs:
       # Generate test reports and check coverage
       - name: Generate test reports
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.0
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.1
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"

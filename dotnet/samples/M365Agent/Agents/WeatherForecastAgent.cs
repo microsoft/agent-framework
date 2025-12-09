@@ -33,9 +33,9 @@ public class WeatherForecastAgent : DelegatingAIAgent
             new ChatClientAgentOptions()
             {
                 Name = AgentName,
-                Instructions = AgentInstructions,
                 ChatOptions = new ChatOptions()
                 {
+                    Instructions = AgentInstructions,
                     Tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))],
                     // We want the agent to return structured output in a known format
                     // so that we can easily create adaptive cards from the response.
