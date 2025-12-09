@@ -19,11 +19,11 @@ internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentP
         yield return
             await aiProjectClient.CreateAgentAsync(
                 agentName: "VisionAgent",
-                agentDefinition: this.DefineMenuAgent(),
+                agentDefinition: this.DefineVisionAgent(),
                 agentDescription: "Use computer vision to describe an image or document.");
     }
 
-    private PromptAgentDefinition DefineMenuAgent() =>
+    private PromptAgentDefinition DefineVisionAgent() =>
         new(this.GetSetting(Settings.FoundryModelFull))
         {
             Instructions =
