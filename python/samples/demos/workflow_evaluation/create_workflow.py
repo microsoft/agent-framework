@@ -21,7 +21,7 @@ WORKFLOW STRUCTURE (7 agents):
 Agents:
 1. Travel Agent - Main coordinator (no tools to avoid thread conflicts)
 2. Hotel Search - Searches hotels with tools
-3. Flight Search - Searches flights with tools  
+3. Flight Search - Searches flights with tools
 4. Activity Search - Searches activities with tools
 5. Booking Information Aggregation - Aggregates hotel & flight booking info
 6. Booking Confirmation - Confirms bookings with tools
@@ -32,40 +32,37 @@ import asyncio
 import os
 from collections import defaultdict
 
-from dotenv import load_dotenv
-
-from agent_framework import (
-    AgentExecutorResponse,
-    AgentRunUpdateEvent,
-    AgentRunResponseUpdate,
-    ChatMessage,
-    Executor,
-    executor,
-    handler,
-    Role,
-    WorkflowContext,
-    WorkflowBuilder,
-    WorkflowOutputEvent,
-)
-from typing_extensions import Never
-
-from agent_framework.azure import AzureAIClient
-from azure.identity.aio import DefaultAzureCredential
-from azure.ai.projects.aio import AIProjectClient
-
 from _tools import (
+    check_flight_availability,
+    check_hotel_availability,
+    confirm_booking,
+    get_flight_details,
+    get_hotel_details,
+    process_payment,
+    search_activities,
+    search_flights,
     # Travel planning tools
     search_hotels,
-    get_hotel_details,
-    search_flights,
-    get_flight_details,
-    search_activities,
-    confirm_booking,
-    check_hotel_availability,
-    check_flight_availability,
-    process_payment,
     validate_payment_method,
 )
+from agent_framework import (
+    AgentExecutorResponse,
+    AgentRunResponseUpdate,
+    AgentRunUpdateEvent,
+    ChatMessage,
+    Executor,
+    Role,
+    WorkflowBuilder,
+    WorkflowContext,
+    WorkflowOutputEvent,
+    executor,
+    handler,
+)
+from agent_framework.azure import AzureAIClient
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity.aio import DefaultAzureCredential
+from dotenv import load_dotenv
+from typing_extensions import Never
 
 load_dotenv()
 
@@ -78,7 +75,7 @@ async def start_executor(input: str, ctx: WorkflowContext[list[ChatMessage]]) ->
 
 class ResearchLead(Executor):
     """Aggregates and summarizes travel planning findings from all specialized agents."""
-    
+
     def __init__(self, chat_client: AzureAIClient, id: str = "travel-planning-coordinator"):
         # store=True to preserve conversation history for evaluation
         self.agent = chat_client.create_agent(
@@ -92,58 +89,69 @@ class ResearchLead(Executor):
                 "Clearly indicate which information came from which agent. Do not use tools."
             ),
             name="travel-planning-coordinator",
-            store=True
+            store=True,
         )
         super().__init__(id=id)
 
     @handler
     async def fan_in_handle(self, responses: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
         user_query = responses[0].full_conversation[0].text
-        
+
         # Extract findings from all agent responses
         agent_findings = self._extract_agent_findings(responses)
-        summary_text = "\n".join(agent_findings) if agent_findings else "No specific findings were provided by the agents."
-        
+        summary_text = (
+            "\n".join(agent_findings) if agent_findings else "No specific findings were provided by the agents."
+        )
+
         # Generate comprehensive travel plan summary
         messages = [
-            ChatMessage(role=Role.SYSTEM, text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query."),
-            ChatMessage(role=Role.USER, text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.")
+            ChatMessage(
+                role=Role.SYSTEM,
+                text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
+            ),
+            ChatMessage(
+                role=Role.USER,
+                text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
+            ),
         ]
-        
+
         try:
             final_response = await self.agent.run(messages)
-            output_text = (final_response.messages[-1].text if final_response.messages and final_response.messages[-1].text 
-                          else f"Based on the available findings, here's your travel plan for '{user_query}': {summary_text}")
+            output_text = (
+                final_response.messages[-1].text
+                if final_response.messages and final_response.messages[-1].text
+                else f"Based on the available findings, here's your travel plan for '{user_query}': {summary_text}"
+            )
         except Exception:
             output_text = f"Based on the available findings, here's your travel plan for '{user_query}': {summary_text}"
-        
+
         await ctx.yield_output(output_text)
-    
+
     def _extract_agent_findings(self, responses: list[AgentExecutorResponse]) -> list[str]:
         """Extract findings from agent responses."""
         agent_findings = []
-        
+
         for response in responses:
             findings = []
             if response.agent_run_response and response.agent_run_response.messages:
                 for msg in response.agent_run_response.messages:
                     if msg.role == Role.ASSISTANT and msg.text and msg.text.strip():
                         findings.append(msg.text.strip())
-            
+
             if findings:
                 combined_findings = " ".join(findings)
                 agent_findings.append(f"[{response.executor_id}]: {combined_findings}")
-        
+
         return agent_findings
 
 
 async def run_workflow_with_response_tracking(query: str, chat_client: AzureAIClient | None = None) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
-    
+
     Args:
         query: The user query to process through the multi-agent workflow
         chat_client: Optional AzureAIClient instance
-        
+
     Returns:
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
     """
@@ -155,11 +163,11 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
                 credential=credential,
                 api_version="2025-11-15-preview",
             )
-            
+
             async with (
                 DefaultAzureCredential() as credential,
                 project_client,
-                AzureAIClient(project_client=project_client, async_credential=credential) as client
+                AzureAIClient(project_client=project_client, credential=credential) as client,
             ):
                 return await _run_workflow_with_client(query, client)
         except Exception as e:
@@ -171,53 +179,46 @@ async def run_workflow_with_response_tracking(query: str, chat_client: AzureAICl
 
 async def _run_workflow_with_client(query: str, chat_client: AzureAIClient) -> dict:
     """Execute workflow with given client and track all interactions."""
-    
+
     # Initialize tracking variables - use lists to track multiple responses per agent
     conversation_ids = defaultdict(list)
     response_ids = defaultdict(list)
     workflow_output = None
-    
+
     # Create workflow components and keep agent references
     # Pass project_client and credential to create separate client instances per agent
-    workflow, agent_map = await _create_workflow(
-        chat_client.project_client, 
-        chat_client.credential
-    )
-    
+    workflow, agent_map = await _create_workflow(chat_client.project_client, chat_client.credential)
+
     # Process workflow events
     events = workflow.run_stream(query)
     workflow_output = await _process_workflow_events(events, conversation_ids, response_ids)
-    
+
     return {
         "conversation_ids": dict(conversation_ids),
         "response_ids": dict(response_ids),
         "output": workflow_output,
-        "query": query
+        "query": query,
     }
 
 
 async def _create_workflow(project_client, credential):
     """Create the multi-agent travel planning workflow with specialized agents.
-    
+
     IMPORTANT: Each agent needs its own client instance because the V2 client stores
     agent_name and agent_version as instance variables, causing all agents to share
     the same agent identity if they share a client.
     """
-    
+
     # Create separate client for Final Coordinator
     final_coordinator_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="final-coordinator"
+        project_client=project_client, credential=credential, agent_name="final-coordinator"
     )
     final_coordinator = ResearchLead(chat_client=final_coordinator_client, id="final-coordinator")
-    
+
     # Agent 1: Travel Request Handler (initial coordinator)
     # Create separate client with unique agent_name
     travel_request_handler_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="travel-request-handler"
+        project_client=project_client, credential=credential, agent_name="travel-request-handler"
     )
     travel_request_handler = travel_request_handler_client.create_agent(
         id="travel-request-handler",
@@ -225,14 +226,12 @@ async def _create_workflow(project_client, credential):
             "You receive user travel queries and relay them to specialized agents. Extract key information: destination, dates, budget, and preferences. Pass this information forward clearly to the next agents."
         ),
         name="travel-request-handler",
-        store=True
+        store=True,
     )
-    
+
     # Agent 2: Hotel Search Executor
     hotel_search_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="hotel-search-agent"
+        project_client=project_client, credential=credential, agent_name="hotel-search-agent"
     )
     hotel_search_agent = hotel_search_client.create_agent(
         id="hotel-search-agent",
@@ -241,14 +240,12 @@ async def _create_workflow(project_client, credential):
         ),
         name="hotel-search-agent",
         tools=[search_hotels, get_hotel_details, check_hotel_availability],
-        store=True
+        store=True,
     )
-    
+
     # Agent 3: Flight Search Executor
     flight_search_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="flight-search-agent"
+        project_client=project_client, credential=credential, agent_name="flight-search-agent"
     )
     flight_search_agent = flight_search_client.create_agent(
         id="flight-search-agent",
@@ -257,14 +254,12 @@ async def _create_workflow(project_client, credential):
         ),
         name="flight-search-agent",
         tools=[search_flights, get_flight_details, check_flight_availability],
-        store=True
+        store=True,
     )
-    
+
     # Agent 4: Activity Search Executor
     activity_search_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="activity-search-agent"
+        project_client=project_client, credential=credential, agent_name="activity-search-agent"
     )
     activity_search_agent = activity_search_client.create_agent(
         id="activity-search-agent",
@@ -273,14 +268,12 @@ async def _create_workflow(project_client, credential):
         ),
         name="activity-search-agent",
         tools=[search_activities],
-        store=True
+        store=True,
     )
-    
+
     # Agent 5: Booking Confirmation Executor
     booking_confirmation_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="booking-confirmation-agent"
+        project_client=project_client, credential=credential, agent_name="booking-confirmation-agent"
     )
     booking_confirmation_agent = booking_confirmation_client.create_agent(
         id="booking-confirmation-agent",
@@ -289,14 +282,12 @@ async def _create_workflow(project_client, credential):
         ),
         name="booking-confirmation-agent",
         tools=[confirm_booking, check_hotel_availability, check_flight_availability],
-        store=True
+        store=True,
     )
-    
+
     # Agent 6: Booking Payment Executor
     booking_payment_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="booking-payment-agent"
+        project_client=project_client, credential=credential, agent_name="booking-payment-agent"
     )
     booking_payment_agent = booking_payment_client.create_agent(
         id="booking-payment-agent",
@@ -305,14 +296,12 @@ async def _create_workflow(project_client, credential):
         ),
         name="booking-payment-agent",
         tools=[process_payment, validate_payment_method],
-        store=True
+        store=True,
     )
-    
+
     # Agent 7: Booking Information Aggregation Executor
     booking_info_client = AzureAIClient(
-        project_client=project_client,
-        async_credential=credential,
-        agent_name="booking-info-aggregation-agent"
+        project_client=project_client, credential=credential, agent_name="booking-info-aggregation-agent"
     )
     booking_info_aggregation_agent = booking_info_client.create_agent(
         id="booking-info-aggregation-agent",
@@ -320,9 +309,9 @@ async def _create_workflow(project_client, credential):
             "You aggregate hotel and flight search results. Receive options from search agents and organize them. Provide: top 2-3 hotel options with prices and top 2-3 flight options with prices in a structured format."
         ),
         name="booking-info-aggregation-agent",
-        store=True
+        store=True,
     )
-    
+
     # Build workflow with logical booking flow:
     # 1. start_executor → travel_request_handler
     # 2. travel_request_handler → hotel_search, flight_search, activity_search (fan-out)
@@ -331,19 +320,22 @@ async def _create_workflow(project_client, credential):
     # 5. booking_info_aggregation → booking_confirmation
     # 6. booking_confirmation → booking_payment
     # 7. booking_info_aggregation, booking_payment, activity_search → final_coordinator (final aggregation, fan-in)
-    
-    workflow = (WorkflowBuilder(name='Travel Planning Workflow')
-            .set_start_executor(start_executor)
-            .add_edge(start_executor, travel_request_handler)
-            .add_fan_out_edges(travel_request_handler, [hotel_search_agent, flight_search_agent, activity_search_agent])
-            .add_edge(hotel_search_agent, booking_info_aggregation_agent)
-            .add_edge(flight_search_agent, booking_info_aggregation_agent)
-            .add_edge(booking_info_aggregation_agent, booking_confirmation_agent)
-            .add_edge(booking_confirmation_agent, booking_payment_agent)
-            .add_fan_in_edges([booking_info_aggregation_agent, booking_payment_agent, activity_search_agent], 
-                             final_coordinator)
-            .build())
-    
+
+    workflow = (
+        WorkflowBuilder(name="Travel Planning Workflow")
+        .set_start_executor(start_executor)
+        .add_edge(start_executor, travel_request_handler)
+        .add_fan_out_edges(travel_request_handler, [hotel_search_agent, flight_search_agent, activity_search_agent])
+        .add_edge(hotel_search_agent, booking_info_aggregation_agent)
+        .add_edge(flight_search_agent, booking_info_aggregation_agent)
+        .add_edge(booking_info_aggregation_agent, booking_confirmation_agent)
+        .add_edge(booking_confirmation_agent, booking_payment_agent)
+        .add_fan_in_edges(
+            [booking_info_aggregation_agent, booking_payment_agent, activity_search_agent], final_coordinator
+        )
+        .build()
+    )
+
     # Return workflow and agent map for thread ID extraction
     agent_map = {
         "travel_request_handler": travel_request_handler,
@@ -355,14 +347,14 @@ async def _create_workflow(project_client, credential):
         "booking-info-aggregation-agent": booking_info_aggregation_agent,
         "final-coordinator": final_coordinator.agent,
     }
-    
+
     return workflow, agent_map
 
 
 async def _process_workflow_events(events, conversation_ids, response_ids):
     """Process workflow events and track interactions."""
     workflow_output = None
-    
+
     async for event in events:
         if isinstance(event, WorkflowOutputEvent):
             workflow_output = event.data
@@ -370,12 +362,12 @@ async def _process_workflow_events(events, conversation_ids, response_ids):
             try:
                 print(f"\nWorkflow Output: {event.data}\n")
             except UnicodeEncodeError:
-                output_str = str(event.data).encode('ascii', 'replace').decode('ascii')
+                output_str = str(event.data).encode("ascii", "replace").decode("ascii")
                 print(f"\nWorkflow Output: {output_str}\n")
-            
+
         elif isinstance(event, AgentRunUpdateEvent):
             _track_agent_ids(event, event.executor_id, response_ids, conversation_ids)
-    
+
     return workflow_output
 
 
@@ -384,21 +376,21 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
     if isinstance(event.data, AgentRunResponseUpdate):
         # Check for conversation_id and response_id from raw_representation
         # V2 API stores conversation_id directly on raw_representation (ChatResponseUpdate)
-        if hasattr(event.data, 'raw_representation') and event.data.raw_representation:
+        if hasattr(event.data, "raw_representation") and event.data.raw_representation:
             raw = event.data.raw_representation
-            
+
             # Try conversation_id directly on raw representation
-            if hasattr(raw, 'conversation_id') and raw.conversation_id:
+            if hasattr(raw, "conversation_id") and raw.conversation_id:
                 # Only add if not already in the list
                 if raw.conversation_id not in conversation_ids[agent]:
                     conversation_ids[agent].append(raw.conversation_id)
-            
+
             # Extract response_id from the OpenAI event (available from first event)
-            if hasattr(raw, 'raw_representation') and raw.raw_representation:
+            if hasattr(raw, "raw_representation") and raw.raw_representation:
                 openai_event = raw.raw_representation
-                
+
                 # Check if event has response object with id
-                if hasattr(openai_event, 'response') and hasattr(openai_event.response, 'id'):
+                if hasattr(openai_event, "response") and hasattr(openai_event.response, "id"):
                     # Only add if not already in the list
                     if openai_event.response.id not in response_ids[agent]:
                         response_ids[agent].append(openai_event.response.id)
@@ -406,7 +398,7 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
 
 async def create_and_run_workflow():
     """Run the workflow evaluation and display results.
-    
+
     Returns:
         Dictionary containing agents data with conversation IDs, response IDs, and query information
     """
@@ -415,36 +407,32 @@ async def create_and_run_workflow():
         "Find a budget hotel in Tokyo for January 5-10, 2026 under $150/night near Shibuya station, book activities including a sushi making class",
         "Search for round-trip flights from Los Angeles to London departing March 20, 2026, returning March 27, 2026. Economy class, 2 passengers. Recommend tourist attractions and museums.",
     ]
-    
+
     query = example_queries[0]
     print(f"Query: {query}\n")
-    
+
     result = await run_workflow_with_response_tracking(query)
-    
+
     # Create output data structure
-    output_data = {
-        "agents": {},
-        "query": result["query"],
-        "output": result.get("output", "")
-    }
-    
+    output_data = {"agents": {}, "query": result["query"], "output": result.get("output", "")}
+
     # Create agent-specific mappings - now with lists of IDs
     all_agents = set(result["conversation_ids"].keys()) | set(result["response_ids"].keys())
     for agent_name in all_agents:
         output_data["agents"][agent_name] = {
             "conversation_ids": result["conversation_ids"].get(agent_name, []),
             "response_ids": result["response_ids"].get(agent_name, []),
-            "response_count": len(result["response_ids"].get(agent_name, []))
+            "response_count": len(result["response_ids"].get(agent_name, [])),
         }
-    
+
     print(f"\nTotal agents tracked: {len(output_data['agents'])}")
-    
+
     # Print summary of multiple responses
     print("\n=== Multi-Response Summary ===")
     for agent_name, agent_data in output_data["agents"].items():
         response_count = agent_data["response_count"]
         print(f"{agent_name}: {response_count} response(s)")
-    
+
     return output_data
 
 

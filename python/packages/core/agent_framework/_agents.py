@@ -1268,22 +1268,24 @@ class ChatAgent(BaseAgent):
             thread_messages.extend(await thread.message_store.list_messages() or [])
         context: Context | None = None
         if self.context_provider:
-            async with self.context_provider:
-                context = await self.context_provider.invoking(input_messages or [], **kwargs)
-                if context:
-                    if context.messages:
-                        thread_messages.extend(context.messages)
-                    if context.tools:
-                        if chat_options.tools is not None:
-                            chat_options.tools.extend(context.tools)
-                        else:
-                            chat_options.tools = list(context.tools)
-                    if context.instructions:
-                        chat_options.instructions = (
-                            context.instructions
-                            if not chat_options.instructions
-                            else f"{chat_options.instructions}\n{context.instructions}"
-                        )
+            # Note: We don't use 'async with' here because the context provider's lifecycle
+            # should be managed by the user (via async with) or persist across multiple invocations.
+            # Using async with here would close resources (like retrieval clients) after each query.
+            context = await self.context_provider.invoking(input_messages or [], **kwargs)
+            if context:
+                if context.messages:
+                    thread_messages.extend(context.messages)
+                if context.tools:
+                    if chat_options.tools is not None:
+                        chat_options.tools.extend(context.tools)
+                    else:
+                        chat_options.tools = list(context.tools)
+                if context.instructions:
+                    chat_options.instructions = (
+                        context.instructions
+                        if not chat_options.instructions
+                        else f"{chat_options.instructions}\n{context.instructions}"
+                    )
         thread_messages.extend(input_messages or [])
         if (
             thread.service_thread_id

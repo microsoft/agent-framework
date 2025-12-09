@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - This is intentional as we are testing deprecated methods
+
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
@@ -8,7 +10,6 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Assistants;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;

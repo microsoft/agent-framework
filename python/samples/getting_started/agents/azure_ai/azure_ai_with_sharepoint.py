@@ -21,7 +21,7 @@ Prerequisites:
 async def main() -> None:
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MySharePointAgent",
             instructions="""You are a helpful agent that can use SharePoint tools to assist users.
             Use the available SharePoint tools to answer questions and perform tasks.""",
