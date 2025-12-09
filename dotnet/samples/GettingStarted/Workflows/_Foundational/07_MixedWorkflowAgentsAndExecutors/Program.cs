@@ -287,10 +287,13 @@ internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine($"\n[{this.Id}] Final Response:");
-        Console.WriteLine($"{lastMessage.Text}");
+        // Safely print the assistant text - normalize null to empty string before printing and returning.
+        string assistantText = lastMessage.Text ?? string.Empty;
+        Console.WriteLine(assistantText);
         Console.WriteLine("\n[End of Workflow]");
         Console.ResetColor();
 
-        return ValueTask.FromResult(lastMessage.Text ?? string.Empty);
+        // Ensure we never return null
+        return ValueTask.FromResult(assistantText);
     }
 }
