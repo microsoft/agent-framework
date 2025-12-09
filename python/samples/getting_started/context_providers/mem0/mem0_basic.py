@@ -54,6 +54,9 @@ async def main() -> None:
         result = await agent.run(query)
         print(f"Agent: {result}\n")
 
+        print("Waiting for memories to be processed...")
+        await asyncio.sleep(12)
+
         print("\nRequest within a new thread:")
         # Create a new thread for the agent.
         # The new thread has no context of the previous conversation.

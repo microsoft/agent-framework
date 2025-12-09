@@ -55,6 +55,12 @@ class Mem0Provider(ContextProvider):
             user_id: The user ID for scoping memories or None.
             scope_to_per_operation_thread_id: Whether to scope memories to per-operation thread ID.
             context_prompt: The prompt to prepend to retrieved memories.
+
+        Note:
+            For advanced filtering (OR logic, date ranges, comparisons, etc.), pass a `filters`
+            parameter to the `invoking()` through `agent.run()` method.
+            The filters will be merged with these init params.
+            See mem0 docs: https://docs.mem0.ai/api-reference/memory/search-memories
         """
         should_close_client = False
         if mem0_client is None:
@@ -138,6 +144,10 @@ class Mem0Provider(ContextProvider):
 
         Keyword Args:
             **kwargs: not used at present.
+            Optional `filters` dictionary for this specific search.
+                Merged with init parameters (user_id, agent_id, etc.).
+                Supports mem0's full filter syntax including logical operators (AND, OR, NOT),
+                comparison operators (in, gte, lte, gt, lt, ne, icontains), and wildcards (*).
 
         Returns:
             Context: Context object containing instructions with memories.
@@ -150,11 +160,13 @@ class Mem0Provider(ContextProvider):
         if not input_text.strip():
             return Context(messages=None)
 
+        # Extract filters from kwargs if provided
+        invocation_filters = kwargs.get("filters")
+        filters = self._build_filters(invocation_filters)
+
         search_response: MemorySearchResponse_v1_1 | MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
-            user_id=self.user_id,
-            agent_id=self.agent_id,
-            run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
+            filters=filters,
         )
 
         # Depending on the API version, the response schema varies slightly
@@ -184,6 +196,37 @@ class Mem0Provider(ContextProvider):
             raise ServiceInitializationError(
                 "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
             )
+
+    def _build_filters(self, invocation_filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Build search filters from init parameters and optional per-invocation filters.
+
+        Args:
+            invocation_filters: Optional filters passed to invoking() for this specific search.
+
+        Returns:
+            Filter dictionary for mem0 search API. Merges init parameters with invocation filters.
+            Init parameters provide the base scope (user_id, agent_id, etc.).
+            Invocation filters can add or override for advanced queries.
+        """
+        # Build base filters from init parameters (flat dictionary = implicit AND)
+        filters: dict[str, Any] = {}
+
+        if self.user_id:
+            filters["user_id"] = self.user_id
+        if self.agent_id:
+            filters["agent_id"] = self.agent_id
+        if self.scope_to_per_operation_thread_id and self._per_operation_thread_id:
+            filters["run_id"] = self._per_operation_thread_id
+        elif self.thread_id:
+            filters["run_id"] = self.thread_id
+        if self.application_id:
+            filters["app_id"] = self.application_id
+
+        # Merge with per-invocation filters (invocation filters take precedence)
+        if invocation_filters:
+            filters.update(invocation_filters)
+
+        return filters
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
         """Validates that a new thread ID doesn't conflict with an existing one when scoped.

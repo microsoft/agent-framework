@@ -338,7 +338,7 @@ class TestMem0ProviderModelInvoking:
         mock_mem0_client.search.assert_called_once()
         call_args = mock_mem0_client.search.call_args
         assert call_args.kwargs["query"] == "What's the weather?"
-        assert call_args.kwargs["user_id"] == "user123"
+        assert call_args.kwargs["filters"] == {"user_id": "user123"}
 
         assert isinstance(context, Context)
         expected_instructions = (
@@ -373,8 +373,7 @@ class TestMem0ProviderModelInvoking:
         await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["agent_id"] == "agent123"
-        assert call_args.kwargs["user_id"] is None
+        assert call_args.kwargs["filters"] == {"agent_id": "agent123"}
 
     async def test_model_invoking_with_scope_to_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
         """Test invoking with scope_to_per_operation_thread_id enabled."""
@@ -392,7 +391,7 @@ class TestMem0ProviderModelInvoking:
         await provider.invoking(message)
 
         call_args = mock_mem0_client.search.call_args
-        assert call_args.kwargs["run_id"] == "operation_thread"
+        assert call_args.kwargs["filters"] == {"user_id": "user123", "run_id": "operation_thread"}
 
     async def test_model_invoking_no_memories_returns_none_instructions(self, mock_mem0_client: AsyncMock) -> None:
         """Test that no memories returns context with None instructions."""
@@ -510,3 +509,68 @@ class TestMem0ProviderValidation:
 
         # Should not raise exception even with different thread ID
         provider._validate_per_operation_thread_id("different_thread")
+
+
+class TestMem0ProviderBuildFilters:
+    """Test the _build_filters method."""
+
+    def test_build_filters_with_invocation_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that invocation filters are merged with init parameters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id="agent123",
+            mem0_client=mock_mem0_client,
+        )
+
+        invocation_filters = {"created_at": {"gte": "2024-12-01"}}
+        filters = provider._build_filters(invocation_filters)
+        assert filters == {
+            "user_id": "user123",
+            "agent_id": "agent123",
+            "created_at": {"gte": "2024-12-01"},
+        }
+
+    def test_build_filters_invocation_overrides_init(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that invocation filters can override init parameters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            mem0_client=mock_mem0_client,
+        )
+
+        invocation_filters = {"user_id": "alice"}  # Override
+        filters = provider._build_filters(invocation_filters)
+        assert filters == {"user_id": "alice"}
+
+    def test_build_filters_with_all_simple_parameters(self, mock_mem0_client: AsyncMock) -> None:
+        """Test building filters with all simple parameters combined."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id="agent456",
+            thread_id="thread999",
+            application_id="app789",
+            mem0_client=mock_mem0_client,
+        )
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "agent_id": "agent456",
+            "run_id": "thread999",
+            "app_id": "app789",
+        }
+
+    def test_build_filters_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that None values are excluded from filters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id=None,
+            thread_id=None,
+            application_id=None,
+            mem0_client=mock_mem0_client,
+        )
+
+        filters = provider._build_filters()
+        assert filters == {"user_id": "user123"}
+        assert "agent_id" not in filters
+        assert "run_id" not in filters
+        assert "app_id" not in filters
