@@ -127,6 +127,15 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
                     this.ScheduleDeletionCheck(sessionId, logger, timeToLive.Value);
                 }
             }
+            else
+            {
+                // TTL is disabled. Clear the expiration time if it was previously set.
+                if (this.State.Data.ExpirationTimeUtc.HasValue)
+                {
+                    logger.LogTTLExpirationTimeCleared(sessionId);
+                    this.State.Data.ExpirationTimeUtc = null;
+                }
+            }
 
             return response;
         }

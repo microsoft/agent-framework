@@ -92,4 +92,12 @@ internal static partial class Logs
         this ILogger logger,
         AgentSessionId sessionId,
         DateTime scheduledTime);
+
+    [LoggerMessage(
+        EventId = 11,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL expiration time cleared (TTL disabled)")]
+    public static partial void LogTTLExpirationTimeCleared(
+        this ILogger logger,
+        AgentSessionId sessionId);
 }
