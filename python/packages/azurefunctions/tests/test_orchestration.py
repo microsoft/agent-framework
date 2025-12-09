@@ -370,13 +370,15 @@ class TestDurableAIAgent:
 
         # Verify that a DEBUG log was created about the session_id
         debug_logs = [record for record in caplog.records if record.levelname == "DEBUG"]
-        session_id_logs = [log for log in debug_logs if "No thread provided, created unique session_id" in log.message]
+        session_id_logs = [
+            log for log in debug_logs if "No thread provided, created unique session_id" in log.getMessage()
+        ]
         assert len(session_id_logs) == 1, "Expected exactly one DEBUG log about session_id creation"
 
         # Verify that NO WARNING log was created
         warning_logs = [record for record in caplog.records if record.levelname == "WARNING"]
         session_warning_logs = [
-            log for log in warning_logs if "No thread provided, created unique session_id" in log.message
+            log for log in warning_logs if "No thread provided, created unique session_id" in log.getMessage()
         ]
         assert len(session_warning_logs) == 0, "Should not log a WARNING when thread is not provided"
 
