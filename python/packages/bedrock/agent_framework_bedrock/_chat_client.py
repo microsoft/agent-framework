@@ -15,6 +15,7 @@ from agent_framework import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    Contents,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
@@ -24,6 +25,7 @@ from agent_framework import (
     UsageContent,
     UsageDetails,
     get_logger,
+    prepare_function_call_results,
     use_chat_middleware,
     use_function_invocation,
 )
@@ -75,7 +77,7 @@ class BedrockSettings(AFBaseSettings):
 class BedrockChatClient(BaseChatClient):
     """Async chat client for Amazon Bedrock's Converse API."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,
@@ -284,16 +286,22 @@ class BedrockChatClient(BaseChatClient):
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
-            if block:
-                blocks.append(block)
-        if not blocks:
-            text_value = self._gather_text_from_message(message)
-            if text_value:
-                blocks.append({"text": text_value})
-        return blocks
+            if block is None:
+                logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
+                continue
+            blocks.append(block)
+        if blocks:
+            return blocks
 
-    def _convert_content_to_bedrock_block(self, content: Any) -> dict[str, Any] | None:
-        if isinstance(content, TextContent) and getattr(content, "text", None):
+        if not message.contents:
+            text_value = message.text
+            if text_value:
+                return [{"text": text_value}]
+
+        return []
+
+    def _convert_content_to_bedrock_block(self, content: Contents) -> dict[str, Any] | None:
+        if isinstance(content, TextContent):
             return {"text": content.text}
         if isinstance(content, FunctionCallContent):
             arguments = content.parse_arguments() or {}
@@ -326,15 +334,21 @@ class BedrockChatClient(BaseChatClient):
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
-        if isinstance(result, list):
+        prepared_result = prepare_function_call_results(result)
+        try:
+            parsed_result = json.loads(prepared_result)
+        except json.JSONDecodeError:
+            return [{"text": prepared_result}]
+
+        return self._convert_prepared_tool_result_to_blocks(parsed_result)
+
+    def _convert_prepared_tool_result_to_blocks(self, value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, list):
             blocks: list[dict[str, Any]] = []
-            for item in result:
-                if isinstance(item, list):
-                    blocks.extend(self._convert_tool_result_to_blocks(item))
-                else:
-                    blocks.append(self._normalize_tool_result_value(item))
+            for item in value:
+                blocks.extend(self._convert_prepared_tool_result_to_blocks(item))
             return blocks or [{"text": ""}]
-        return [self._normalize_tool_result_value(result)]
+        return [self._normalize_tool_result_value(value)]
 
     def _normalize_tool_result_value(self, value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
