@@ -126,7 +126,7 @@ class SequentialBuilder:
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
-        self._participants_factories: list[Callable[[], AgentProtocol | Executor]] = []
+        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
         self._checkpoint_storage: CheckpointStorage | None = None
 
     def register_participants(
@@ -142,7 +142,7 @@ class SequentialBuilder:
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
-        self._participants_factories = participant_factories
+        self._participant_factories = participant_factories
         return self
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
@@ -151,7 +151,7 @@ class SequentialBuilder:
         Accepts AgentProtocol instances (auto-wrapped as AgentExecutor) or Executor instances.
         Raises if empty or duplicates are provided for clarity.
         """
-        if self._participants_factories:
+        if self._participant_factories:
             raise ValueError(
                 "Cannot mix .participants([...]) and .register_participant() in the same builder instance."
             )
@@ -193,13 +193,13 @@ class SequentialBuilder:
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
-        if not self._participants and not self._participants_factories:
+        if not self._participants and not self._participant_factories:
             raise ValueError(
                 "No participants or participant factories provided to the builder. "
                 "Use .participants([...]) or .register_participants([...])."
             )
 
-        if self._participants and self._participants_factories:
+        if self._participants and self._participant_factories:
             # Defensive strategy: this should never happen due to checks in respective methods
             raise ValueError(
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
@@ -215,13 +215,15 @@ class SequentialBuilder:
         # Start of the chain is the input normalizer
         prior: Executor | AgentProtocol = input_conv
 
-        if self._participants_factories:
-            # Factory branch
-            for factory in self._participants_factories:
+        participants: list[Executor | AgentProtocol] = []
+        if self._participant_factories:
+            for factory in self._participant_factories:
                 p = factory()
-                self._participants.append(p)
+                participants.append(p)
+        else:
+            participants = self._participants
 
-        for p in self._participants:
+        for p in participants:
             # Agent-like branch: either explicitly an AgentExecutor or any non-AgentExecutor
             if not (isinstance(p, Executor) and not isinstance(p, AgentExecutor)):
                 # input conversation -> (agent) -> response -> conversation

@@ -395,3 +395,44 @@ async def test_sequential_register_participants_factories_called_on_build() -> N
     msgs: list[ChatMessage] = output
     # Should have user message + 2 agent replies
     assert len(msgs) == 3
+
+
+async def test_sequential_builder_reusable_after_build_with_participants() -> None:
+    """Test that the builder can be reused to build multiple identical workflows with participants()."""
+    a1 = _EchoAgent(id="agent1", name="A1")
+    a2 = _EchoAgent(id="agent2", name="A2")
+
+    builder = SequentialBuilder().participants([a1, a2])
+
+    # Build first workflow
+    builder.build()
+
+    assert builder._participants[0] is a1  # type: ignore
+    assert builder._participants[1] is a2  # type: ignore
+    assert builder._participant_factories == []  # type: ignore
+
+
+async def test_sequential_builder_reusable_after_build_with_factories() -> None:
+    """Test that the builder can be reused to build multiple workflows with register_participants()."""
+    call_count = 0
+
+    def create_agent1() -> _EchoAgent:
+        nonlocal call_count
+        call_count += 1
+        return _EchoAgent(id="agent1", name="A1")
+
+    def create_agent2() -> _EchoAgent:
+        nonlocal call_count
+        call_count += 1
+        return _EchoAgent(id="agent2", name="A2")
+
+    builder = SequentialBuilder().register_participants([create_agent1, create_agent2])
+
+    # Build first workflow - factories should be called
+    builder.build()
+
+    assert call_count == 2
+    assert builder._participants == []  # type: ignore
+    assert len(builder._participant_factories) == 2  # type: ignore
+    assert builder._participant_factories[0] is create_agent1  # type: ignore
+    assert builder._participant_factories[1] is create_agent2  # type: ignore
