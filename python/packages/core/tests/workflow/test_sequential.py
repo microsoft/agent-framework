@@ -15,6 +15,7 @@ from agent_framework import (
     Role,
     SequentialBuilder,
     TextContent,
+    TypeCompatibilityError,
     WorkflowContext,
     WorkflowOutputEvent,
     WorkflowRunState,
@@ -58,6 +59,14 @@ class _SummarizerExec(Executor):
         await ctx.send_message(list(conversation) + [summary])
 
 
+class _InvalidExecutor(Executor):
+    """Invalid executor that does not have a handler that accepts a list of chat messages"""
+
+    @handler
+    async def summarize(self, conversation: list[str], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        pass
+
+
 def test_sequential_builder_rejects_empty_participants() -> None:
     with pytest.raises(ValueError):
         SequentialBuilder().participants([])
@@ -79,6 +88,12 @@ def test_sequential_builder_rejects_mixing_participants_and_factories() -> None:
     # Try .register_participants() then .participants()
     with pytest.raises(ValueError, match="Cannot mix"):
         SequentialBuilder().register_participants([lambda: _EchoAgent(id="agent1", name="A1")]).participants([a1])
+
+
+def test_sequential_builder_validation_rejects_invalid_executor() -> None:
+    """Test that adding an invalid executor to the builder raises an error."""
+    with pytest.raises(TypeCompatibilityError):
+        SequentialBuilder().participants([_EchoAgent(id="agent1", name="A1"), _InvalidExecutor(id="invalid")]).build()
 
 
 async def test_sequential_agents_append_to_context() -> None:

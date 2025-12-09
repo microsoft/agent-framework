@@ -72,9 +72,7 @@ class _InputToConversation(Executor):
 
     @handler
     async def from_messages(self, messages: list[str | ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
-        # Make a copy to avoid mutation downstream
-        normalized = normalize_messages_input(messages)
-        await ctx.send_message(list(normalized))
+        await ctx.send_message(normalize_messages_input(messages))
 
 
 class _ResponseToConversation(Executor):
@@ -100,7 +98,9 @@ class SequentialBuilder:
     r"""High-level builder for sequential agent/executor workflows with shared context.
 
     - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor instances
-    - `register_participant([...])` accepts a list of factories for AgentProtocol (recommended) or Executor factories
+    - `register_participant([...])` accepts a list of factories for AgentProtocol (recommended)
+       or Executor factories
+    - Executors must define a handler that consumes list[ChatMessage] and sends out a list[ChatMessage]
     - The workflow wires participants in order, passing a list[ChatMessage] down the chain
     - Agents append their assistant messages to the conversation
     - Custom executors can transform/summarize and return a list[ChatMessage]
@@ -224,21 +224,19 @@ class SequentialBuilder:
             participants = self._participants
 
         for p in participants:
-            # Agent-like branch: either explicitly an AgentExecutor or any non-AgentExecutor
-            if not (isinstance(p, Executor) and not isinstance(p, AgentExecutor)):
-                # input conversation -> (agent) -> response -> conversation
+            if isinstance(p, (AgentProtocol, AgentExecutor)):
                 builder.add_edge(prior, p)
+                label = p.id if isinstance(p, AgentExecutor) else p.display_name
                 # Give the adapter a deterministic, self-describing id
-                label: str
-                label = p.id if isinstance(p, Executor) else getattr(p, "name", None) or p.__class__.__name__
                 resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
                 builder.add_edge(p, resp_to_conv)
                 prior = resp_to_conv
             elif isinstance(p, Executor):
                 # Custom executor operates on list[ChatMessage]
+                # If the executor doesn't handle list[ChatMessage] correctly, validation will fail
                 builder.add_edge(prior, p)
                 prior = p
-            else:  # pragma: no cover - defensive
+            else:
                 raise TypeError(f"Unsupported participant type: {type(p).__name__}")
 
         # Terminate with the final conversation
