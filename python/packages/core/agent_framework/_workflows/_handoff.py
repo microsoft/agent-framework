@@ -322,6 +322,28 @@ def _target_from_tool_name(name: str | None) -> str | None:
     return None
 
 
+def _has_tool_result_for_call(conversation: list[ChatMessage], call_id: str) -> bool:
+    """Check if a tool result message exists for the given call_id.
+
+    Args:
+        conversation: The conversation history to check
+        call_id: The function call ID to look for
+
+    Returns:
+        True if a tool result with matching call_id exists, False otherwise
+    """
+    for msg in conversation:
+        if msg.role != Role.TOOL:
+            continue
+
+        for content in msg.contents:
+            if isinstance(content, FunctionResultContent):
+                if content.call_id == call_id:
+                    return True
+
+    return False
+
+
 class _HandoffCoordinator(BaseGroupChatOrchestrator):
     """Coordinates agent-to-agent transfers and user turn requests."""
 
@@ -563,6 +585,14 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """Append a synthetic tool result acknowledging the resolved specialist id."""
         call_id = getattr(function_call, "call_id", None)
         if not call_id:
+            return
+
+        # Skip if tool result already exists to avoid duplicates from _AutoHandoffMiddleware
+        if _has_tool_result_for_call(conversation, call_id):
+            logger.debug(
+                f"Tool result for call_id '{call_id}' already exists, "
+                f"skipping duplicate for handoff to '{resolved_id}'"
+            )
             return
 
         result_payload: Any = {"handoff_to": resolved_id}
