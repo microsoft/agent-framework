@@ -143,8 +143,8 @@ class Mem0Provider(ContextProvider):
             messages: List of new messages in the thread.
 
         Keyword Args:
-            **kwargs: not used at present.
-            Optional `filters` dictionary for this specific search.
+            **kwargs: Optional keyword arguments.
+            filters (dict, optional): Optional dictionary for this specific search.
                 Merged with init parameters (user_id, agent_id, etc.).
                 Supports mem0's full filter syntax including logical operators (AND, OR, NOT),
                 comparison operators (in, gte, lte, gt, lt, ne, icontains), and wildcards (*).

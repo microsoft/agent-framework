@@ -574,3 +574,18 @@ class TestMem0ProviderBuildFilters:
         assert "agent_id" not in filters
         assert "run_id" not in filters
         assert "app_id" not in filters
+
+    async def test_model_invoking_with_filters_kwarg(self, mock_mem0_client: AsyncMock) -> None:
+        """Test invoking with filters passed via kwargs."""
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+        message = ChatMessage(role=Role.USER, text="Hello")
+
+        mock_mem0_client.search.return_value = []
+
+        await provider.invoking(message, filters={"created_at": {"gte": "2024-12-01"}})
+
+        call_args = mock_mem0_client.search.call_args
+        assert call_args.kwargs["filters"] == {
+            "user_id": "user123",
+            "created_at": {"gte": "2024-12-01"},
+        }
