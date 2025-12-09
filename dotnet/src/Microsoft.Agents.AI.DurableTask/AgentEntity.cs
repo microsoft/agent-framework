@@ -114,9 +114,9 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
             if (timeToLive.HasValue)
             {
                 DateTime newExpirationTime = DateTime.UtcNow.Add(timeToLive.Value);
-                bool isFirstInteraction = this.State.Data.ExpirationTime is null;
+                bool isFirstInteraction = this.State.Data.ExpirationTimeUtc is null;
 
-                this.State.Data.ExpirationTime = newExpirationTime;
+                this.State.Data.ExpirationTimeUtc = newExpirationTime;
                 logger.LogTTLExpirationTimeUpdated(sessionId, newExpirationTime);
 
                 // Only schedule deletion check on the first interaction when entity is created.
@@ -150,7 +150,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         ILogger logger = this.GetLogger(agent.Name!, sessionId.Key);
 
         DateTime currentTime = DateTime.UtcNow;
-        DateTime? expirationTime = this.State.Data.ExpirationTime;
+        DateTime? expirationTime = this.State.Data.ExpirationTimeUtc;
 
         logger.LogTTLDeletionCheck(sessionId, expirationTime, currentTime);
 
@@ -177,7 +177,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
     private void ScheduleDeletionCheck(AgentSessionId sessionId, ILogger logger, TimeSpan timeToLive)
     {
         DateTime currentTime = DateTime.UtcNow;
-        DateTime expirationTime = this.State.Data.ExpirationTime ?? currentTime.Add(timeToLive);
+        DateTime expirationTime = this.State.Data.ExpirationTimeUtc ?? currentTime.Add(timeToLive);
         TimeSpan minimumDelay = this._options.MinimumTimeToLiveSignalDelay;
 
         // To avoid excessive scheduling, we schedule the deletion check for no less than the minimum delay.

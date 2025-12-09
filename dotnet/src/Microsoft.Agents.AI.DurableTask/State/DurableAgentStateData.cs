@@ -18,11 +18,11 @@ internal sealed class DurableAgentStateData
     public IList<DurableAgentStateEntry> ConversationHistory { get; init; } = [];
 
     /// <summary>
-    /// Gets or sets the expiration time for this agent entity.
+    /// Gets or sets the expiration time (UTC) for this agent entity.
     /// If the entity is idle beyond this time, it will be automatically deleted.
     /// </summary>
-    [JsonPropertyName("expirationTime")]
-    public DateTime? ExpirationTime { get; set; }
+    [JsonPropertyName("expirationTimeUtc")]
+    public DateTime? ExpirationTimeUtc { get; set; }
 
     /// <summary>
     /// Gets any additional data found during deserialization that does not map to known properties.

@@ -71,8 +71,8 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
         Assert.True(entity.IncludesState);
 
         DurableAgentState state = entity.State.ReadAs<DurableAgentState>();
-        Assert.NotNull(state.Data.ExpirationTime);
-        DateTime expirationTime = state.Data.ExpirationTime.Value;
+        Assert.NotNull(state.Data.ExpirationTimeUtc);
+        DateTime expirationTime = state.Data.ExpirationTimeUtc.Value;
         Assert.True(expirationTime > DateTime.UtcNow);
 
         // Calculate how long to wait: expiration time + buffer for signal processing
@@ -135,7 +135,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
         Assert.True(entity.IncludesState);
 
         DurableAgentState state = entity.State.ReadAs<DurableAgentState>();
-        DateTime firstExpirationTime = state.Data.ExpirationTime!.Value;
+        DateTime firstExpirationTime = state.Data.ExpirationTimeUtc!.Value;
 
         // Wait partway through TTL
         await Task.Delay(TimeSpan.FromSeconds(3), this.TestTimeoutToken);
@@ -152,7 +152,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
         Assert.True(entity.IncludesState);
 
         state = entity.State.ReadAs<DurableAgentState>();
-        DateTime secondExpirationTime = state.Data.ExpirationTime!.Value;
+        DateTime secondExpirationTime = state.Data.ExpirationTimeUtc!.Value;
         Assert.True(secondExpirationTime > firstExpirationTime);
 
         // Calculate when the original expiration time would have been
@@ -172,9 +172,9 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
 
         state = entity.State.ReadAs<DurableAgentState>();
         Assert.NotNull(state);
-        Assert.NotNull(state.Data.ExpirationTime);
+        Assert.NotNull(state.Data.ExpirationTimeUtc);
         Assert.True(
-            state.Data.ExpirationTime > DateTime.UtcNow,
+            state.Data.ExpirationTimeUtc > DateTime.UtcNow,
             "Entity should still be valid because TTL was reset");
 
         // Wait for the entity to be deleted
