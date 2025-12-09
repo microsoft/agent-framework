@@ -6,7 +6,8 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Chat;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using OpenAIChatClient = OpenAI.Chat.ChatClient;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
