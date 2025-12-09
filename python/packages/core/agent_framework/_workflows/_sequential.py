@@ -131,7 +131,7 @@ class SequentialBuilder:
 
     def register_participants(
         self,
-        participant_factories: list[Callable[[], AgentProtocol | Executor]],
+        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
     ) -> "SequentialBuilder":
         """Register participant factories for this sequential workflow."""
         if self._participants:
@@ -142,7 +142,7 @@ class SequentialBuilder:
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
-        self._participant_factories = participant_factories
+        self._participant_factories = list(participant_factories)
         return self
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
