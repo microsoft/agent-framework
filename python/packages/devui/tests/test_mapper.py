@@ -596,6 +596,31 @@ async def test_workflow_failed_event(mapper: MessageMapper, test_request: AgentF
     response = failed_events[0].response
     assert response.status == "failed"
     assert response.error is not None
+    # Verify error message is correctly extracted from details.message (not "Unknown error")
+    assert "Workflow failed due to test error" in response.error.message
+    assert "Unknown error" not in response.error.message
+
+
+async def test_workflow_failed_event_with_extra(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Test WorkflowFailedEvent includes extra context when available."""
+    from agent_framework._workflows._events import WorkflowErrorDetails, WorkflowFailedEvent
+
+    details = WorkflowErrorDetails(
+        error_type="ValidationError",
+        message="Input validation failed",
+        executor_id="validation_executor",
+        extra={"field": "email", "reason": "invalid format"},
+    )
+    event = WorkflowFailedEvent(details=details)
+    events = await mapper.convert_event(event, test_request)
+
+    assert len(events) == 1
+    assert events[0].type == "response.failed"
+    response = events[0].response
+    # Verify both the message and extra context are included
+    assert "Input validation failed" in response.error.message
+    assert "extra:" in response.error.message
+    assert "email" in response.error.message
 
 
 async def test_workflow_failed_event_with_traceback(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
