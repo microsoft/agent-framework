@@ -642,12 +642,26 @@ class AgentFrameworkExecutor:
                                             media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
+                                    # Include filename in additional_properties for OpenAI/Azure file handling
+                                    additional_props = {"filename": filename} if filename else None
                                     if file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
-                                        contents.append(DataContent(uri=data_uri, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=data_uri,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
                                     elif file_url:
-                                        contents.append(DataContent(uri=file_url, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=file_url,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)

@@ -13,7 +13,7 @@ using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
-using OpenAI;
+using OpenAI.Chat;
 
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")

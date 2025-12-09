@@ -27,7 +27,7 @@ def get_weather(
 async def main() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    async with AzureAIAgentClient(async_credential=AzureCliCredential()) as client:
+    async with AzureAIAgentClient(credential=AzureCliCredential()) as client:
         message = "What's the weather in Amsterdam and in Paris?"
         stream = False
         print(f"User: {message}")
