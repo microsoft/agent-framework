@@ -93,7 +93,7 @@ trigger:
       conversationId: =Local.StatusConversationId
       agent:
         name: PlannerAgent
-      inputs:
+      input:
         arguments:
           team: =Local.TeamDescription
       output:

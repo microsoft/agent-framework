@@ -36,10 +36,13 @@ async def run_agent_framework() -> None:
     from agent_framework.azure import AzureAIAgentClient
     from azure.identity.aio import AzureCliCredential
 
-    async with AzureCliCredential() as credential, AzureAIAgentClient(async_credential=credential).create_agent(
-        name="Planner",
-        instructions="Track follow-up questions within the same thread.",
-    ) as agent:
+    async with (
+        AzureCliCredential() as credential,
+        AzureAIAgentClient(credential=credential).create_agent(
+            name="Planner",
+            instructions="Track follow-up questions within the same thread.",
+        ) as agent,
+    ):
         thread = agent.get_new_thread()
         # AF threads are explicit and can be serialized for external storage.
         first = await agent.run("Outline the onboarding checklist.", thread=thread)
