@@ -214,9 +214,13 @@ public class AIAgentTests
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
+        // Arrange
         var agent = new MockAgent();
 
+        // Act
         string id = agent.Id;
+
+        // Assert
         Assert.NotNull(id);
         Assert.Equal(id, agent.Id);
     }
@@ -224,9 +228,13 @@ public class AIAgentTests
     [Fact]
     public void ValidateAgentIDCanBeProvidedByDerivedAgentClass()
     {
+        // Arrange
         var agent = new MockAgent(id: "test-agent-id");
 
+        // Act
         string id = agent.Id;
+
+        // Assert
         Assert.NotNull(id);
         Assert.Equal("test-agent-id", id);
     }
