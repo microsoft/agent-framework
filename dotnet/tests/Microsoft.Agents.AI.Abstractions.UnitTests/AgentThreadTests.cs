@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
-using Microsoft.Extensions.AI;
 
 #pragma warning disable CA1861 // Avoid constant arrays as arguments
 
@@ -19,15 +17,6 @@ public class AgentThreadTests
         var thread = new TestAgentThread();
         var result = thread.Serialize();
         Assert.Equal(default, result);
-    }
-
-    [Fact]
-    public void MessagesReceivedAsync_ReturnsCompletedTask()
-    {
-        var thread = new TestAgentThread();
-        var messages = new List<ChatMessage> { new(ChatRole.User, "hello") };
-        var result = thread.MessagesReceivedAsync(messages);
-        Assert.True(result.IsCompleted);
     }
 
     #region GetService Method Tests

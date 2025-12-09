@@ -18,7 +18,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
     {
-        return JsonSerializer.Deserialize<EchoAgentThread>(serializedThread, jsonSerializerOptions) ?? this.GetNewThread();
+        return serializedThread.Deserialize<EchoAgentThread>(jsonSerializerOptions) ?? this.GetNewThread();
     }
 
     public override AgentThread GetNewThread()
@@ -91,7 +91,5 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         }
     }
 
-    private sealed class EchoAgentThread : InMemoryAgentThread
-    {
-    }
+    private sealed class EchoAgentThread : InMemoryAgentThread;
 }

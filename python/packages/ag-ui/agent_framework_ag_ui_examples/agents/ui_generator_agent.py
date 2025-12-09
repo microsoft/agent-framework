@@ -4,10 +4,8 @@
 
 from typing import Any
 
-from agent_framework import AIFunction, ChatAgent
-from agent_framework._clients import ChatClientProtocol
-
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework import AIFunction, ChatAgent, ChatClientProtocol
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
 generate_haiku = AIFunction[Any, str](

@@ -39,8 +39,9 @@ using IHost app = FunctionsApplication
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableAgents(options =>
     {
-        options.AddAIAgent(spamDetectionAgent);
-        options.AddAIAgent(emailAssistantAgent);
+        options
+            .AddAIAgent(spamDetectionAgent)
+            .AddAIAgent(emailAssistantAgent);
     })
     .Build();
 

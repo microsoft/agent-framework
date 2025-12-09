@@ -6,14 +6,12 @@
     <AnalysisMode>AllEnabledByDefault</AnalysisMode>
     <AnalysisLevel>latest</AnalysisLevel>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <LangVersion>13</LangVersion>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
-    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <NoWarn>$(NoWarn);NU5128;CS8002</NoWarn>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <ProjectsCoreTargetFrameworks>net9.0;net8.0</ProjectsCoreTargetFrameworks>
-    <ProjectsDebugCoreTargetFrameworks>net9.0</ProjectsDebugCoreTargetFrameworks>
-    <ProjectsTargetFrameworks>net9.0;net8.0;netstandard2.0;net472</ProjectsTargetFrameworks>
-    <ProjectsDebugTargetFrameworks>net9.0;net472</ProjectsDebugTargetFrameworks>
+    <TargetFrameworksCore>net10.0;net9.0;net8.0</TargetFrameworksCore>
+    <TargetFrameworks>$(TargetFrameworksCore);netstandard2.0;net472</TargetFrameworks>
     <IsAotCompatible Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net7.0'))">true</IsAotCompatible>
     <Configurations>Debug;Release;Publish</Configurations>
   </PropertyGroup>

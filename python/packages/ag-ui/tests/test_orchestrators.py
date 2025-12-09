@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 """Tests for AG-UI orchestrators."""
 
 from collections.abc import AsyncGenerator
@@ -34,6 +36,7 @@ class DummyAgent:
         *,
         thread: Any,
         tools: list[Any] | None = None,
+        **kwargs: Any,
     ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
         self.seen_tools = tools
         yield AgentRunResponseUpdate(contents=[TextContent(text="ok")], role="assistant")

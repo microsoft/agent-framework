@@ -2,8 +2,6 @@
 
 """Agent Framework entity discovery implementation."""
 
-from __future__ import annotations
-
 import ast
 import importlib
 import importlib.util
@@ -184,13 +182,28 @@ class EntityDiscovery:
                 f"{entity_id}.workflow",
             ]
 
+            # Track import errors to provide meaningful feedback
+            import_errors: list[tuple[str, Exception]] = []
+
             for pattern in import_patterns:
-                module = self._load_module_from_pattern(pattern)
+                module, error = self._load_module_from_pattern(pattern)
+                if error:
+                    import_errors.append((pattern, error))
                 if module:
                     # Find entity in module - pass entity_id so registration uses correct ID
                     entity_obj = await self._find_entity_in_module(module, entity_id, str(dir_path))
                     if entity_obj:
                         return entity_obj
+
+            # If we have import errors, raise the most informative one
+            if import_errors:
+                # Prefer errors from the main module pattern (entity_id) or agent submodule
+                for pattern, error in import_errors:
+                    if pattern == entity_id or pattern.endswith(".agent"):
+                        raise ValueError(f"Failed to load entity '{entity_id}': {error}") from error
+                # Fall back to first error
+                pattern, error = import_errors[0]
+                raise ValueError(f"Failed to load entity '{entity_id}': {error}") from error
 
             raise ValueError(f"No valid entity found in {dir_path}")
         # File-based entity
@@ -231,6 +244,15 @@ class EntityDiscovery:
         Args:
             entity_id: Entity identifier to invalidate
         """
+        # Check if entity is in-memory - these cannot be invalidated
+        entity_info = self._entities.get(entity_id)
+        if entity_info and entity_info.source == "in_memory":
+            logger.warning(
+                f"Attempted to invalidate in-memory entity {entity_id} - ignoring "
+                f"(in-memory entities cannot be reloaded)"
+            )
+            return
+
         # Remove from loaded objects cache
         if entity_id in self._loaded_objects:
             del self._loaded_objects[entity_id]
@@ -368,6 +390,7 @@ class EntityDiscovery:
             description=description,
             type=entity_type,
             framework="agent_framework",
+            source=source,  # IMPORTANT: Pass the source parameter
             tools=[str(tool) for tool in (tools_list or [])],
             instructions=instructions,
             model_id=model,
@@ -624,31 +647,32 @@ class EntityDiscovery:
             return True
         return False
 
-    def _load_module_from_pattern(self, pattern: str) -> Any | None:
+    def _load_module_from_pattern(self, pattern: str) -> tuple[Any | None, Exception | None]:
         """Load module using import pattern.
 
         Args:
             pattern: Import pattern to try
 
         Returns:
-            Loaded module or None if failed
+            Tuple of (loaded module or None, error or None)
         """
         try:
             # Check if module exists first
             spec = importlib.util.find_spec(pattern)
             if spec is None:
-                return None
+                return None, None
 
             module = importlib.import_module(pattern)
             logger.debug(f"Successfully imported {pattern}")
-            return module
+            return module, None
 
         except ModuleNotFoundError:
             logger.debug(f"Import pattern {pattern} not found")
-            return None
+            return None, None
         except Exception as e:
+            # Capture the actual error for better error messages
             logger.warning(f"Error importing {pattern}: {e}")
-            return None
+            return None, e
 
     def _load_module_from_file(self, file_path: Path, module_name: str) -> Any | None:
         """Load module directly from file path.

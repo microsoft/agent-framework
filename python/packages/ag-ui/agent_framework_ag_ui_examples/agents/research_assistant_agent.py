@@ -4,10 +4,8 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, ai_function
-from agent_framework._clients import ChatClientProtocol
-
-from agent_framework_ag_ui import AgentFrameworkAgent
+from agent_framework import ChatAgent, ChatClientProtocol, ai_function
+from agent_framework.ag_ui import AgentFrameworkAgent
 
 
 @ai_function

@@ -4,7 +4,7 @@ description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251114"
+version = "1.0.0b251204"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -49,6 +49,7 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
+pythonpath = ["tests"]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

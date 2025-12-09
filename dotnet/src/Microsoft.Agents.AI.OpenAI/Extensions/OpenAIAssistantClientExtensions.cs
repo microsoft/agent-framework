@@ -28,19 +28,22 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="assistantClientResult">The client result containing the assistant.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         ClientResult<Assistant> assistantClientResult,
         ChatOptions? chatOptions = null,
-        Func<IChatClient, IChatClient>? clientFactory = null)
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null)
     {
         if (assistantClientResult is null)
         {
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return assistantClient.GetAIAgent(assistantClientResult.Value, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistantClientResult.Value, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -50,12 +53,15 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="assistantMetadata">The assistant metadata.</param>
     /// <param name="chatOptions">Optional chat options.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         Assistant assistantMetadata,
         ChatOptions? chatOptions = null,
-        Func<IChatClient, IChatClient>? clientFactory = null)
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null)
     {
         if (assistantMetadata is null)
         {
@@ -73,14 +79,19 @@ public static class OpenAIAssistantClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        if (!string.IsNullOrWhiteSpace(assistantMetadata.Instructions) && chatOptions?.Instructions is null)
+        {
+            chatOptions ??= new ChatOptions();
+            chatOptions.Instructions = assistantMetadata.Instructions;
+        }
+
         return new ChatClientAgent(chatClient, options: new()
         {
             Id = assistantMetadata.Id,
             Name = assistantMetadata.Name,
             Description = assistantMetadata.Description,
-            Instructions = assistantMetadata.Instructions,
             ChatOptions = chatOptions
-        });
+        }, services: services);
     }
 
     /// <summary>
@@ -90,13 +101,16 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="agentId">The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         string agentId,
         ChatOptions? chatOptions = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         if (assistantClient is null)
@@ -110,7 +124,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
-        return assistantClient.GetAIAgent(assistant, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistant, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -120,13 +134,16 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="chatOptions">Options that should apply to all runs of the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AssistantClient assistantClient,
         string agentId,
         ChatOptions? chatOptions = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         if (assistantClient is null)
@@ -140,7 +157,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistantResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return assistantClient.GetAIAgent(assistantResponse, chatOptions, clientFactory);
+        return assistantClient.GetAIAgent(assistantResponse, chatOptions, clientFactory, services);
     }
 
     /// <summary>
@@ -150,20 +167,23 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="assistantClientResult">The client result containing the assistant.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClientResult"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         ClientResult<Assistant> assistantClientResult,
         ChatClientAgentOptions options,
-        Func<IChatClient, IChatClient>? clientFactory = null)
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null)
     {
         if (assistantClientResult is null)
         {
             throw new ArgumentNullException(nameof(assistantClientResult));
         }
 
-        return assistantClient.GetAIAgent(assistantClientResult.Value, options, clientFactory);
+        return assistantClient.GetAIAgent(assistantClientResult.Value, options, clientFactory, services);
     }
 
     /// <summary>
@@ -173,13 +193,16 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="assistantMetadata">The assistant metadata.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantMetadata"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         Assistant assistantMetadata,
         ChatClientAgentOptions options,
-        Func<IChatClient, IChatClient>? clientFactory = null)
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null)
     {
         if (assistantMetadata is null)
         {
@@ -203,19 +226,24 @@ public static class OpenAIAssistantClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        if (string.IsNullOrWhiteSpace(options.ChatOptions?.Instructions) && !string.IsNullOrWhiteSpace(assistantMetadata.Instructions))
+        {
+            options.ChatOptions ??= new ChatOptions();
+            options.ChatOptions.Instructions = assistantMetadata.Instructions;
+        }
+
         var mergedOptions = new ChatClientAgentOptions()
         {
             Id = assistantMetadata.Id,
             Name = options.Name ?? assistantMetadata.Name,
             Description = options.Description ?? assistantMetadata.Description,
-            Instructions = options.Instructions ?? assistantMetadata.Instructions,
             ChatOptions = options.ChatOptions,
             AIContextProviderFactory = options.AIContextProviderFactory,
             ChatMessageStoreFactory = options.ChatMessageStoreFactory,
             UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs
         };
 
-        return new ChatClientAgent(chatClient, mergedOptions);
+        return new ChatClientAgent(chatClient, mergedOptions, services: services);
     }
 
     /// <summary>
@@ -225,15 +253,18 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="agentId">The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="agentId"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent GetAIAgent(
         this AssistantClient assistantClient,
         string agentId,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         if (assistantClient is null)
@@ -252,7 +283,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistant = assistantClient.GetAssistant(agentId, cancellationToken);
-        return assistantClient.GetAIAgent(assistant, options, clientFactory);
+        return assistantClient.GetAIAgent(assistant, options, clientFactory, services);
     }
 
     /// <summary>
@@ -262,15 +293,18 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="agentId"> The ID of the server side agent to create a <see cref="ChatClientAgent"/> for.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the assistant agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="assistantClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="agentId"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AssistantClient assistantClient,
         string agentId,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
+        IServiceProvider? services = null,
         CancellationToken cancellationToken = default)
     {
         if (assistantClient is null)
@@ -289,7 +323,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         var assistantResponse = await assistantClient.GetAssistantAsync(agentId, cancellationToken).ConfigureAwait(false);
-        return assistantClient.GetAIAgent(assistantResponse, options, clientFactory);
+        return assistantClient.GetAIAgent(assistantResponse, options, clientFactory, services);
     }
 
     /// <summary>
@@ -303,9 +337,11 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent CreateAIAgent(
         this AssistantClient client,
         string model,
@@ -314,21 +350,23 @@ public static class OpenAIAssistantClientExtensions
         string? description = null,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
-        ILoggerFactory? loggerFactory = null) =>
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null) =>
         client.CreateAIAgent(
             model,
             new ChatClientAgentOptions()
             {
                 Name = name,
                 Description = description,
-                Instructions = instructions,
-                ChatOptions = tools is null ? null : new ChatOptions()
+                ChatOptions = tools is null && string.IsNullOrWhiteSpace(instructions) ? null : new ChatOptions()
                 {
                     Tools = tools,
+                    Instructions = instructions
                 }
             },
             clientFactory,
-            loggerFactory);
+            loggerFactory,
+            services);
 
     /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
@@ -338,15 +376,18 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static ChatClientAgent CreateAIAgent(
         this AssistantClient client,
         string model,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null)
     {
         Throw.IfNull(client);
         Throw.IfNullOrEmpty(model);
@@ -356,7 +397,7 @@ public static class OpenAIAssistantClientExtensions
         {
             Name = options.Name,
             Description = options.Description,
-            Instructions = options.Instructions,
+            Instructions = options.ChatOptions?.Instructions,
         };
 
         // Convert AITools to ToolDefinitions and ToolResources
@@ -387,7 +428,7 @@ public static class OpenAIAssistantClientExtensions
         options.ChatOptions ??= new ChatOptions();
         options.ChatOptions!.Tools = toolDefinitionsAndResources.FunctionToolsAndOtherTools;
 
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
+        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
     }
 
     /// <summary>
@@ -401,9 +442,12 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="tools">Optional collection of AI tools that the agent can use during conversations.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AssistantClient client,
         string model,
@@ -412,20 +456,24 @@ public static class OpenAIAssistantClientExtensions
         string? description = null,
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
-        ILoggerFactory? loggerFactory = null) =>
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null,
+        CancellationToken cancellationToken = default) =>
         await client.CreateAIAgentAsync(model,
             new ChatClientAgentOptions()
             {
                 Name = name,
                 Description = description,
-                Instructions = instructions,
-                ChatOptions = tools is null ? null : new ChatOptions()
+                ChatOptions = tools is null && string.IsNullOrWhiteSpace(instructions) ? null : new ChatOptions()
                 {
                     Tools = tools,
+                    Instructions = instructions,
                 }
             },
             clientFactory,
-            loggerFactory).ConfigureAwait(false);
+            loggerFactory,
+            services,
+            cancellationToken).ConfigureAwait(false);
 
     /// <summary>
     /// Creates an AI agent from an <see cref="AssistantClient"/> using the OpenAI Assistant API.
@@ -435,15 +483,20 @@ public static class OpenAIAssistantClientExtensions
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Assistant service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="model"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace.</exception>
+    [Obsolete("The Assistants API has been deprecated. Please use the Responses API instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AssistantClient client,
         string model,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null,
+        CancellationToken cancellationToken = default)
     {
         Throw.IfNull(client);
         Throw.IfNull(model);
@@ -453,7 +506,7 @@ public static class OpenAIAssistantClientExtensions
         {
             Name = options.Name,
             Description = options.Description,
-            Instructions = options.Instructions,
+            Instructions = options.ChatOptions?.Instructions,
         };
 
         // Convert AITools to ToolDefinitions and ToolResources
@@ -468,7 +521,7 @@ public static class OpenAIAssistantClientExtensions
         }
 
         // Create the assistant in the assistant service.
-        var assistantCreateResult = await client.CreateAssistantAsync(model, assistantOptions).ConfigureAwait(false);
+        var assistantCreateResult = await client.CreateAssistantAsync(model, assistantOptions, cancellationToken).ConfigureAwait(false);
         var assistantId = assistantCreateResult.Value.Id;
 
         // Build the local agent object.
@@ -483,7 +536,7 @@ public static class OpenAIAssistantClientExtensions
         options.ChatOptions ??= new ChatOptions();
         options.ChatOptions!.Tools = toolDefinitionsAndResources.FunctionToolsAndOtherTools;
 
-        return new ChatClientAgent(chatClient, agentOptions, loggerFactory);
+        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
     }
 
     private static (List<ToolDefinition>? ToolDefinitions, ToolResources? ToolResources, List<AITool>? FunctionToolsAndOtherTools) ConvertAIToolsToToolDefinitions(IList<AITool>? tools)
@@ -500,7 +553,7 @@ public static class OpenAIAssistantClientExtensions
                 {
                     case HostedCodeInterpreterTool codeTool:
 
-                        toolDefinitions ??= new();
+                        toolDefinitions ??= [];
                         toolDefinitions.Add(new CodeInterpreterToolDefinition());
 
                         if (codeTool.Inputs is { Count: > 0 })
@@ -521,7 +574,7 @@ public static class OpenAIAssistantClientExtensions
                         break;
 
                     case HostedFileSearchTool fileSearchTool:
-                        toolDefinitions ??= new();
+                        toolDefinitions ??= [];
                         toolDefinitions.Add(new FileSearchToolDefinition
                         {
                             MaxResults = fileSearchTool.MaximumResultCount,
@@ -544,7 +597,7 @@ public static class OpenAIAssistantClientExtensions
                         break;
 
                     default:
-                        functionToolsAndOtherTools ??= new();
+                        functionToolsAndOtherTools ??= [];
                         functionToolsAndOtherTools.Add(tool);
                         break;
                 }

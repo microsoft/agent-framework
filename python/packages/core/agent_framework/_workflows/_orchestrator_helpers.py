@@ -186,6 +186,10 @@ class ParticipantRegistry:
         """Check if a participant is registered."""
         return name in self._participant_entry_ids
 
+    def is_participant_registered(self, name: str) -> bool:
+        """Check if a participant is registered (alias for is_registered for compatibility)."""
+        return self.is_registered(name)
+
     def all_participants(self) -> set[str]:
         """Get all registered participant names."""
         return set(self._participant_entry_ids.keys())

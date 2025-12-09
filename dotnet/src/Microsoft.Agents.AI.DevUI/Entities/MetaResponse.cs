@@ -55,7 +55,7 @@ internal sealed record MetaResponse
     /// - "openai_proxy": Whether the server can proxy requests to OpenAI
     /// </remarks>
     [JsonPropertyName("capabilities")]
-    public Dictionary<string, bool> Capabilities { get; init; } = new();
+    public Dictionary<string, bool> Capabilities { get; init; } = [];
 
     /// <summary>
     /// Gets a value indicating whether Bearer token authentication is required for API access.

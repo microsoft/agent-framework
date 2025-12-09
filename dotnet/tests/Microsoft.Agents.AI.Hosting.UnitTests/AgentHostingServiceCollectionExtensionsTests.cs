@@ -58,7 +58,7 @@ public class AgentHostingServiceCollectionExtensionsTests
     public void AddAIAgentWithKey_NullInstructions_AllowsNull()
     {
         var services = new ServiceCollection();
-        var result = services.AddAIAgent("agentName", null!, "key");
+        var result = services.AddAIAgent("agentName", null, "key");
         Assert.NotNull(result);
     }
 

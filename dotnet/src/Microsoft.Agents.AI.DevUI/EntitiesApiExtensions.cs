@@ -1,10 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json;
-
 using Microsoft.Agents.AI.DevUI.Entities;
-using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -27,21 +24,26 @@ internal static class EntitiesApiExtensions
     /// <item><description>GET /v1/entities/{entityId}/info - Get detailed information about a specific entity</description></item>
     /// </list>
     /// The endpoints are compatible with the Python DevUI frontend and automatically discover entities
-    /// from the registered <see cref="AgentCatalog"/> and <see cref="WorkflowCatalog"/> services.
+    /// from the registered <see cref="AIAgent">agents</see> and <see cref="Workflow">workflows</see> in the dependency injection container.
     /// </remarks>
     public static IEndpointConventionBuilder MapEntities(this IEndpointRouteBuilder endpoints)
     {
+        var registeredAIAgents = GetRegisteredEntities<AIAgent>(endpoints.ServiceProvider);
+        var registeredWorkflows = GetRegisteredEntities<Workflow>(endpoints.ServiceProvider);
+
         var group = endpoints.MapGroup("/v1/entities")
             .WithTags("Entities");
 
         // List all entities
-        group.MapGet("", ListEntitiesAsync)
+        group.MapGet("", (CancellationToken cancellationToken)
+                => ListEntitiesAsync(registeredAIAgents, registeredWorkflows, cancellationToken))
             .WithName("ListEntities")
             .WithSummary("List all registered entities (agents and workflows)")
             .Produces<DiscoveryResponse>(StatusCodes.Status200OK, contentType: "application/json");
 
         // Get detailed entity information
-        group.MapGet("{entityId}/info", GetEntityInfoAsync)
+        group.MapGet("{entityId}/info", (string entityId, string? type, CancellationToken cancellationToken)
+                => GetEntityInfoAsync(entityId, type, registeredAIAgents, registeredWorkflows, cancellationToken))
             .WithName("GetEntityInfo")
             .WithSummary("Get detailed information about a specific entity")
             .Produces<EntityInfo>(StatusCodes.Status200OK, contentType: "application/json")
@@ -51,8 +53,8 @@ internal static class EntitiesApiExtensions
     }
 
     private static async Task<IResult> ListEntitiesAsync(
-        AgentCatalog? agentCatalog,
-        WorkflowCatalog? workflowCatalog,
+        IEnumerable<AIAgent> agents,
+        IEnumerable<Workflow> workflows,
         CancellationToken cancellationToken)
     {
         try
@@ -60,13 +62,13 @@ internal static class EntitiesApiExtensions
             var entities = new Dictionary<string, EntityInfo>();
 
             // Discover agents
-            await foreach (var agentInfo in DiscoverAgentsAsync(agentCatalog, entityIdFilter: null, cancellationToken).ConfigureAwait(false))
+            foreach (var agentInfo in DiscoverAgents(agents, entityIdFilter: null))
             {
                 entities[agentInfo.Id] = agentInfo;
             }
 
             // Discover workflows
-            await foreach (var workflowInfo in DiscoverWorkflowsAsync(workflowCatalog, entityIdFilter: null, cancellationToken).ConfigureAwait(false))
+            foreach (var workflowInfo in DiscoverWorkflows(workflows, entityIdFilter: null))
             {
                 entities[workflowInfo.Id] = workflowInfo;
             }
@@ -85,15 +87,15 @@ internal static class EntitiesApiExtensions
     private static async Task<IResult> GetEntityInfoAsync(
         string entityId,
         string? type,
-        AgentCatalog? agentCatalog,
-        WorkflowCatalog? workflowCatalog,
+        IEnumerable<AIAgent> agents,
+        IEnumerable<Workflow> workflows,
         CancellationToken cancellationToken)
     {
         try
         {
             if (type is null || string.Equals(type, "workflow", StringComparison.OrdinalIgnoreCase))
             {
-                await foreach (var workflowInfo in DiscoverWorkflowsAsync(workflowCatalog, entityId, cancellationToken).ConfigureAwait(false))
+                foreach (var workflowInfo in DiscoverWorkflows(workflows, entityId))
                 {
                     return Results.Json(workflowInfo, EntitiesJsonContext.Default.EntityInfo);
                 }
@@ -101,7 +103,7 @@ internal static class EntitiesApiExtensions
 
             if (type is null || string.Equals(type, "agent", StringComparison.OrdinalIgnoreCase))
             {
-                await foreach (var agentInfo in DiscoverAgentsAsync(agentCatalog, entityId, cancellationToken).ConfigureAwait(false))
+                foreach (var agentInfo in DiscoverAgents(agents, entityId))
                 {
                     return Results.Json(agentInfo, EntitiesJsonContext.Default.EntityInfo);
                 }
@@ -118,17 +120,9 @@ internal static class EntitiesApiExtensions
         }
     }
 
-    private static async IAsyncEnumerable<EntityInfo> DiscoverAgentsAsync(
-        AgentCatalog? agentCatalog,
-        string? entityIdFilter,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static IEnumerable<EntityInfo> DiscoverAgents(IEnumerable<AIAgent> agents, string? entityIdFilter)
     {
-        if (agentCatalog is null)
-        {
-            yield break;
-        }
-
-        await foreach (var agent in agentCatalog.GetAgentsAsync(cancellationToken).ConfigureAwait(false))
+        foreach (var agent in agents)
         {
             // If filtering by entity ID, skip non-matching agents
             if (entityIdFilter is not null &&
@@ -148,17 +142,9 @@ internal static class EntitiesApiExtensions
         }
     }
 
-    private static async IAsyncEnumerable<EntityInfo> DiscoverWorkflowsAsync(
-        WorkflowCatalog? workflowCatalog,
-        string? entityIdFilter,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+    private static IEnumerable<EntityInfo> DiscoverWorkflows(IEnumerable<Workflow> workflows, string? entityIdFilter)
     {
-        if (workflowCatalog is null)
-        {
-            yield break;
-        }
-
-        await foreach (var workflow in workflowCatalog.GetWorkflowsAsync(cancellationToken).ConfigureAwait(false))
+        foreach (var workflow in workflows)
         {
             var workflowId = workflow.Name ?? workflow.StartExecutorId;
 
@@ -303,5 +289,15 @@ internal static class EntitiesApiExtensions
             InputTypeName = "string",
             StartExecutorId = workflow.StartExecutorId
         };
+    }
+
+    private static IEnumerable<T> GetRegisteredEntities<T>(IServiceProvider serviceProvider)
+    {
+        var keyedEntities = serviceProvider.GetKeyedServices<T>(KeyedService.AnyKey);
+        var defaultEntities = serviceProvider.GetServices<T>() ?? [];
+
+        return keyedEntities
+            .Concat(defaultEntities)
+            .Where(entity => entity is not null);
     }
 }

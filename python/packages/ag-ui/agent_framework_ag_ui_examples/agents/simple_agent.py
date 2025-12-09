@@ -2,8 +2,7 @@
 
 """Simple agentic chat example (Feature 1: Agentic Chat)."""
 
-from agent_framework import ChatAgent
-from agent_framework._clients import ChatClientProtocol
+from agent_framework import ChatAgent, ChatClientProtocol
 
 
 def simple_agent(chat_client: ChatClientProtocol) -> ChatAgent:

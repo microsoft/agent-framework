@@ -1,8 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Cache provider for Purview data."""
 
-from __future__ import annotations
-
 import hashlib
 import heapq
 import json

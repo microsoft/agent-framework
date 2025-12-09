@@ -18,6 +18,7 @@ on:
 
 env:
   COVERAGE_THRESHOLD: 80
+  COVERAGE_FRAMEWORK: net10.0 # framework target for which we run/report code coverage
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -59,9 +60,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
-          - { targetFramework: "net9.0", os: "ubuntu-latest", configuration: Debug }
-          - { targetFramework: "net9.0", os: "windows-latest", configuration: Release }
+          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net9.0", os: "windows-latest", configuration: Debug }
+          - { targetFramework: "net8.0", os: "ubuntu-latest", configuration: Release }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
     runs-on: ${{ matrix.os }}
@@ -69,16 +70,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          persist-credentials: false
-          sparse-checkout: |
-            .
-            .github
-            dotnet
-            python
-            workflow-samples
+            persist-credentials: false
+            sparse-checkout: |
+              .
+              .github
+              dotnet
+              python
+              workflow-samples
 
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v5.0.0
+        uses: actions/setup-dotnet@v5.0.1
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
       - name: Build dotnet solutions
@@ -123,7 +124,17 @@ jobs:
           popd
           rm -rf "$TEMP_DIR"
 
-      - name: Run Unit Tests Windows
+      # Start Cosmos DB Emulator for Cosmos-based unit tests (only on Windows)
+      - name: Start Azure Cosmos DB Emulator
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Launching Azure Cosmos DB Emulator"
+          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
+          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+
+      - name: Run Unit Tests
         shell: bash
         run: |
           export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
@@ -133,12 +144,20 @@ jobs:
             
             # Check if the project supports the target framework
             if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
-              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+              if [[ "${{ matrix.targetFramework }}" == "${{ env.COVERAGE_FRAMEWORK }}" ]]; then
+                dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+              else
+                dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
+              fi
             else
               echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
             fi
           done
-      
+        env:
+          # Cosmos DB Emulator connection settings
+          COSMOSDB_ENDPOINT: https://localhost:8081
+          COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+
       - name: Log event name and matrix integration-tests
         shell: bash 
         run: echo "github.event_name:${{ github.event_name }} matrix.integration-tests:${{ matrix.integration-tests }} github.event.action:${{ github.event.action }} github.event.pull_request.merged:${{ github.event.pull_request.merged }}" 
@@ -176,6 +195,9 @@ jobs:
             fi
           done
         env:
+          # Cosmos DB Emulator connection settings
+          COSMOSDB_ENDPOINT: https://localhost:8081
+          COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
           # OpenAI Models
           OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
           OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
@@ -194,19 +216,22 @@ jobs:
 
       # Generate test reports and check coverage
       - name: Generate test reports
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.4.18
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.1
         with:
           reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
           targetdir: "./TestResults/Reports"
           reporttypes: "HtmlInline;JsonSummary"
 
       - name: Upload coverage report artifact
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         uses: actions/upload-artifact@v5
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
 
       - name: Check coverage
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         shell: pwsh
         run: .github/workflows/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
 

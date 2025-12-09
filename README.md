@@ -48,6 +48,8 @@ dotnet add package Microsoft.Agents.AI
 - **[Migration from Semantic Kernel](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-semantic-kernel)** - Guide to migrate from Semantic Kernel
 - **[Migration from AutoGen](https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen)** - Guide to migrate from AutoGen
 
+Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-community-office-hours) or ask questions in our [Discord channel](https://discord.gg/b5zjErwbQM) to get help from the team and other users.
+
 ### ✨ **Highlights**
 
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, human-in-the-loop, and time-travel capabilities

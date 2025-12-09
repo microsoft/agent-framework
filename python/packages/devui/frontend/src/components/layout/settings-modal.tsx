@@ -41,8 +41,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>("general");
 
-  // OpenAI proxy mode, Azure deployment, auth status, and server capabilities from store
-  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities } = useDevUIStore();
+  // OpenAI proxy mode, Azure deployment, auth status, server capabilities, and version from store
+  const { oaiMode, setOAIMode, azureDeploymentEnabled, setAzureDeploymentEnabled, authRequired, serverCapabilities, serverVersion, runtime, uiMode } = useDevUIStore();
 
   // Get current backend URL from localStorage or default
   const defaultUrl = import.meta.env.VITE_API_BASE_URL !== undefined ? import.meta.env.VITE_API_BASE_URL : "";
@@ -335,6 +335,24 @@ export function SettingsModal({
                 </details>
               </div>
               )}
+
+              {/* UI Settings */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-sm font-medium">
+                      Show Tool Calls
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Display function/tool calls and results in chat messages
+                    </p>
+                  </div>
+                  <Switch
+                    checked={useDevUIStore.getState().showToolCalls}
+                    onCheckedChange={(checked) => useDevUIStore.getState().setShowToolCalls(checked)}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -589,6 +607,62 @@ export function SettingsModal({
               <p className="text-sm text-muted-foreground">
                 DevUI is a sample app for getting started with Agent Framework.
               </p>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Version:</span>
+                  <span className="font-mono">{serverVersion || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Runtime:</span>
+                  <span className="font-mono capitalize">{runtime || 'Unknown'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">UI Mode:</span>
+                  <span className="font-mono capitalize">{uiMode || 'Unknown'}</span>
+                </div>
+              </div>
+
+              {/* Capabilities section - only show if we have capability data */}
+              {(serverCapabilities || authRequired !== undefined) && (
+                <div className="space-y-2 pt-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Capabilities</p>
+                  <div className="space-y-1 text-sm">
+                    {serverCapabilities?.tracing !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Tracing:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.tracing ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.tracing ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                    )}
+                    {serverCapabilities?.openai_proxy !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">OpenAI Proxy:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.openai_proxy ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.openai_proxy ? 'Available' : 'Not Configured'}
+                        </span>
+                      </div>
+                    )}
+                    {serverCapabilities?.deployment !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Deployment:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.deployment ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.deployment ? 'Available' : 'Disabled'}
+                        </span>
+                      </div>
+                    )}
+                    {authRequired !== undefined && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Authentication:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${authRequired ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-muted text-muted-foreground'}`}>
+                          {authRequired ? 'Required' : 'Not Required'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-center pt-2">
                 <Button

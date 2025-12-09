@@ -538,7 +538,7 @@ public class StateManagerTests
 
         Dictionary<ScopeKey, PortableValue> exportedState = await manager.ExportStateAsync();
         Dictionary<ScopeKey, PortableValue> serializedState = JsonSerializationTests.RunJsonRoundtrip(exportedState);
-        Checkpoint testCheckpoint = new(0, JsonSerializationTests.CreateTestWorkflowInfo(), new([], [], []), serializedState, new());
+        Checkpoint testCheckpoint = new(0, JsonSerializationTests.CreateTestWorkflowInfo(), new([], [], []), serializedState, []);
 
         manager = new();
         await manager.ImportStateAsync(testCheckpoint);

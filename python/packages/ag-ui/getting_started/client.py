@@ -10,7 +10,7 @@ standard chat interface.
 import asyncio
 import os
 
-from agent_framework_ag_ui import AGUIChatClient
+from agent_framework.ag_ui import AGUIChatClient
 
 
 async def main():

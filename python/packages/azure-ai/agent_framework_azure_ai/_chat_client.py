@@ -118,10 +118,11 @@ class AzureAIAgentClient(BaseChatClient):
         agents_client: AgentsClient | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
+        agent_description: str | None = None,
         thread_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        async_credential: AsyncTokenCredential | None = None,
+        credential: AsyncTokenCredential | None = None,
         should_cleanup_agent: bool = True,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -135,6 +136,7 @@ class AzureAIAgentClient(BaseChatClient):
                 a new agent will be created (and deleted after the request). If neither agents_client
                 nor agent_id is provided, both will be created and managed automatically.
             agent_name: The name to use when creating new agents.
+            agent_description: The description to use when creating new agents.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
@@ -142,7 +144,7 @@ class AzureAIAgentClient(BaseChatClient):
                 Ignored when a agents_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            async_credential: Azure async credential to use for authentication.
+            credential: Azure async credential to use for authentication.
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
@@ -160,17 +162,17 @@ class AzureAIAgentClient(BaseChatClient):
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
                 # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
-                client = AzureAIAgentClient(async_credential=credential)
+                client = AzureAIAgentClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIAgentClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
                     model_deployment_name="gpt-4",
-                    async_credential=credential,
+                    credential=credential,
                 )
 
                 # Or loading from a .env file
-                client = AzureAIAgentClient(async_credential=credential, env_file_path="path/to/.env")
+                client = AzureAIAgentClient(credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -198,11 +200,11 @@ class AzureAIAgentClient(BaseChatClient):
                 )
 
             # Use provided credential
-            if not async_credential:
+            if not credential:
                 raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
             agents_client = AgentsClient(
                 endpoint=azure_ai_settings.project_endpoint,
-                credential=async_credential,
+                credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -212,9 +214,10 @@ class AzureAIAgentClient(BaseChatClient):
 
         # Initialize instance variables
         self.agents_client = agents_client
-        self.credential = async_credential
+        self.credential = credential
         self.agent_id = agent_id
         self.agent_name = agent_name
+        self.agent_description = agent_description
         self.model_id = azure_ai_settings.model_deployment_name
         self.thread_id = thread_id
         self.should_cleanup_agent = should_cleanup_agent  # Track whether we should delete the agent
@@ -311,6 +314,7 @@ class AzureAIAgentClient(BaseChatClient):
             args: dict[str, Any] = {
                 "model": run_options["model"],
                 "name": agent_name,
+                "description": self.agent_description,
             }
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
@@ -1038,16 +1042,19 @@ class AzureAIAgentClient(BaseChatClient):
 
         return run_id, tool_outputs, tool_approvals
 
-    def _update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None) -> None:
         """Update the agent name in the chat client.
 
         Args:
             agent_name: The new name for the agent.
+            description: The new description for the agent.
         """
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
+        if description and not self.agent_description:
+            self.agent_description = description
 
     def service_url(self) -> str:
         """Get the service URL for the chat client.

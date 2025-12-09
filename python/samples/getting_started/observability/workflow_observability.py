@@ -17,10 +17,25 @@ from typing_extensions import Never
 """
 This sample shows the telemetry collected when running a Agent Framework workflow.
 
+This simple workflow consists of two executors arranged sequentially:
+1. An executor that converts input text to uppercase.
+2. An executor that reverses the uppercase text.
+
+The workflow receives an initial string message, processes it through the two executors,
+and yields the final result.
+
 Telemetry data that the workflow system emits includes:
 - Overall workflow build & execution spans
+  - workflow.build (events: build.started, build.validation_completed, build.completed, edge_group.process)
+  - workflow.run (events: workflow.started, workflow.completed or workflow.error)
 - Individual executor processing spans
+  - executor.process (for each executor invocation)
 - Message publishing between executors
+  - message.send (for each outbound message)
+
+Prerequisites:
+- Basic understanding of workflow executors, edges, and messages.
+- Basic understanding of OpenTelemetry concepts like spans and traces.
 """
 
 

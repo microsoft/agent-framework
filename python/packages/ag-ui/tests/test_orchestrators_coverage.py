@@ -2,7 +2,9 @@
 
 """Comprehensive tests for orchestrator coverage."""
 
+import sys
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,11 +17,10 @@ from agent_framework import (
 from pydantic import BaseModel
 
 from agent_framework_ag_ui._agent import AgentConfig
-from agent_framework_ag_ui._orchestrators import (
-    DefaultOrchestrator,
-    ExecutionContext,
-    HumanInTheLoopOrchestrator,
-)
+from agent_framework_ag_ui._orchestrators import DefaultOrchestrator, HumanInTheLoopOrchestrator
+
+sys.path.insert(0, str(Path(__file__).parent))
+from test_helpers_ag_ui import StubAgent, TestExecutionContext
 
 
 @ai_function(approval_mode="always_require")
@@ -28,34 +29,14 @@ def approval_tool(param: str) -> str:
     return f"executed: {param}"
 
 
-class MockAgent:
-    """Mock agent for testing."""
-
-    def __init__(self, updates: list[AgentRunResponseUpdate] | None = None) -> None:
-        self.updates = updates or [AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")]
-        self.chat_options = SimpleNamespace(tools=[approval_tool], response_format=None)
-        self.chat_client = SimpleNamespace(function_invocation_configuration=None)
-        self.messages_received: list[Any] = []
-        self.tools_received: list[Any] | None = None
-
-    async def run_stream(
-        self,
-        messages: list[Any],
-        *,
-        thread: Any = None,
-        tools: list[Any] | None = None,
-    ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
-        self.messages_received = messages
-        self.tools_received = tools
-        for update in self.updates:
-            yield update
+DEFAULT_CHAT_OPTIONS = SimpleNamespace(tools=[approval_tool], response_format=None)
 
 
 async def test_human_in_the_loop_json_decode_error() -> None:
     """Test HumanInTheLoopOrchestrator handles invalid JSON in tool result."""
     orchestrator = HumanInTheLoopOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "tool",
@@ -72,21 +53,25 @@ async def test_human_in_the_loop_json_decode_error() -> None:
         )
     ]
 
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=SimpleNamespace(tools=[approval_tool], response_format=None),
+        updates=[AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")],
+    )
+    context = TestExecutionContext(
         input_data=input_data,
-        agent=MockAgent(),
+        agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
     assert orchestrator.can_handle(context)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
     # Should emit RunErrorEvent for invalid JSON
-    error_events = [e for e in events if e.type == "RUN_ERROR"]
+    error_events: list[Any] = [e for e in events if e.type == "RUN_ERROR"]
     assert len(error_events) == 1
     assert "Invalid tool result format" in error_events[0].message
 
@@ -118,18 +103,20 @@ async def test_sanitize_tool_history_confirm_changes() -> None:
     orchestrator = DefaultOrchestrator()
 
     # Use pre-constructed ChatMessage objects to bypass message adapter
-    input_data = {"messages": []}
+    input_data: dict[str, Any] = {"messages": []}
 
-    agent = MockAgent()
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
     # Override the messages property to use our pre-constructed messages
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -162,16 +149,18 @@ async def test_sanitize_tool_history_orphaned_tool_result() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -188,7 +177,7 @@ async def test_orphaned_tool_result_sanitization() -> None:
     """Test that orphaned tool results are filtered out."""
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "tool",
@@ -201,14 +190,16 @@ async def test_orphaned_tool_result_sanitization() -> None:
         ],
     }
 
-    agent = MockAgent()
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -241,16 +232,18 @@ async def test_deduplicate_messages_empty_tool_results() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -284,16 +277,18 @@ async def test_deduplicate_messages_duplicate_assistant_tool_calls() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -326,16 +321,18 @@ async def test_deduplicate_messages_duplicate_system_messages() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -354,7 +351,7 @@ async def test_state_context_injection() -> None:
     """Test state context message injection for first request."""
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
@@ -364,14 +361,16 @@ async def test_state_context_injection() -> None:
         "state": {"items": ["apple", "banana"]},
     }
 
-    agent = MockAgent()
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(state_schema={"items": {"type": "array"}}),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -406,16 +405,18 @@ async def test_no_state_context_injection_with_tool_calls() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": [], "state": {"weather": "sunny"}}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": [], "state": {"weather": "sunny"}}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(state_schema={"weather": {"type": "string"}}),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -437,7 +438,7 @@ async def test_structured_output_processing() -> None:
 
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
@@ -447,32 +448,33 @@ async def test_structured_output_processing() -> None:
     }
 
     # Agent with structured output
-    agent = MockAgent(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
         updates=[
             AgentRunResponseUpdate(
                 contents=[TextContent(text='{"ingredients": ["tomato"], "message": "Added tomato"}')],
                 role="assistant",
             )
-        ]
+        ],
     )
     agent.chat_options.response_format = RecipeState
 
-    context = ExecutionContext(
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(state_schema={"ingredients": {"type": "array"}}),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
     # Should emit StateSnapshotEvent with ingredients
-    state_events = [e for e in events if e.type == "STATE_SNAPSHOT"]
+    state_events: list[Any] = [e for e in events if e.type == "STATE_SNAPSHOT"]
     assert len(state_events) >= 1
 
     # Should emit TextMessage with message field
-    text_content_events = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
+    text_content_events: list[Any] = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
     assert len(text_content_events) >= 1
     assert any("Added tomato" in e.delta for e in text_content_events)
 
@@ -487,7 +489,7 @@ async def test_duplicate_client_tools_filtered() -> None:
 
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
@@ -507,16 +509,18 @@ async def test_duplicate_client_tools_filtered() -> None:
         ],
     }
 
-    agent = MockAgent()
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
     agent.chat_options.tools = [get_weather]
 
-    context = ExecutionContext(
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -534,7 +538,7 @@ async def test_unique_client_tools_merged() -> None:
 
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "user",
@@ -554,16 +558,18 @@ async def test_unique_client_tools_merged() -> None:
         ],
     }
 
-    agent = MockAgent()
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
     agent.chat_options.tools = [server_tool]
 
-    context = ExecutionContext(
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -578,16 +584,18 @@ async def test_empty_messages_handling() -> None:
     """Test orchestrator handles empty message list gracefully."""
     orchestrator = DefaultOrchestrator()
 
-    input_data = {"messages": []}
+    input_data: dict[str, Any] = {"messages": []}
 
-    agent = MockAgent()
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -603,7 +611,7 @@ async def test_all_messages_filtered_handling() -> None:
     """Test orchestrator handles case where all messages are filtered out."""
     orchestrator = DefaultOrchestrator()
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "messages": [
             {
                 "role": "tool",
@@ -612,14 +620,16 @@ async def test_all_messages_filtered_handling() -> None:
         ]
     }
 
-    agent = MockAgent()
-    context = ExecutionContext(
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -651,16 +661,18 @@ async def test_confirm_changes_with_invalid_json_fallback() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -689,16 +701,18 @@ async def test_tool_result_kept_when_call_id_matches() -> None:
     ]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": []}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -729,6 +743,7 @@ async def test_agent_protocol_fallback_paths() -> None:
             *,
             thread: Any = None,
             tools: list[Any] | None = None,
+            **kwargs: Any,
         ) -> AsyncGenerator[AgentRunResponseUpdate, None]:
             self.messages_received = messages
             yield AgentRunResponseUpdate(contents=[TextContent(text="response")], role="assistant")
@@ -738,16 +753,16 @@ async def test_agent_protocol_fallback_paths() -> None:
     messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
+    input_data: dict[str, Any] = {"messages": []}
     agent = CustomAgent()
-    context = ExecutionContext(
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,  # type: ignore
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
@@ -762,21 +777,23 @@ async def test_initial_state_snapshot_with_array_schema() -> None:
     messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": [], "state": {}}
-    agent = MockAgent()
-    context = ExecutionContext(
+    input_data: dict[str, Any] = {"messages": [], "state": {}}
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(state_schema={"items": {"type": "array"}}),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 
     # Should emit state snapshot with empty array for items
-    state_events = [e for e in events if e.type == "STATE_SNAPSHOT"]
+    state_events: list[Any] = [e for e in events if e.type == "STATE_SNAPSHOT"]
     assert len(state_events) >= 1
 
 
@@ -791,19 +808,21 @@ async def test_response_format_skip_text_content() -> None:
     messages = [ChatMessage(role="user", contents=[TextContent(text="Hello")])]
 
     orchestrator = DefaultOrchestrator()
-    input_data = {"messages": []}
+    input_data: dict[str, Any] = {"messages": []}
 
-    agent = MockAgent()
+    agent = StubAgent(
+        chat_options=DEFAULT_CHAT_OPTIONS,
+    )
     agent.chat_options.response_format = OutputModel
 
-    context = ExecutionContext(
+    context = TestExecutionContext(
         input_data=input_data,
         agent=agent,
         config=AgentConfig(),
     )
-    context._messages = messages
+    context.set_messages(messages)
 
-    events = []
+    events: list[Any] = []
     async for event in orchestrator.run(context):
         events.append(event)
 

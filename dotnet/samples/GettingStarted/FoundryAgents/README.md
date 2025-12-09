@@ -6,11 +6,20 @@ of Azure Foundry Agents and can be used with Azure Foundry as the AI provider.
 These samples showcase how to work with agents managed through Azure Foundry, including agent creation,
 versioning, multi-turn conversations, and advanced features like code interpretation and computer use.
 
+## Classic vs New Foundry Agents
+
+> [!NOTE]
+> Recently, Azure Foundry introduced a new and improved experience for creating and managing AI agents, which is the target of these samples.
+
+For more information about the previous classic agents and for what's new in Foundry Agents, see the [Foundry Agents migration documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/migrate?view=foundry).
+
+For a sample demonstrating how to use classic Foundry Agents, see the following: [Agent with Azure AI Persistent](../AgentProviders/Agent_With_AzureAIAgentsPersistent/README.md).
+
 ## Getting started with Foundry Agents prerequisites
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure Foundry service endpoint and project configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
@@ -25,8 +34,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Basics](./FoundryAgents_Step01.1_Basics/)|This sample demonstrates how to create and manage AI agents with versioning|
 |[Running a simple agent](./FoundryAgents_Step01.2_Running/)|This sample demonstrates how to create and run a basic Foundry agent|
 |[Multi-turn conversation](./FoundryAgents_Step02_MultiturnConversation/)|This sample demonstrates how to implement a multi-turn conversation with a Foundry agent|
-|[Using function tools](./FoundryAgents_Step03.1_UsingFunctionTools/)|This sample demonstrates how to use function tools with a Foundry agent|
-|[Using OpenAPI function tools](./FoundryAgents_Step03.2_UsingFunctionTools_FromOpenAPI/)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a Foundry agent|
+|[Using function tools](./FoundryAgents_Step03_UsingFunctionTools/)|This sample demonstrates how to use function tools with a Foundry agent|
 |[Using function tools with approvals](./FoundryAgents_Step04_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output](./FoundryAgents_Step05_StructuredOutput/)|This sample demonstrates how to use structured output with a Foundry agent|
 |[Persisted conversations](./FoundryAgents_Step06_PersistedConversations/)|This sample demonstrates how to persist conversations and reload them later|

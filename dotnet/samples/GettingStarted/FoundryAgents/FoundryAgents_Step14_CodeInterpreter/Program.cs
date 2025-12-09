@@ -55,7 +55,7 @@ AgentRunResponse response = await agentOption1.RunAsync("I need to solve the equ
 // AgentRunResponse response = await agentOption2.RunAsync("I need to solve the equation sin(x) + x^2 = 42");
 
 // Get the CodeInterpreterToolCallContent
-CodeInterpreterToolCallContent? toolCallContent = response.Messages.SelectMany(m => m.Contents).OfType<CodeInterpreterToolCallContent>().SingleOrDefault();
+CodeInterpreterToolCallContent? toolCallContent = response.Messages.SelectMany(m => m.Contents).OfType<CodeInterpreterToolCallContent>().FirstOrDefault();
 if (toolCallContent?.Inputs is not null)
 {
     DataContent? codeInput = toolCallContent.Inputs.OfType<DataContent>().FirstOrDefault();

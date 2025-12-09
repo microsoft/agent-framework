@@ -5,16 +5,16 @@ import logging
 from typing import cast
 
 from agent_framework import (
+    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
+    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
+    AgentRunUpdateEvent,
     ChatAgent,
     HostedCodeInterpreterTool,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticFinalResultEvent,
-    MagenticOrchestratorMessageEvent,
-    MagenticPlanReviewDecision,
-    MagenticPlanReviewReply,
-    MagenticPlanReviewRequest,
+    MagenticHumanInterventionDecision,
+    MagenticHumanInterventionKind,
+    MagenticHumanInterventionReply,
+    MagenticHumanInterventionRequest,
     RequestInfoEvent,
     WorkflowOutputEvent,
 )
@@ -67,6 +67,14 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
+    # Create a manager agent for the orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
+    )
+
     # Callbacks
     def on_exception(exception: Exception) -> None:
         print(f"Exception occurred: {exception}")
@@ -81,7 +89,7 @@ async def main() -> None:
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
         .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+            agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,
@@ -104,7 +112,7 @@ async def main() -> None:
 
     try:
         pending_request: RequestInfoEvent | None = None
-        pending_responses: dict[str, MagenticPlanReviewReply] | None = None
+        pending_responses: dict[str, MagenticHumanInterventionReply] | None = None
         completed = False
         workflow_output: str | None = None
 
@@ -117,38 +125,30 @@ async def main() -> None:
 
             # Collect events from the stream
             async for event in stream:
-                if isinstance(event, MagenticOrchestratorMessageEvent):
-                    print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-                elif isinstance(event, MagenticAgentDeltaEvent):
-                    if last_stream_agent_id != event.agent_id or not stream_line_open:
-                        if stream_line_open:
-                            print()
-                        print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                        last_stream_agent_id = event.agent_id
-                        stream_line_open = True
-                    if event.text:
-                        print(event.text, end="", flush=True)
-                elif isinstance(event, MagenticAgentMessageEvent):
-                    if stream_line_open:
-                        print(" (final)")
-                        stream_line_open = False
-                        print()
-                    msg = event.message
-                    if msg is not None:
-                        response_text = (msg.text or "").replace("\n", " ")
-                        print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-                elif isinstance(event, MagenticFinalResultEvent):
-                    print("\n" + "=" * 50)
-                    print("FINAL RESULT:")
-                    print("=" * 50)
-                    if event.message is not None:
-                        print(event.message.text)
-                    print("=" * 50)
-                if isinstance(event, RequestInfoEvent) and event.request_type is MagenticPlanReviewRequest:
-                    pending_request = event
-                    review_req = cast(MagenticPlanReviewRequest, event.data)
-                    if review_req.plan_text:
-                        print(f"\n=== PLAN REVIEW REQUEST ===\n{review_req.plan_text}\n")
+                if isinstance(event, AgentRunUpdateEvent):
+                    props = event.data.additional_properties if event.data else None
+                    event_type = props.get("magentic_event_type") if props else None
+
+                    if event_type == MAGENTIC_EVENT_TYPE_ORCHESTRATOR:
+                        kind = props.get("orchestrator_message_kind", "") if props else ""
+                        text = event.data.text if event.data else ""
+                        print(f"\n[ORCH:{kind}]\n\n{text}\n{'-' * 26}")
+                    elif event_type == MAGENTIC_EVENT_TYPE_AGENT_DELTA:
+                        agent_id = props.get("agent_id", "unknown") if props else "unknown"
+                        if last_stream_agent_id != agent_id or not stream_line_open:
+                            if stream_line_open:
+                                print()
+                            print(f"\n[STREAM:{agent_id}]: ", end="", flush=True)
+                            last_stream_agent_id = agent_id
+                            stream_line_open = True
+                        if event.data and event.data.text:
+                            print(event.data.text, end="", flush=True)
+                elif isinstance(event, RequestInfoEvent) and event.request_type is MagenticHumanInterventionRequest:
+                    request = cast(MagenticHumanInterventionRequest, event.data)
+                    if request.kind == MagenticHumanInterventionKind.PLAN_REVIEW:
+                        pending_request = event
+                        if request.plan_text:
+                            print(f"\n=== PLAN REVIEW REQUEST ===\n{request.plan_text}\n")
                 elif isinstance(event, WorkflowOutputEvent):
                     # Capture workflow output during streaming
                     workflow_output = str(event.data) if event.data else None
@@ -164,21 +164,48 @@ async def main() -> None:
                 # Get human input for plan review decision
                 print("Plan review options:")
                 print("1. approve - Approve the plan as-is")
-                print("2. revise - Request revision of the plan")
-                print("3. exit - Exit the workflow")
+                print("2. approve with comments - Approve with feedback for the manager")
+                print("3. revise - Request revision with your feedback")
+                print("4. edit - Directly edit the plan text")
+                print("5. exit - Exit the workflow")
 
                 while True:
-                    choice = input("Enter your choice (approve/revise/exit): ").strip().lower()  # noqa: ASYNC250
+                    choice = input("Enter your choice (1-5): ").strip().lower()  # noqa: ASYNC250
                     if choice in ["approve", "1"]:
-                        reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.APPROVE)
+                        reply = MagenticHumanInterventionReply(decision=MagenticHumanInterventionDecision.APPROVE)
                         break
-                    if choice in ["revise", "2"]:
-                        reply = MagenticPlanReviewReply(decision=MagenticPlanReviewDecision.REVISE)
+                    if choice in ["approve with comments", "2"]:
+                        comments = input("Enter your comments for the manager: ").strip()  # noqa: ASYNC250
+                        reply = MagenticHumanInterventionReply(
+                            decision=MagenticHumanInterventionDecision.APPROVE,
+                            comments=comments if comments else None,
+                        )
                         break
-                    if choice in ["exit", "3"]:
+                    if choice in ["revise", "3"]:
+                        comments = input("Enter feedback for revising the plan: ").strip()  # noqa: ASYNC250
+                        reply = MagenticHumanInterventionReply(
+                            decision=MagenticHumanInterventionDecision.REVISE,
+                            comments=comments if comments else None,
+                        )
+                        break
+                    if choice in ["edit", "4"]:
+                        print("Enter your edited plan (end with an empty line):")
+                        lines = []
+                        while True:
+                            line = input()  # noqa: ASYNC250
+                            if line == "":
+                                break
+                            lines.append(line)
+                        edited_plan = "\n".join(lines)
+                        reply = MagenticHumanInterventionReply(
+                            decision=MagenticHumanInterventionDecision.REVISE,
+                            edited_plan_text=edited_plan if edited_plan else None,
+                        )
+                        break
+                    if choice in ["exit", "5"]:
                         print("Exiting workflow...")
                         return
-                    print("Invalid choice. Please enter 'approve', 'revise', or 'exit'.")
+                    print("Invalid choice. Please enter a number 1-5.")
 
                 pending_responses = {pending_request.request_id: reply}
                 pending_request = None

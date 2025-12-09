@@ -4,41 +4,36 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useCancellableRequest, isAbortError } from "@/hooks";
 import {
-  Play,
-  Settings,
-  RotateCcw,
   Info,
   Workflow as WorkflowIcon,
   RefreshCw,
-  Loader2,
   Trash2,
   Plus,
   ChevronLeft,
   ChevronRight,
+  AlertCircle,
+  Send,
 } from "lucide-react";
 import { LoadingState } from "@/components/ui/loading-state";
-import { WorkflowInputForm } from "./workflow-input-form";
-import { HilInputModal } from "./hil-input-modal";
+import { RunWorkflowButton } from "./run-workflow-button";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { WorkflowFlow } from "./workflow-flow";
 import { WorkflowDetailsModal } from "./workflow-details-modal";
+import { CheckpointInfoModal } from "./checkpoint-info-modal";
 import { ExecutionTimeline } from "./execution-timeline";
+import { validateSchemaForm } from "./schema-form-renderer";
 import { apiClient } from "@/services/api";
 import { useDevUIStore } from "@/stores/devuiStore";
 import type {
   WorkflowInfo,
   ExtendedResponseStreamEvent,
   JSONSchemaProperty,
+  CheckpointItem,
 } from "@/types";
 import type { ResponseRequestInfoEvent } from "@/types/openai";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogClose,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -49,337 +44,13 @@ import {
 
 type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
 
-// Compact Checkpoint Selector Component (currently unused - commented out in JSX)
-/*
-interface CheckpointSelectorProps {
-  conversationId: string | undefined;
-  selectedCheckpoint: string | undefined;
-  onCheckpointSelect: (checkpointId: string | undefined) => void;
-}
-
-function CheckpointSelector({
-  conversationId,
-  selectedCheckpoint,
-  onCheckpointSelect,
-}: CheckpointSelectorProps) {
-  const [checkpoints, setCheckpoints] = useState<
-    Array<{
-      checkpoint_id: string;
-      timestamp: number;
-    }>
-  >([]);
-  const [loading, setLoading] = useState(false);
-  const addToast = useDevUIStore((state) => state.addToast);
-
-  // Load checkpoints when conversation changes
-  useEffect(() => {
-    if (!conversationId) {
-      setCheckpoints([]);
-      return;
-    }
-
-    const loadCheckpoints = async () => {
-      setLoading(true);
-      try {
-        // Fetch conversation items and filter for checkpoints
-        const response = await apiClient.listConversationItems(conversationId, {
-          limit: 100,
-        });
-        const checkpointItems = response.data
-          .filter((item: any) => item.type === "checkpoint")
-          .map((item: any) => ({
-            checkpoint_id: item.checkpoint_id,
-            timestamp: item.timestamp,
-          }));
-        setCheckpoints(checkpointItems);
-      } catch (error) {
-        console.error("Failed to load checkpoints:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadCheckpoints();
-  }, [conversationId]);
-
-  const handleDelete = async (checkpointId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    if (!confirm("Delete this checkpoint?")) return;
-
-    try {
-      // Delete through conversation items API
-      const itemId = `checkpoint_${checkpointId}`;
-      await apiClient.deleteConversationItem(conversationId!, itemId);
-      addToast({ message: "Checkpoint deleted", type: "success" });
-      setCheckpoints((prev) =>
-        prev.filter((cp) => cp.checkpoint_id !== checkpointId)
-      );
-      if (selectedCheckpoint === checkpointId) {
-        onCheckpointSelect(undefined);
-      }
-    } catch (error) {
-      console.error("Failed to delete checkpoint:", error);
-      addToast({ message: "Failed to delete checkpoint", type: "error" });
-    }
-  };
-
-  if (!conversationId || checkpoints.length === 0) {
-    return null; // Hide when no conversation or no checkpoints
-  }
-
-  return (
-    <Select
-      value={selectedCheckpoint || "none"}
-      onValueChange={(value) =>
-        onCheckpointSelect(value === "none" ? undefined : value)
-      }
-      disabled={loading}
-    >
-      <SelectTrigger className="w-[200px] h-9 text-xs">
-        <SelectValue placeholder="Resume from..." />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="none">Start Fresh (No Checkpoint)</SelectItem>
-        {checkpoints.map((cp) => (
-          <div
-            key={cp.checkpoint_id}
-            className="flex items-center justify-between group"
-          >
-            <SelectItem value={cp.checkpoint_id} className="flex-1">
-              Checkpoint {new Date(cp.timestamp * 1000).toLocaleString()}
-            </SelectItem>
-            <button
-              onClick={(e) => handleDelete(cp.checkpoint_id, e)}
-              className="p-1 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"
-              title="Delete checkpoint"
-            >
-              <Trash2 className="w-3 h-3" />
-            </button>
-          </div>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-*/
-
-// Smart Run Workflow Button Component
-interface RunWorkflowButtonProps {
-  inputSchema: JSONSchemaProperty;
-  onRun: (data: Record<string, unknown>) => void;
-  isSubmitting: boolean;
-  workflowState: "ready" | "running" | "completed" | "error";
-  executorHistory: Array<{
-    executorId: string;
-    message: string;
-    timestamp: string;
-    status: string;
-  }>;
-}
-
-function RunWorkflowButton({
-  inputSchema,
-  onRun,
-  isSubmitting,
-  workflowState,
-}: RunWorkflowButtonProps) {
-  const [showModal, setShowModal] = useState(false);
-
-  // Handle escape key to close modal
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && showModal) {
-        setShowModal(false);
-      }
-    };
-
-    if (showModal) {
-      document.addEventListener("keydown", handleEscape);
-      return () => document.removeEventListener("keydown", handleEscape);
-    }
-  }, [showModal]);
-
-  // Analyze input requirements
-  const inputAnalysis = useMemo(() => {
-    if (!inputSchema)
-      return { needsInput: false, hasDefaults: false, fieldCount: 0 };
-
-    if (inputSchema.type === "string") {
-      return {
-        needsInput: !inputSchema.default,
-        hasDefaults: !!inputSchema.default,
-        fieldCount: 1,
-        canRunDirectly: !!inputSchema.default,
-      };
-    }
-
-    if (inputSchema.type === "object" && inputSchema.properties) {
-      const properties = inputSchema.properties;
-      const fields = Object.entries(properties);
-      const fieldsWithDefaults = fields.filter(
-        ([, schema]: [string, JSONSchemaProperty]) =>
-          schema.default !== undefined ||
-          (schema.enum && schema.enum.length > 0)
-      );
-
-      return {
-        needsInput: fields.length > 0,
-        hasDefaults: fieldsWithDefaults.length > 0,
-        fieldCount: fields.length,
-        canRunDirectly: fieldsWithDefaults.length === fields.length, // All fields have defaults
-      };
-    }
-
-    return {
-      needsInput: false,
-      hasDefaults: false,
-      fieldCount: 0,
-      canRunDirectly: true,
-    };
-  }, [inputSchema]);
-
-  const handleDirectRun = () => {
-    if (inputAnalysis.canRunDirectly) {
-      // Build default data
-      const defaultData: Record<string, unknown> = {};
-
-      if (inputSchema.type === "string" && inputSchema.default) {
-        defaultData.input = inputSchema.default;
-      } else if (inputSchema.type === "object" && inputSchema.properties) {
-        Object.entries(inputSchema.properties).forEach(
-          ([key, schema]: [string, JSONSchemaProperty]) => {
-            if (schema.default !== undefined) {
-              defaultData[key] = schema.default;
-            } else if (schema.enum && schema.enum.length > 0) {
-              defaultData[key] = schema.enum[0];
-            }
-          }
-        );
-      }
-
-      onRun(defaultData);
-    } else {
-      setShowModal(true);
-    }
-  };
-
-  const getButtonText = () => {
-    if (workflowState === "running") return "Running...";
-    if (workflowState === "completed") return "Run Again";
-    if (workflowState === "error") return "Retry";
-    if (inputAnalysis.fieldCount === 0) return "Run Workflow";
-    if (inputAnalysis.canRunDirectly) return "Run Workflow";
-    return "Configure & Run";
-  };
-
-  const getButtonIcon = () => {
-    if (workflowState === "running")
-      return <Loader2 className="w-4 h-4 animate-spin" />;
-    if (workflowState === "error") return <RotateCcw className="w-4 h-4" />;
-    if (inputAnalysis.needsInput && !inputAnalysis.canRunDirectly)
-      return <Settings className="w-4 h-4" />;
-    return <Play className="w-4 h-4" />;
-  };
-
-  const isButtonDisabled = workflowState === "running";
-  const buttonVariant = workflowState === "error" ? "destructive" : "primary";
-
-  return (
-    <>
-      <div className="flex items-center">
-        {/* Split button group using proper Button components */}
-        <div className="flex">
-          {/* Main button */}
-          <Button
-            onClick={handleDirectRun}
-            disabled={isButtonDisabled}
-            variant={
-              buttonVariant === "destructive" ? "destructive" : "default"
-            }
-            size="default"
-            className={inputAnalysis.needsInput ? "rounded-r-none" : ""}
-          >
-            {getButtonIcon()}
-            {getButtonText()}
-          </Button>
-
-          {/* Dropdown button - only show if inputs are available */}
-          {inputAnalysis.needsInput && (
-            <Button
-              onClick={() => setShowModal(true)}
-              disabled={isButtonDisabled}
-              variant={
-                buttonVariant === "destructive" ? "destructive" : "default"
-              }
-              size="default"
-              className="rounded-l-none border-l-0 px-3"
-              title="Configure workflow inputs - customize parameters before running"
-            >
-              <Settings className="w-4 h-4" />
-              <span className="ml-1.5">Inputs</span>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Modal with proper Dialog component - matching WorkflowInputForm structure */}
-      <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="w-full min-w-[400px] max-w-md sm:max-w-lg md:max-w-2xl lg:max-w-4xl xl:max-w-5xl max-h-[90vh] flex flex-col">
-          <DialogHeader className="px-8 pt-6">
-            <DialogTitle>Configure Workflow Inputs</DialogTitle>
-            <DialogClose onClose={() => setShowModal(false)} />
-          </DialogHeader>
-
-          {/* Form Info - matching the structure from WorkflowInputForm */}
-          <div className="px-8 py-4 border-b flex-shrink-0">
-            <div className="text-sm text-muted-foreground">
-              <div className="flex items-center gap-3">
-                <span className="font-medium">Input Type:</span>
-                <code className="bg-muted px-3 py-1 text-xs font-mono">
-                  {inputAnalysis.fieldCount === 0
-                    ? "No Input"
-                    : inputSchema.type === "string"
-                    ? "String"
-                    : "Object"}
-                </code>
-                {inputSchema.type === "object" && inputSchema.properties && (
-                  <span className="text-xs text-muted-foreground">
-                    {Object.keys(inputSchema.properties).length} field
-                    {Object.keys(inputSchema.properties).length !== 1
-                      ? "s"
-                      : ""}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Scrollable Form Content - matching padding and structure */}
-          <div className="px-8 py-6 overflow-y-auto flex-1 min-h-0">
-            <WorkflowInputForm
-              inputSchema={inputSchema}
-              inputTypeName="Input"
-              onSubmit={(data) => {
-                onRun(data as Record<string, unknown>);
-                setShowModal(false);
-              }}
-              isSubmitting={isSubmitting}
-              className="embedded"
-            />
-          </div>
-
-          {/* Footer - no additional buttons needed since WorkflowInputForm embedded mode has its own */}
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
 interface WorkflowViewProps {
   selectedWorkflow: WorkflowInfo;
   onDebugEvent: DebugEventHandler;
 }
+
+// TODO: CheckpointSelector is not currently used but may be needed for checkpoint resumption feature
+// Smart Run Workflow Button Component moved to separate file
 
 export function WorkflowView({
   selectedWorkflow,
@@ -394,14 +65,20 @@ export function WorkflowView({
     ExtendedResponseStreamEvent[]
   >([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [wasCancelled, setWasCancelled] = useState(false);
   const [selectedExecutorId, setSelectedExecutorId] = useState<string | null>(
     null
   );
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [checkpointInfoModalOpen, setCheckpointInfoModalOpen] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
-  const [showTimeline, setShowTimeline] = useState(false);
   const [timelineMinimized, setTimelineMinimized] = useState(false);
   const [workflowResult, setWorkflowResult] = useState<string>("");
+  const [sessionCheckpoints, setSessionCheckpoints] = useState<CheckpointItem[]>([]);
+
+  // Use the cancellation hook
+  const { isCancelling, createAbortSignal, handleCancel, resetCancelling } =
+    useCancellableRequest();
 
   // HIL (Human-in-the-Loop) state
   const [pendingHilRequests, setPendingHilRequests] = useState<
@@ -414,7 +91,6 @@ export function WorkflowView({
   const [hilResponses, setHilResponses] = useState<
     Record<string, Record<string, unknown>>
   >({});
-  const [showHilModal, setShowHilModal] = useState(false);
 
   // Track per-item outputs (keyed by item.id, not executor_id to handle multiple runs)
   const itemOutputs = useRef<Record<string, string>>({});
@@ -434,11 +110,6 @@ export function WorkflowView({
   const removeSession = useDevUIStore((state) => state.removeSession);
   const addToast = useDevUIStore((state) => state.addToast);
   const runtime = useDevUIStore((state) => state.runtime);
-
-  // Selected checkpoint for resume (local state)
-  const [selectedCheckpointId, setSelectedCheckpointId] = useState<
-    string | null
-  >(null);
 
   // View options state
   const [viewOptions, setViewOptions] = useState(() => {
@@ -462,7 +133,7 @@ export function WorkflowView({
   // Layout direction state
   const [layoutDirection, setLayoutDirection] = useState<"LR" | "TB">(() => {
     const saved = localStorage.getItem("workflowLayoutDirection");
-    return (saved as "LR" | "TB") || "LR";
+    return (saved as "LR" | "TB") || "TB";
   });
 
   // Save view options to localStorage
@@ -556,7 +227,7 @@ export function WorkflowView({
     setOpenAIEvents([]);
     setIsStreaming(false);
     setSelectedExecutorId(null);
-    setShowTimeline(false);
+    // Timeline stays visible (we changed this to always show)
     setWorkflowResult("");
     setWorkflowLoadError(null);
     itemOutputs.current = {};
@@ -567,60 +238,105 @@ export function WorkflowView({
   }, [selectedWorkflow.id, selectedWorkflow.type]);
 
   // Load sessions when workflow is selected
-  useEffect(() => {
-    const loadSessions = async () => {
-      if (!workflowInfo) return;
+  const loadSessions = useCallback(async () => {
+    if (!workflowInfo) return;
 
-      setLoadingSessions(true);
-      try {
-        const response = await apiClient.listWorkflowSessions(workflowInfo.id);
+    setLoadingSessions(true);
+    try {
+      const response = await apiClient.listWorkflowSessions(workflowInfo.id);
 
-        // If no sessions exist, auto-create one
-        if (response.data.length === 0) {
-          const newSession = await apiClient.createWorkflowSession(
-            workflowInfo.id,
-            {
-              name: `Conversation ${new Date().toLocaleString()}`,
-            }
-          );
-          setAvailableSessions([newSession]);
-          setCurrentSession(newSession);
-        } else {
-          setAvailableSessions(response.data);
-          // Auto-select first session if none selected
-          if (!currentSession) {
-            const firstSession = response.data[0];
-            setCurrentSession(firstSession);
-            await handleSessionChange(firstSession);
+      // If no sessions exist, auto-create one
+      if (response.data.length === 0) {
+        const newSession = await apiClient.createWorkflowSession(
+          workflowInfo.id,
+          {
+            name: `Checkpoint Storage ${new Date().toLocaleString()}`,
           }
-        }
-      } catch (error) {
-        console.error("Failed to load sessions:", error);
+        );
+        setAvailableSessions([newSession]);
+        setCurrentSession(newSession);
+      } else {
+        // Sort by created_at descending (most recent first)
+        const sortedSessions = [...response.data].sort((a, b) => b.created_at - a.created_at);
 
-        // Silently handle for .NET backend (doesn't support conversations yet)
-        // Only show error for Python backend where this is unexpected
-        if (runtime !== "dotnet") {
-          addToast({
-            message: "Failed to load sessions",
-            type: "error"
-          });
+        setAvailableSessions(sortedSessions);
+
+        // Auto-select most recent session if none selected (but keep current if it exists)
+        if (!currentSession) {
+          const firstSession = sortedSessions[0];
+          setCurrentSession(firstSession);
+          await handleSessionChange(firstSession);
         }
-      } finally {
-        setLoadingSessions(false);
       }
-    };
+    } catch (error) {
+      console.error("Failed to load sessions:", error);
 
+      // Silently handle for .NET backend (doesn't support conversations yet)
+      // Only show error for Python backend where this is unexpected
+      if (runtime !== "dotnet") {
+        addToast({
+          message: "Failed to load sessions",
+          type: "error",
+        });
+      }
+    } finally {
+      setLoadingSessions(false);
+    }
+    // Note: handleSessionChange is intentionally omitted from dependencies to avoid circular dependency.
+    // It's only called conditionally on initial session selection, not on every loadSessions call.
+  }, [workflowInfo, currentSession, runtime, addToast, setAvailableSessions, setCurrentSession]);
+
+  useEffect(() => {
     loadSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowInfo?.id, runtime]);
 
-  // Handle session change - just clear checkpoint selection
+  // Load checkpoint items for current session (for checkpoint info modal)
+  const loadCheckpoints = useCallback(async () => {
+    if (!currentSession) {
+      setSessionCheckpoints([]);
+      return;
+    }
+
+    try {
+      const response = await apiClient.listConversationItems(
+        currentSession.conversation_id,
+        { limit: 100 }
+      );
+      const checkpointItems = response.data.filter(
+        (item: any) => item.type === "checkpoint"
+      ) as CheckpointItem[];
+      setSessionCheckpoints(checkpointItems);
+    } catch (error) {
+      console.error(`Failed to load checkpoints for session ${currentSession.conversation_id}:`, error);
+      setSessionCheckpoints([]);
+    }
+  }, [currentSession]);
+
+  // Only load checkpoints when modal opens or session changes while modal is open
+  useEffect(() => {
+    if (checkpointInfoModalOpen && currentSession) {
+      loadCheckpoints();
+    }
+  }, [checkpointInfoModalOpen, currentSession, loadCheckpoints]);
+
+  // Handle session change - reset workflow view state
   const handleSessionChange = useCallback(
     async (session: typeof currentSession) => {
       if (!session || !workflowInfo) return;
-      // Clear selected checkpoint when switching sessions
-      // CheckpointSelector component will load checkpoints automatically
-      setSelectedCheckpointId(null);
+
+      // Reset workflow view state when switching checkpoint storages
+      setOpenAIEvents([]);
+      setIsStreaming(false);
+      setWasCancelled(false);
+      setSelectedExecutorId(null);
+      setTimelineMinimized(false);
+      setWorkflowResult("");
+      setPendingHilRequests([]);
+      setHilResponses({});
+      itemOutputs.current = {};
+      currentStreamingItemId.current = null;
+      workflowMetadata.current = null;
     },
     [workflowInfo]
   );
@@ -647,19 +363,29 @@ export function WorkflowView({
       const newSession = await apiClient.createWorkflowSession(
         workflowInfo.id,
         {
-          name: `Conversation ${new Date().toLocaleString()}`,
+          name: `Checkpoint Storage ${new Date().toLocaleString()}`,
         }
       );
+
+      // Debug logging
+      console.log("[WorkflowView] Created new session:", newSession.conversation_id);
+      console.log("[WorkflowView] Previous session:", currentSession?.conversation_id);
+
       addSession(newSession);
       setCurrentSession(newSession);
       await handleSessionChange(newSession);
-      addToast({ message: "New session created", type: "success" });
+
+      // Force a small delay to ensure state is updated
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      addToast({ message: "New checkpoint storage created", type: "success" });
     } catch (error) {
-      console.error("Failed to create session:", error);
-      addToast({ message: "Failed to create session", type: "error" });
+      console.error("Failed to create checkpoint storage:", error);
+      addToast({ message: "Failed to create checkpoint storage", type: "error" });
     }
   }, [
     workflowInfo,
+    currentSession,
     addSession,
     setCurrentSession,
     handleSessionChange,
@@ -705,12 +431,7 @@ export function WorkflowView({
     );
   }, [openAIEvents]);
 
-  // Show timeline when first workflow event arrives
-  useEffect(() => {
-    if (workflowEvents.length > 0 && !showTimeline) {
-      setShowTimeline(true);
-    }
-  }, [workflowEvents.length, showTimeline]);
+  // Timeline is now always visible, no need to control visibility
 
   // Extract executor history from workflow events (filter out workflow-level events)
   const executorHistory = useMemo(() => {
@@ -727,7 +448,11 @@ export function WorkflowView({
         event.type === "response.output_item.added" ||
         event.type === "response.output_item.done"
       ) {
-        const item = (event as any).item;
+        const item = (
+          event as
+            | import("@/types/openai").ResponseOutputItemAddedEvent
+            | import("@/types/openai").ResponseOutputItemDoneEvent
+        ).item;
         if (item && item.type === "executor_action" && item.executor_id) {
           history.push({
             executorId: item.executor_id,
@@ -786,10 +511,11 @@ export function WorkflowView({
 
   // Handle workflow data sending (structured input)
   const handleSendWorkflowData = useCallback(
-    async (inputData: Record<string, unknown>) => {
+    async (inputData: Record<string, unknown>, checkpointId?: string) => {
       if (!selectedWorkflow || selectedWorkflow.type !== "workflow") return;
 
       setIsStreaming(true);
+      setWasCancelled(false); // Reset cancelled state for new run
       setOpenAIEvents([]); // Clear previous OpenAI events for new execution
 
       // Clear per-item outputs and metadata for new run
@@ -798,24 +524,41 @@ export function WorkflowView({
       currentStreamingItemId.current = null;
       workflowMetadata.current = null;
 
+      // Clear HIL state for new workflow run
+      setPendingHilRequests([]);
+      setHilResponses({});
+
       // Clear debug panel events for new workflow run
       onDebugEvent("clear");
 
+      // Create new AbortController for this request
+      const signal = createAbortSignal();
+
       try {
+        // Debug logging to track conversation ID usage
+        console.log("[WorkflowView] Running workflow with:");
+        console.log("  - Current session ID:", currentSession?.conversation_id);
+        console.log("  - Input data:", inputData);
+
         const request = {
           input_data: inputData,
           conversation_id: currentSession?.conversation_id || undefined, // Pass session conversation_id for checkpoint support
-          checkpoint_id: selectedCheckpointId || undefined, // Pass selected checkpoint if any
+          checkpoint_id: checkpointId, // Pass checkpoint ID when resuming from a checkpoint
         };
 
         // Clear any previous streaming state before starting new workflow execution
-        // Note: Workflows don't use conversation IDs, so we use workflow ID as the key
-        apiClient.clearStreamingState(selectedWorkflow.id);
+        // Use conversation ID if available, otherwise use workflow ID
+        if (currentSession?.conversation_id) {
+          apiClient.clearStreamingState(currentSession.conversation_id);
+        } else {
+          apiClient.clearStreamingState(selectedWorkflow.id);
+        }
 
         // Use OpenAI-compatible API streaming - direct event handling
         const streamGenerator = apiClient.streamWorkflowExecutionOpenAI(
           selectedWorkflow.id,
-          request
+          request,
+          signal
         );
 
         for await (const openAIEvent of streamGenerator) {
@@ -835,7 +578,8 @@ export function WorkflowView({
               const baseTimestamp = Math.floor(Date.now() / 1000);
               const lastTimestamp =
                 prev.length > 0
-                  ? (prev[prev.length - 1] as any)._uiTimestamp || 0
+                  ? (prev[prev.length - 1] as { _uiTimestamp?: number })
+                      ._uiTimestamp || 0
                   : 0;
               const uniqueTimestamp = Math.max(
                 baseTimestamp,
@@ -857,7 +601,9 @@ export function WorkflowView({
 
           // Handle new standard OpenAI events
           if (openAIEvent.type === "response.output_item.added") {
-            const item = (openAIEvent as any).item;
+            const item = (
+              openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent
+            ).item;
 
             // Handle executor action items
             if (
@@ -981,8 +727,10 @@ export function WorkflowView({
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            // Determine which ITEM (specific run) owns this text
-            const itemId = currentStreamingItemId.current;
+            // Use the item_id from the event itself (for concurrent workflows)
+            // Fall back to currentStreamingItemId for backwards compatibility
+            const itemId =
+              openAIEvent.item_id || currentStreamingItemId.current;
 
             if (itemId) {
               // Initialize item output if needed
@@ -1035,11 +783,6 @@ export function WorkflowView({
               ...prev,
               [hilEvent.request_id]: defaultValues,
             }));
-
-            // Auto-show modal when first request arrives
-            if (pendingHilRequests.length === 0) {
-              setShowHilModal(true);
-            }
           }
 
           // Handle errors (ResponseErrorEvent - fallback error format)
@@ -1049,33 +792,66 @@ export function WorkflowView({
           }
         }
 
-        // Check if workflow ended with pending HIL requests
-        if (pendingHilRequests.length > 0 && !showHilModal) {
-          setShowHilModal(true);
-        }
-
         setIsStreaming(false);
       } catch (error) {
-        // Error will be displayed in timeline
-        console.error("Workflow execution error:", error);
+        // Handle abort separately - don't show error message
+        if (isAbortError(error)) {
+          // User cancelled - just stop gracefully
+          console.log("Workflow execution cancelled by user");
+          setWasCancelled(true); // Mark as cancelled for UI feedback
+          // Leave the last state visible to show where workflow was when cancelled
+          // Clear any pending HIL requests since workflow is cancelled
+          setPendingHilRequests([]);
+          setHilResponses({});
+        } else {
+          // Other errors - log them
+          console.error("Workflow execution error:", error);
+        }
         setIsStreaming(false);
+        resetCancelling();
       }
     },
     [
       selectedWorkflow,
       onDebugEvent,
-      workflowInfo,
       currentSession,
-      selectedCheckpointId,
+      createAbortSignal,
+      resetCancelling,
     ]
   );
+
+  // Check if all HIL responses are valid
+  const areAllHilResponsesValid = useCallback(() => {
+    // Check each pending request has a valid response
+    for (const request of pendingHilRequests) {
+      const response = hilResponses[request.request_id] || {};
+      // Use the same validation logic as HilTimelineItem
+      if (!validateSchemaForm(request.request_schema, response)) {
+        return false;
+      }
+    }
+    return true;
+  }, [pendingHilRequests, hilResponses]);
 
   // Handle HIL response submission
   const handleSubmitHilResponses = useCallback(async () => {
     if (!selectedWorkflow || selectedWorkflow.type !== "workflow") return;
 
-    setShowHilModal(false);
+    // Only submit if ALL forms are valid
+    if (!areAllHilResponsesValid()) {
+      console.warn("Cannot submit: Not all HIL forms are valid");
+      return;
+    }
+
     setIsStreaming(true);
+
+    // Clear pending HIL requests immediately after submission
+    // They've been submitted, so we shouldn't show them anymore
+    setPendingHilRequests([]);
+    setHilResponses({});
+
+    // Create new AbortController for HIL submission
+    const signal = createAbortSignal();
 
     try {
       // Create OpenAI request with workflow_hil_response content type
@@ -1090,16 +866,21 @@ export function WorkflowView({
               },
             ],
           },
-        ] as any, // OpenAI Responses API format, cast to satisfy TypeScript
+        ] as unknown as Record<string, unknown>, // OpenAI Responses API format, cast to satisfy RunWorkflowRequest type
         conversation_id: currentSession?.conversation_id || undefined,
-        checkpoint_id: selectedCheckpointId || undefined, // Pass selected checkpoint
+        // checkpoint_id: undefined, // Checkpoint functionality currently disabled
       };
 
       // Use OpenAI-compatible API streaming to continue workflow
       const streamGenerator = apiClient.streamWorkflowExecutionOpenAI(
         selectedWorkflow.id,
-        request
+        request,
+        signal
       );
+
+      // Track if new HIL requests arrive during response processing
+      let newHilRequestsArrived = false;
+      const newHilRequests: typeof pendingHilRequests = [];
 
       for await (const openAIEvent of streamGenerator) {
         // Store workflow-related events
@@ -1117,7 +898,8 @@ export function WorkflowView({
             const baseTimestamp = Math.floor(Date.now() / 1000);
             const lastTimestamp =
               prev.length > 0
-                ? (prev[prev.length - 1] as any)._uiTimestamp || 0
+                ? (prev[prev.length - 1] as { _uiTimestamp?: number })
+                    ._uiTimestamp || 0
                 : 0;
             const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
 
@@ -1134,9 +916,54 @@ export function WorkflowView({
         // Pass to debug panel
         onDebugEvent(openAIEvent);
 
+        // Check for new HIL requests after sending responses - handles multi-round HIL
+        if (openAIEvent.type === "response.request_info.requested") {
+          const hilEvent = openAIEvent as ResponseRequestInfoEvent;
+          newHilRequestsArrived = true;
+
+          // Cast to the correct type for setPendingHilRequests
+          const typedHilEvent = {
+            request_id: hilEvent.request_id,
+            request_data: hilEvent.request_data,
+            request_schema:
+              hilEvent.request_schema as unknown as JSONSchemaProperty,
+          };
+
+          // Collect new requests (don't update state yet)
+          newHilRequests.push(typedHilEvent);
+
+          // Initialize response data with defaults from schema
+          const schema =
+            hilEvent.request_schema as unknown as JSONSchemaProperty;
+          const defaultValues: Record<string, unknown> = {};
+
+          if (schema.properties) {
+            Object.entries(schema.properties).forEach(
+              ([fieldName, fieldSchema]) => {
+                const field = fieldSchema as JSONSchemaProperty;
+                // Set default for enum fields to first option
+                if (field.enum && field.enum.length > 0) {
+                  defaultValues[fieldName] = field.enum[0];
+                }
+                // Use explicit default value if provided
+                else if (field.default !== undefined) {
+                  defaultValues[fieldName] = field.default;
+                }
+              }
+            );
+          }
+
+          setHilResponses((prev) => ({
+            ...prev,
+            [hilEvent.request_id]: defaultValues,
+          }));
+        }
+
         // Handle workflow output items (from ctx.yield_output)
         if (openAIEvent.type === "response.output_item.added") {
-          const item = (openAIEvent as any).item;
+          const item = (
+            openAIEvent as import("@/types/openai").ResponseOutputItemAddedEvent
+          ).item;
 
           // Handle executor action items
           if (
@@ -1196,30 +1023,51 @@ export function WorkflowView({
 
         // Handle completion
         if (openAIEvent.type === "response.completed") {
-          // Workflow completed successfully
+          // Workflow completed successfully - refetch checkpoints
+          await loadCheckpoints();
         }
 
         // Handle errors
         if (openAIEvent.type === "response.failed") {
-          // Error will be displayed in timeline
+          // Error will be displayed in timeline - refetch checkpoints
+          await loadCheckpoints();
         }
       }
 
-      // Clear HIL state after successful submission
-      setPendingHilRequests([]);
-      setHilResponses({});
+      // Handle new HIL requests if any arrived during processing
+      if (newHilRequestsArrived) {
+        // Set the new pending requests
+        setPendingHilRequests(newHilRequests);
+        // Note: HIL responses are already initialized when requests arrive (lines 1198-1201)
+        // No need to reinitialize them here
+      }
+
+      // Stream is done - refetch checkpoints to update badge count
       setIsStreaming(false);
+      await loadCheckpoints();
     } catch (error) {
-      // Error will be displayed in timeline
-      console.error("HIL submission error:", error);
+      // Handle abort separately
+      if (isAbortError(error)) {
+        console.log("HIL submission cancelled by user");
+        setWasCancelled(true); // Mark as cancelled for UI feedback
+      } else {
+        // Other errors
+        console.error("HIL submission error:", error);
+      }
       setIsStreaming(false);
+      resetCancelling();
+      // Refetch checkpoints even on error/cancel
+      await loadCheckpoints();
     }
   }, [
     selectedWorkflow,
     hilResponses,
     onDebugEvent,
     currentSession,
-    selectedCheckpointId,
+    areAllHilResponsesValid,
+    createAbortSignal,
+    resetCancelling,
+    loadCheckpoints,
   ]);
 
   // Show loading state when workflow is being loaded
@@ -1299,26 +1147,25 @@ export function WorkflowView({
             >
               <Info className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleReloadEntity}
-              disabled={
-                isReloading || selectedWorkflow.metadata?.source === "in_memory"
-              }
-              className="h-6 w-6 p-0 flex-shrink-0"
-              title={
-                selectedWorkflow.metadata?.source === "in_memory"
-                  ? "In-memory entities cannot be reloaded"
-                  : isReloading
-                  ? "Reloading..."
-                  : "Reload entity code (hot reload)"
-              }
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`}
-              />
-            </Button>
+            {/* Only show reload button for directory-based entities */}
+            {selectedWorkflow.source !== "in_memory" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleReloadEntity}
+                disabled={isReloading}
+                className="h-6 w-6 p-0 flex-shrink-0"
+                title={
+                  isReloading
+                    ? "Reloading..."
+                    : "Reload entity code (hot reload)"
+                }
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${isReloading ? "animate-spin" : ""}`}
+                />
+              </Button>
+            )}
           </div>
 
           {/* Workflow Session & Checkpoint Controls - Compact header like agent view */}
@@ -1336,18 +1183,30 @@ export function WorkflowView({
                       loadingSessions
                         ? "Loading..."
                         : availableSessions.length === 0
-                        ? "No conversations"
-                        : "Select conversation"
+                        ? "No checkpoint storages"
+                        : "Select checkpoint storage"
                     }
                   >
                     {currentSession && (
                       <div className="flex items-center gap-2 text-xs">
-                        <span>
+                        <span className="truncate">
                           {currentSession.metadata.name ||
-                            `Conversation ${currentSession.conversation_id.slice(
+                            `Checkpoint Storage ${currentSession.conversation_id.slice(
                               -8
                             )}`}
                         </span>
+                        {currentSession.metadata.checkpoint_summary && currentSession.metadata.checkpoint_summary.count > 0 && (
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                              {currentSession.metadata.checkpoint_summary.count}
+                            </Badge>
+                            {currentSession.metadata.checkpoint_summary.has_pending_hil && (
+                              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                                HIL
+                              </Badge>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </SelectValue>
@@ -1358,23 +1217,49 @@ export function WorkflowView({
                       key={session.conversation_id}
                       value={session.conversation_id}
                     >
-                      <div className="flex items-center justify-between w-full">
-                        <span>
+                      <div className="flex items-center justify-between w-full gap-2">
+                        <span className="truncate">
                           {session.metadata.name ||
-                            `Conversation ${session.conversation_id.slice(-8)}`}
+                            `Checkpoint Storage ${session.conversation_id.slice(-8)}`}
                         </span>
-                        {session.created_at && (
-                          <span className="text-xs text-muted-foreground ml-3">
-                            {new Date(
-                              session.created_at * 1000
-                            ).toLocaleTimeString()}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {session.created_at && (
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(
+                                session.created_at * 1000
+                              ).toLocaleTimeString()}
+                            </span>
+                          )}
+                          {session.metadata.checkpoint_summary && session.metadata.checkpoint_summary.count > 0 && (
+                            <>
+                              <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                                {session.metadata.checkpoint_summary.count}
+                              </Badge>
+                              {session.metadata.checkpoint_summary.has_pending_hil && (
+                                <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                                  HIL
+                                </Badge>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              {/* Checkpoint Info Button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCheckpointInfoModalOpen(true)}
+                disabled={!currentSession}
+                className="h-9 w-9 p-0 flex-shrink-0"
+                title="View checkpoint details"
+              >
+                <Info className="h-4 w-4" />
+              </Button>
 
               {/* Delete Session Button */}
               <Button
@@ -1407,20 +1292,25 @@ export function WorkflowView({
                 onCheckpointSelect={(checkpointId) => setSelectedCheckpointId(checkpointId || null)}
               /> */}
 
-              {/* Run Button */}
-              <RunWorkflowButton
-                inputSchema={workflowInfo.input_schema}
-                onRun={handleSendWorkflowData}
-                isSubmitting={isStreaming}
-                workflowState={
-                  isStreaming
-                    ? "running"
-                    : executorHistory.length > 0
-                    ? "completed"
-                    : "ready"
-                }
-                executorHistory={executorHistory}
-              />
+              {/* Run Button - only show when timeline is minimized */}
+              {timelineMinimized && (
+                <RunWorkflowButton
+                  inputSchema={workflowInfo.input_schema}
+                  onRun={handleSendWorkflowData}
+                  onCancel={handleCancel}
+                  isSubmitting={isStreaming}
+                  isCancelling={isCancelling}
+                  workflowState={
+                    isStreaming
+                      ? "running"
+                      : executorHistory.length > 0
+                      ? "completed"
+                      : "ready"
+                  }
+                  checkpoints={sessionCheckpoints}
+                  showCheckpoints={false}
+                />
+              )}
             </div>
           )}
         </div>
@@ -1431,6 +1321,49 @@ export function WorkflowView({
           </p>
         )}
       </div>
+
+      {/* HIL Warning Bar */}
+      {pendingHilRequests.length > 0 && (
+        <div className="bg-orange-100 dark:bg-orange-950/30 border-b border-orange-300 dark:border-orange-800 px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+              <span className="text-sm font-medium text-orange-900 dark:text-orange-100">
+                Workflow is waiting for your input ({pendingHilRequests.length}{" "}
+                request{pendingHilRequests.length > 1 ? "s" : ""})
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {pendingHilRequests.length > 1 && (
+                <Button
+                  size="sm"
+                  onClick={handleSubmitHilResponses}
+                  disabled={!areAllHilResponsesValid() || isStreaming}
+                  className="gap-1"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  Submit All
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  // Scroll to HIL form in timeline
+                  const hilForm = document.querySelector("[data-hil-form]");
+                  hilForm?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                  });
+                }}
+                className="text-orange-700 hover:text-orange-900 dark:text-orange-400 dark:hover:text-orange-200"
+              >
+                Jump to input →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Side-by-side Layout: Workflow Graph (left) + Execution Timeline (right) */}
       <div className="flex-1 min-h-0 flex gap-0">
@@ -1447,17 +1380,16 @@ export function WorkflowView({
               onToggleViewOption={toggleViewOption}
               layoutDirection={layoutDirection}
               onLayoutDirectionChange={setLayoutDirection}
-              timelineVisible={showTimeline}
+              timelineVisible={true}
             />
           )}
         </div>
 
         {/* Right: Execution Timeline - inflates from left on first event */}
-        {showTimeline && (
-          <div
+        <div
             className="flex-shrink-0 overflow-hidden transition-all duration-300 ease-out border-l"
             style={{
-              width: timelineMinimized ? "2.5rem" : "24rem",
+              width: timelineMinimized ? "2.5rem" : "28rem", // Increased width for better form display
             }}
           >
             {timelineMinimized ? (
@@ -1497,7 +1429,7 @@ export function WorkflowView({
               </div>
             ) : (
               /* Expanded Timeline */
-              <div className="w-96 h-full flex flex-col">
+              <div className="w-[28rem] h-full flex flex-col">
                 {/* Timeline Header with Count Badge and Minimize Button */}
                 <div className="flex items-center justify-between p-2 border-b">
                   <div className="flex items-center gap-2">
@@ -1535,12 +1467,40 @@ export function WorkflowView({
                     onExecutorClick={handleNodeSelect}
                     selectedExecutorId={selectedExecutorId}
                     workflowResult={workflowResult}
+                    pendingHilRequests={pendingHilRequests}
+                    hilResponses={hilResponses}
+                    onHilResponseChange={(requestId, values) => {
+                      setHilResponses((prev) => ({
+                        ...prev,
+                        [requestId]: values,
+                      }));
+                    }}
+                    onHilSubmit={handleSubmitHilResponses}
+                    isSubmittingHil={isStreaming}
+                    // New props for bottom control
+                    inputSchema={workflowInfo?.input_schema}
+                    onRun={(data, checkpointId) => {
+                      // Use the form data from timeline
+                      handleSendWorkflowData(data, checkpointId);
+                    }}
+                    onCancel={handleCancel}
+                    isCancelling={isCancelling}
+                    workflowState={
+                      isStreaming
+                        ? "running"
+                        : wasCancelled
+                        ? "cancelled"
+                        : executorHistory.length > 0
+                        ? "completed"
+                        : "ready"
+                    }
+                    wasCancelled={wasCancelled}
+                    checkpoints={sessionCheckpoints}
                   />
                 </div>
               </div>
             )}
           </div>
-        )}
       </div>
 
       {/* Workflow Details Modal */}
@@ -1550,20 +1510,12 @@ export function WorkflowView({
         onOpenChange={setDetailsModalOpen}
       />
 
-      {/* HIL (Human-in-the-Loop) Input Modal */}
-      <HilInputModal
-        open={showHilModal}
-        onOpenChange={setShowHilModal}
-        requests={pendingHilRequests}
-        responses={hilResponses}
-        onResponseChange={(requestId, values) => {
-          setHilResponses((prev) => ({
-            ...prev,
-            [requestId]: values,
-          }));
-        }}
-        onSubmit={handleSubmitHilResponses}
-        isSubmitting={isStreaming}
+      {/* Checkpoint Info Modal */}
+      <CheckpointInfoModal
+        session={currentSession || null}
+        checkpoints={sessionCheckpoints}
+        open={checkpointInfoModalOpen}
+        onOpenChange={setCheckpointInfoModalOpen}
       />
     </div>
   );

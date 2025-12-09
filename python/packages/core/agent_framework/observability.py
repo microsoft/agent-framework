@@ -20,7 +20,7 @@ from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
     from azure.core.credentials import TokenCredential
-    from opentelemetry.sdk._logs._internal.export import LogExporter
+    from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace.export import SpanExporter
@@ -259,13 +259,13 @@ FINISH_REASON_MAP = {
 # region Telemetry utils
 
 
-def _get_otlp_exporters(endpoints: list[str]) -> list["LogExporter | SpanExporter | MetricExporter"]:
+def _get_otlp_exporters(endpoints: list[str]) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
     """Create standard OTLP Exporters for the supplied endpoints."""
     from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
     from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-    exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
 
     for endpoint in endpoints:
         exporters.append(OTLPLogExporter(endpoint=endpoint))
@@ -277,7 +277,7 @@ def _get_otlp_exporters(endpoints: list[str]) -> list["LogExporter | SpanExporte
 def _get_azure_monitor_exporters(
     connection_strings: list[str],
     credential: "TokenCredential | None" = None,
-) -> list["LogExporter | SpanExporter | MetricExporter"]:
+) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
     """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
     try:
         from azure.monitor.opentelemetry.exporter import (
@@ -291,7 +291,7 @@ def _get_azure_monitor_exporters(
             "Install it with: pip install azure-monitor-opentelemetry-exporter>=1.0.0b41"
         ) from e
 
-    exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
     for conn_string in connection_strings:
         exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
         exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
@@ -303,7 +303,7 @@ def get_exporters(
     otlp_endpoints: list[str] | None = None,
     connection_strings: list[str] | None = None,
     credential: "TokenCredential | None" = None,
-) -> list["LogExporter | SpanExporter | MetricExporter"]:
+) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
     """Add additional exporters to the existing configuration.
 
     If you supply exporters, those will be added to the relevant providers directly.
@@ -319,7 +319,7 @@ def get_exporters(
         connection_strings: A list of Azure Monitor connection strings. Default is None.
         credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
     """
-    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = []
+    new_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
     if otlp_endpoints:
         new_exporters.extend(_get_otlp_exporters(endpoints=otlp_endpoints))
 
@@ -429,7 +429,7 @@ class ObservabilitySettings(AFBaseSettings):
     def _configure(
         self,
         credential: "TokenCredential | None" = None,
-        additional_exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
+        additional_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
     ) -> None:
         """Configure application-wide observability based on the settings.
 
@@ -444,7 +444,7 @@ class ObservabilitySettings(AFBaseSettings):
         if not self.ENABLED or self._executed_setup:
             return
 
-        exporters: list["LogExporter | SpanExporter | MetricExporter"] = additional_exporters or []
+        exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = additional_exporters or []
         if self.otlp_endpoint:
             exporters.extend(
                 _get_otlp_exporters(
@@ -489,12 +489,11 @@ class ObservabilitySettings(AFBaseSettings):
             else [self.applicationinsights_connection_string]
         )
 
-    def _configure_providers(self, exporters: list["LogExporter | MetricExporter | SpanExporter"]) -> None:
+    def _configure_providers(self, exporters: list["LogRecordExporter | MetricExporter | SpanExporter"]) -> None:
         """Configure tracing, logging, events and metrics with the provided exporters."""
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs._internal.export import LogExporter
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
         from opentelemetry.sdk.metrics.view import DropAggregation, View
@@ -518,11 +517,11 @@ class ObservabilitySettings(AFBaseSettings):
         logger_provider = LoggerProvider(resource=self.resource)
         should_add_console_exporter = True
         for exporter in exporters:
-            if isinstance(exporter, LogExporter):
+            if isinstance(exporter, LogRecordExporter):
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
                 should_add_console_exporter = False
         if should_add_console_exporter:
-            from opentelemetry.sdk._logs._internal.export import ConsoleLogExporter
+            from opentelemetry.sdk._logs.export import ConsoleLogExporter
 
             logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
 
@@ -667,7 +666,7 @@ def setup_observability(
     otlp_endpoint: str | list[str] | None = None,
     applicationinsights_connection_string: str | list[str] | None = None,
     credential: "TokenCredential | None" = None,
-    exporters: list["LogExporter | SpanExporter | MetricExporter"] | None = None,
+    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
     vs_code_extension_port: int | None = None,
 ) -> None:
     """Setup observability for the application with OpenTelemetry.
@@ -749,7 +748,7 @@ def setup_observability(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 
     # Create exporters, after checking if they are already configured through the env.
-    new_exporters: list["LogExporter | SpanExporter | MetricExporter"] = exporters or []
+    new_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = exporters or []
     if otlp_endpoint:
         if isinstance(otlp_endpoint, str):
             otlp_endpoint = [otlp_endpoint]
@@ -1021,7 +1020,7 @@ def use_observability(
         .. code-block:: python
 
             from agent_framework import use_observability, setup_observability
-            from agent_framework._clients import ChatClientProtocol
+            from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
@@ -1104,6 +1103,7 @@ def _trace_agent_run(
         if not OBSERVABILITY_SETTINGS.ENABLED:
             # If model diagnostics are not enabled, just return the completion
             return await run_func(self, messages=messages, thread=thread, **kwargs)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1112,7 +1112,7 @@ def _trace_agent_run(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1120,7 +1120,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1173,6 +1173,7 @@ def _trace_agent_run_stream(
 
         all_updates: list["AgentRunResponseUpdate"] = []
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1181,7 +1182,7 @@ def _trace_agent_run_stream(
             agent_description=self.description,
             thread_id=thread.service_thread_id if thread else None,
             chat_options=getattr(self, "chat_options", None),
-            **kwargs,
+            **filtered_kwargs,
         )
         with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
@@ -1189,7 +1190,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(self, "instructions", None),
+                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1421,7 +1422,7 @@ def _capture_messages(
     """Log messages with extra information."""
     from ._types import prepare_messages
 
-    prepped = prepare_messages(messages)
+    prepped = prepare_messages(messages, system_instructions=system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
         otel_messages.append(_to_otel_message(message))
@@ -1472,10 +1473,10 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
                         elif isinstance(item, BaseModel):
                             res.append(item.model_dump(exclude_none=True))
                         else:
-                            res.append(json.dumps(item))
-                    response = json.dumps(res)
+                            res.append(json.dumps(item, default=str))
+                    response = json.dumps(res, default=str)
                 else:
-                    response = json.dumps(content.result)
+                    response = json.dumps(content.result, default=str)
             return {"type": "tool_call_response", "id": content.call_id, "response": response}
         case _:
             # GenericPart in otel output messages json spec.
@@ -1624,7 +1625,7 @@ def create_processing_span(
                         links.append(trace.Link(span_context))
 
     return workflow_tracer().start_as_current_span(
-        OtelAttr.EXECUTOR_PROCESS_SPAN,
+        f"{OtelAttr.EXECUTOR_PROCESS_SPAN} {executor_id}",
         kind=trace.SpanKind.INTERNAL,
         attributes={
             OtelAttr.EXECUTOR_ID: executor_id,
@@ -1697,7 +1698,7 @@ def create_edge_group_processing_span(
                 pass
 
     return workflow_tracer().start_as_current_span(
-        OtelAttr.EDGE_GROUP_PROCESS_SPAN,
+        f"{OtelAttr.EDGE_GROUP_PROCESS_SPAN} {edge_group_type}",
         kind=trace.SpanKind.INTERNAL,
         attributes=attributes,
         links=links,

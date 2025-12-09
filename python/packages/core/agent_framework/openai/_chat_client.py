@@ -3,7 +3,7 @@
 import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, TypeVar
 
@@ -214,7 +214,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
-            created_at=datetime.fromtimestamp(response.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             usage_details=self._usage_details_from_openai(response.usage) if response.usage else None,
             messages=messages,
             model_id=response.model,
@@ -249,7 +249,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if text_content := self._parse_text_from_choice(choice):
                 contents.append(text_content)
         return ChatResponseUpdate(
-            created_at=datetime.fromtimestamp(chunk.created).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
             role=Role.ASSISTANT,
             model_id=chunk.model,
@@ -369,8 +369,6 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
-            if message.additional_properties:
-                args["metadata"] = message.additional_properties
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:

@@ -10,7 +10,7 @@ You could use models from Microsoft, OpenAI, DeepSeek, Hugging Face, Meta, xAI o
 
 Before you begin, ensure you have the following prerequisites:
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure AI Foundry resource
 - A model deployment in your Azure AI Foundry resource. This example defaults to using the `Phi-4-mini-instruct` model,
 so if you want to use a different model, ensure that you set your `AZURE_FOUNDRY_MODEL_DEPLOYMENT` environment

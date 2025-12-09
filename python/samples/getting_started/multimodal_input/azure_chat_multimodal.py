@@ -13,6 +13,7 @@ def create_sample_image() -> str:
     png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
     return f"data:image/png;base64,{png_data}"
 
+
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -36,6 +37,7 @@ async def main() -> None:
     print("=== Testing Azure OpenAI Multimodal ===")
     print("Testing image analysis (supported by Chat Completions API)")
     await test_image()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
