@@ -124,6 +124,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
 | [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
 | [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |
+| [setup_observability_with_opik.py](./setup_observability_with_opik.py) | Streams Agent Framework telemetry to Opik using the OTLP HTTP exporter. |
 | [workflow_observability.py](./workflow_observability.py) | A simple example showing how to setup telemetry for a workflow. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | A comprehensive example showing how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | A comprehensive example showing how to setup telemetry using the `opentelemetry-instrument` lib without modifying any code. |
@@ -176,6 +177,17 @@ from agent_framework.observability import setup_observability
 exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compression.Gzip)
 setup_observability(exporters=[exporter])
 ```
+
+### Sending telemetry to Opik
+
+[Opik](https://www.comet.com/opik/) is Comet's observability, evaluation, and optimization platform for LLM and agent workloads. After installing `opik` and exporting the OTLP environment variables described at the top of `setup_observability_with_opik.py`, run:
+
+```bash
+pip install opik
+python setup_observability_with_opik.py
+```
+
+The script streams a single conversation to Opik so you can inspect the agent → tool → model spans, token usage, and cost breakdown. See the [Opik + Microsoft Agent Framework guide](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework) for additional configuration tips.
 
 ### Logs
 
