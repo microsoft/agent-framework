@@ -60,6 +60,19 @@ class Mem0Provider(ContextProvider):
             For advanced filtering (OR logic, date ranges, comparisons, etc.), pass a `filters`
             parameter to the `invoking()` through `agent.run()` method.
             The filters will be merged with these init params.
+
+        Example:
+                ```python
+                provider = Mem0Provider(user_id="user123")
+                agent = client.create_agent(context_providers=provider)
+
+                # Advanced filtering with OR logic
+                await agent.run(
+                    "Show memories from Bob or recent memories",
+                    filters={"OR": [{"user_id": "bob"}, {"created_at": {"gte": "2024-12-01"}}]},
+                )
+                ```
+
             See mem0 docs: https://docs.mem0.ai/api-reference/memory/search-memories
         """
         should_close_client = False
