@@ -72,7 +72,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponse response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            AgentRunResponse response = await base.RunCoreAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
 
             if (this._logger.IsEnabled(LogLevel.Debug))
             {
@@ -119,7 +119,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
         IAsyncEnumerator<AgentRunResponseUpdate> e;
         try
         {
-            e = base.RunStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            e = base.RunCoreStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
         catch (OperationCanceledException)
         {
