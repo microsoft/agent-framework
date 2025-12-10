@@ -9,7 +9,7 @@ from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from mcp import types
 from mcp.client.session import ClientSession
@@ -300,7 +300,7 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         return create_model(f"{tool.name}_input")
 
     # Counter for generating unique model names
-    model_counter = {"count": 0}
+    model_counter = 0
 
     def resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
         """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
@@ -312,6 +312,8 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         Returns:
             Python type annotation (could be int, str, list[str], or a nested Pydantic model)
         """
+        nonlocal model_counter
+
         # Handle $ref by resolving the reference
         if "$ref" in prop_details:
             ref = prop_details["$ref"]
@@ -351,11 +353,10 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
 
                 if nested_properties and isinstance(nested_properties, dict):
                     # Generate a unique name for the nested model
-                    model_counter["count"] += 1
-                    if parent_name:
-                        nested_model_name = f"{parent_name}_nested_{model_counter['count']}"
-                    else:
-                        nested_model_name = f"NestedModel_{model_counter['count']}"
+                    model_counter += 1
+                    nested_model_name = (
+                        f"{parent_name}_nested_{model_counter}" if parent_name else f"NestedModel_{model_counter}"
+                    )
 
                     # Recursively build field definitions for the nested model
                     nested_field_definitions: dict[str, Any] = {}
@@ -378,26 +379,23 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
 
                         # Create field definition
                         if nested_prop_name in nested_required:
-                            if nested_field_kwargs:
-                                nested_field_definitions[nested_prop_name] = (
+                            nested_field_definitions[nested_prop_name] = (
+                                (
                                     nested_python_type,
                                     Field(**nested_field_kwargs),
                                 )
-                            else:
-                                nested_field_definitions[nested_prop_name] = (nested_python_type, ...)
+                                if nested_field_kwargs
+                                else (nested_python_type, ...)
+                            )
                         else:
-                            nested_default = nested_prop_details.get("default", None)
-                            nested_field_kwargs["default"] = nested_default
-                            if nested_field_kwargs and any(k != "default" for k in nested_field_kwargs):
-                                nested_field_definitions[nested_prop_name] = (
-                                    nested_python_type,
-                                    Field(**nested_field_kwargs),
-                                )
-                            else:
-                                nested_field_definitions[nested_prop_name] = (nested_python_type, nested_default)
+                            nested_field_kwargs["default"] = nested_prop_details.get("default", None)
+                            nested_field_definitions[nested_prop_name] = (
+                                nested_python_type,
+                                Field(**nested_field_kwargs),
+                            )
 
                     # Create and return the nested Pydantic model
-                    return cast(type[BaseModel], create_model(nested_model_name, **nested_field_definitions))
+                    return create_model(nested_model_name, **nested_field_definitions)  # type: ignore
 
                 # If no properties defined, return bare dict
                 return dict
