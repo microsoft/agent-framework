@@ -1148,21 +1148,29 @@ class WorkflowBuilder:
         if isinstance(self._start_executor, Executor):
             start_executor = self._start_executor
 
-        executors: dict[str, Executor] = {}
+        # Maps registered factory names to created executor instances for edge resolution
+        factory_name_to_instance: dict[str, Executor] = {}
+        # Maps executor IDs to created executor instances to prevent duplicates
+        executor_id_to_instance: dict[str, Executor] = {}
         deferred_edge_groups: list[EdgeGroup] = []
         for name, exec_factory in self._executor_registry.items():
             instance = exec_factory()
+            if instance.id in executor_id_to_instance:
+                raise ValueError(f"Executor with ID '{instance.id}' has already been registered.")
+            executor_id_to_instance[instance.id] = instance
+
             if isinstance(self._start_executor, str) and name == self._start_executor:
                 start_executor = instance
+
             # All executors will get their own internal edge group for receiving system messages
             deferred_edge_groups.append(InternalEdgeGroup(instance.id))  # type: ignore[call-arg]
-            executors[name] = instance
+            factory_name_to_instance[name] = instance
 
         def _get_executor(name: str) -> Executor:
             """Helper to get executor by the registered name. Raises if not found."""
-            if name not in executors:
-                raise ValueError(f"Executor with name '{name}' has not been registered.")
-            return executors[name]
+            if name not in factory_name_to_instance:
+                raise ValueError(f"Executor with factory name '{name}' has not been registered.")
+            return factory_name_to_instance[name]
 
         for registration in self._edge_registry:
             match registration:
@@ -1201,7 +1209,7 @@ class WorkflowBuilder:
         if start_executor is None:
             raise ValueError("Failed to resolve starting executor from registered factories.")
 
-        return start_executor, list(executors.values()), deferred_edge_groups
+        return start_executor, list(executor_id_to_instance.values()), deferred_edge_groups
 
     def build(self) -> Workflow:
         """Build and return the constructed workflow.

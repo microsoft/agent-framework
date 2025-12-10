@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -488,18 +489,50 @@ class ConcurrentBuilder:
             participants = self._participants
 
         builder = WorkflowBuilder()
-        builder.set_start_executor(dispatcher)
-        builder.add_fan_out_edges(dispatcher, list(participants))
+        if self._participant_factories:
+            # Register executors/agents to avoid warnings from the workflow builder
+            # if factories are provided instead of direct instances. This doesn't
+            # break the factory pattern since the concurrent builder still creates
+            # new instances per workflow build.
+            factory_names: list[str] = []
+            for p in participants:
+                factory_name = uuid.uuid4().hex
+                factory_names.append(factory_name)
+                if isinstance(p, Executor):
+                    builder.register_executor(lambda p=p: p, name=factory_name)
+                else:
+                    builder.register_agent(lambda p=p: p, name=factory_name)
+            # Register the dispatcher and the aggregator
+            builder.register_executor(lambda: dispatcher, name="dispatcher")
+            builder.register_executor(lambda: aggregator, name="aggregator")
 
-        if self._request_info_enabled:
-            # Insert interceptor between fan-in and aggregator
-            # participants -> fan-in -> interceptor -> aggregator
-            request_info_interceptor = RequestInfoInterceptor(executor_id="request_info")
-            builder.add_fan_in_edges(list(participants), request_info_interceptor)
-            builder.add_edge(request_info_interceptor, aggregator)
+            builder.set_start_executor("dispatcher")
+            builder.add_fan_out_edges("dispatcher", factory_names)
+            if self._request_info_enabled:
+                # Insert interceptor between fan-in and aggregator
+                # participants -> fan-in -> interceptor -> aggregator
+                builder.register_executor(
+                    lambda: RequestInfoInterceptor(executor_id="request_info"),
+                    name="request_info_interceptor",
+                )
+                builder.add_fan_in_edges(factory_names, "request_info_interceptor")
+                builder.add_edge("request_info_interceptor", "aggregator")
+            else:
+                # Direct fan-in to aggregator
+                builder.add_fan_in_edges(factory_names, "aggregator")
         else:
-            # Direct fan-in to aggregator
-            builder.add_fan_in_edges(list(participants), aggregator)
+            builder.set_start_executor(dispatcher)
+            builder.add_fan_out_edges(dispatcher, list(participants))
+
+            if self._request_info_enabled:
+                # Insert interceptor between fan-in and aggregator
+                # participants -> fan-in -> interceptor -> aggregator
+                request_info_interceptor = RequestInfoInterceptor(executor_id="request_info")
+                builder.add_fan_in_edges(list(participants), request_info_interceptor)
+                builder.add_edge(request_info_interceptor, aggregator)
+            else:
+                # Direct fan-in to aggregator
+                builder.add_fan_in_edges(list(participants), aggregator)
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
