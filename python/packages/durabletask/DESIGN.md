@@ -33,7 +33,7 @@ packages/durabletask/
 │   ├── _entities.py    # AgentEntity implementation
 │   ├── _models.py      # Data models (RunRequest, AgentResponse, etc.)
 │   ├── _durable_agent_state.py # State schema (Ported from azurefunctions)
-│   ├── _shim.py        # DurableAIAgent implementation
+│   ├── _shim.py        # DurableAIAgent implementation (will be ported from azurefunctions)
 │   └── _utils.py       # Mixins and helpers
 └── tests/
 ```
@@ -47,69 +47,7 @@ packages/durabletask/
 
 We will implement a class `AgentEntity` that inherits from `durabletask.entities.DurableEntity`.
 
-**Important**: Due to the nature of the `durabletask` SDK, `DurableEntity` subclasses cannot have custom constructors. The SDK instantiates entities using a parameterless constructor. Therefore, we must use a **factory pattern** to inject the agent instance, similar to the approach used in `agent-framework-azurefunctions`.
-
-```python
-class AgentEntity(durabletask.entities.DurableEntity):
-    """Durable entity that wraps an agent and maintains conversation state.
-    
-    Note: This class cannot have a custom __init__ due to durabletask SDK constraints.
-    Use create_agent_entity() factory function to create instances with injected agents.
-    """
-    
-    agent: AgentProtocol
-    state: DurableAgentState
-
-    async def run_agent(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        # 1. Deserialize Input
-        request = RunRequest.from_dict(input_data)
-        
-        # 2. Update State (User Message)
-        state_request = DurableAgentStateRequest.from_run_request(request)
-        self.state.data.conversation_history.append(state_request)
-        
-        # 3. Rehydrate Chat History
-        chat_messages = [
-            m.to_chat_message()
-            for entry in self.state.data.conversation_history
-            for m in entry.messages
-        ]
-        
-        # 4. Execute Agent
-        response = await self.agent.run(messages=chat_messages, ...)
-        
-        # 5. Update State (Agent Response)
-        state_response = DurableAgentStateResponse.from_run_response(
-            request.correlation_id, response
-        )
-        self.state.data.conversation_history.append(state_response)
-        
-        # 6. Return Result (Serialized AgentRunResponse)
-        return response.to_dict()
-
-    def reset(self) -> None:
-        self.state = DurableAgentState()
-
-
-def create_agent_entity(agent: AgentProtocol) -> type[AgentEntity]:
-    """Factory function to create an AgentEntity class with an injected agent.
-    
-    This factory pattern is required because DurableEntity subclasses cannot
-    have custom constructors due to durabletask SDK constraints.
-    
-    Args:
-        agent: The agent instance to inject into the entity
-        
-    Returns:
-        A new AgentEntity class with the agent pre-configured
-    """
-    class ConfiguredAgentEntity(AgentEntity):
-        def __init__(self):
-            self.agent = agent
-            self.state = DurableAgentState()
-    
-    return ConfiguredAgentEntity
-```
+**Important**: This will be ported from `azurefunctions` package too but with slight modifications, details TBD.
 
 ### 4. The Worker Wrapper (`_worker.py`)
 
@@ -204,7 +142,7 @@ class DurableAIAgentOrchestrator(GetDurableAgentMixin):
 
 ### 8. The Durable Agent Shim (`_shim.py`)
 
-The `DurableAIAgent` implements `AgentProtocol` but delegates execution to the provider.
+The `DurableAIAgent` implements `AgentProtocol` but delegates execution to the provider. This will be ported from `azurefunctions` package and updated accordingly.
 
 ```python
 class DurableAIAgent(AgentProtocol):
@@ -252,15 +190,3 @@ def orchestrator(context):
     # Returns a Task, so we yield it
     result = yield agent.run("Hello")
 ```
-
-## Implementation Steps
-
-1.  **Scaffold Package**: Create directory structure and `pyproject.toml`.
-2.  **Port State Models**: Copy `_durable_agent_state.py` and `_models.py` (adapting imports).
-3.  **Implement `AgentEntity`**: Create `_entities.py`.
-4.  **Implement `DurableAIAgentWorker`**: Create `_worker.py`.
-5.  **Implement `GetDurableAgentMixin`**: Create `_utils.py` (or `_mixins.py`).
-6.  **Implement `DurableAIAgent`**: Create `_shim.py`.
-7.  **Implement `DurableAIAgentClient`**: Create `_client.py`.
-8.  **Implement `DurableAIAgentOrchestrator`**: Create `_orchestrator.py`.
-9.  **Tests**: Add unit tests and integration tests.
