@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -80,7 +81,7 @@ internal sealed class WorkflowThread : AgentThread
         return marshaller.Marshal(info);
     }
 
-    public AgentRunResponseUpdate CreateUpdate(string responseId, params AIContent[] parts)
+    public AgentRunResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
     {
         Throw.IfNullOrEmpty(parts);
 
@@ -89,7 +90,8 @@ internal sealed class WorkflowThread : AgentThread
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
             Role = ChatRole.Assistant,
-            ResponseId = responseId
+            ResponseId = responseId,
+            RawRepresentation = raw
         };
 
         this.MessageStore.AddMessages(update.ToChatMessage());
@@ -153,8 +155,23 @@ internal sealed class WorkflowThread : AgentThread
 
                     case RequestInfoEvent requestInfo:
                         FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentRunResponseUpdate update = this.CreateUpdate(this.LastResponseId, fcContent);
+                        AgentRunResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
                         yield return update;
+                        break;
+
+                    case WorkflowErrorEvent workflowError:
+                        Exception? exception = workflowError.Exception;
+                        if (exception is TargetInvocationException tie && tie.InnerException != null)
+                        {
+                            exception = tie.InnerException;
+                        }
+
+                        if (exception != null)
+                        {
+                            ErrorContent errorContent = new(exception.Message);
+                            yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
+                        }
+
                         break;
 
                     case SuperStepCompletedEvent stepCompleted:
