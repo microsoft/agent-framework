@@ -22,18 +22,15 @@ OpenAIClient openAIClient = new(apiKey);
 ConversationClient conversationClient = openAIClient.GetConversationClient();
 
 // Create an agent directly from the OpenAIResponseClient using OpenAIResponseClientAgent
-OpenAIResponseClientAgent agent = new(openAIClient.GetOpenAIResponseClient(model), instructions: "You are a helpful assistant.", name: "ConversationAgent");
+ChatClientAgent agent = new(openAIClient.GetOpenAIResponseClient(model).AsIChatClient(), instructions: "You are a helpful assistant.", name: "ConversationAgent");
 
 ClientResult createConversationResult = await conversationClient.CreateConversationAsync(BinaryContent.Create(BinaryData.FromString("{}")));
 
 using JsonDocument createConversationResultAsJson = JsonDocument.Parse(createConversationResult.GetRawResponse().Content.ToString());
 string conversationId = createConversationResultAsJson.RootElement.GetProperty("id"u8)!.GetString()!;
 
-// Set up agent run options with the conversation that was previously created
-ChatClientAgentRunOptions agentRunOptions = new() { ChatOptions = new ChatOptions() { ConversationId = conversationId } };
-
 // Create a thread for the conversation - this enables conversation state management for subsequent turns
-AgentThread thread = agent.GetNewThread();
+AgentThread thread = agent.GetNewThread(conversationId);
 
 Console.WriteLine("=== Multi-turn Conversation Demo ===\n");
 
@@ -42,14 +39,13 @@ Console.WriteLine("User: What is the capital of France?");
 UserChatMessage firstMessage = new("What is the capital of France?");
 
 // After this call, the conversation state associated in the options is stored in 'thread' and used in subsequent calls
-ChatCompletion firstResponse = await agent.RunAsync([firstMessage], thread, agentRunOptions);
+ChatCompletion firstResponse = await agent.RunAsync([firstMessage], thread);
 Console.WriteLine($"Assistant: {firstResponse.Content.Last().Text}\n");
 
 // Second turn: Follow-up question that relies on conversation context
 Console.WriteLine("User: What famous landmarks are located there?");
 UserChatMessage secondMessage = new("What famous landmarks are located there?");
 
-// No options with conversation id is needed here because 'thread' maintains the context
 ChatCompletion secondResponse = await agent.RunAsync([secondMessage], thread);
 Console.WriteLine($"Assistant: {secondResponse.Content.Last().Text}\n");
 
@@ -57,7 +53,6 @@ Console.WriteLine($"Assistant: {secondResponse.Content.Last().Text}\n");
 Console.WriteLine("User: How tall is the most famous one?");
 UserChatMessage thirdMessage = new("How tall is the most famous one?");
 
-// No options with conversation id is needed here because 'thread' maintains the context
 ChatCompletion thirdResponse = await agent.RunAsync([thirdMessage], thread);
 Console.WriteLine($"Assistant: {thirdResponse.Content.Last().Text}\n");
 
