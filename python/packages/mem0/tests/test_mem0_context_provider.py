@@ -514,6 +514,13 @@ class TestMem0ProviderValidation:
 class TestMem0ProviderBuildFilters:
     """Test the _build_filters method."""
 
+    def test_build_filters_with_user_id_only(self, mock_mem0_client: AsyncMock) -> None:
+        """Test building filters with only user_id."""
+        provider = Mem0Provider(user_id="user123", mem0_client=mock_mem0_client)
+
+        filters = provider._build_filters()
+        assert filters == {"user_id": "user123"}
+
     def test_build_filters_with_all_parameters(self, mock_mem0_client: AsyncMock) -> None:
         """Test building filters with all initialization parameters."""
         provider = Mem0Provider(
@@ -531,3 +538,58 @@ class TestMem0ProviderBuildFilters:
             "run_id": "thread789",
             "app_id": "app999",
         }
+
+    def test_build_filters_excludes_none_values(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that None values are excluded from filters."""
+        provider = Mem0Provider(
+            user_id="user123",
+            agent_id=None,
+            thread_id=None,
+            application_id=None,
+            mem0_client=mock_mem0_client,
+        )
+
+        filters = provider._build_filters()
+        assert filters == {"user_id": "user123"}
+        assert "agent_id" not in filters
+        assert "run_id" not in filters
+        assert "app_id" not in filters
+
+    def test_build_filters_with_per_operation_thread_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that per-operation thread ID takes precedence over base thread_id."""
+        provider = Mem0Provider(
+            user_id="user123",
+            thread_id="base_thread",
+            scope_to_per_operation_thread_id=True,
+            mem0_client=mock_mem0_client,
+        )
+        provider._per_operation_thread_id = "operation_thread"
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "run_id": "operation_thread",  # Per-operation thread, not base_thread
+        }
+
+    def test_build_filters_uses_base_thread_when_no_per_operation(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that base thread_id is used when per-operation thread is not set."""
+        provider = Mem0Provider(
+            user_id="user123",
+            thread_id="base_thread",
+            scope_to_per_operation_thread_id=True,
+            mem0_client=mock_mem0_client,
+        )
+        # _per_operation_thread_id is None
+
+        filters = provider._build_filters()
+        assert filters == {
+            "user_id": "user123",
+            "run_id": "base_thread",  # Falls back to base thread_id
+        }
+
+    def test_build_filters_returns_empty_dict_when_no_parameters(self, mock_mem0_client: AsyncMock) -> None:
+        """Test that _build_filters returns an empty dict when no parameters are set."""
+        provider = Mem0Provider(mem0_client=mock_mem0_client)
+
+        filters = provider._build_filters()
+        assert filters == {}
