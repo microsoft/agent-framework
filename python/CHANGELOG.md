@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251209] - 2025-12-09
+
+### Added
+
+- **agent-framework-core**: Support an autonomous handoff flow (#2497)
+- **agent-framework-core**: WorkflowBuilder registry (#2486)
+- **agent-framework-a2a**: Add configurable timeout support to A2AAgent (#2432)
+- **samples**: Added Azure OpenAI Responses File Search sample + Integration test update (#2645)
+- **samples**: Update fan in fan out sample to show concurrency (#2705)
+
+### Changed
+
+- **agent-framework-azure-ai**: [BREAKING] Renamed `async_credential` to `credential` (#2648)
+- **samples**: Improve sample logging (#2692)
+- **samples**: azureai image gen sample update (#2709)
+
+### Fixed
+
+- **agent-framework-core**: Fix DurableState schema serializations (#2670)
+- **agent-framework-core**: Fix context provider lifecycle agentic mode (#2650)
+- **agent-framework-devui**: Fix WorkflowFailedEvent error extraction (#2706)
+- **agent-framework-devui**: Fix DevUI fails when uploading Pdf file (#2675)
+- **agent-framework-devui**: Fix message serialization issue (#2674)
+- **observability**: Display system prompt in langfuse (#2653)
+
 ## [1.0.0b251204] - 2025-12-04
 
 ### Added
@@ -322,7 +347,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...HEAD
+[1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
 [1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
 [1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
 [1.0.0b251117]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...python-1.0.0b251117
