@@ -156,10 +156,10 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
     /// <summary>
     /// Gets or sets the input messages used for streaming run.
     /// </summary>
-    internal IReadOnlyCollection<ChatMessage>? InputMessages { set; get; }
+    internal IReadOnlyCollection<ChatMessage>? InputMessages { get; set; }
 
     /// <summary>
     /// Gets or sets the response updates received so far.
     /// </summary>
-    internal IReadOnlyCollection<ChatResponseUpdate>? ResponseUpdates { set; get; }
+    internal IReadOnlyCollection<ChatResponseUpdate>? ResponseUpdates { get; set; }
 }
