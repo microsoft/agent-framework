@@ -299,8 +299,19 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     if not properties:
         return create_model(f"{tool.name}_input")
 
-    def resolve_type(prop_details: dict[str, Any]) -> type:
-        """Resolve JSON Schema type to Python type, handling $ref."""
+    # Counter for generating unique model names
+    model_counter = {"count": 0}
+
+    def resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
+        """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
+
+        Args:
+            prop_details: The JSON Schema property details
+            parent_name: Name to use for creating nested models (for uniqueness)
+
+        Returns:
+            Python type annotation (could be int, str, list[str], or a nested Pydantic model)
+        """
         # Handle $ref by resolving the reference
         if "$ref" in prop_details:
             ref = prop_details["$ref"]
@@ -310,7 +321,7 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
                 if def_name in definitions:
                     # Resolve the reference and use its type
                     resolved = definitions[def_name]
-                    return resolve_type(resolved)
+                    return resolve_type(resolved, def_name)
             # If we can't resolve the ref, default to dict for safety
             return dict
 
@@ -324,8 +335,71 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
             case "boolean":
                 return bool
             case "array":
+                # Handle typed arrays
+                items_schema = prop_details.get("items")
+                if items_schema and isinstance(items_schema, dict):
+                    # Recursively resolve the item type
+                    item_type = resolve_type(items_schema, f"{parent_name}_item")
+                    # Return list[ItemType] instead of bare list
+                    return list[item_type]  # type: ignore
+                # If no items schema or invalid, return bare list
                 return list
             case "object":
+                # Handle nested objects by creating a nested Pydantic model
+                nested_properties = prop_details.get("properties")
+                nested_required = prop_details.get("required", [])
+
+                if nested_properties and isinstance(nested_properties, dict):
+                    # Generate a unique name for the nested model
+                    model_counter["count"] += 1
+                    if parent_name:
+                        nested_model_name = f"{parent_name}_nested_{model_counter['count']}"
+                    else:
+                        nested_model_name = f"NestedModel_{model_counter['count']}"
+
+                    # Recursively build field definitions for the nested model
+                    nested_field_definitions: dict[str, Any] = {}
+                    for nested_prop_name, nested_prop_details in nested_properties.items():
+                        nested_prop_details = (
+                            json.loads(nested_prop_details)
+                            if isinstance(nested_prop_details, str)
+                            else nested_prop_details
+                        )
+
+                        nested_python_type = resolve_type(
+                            nested_prop_details, f"{nested_model_name}_{nested_prop_name}"
+                        )
+                        nested_description = nested_prop_details.get("description", "")
+
+                        # Build field kwargs for nested property
+                        nested_field_kwargs: dict[str, Any] = {}
+                        if nested_description:
+                            nested_field_kwargs["description"] = nested_description
+
+                        # Create field definition
+                        if nested_prop_name in nested_required:
+                            if nested_field_kwargs:
+                                nested_field_definitions[nested_prop_name] = (
+                                    nested_python_type,
+                                    Field(**nested_field_kwargs),
+                                )
+                            else:
+                                nested_field_definitions[nested_prop_name] = (nested_python_type, ...)
+                        else:
+                            nested_default = nested_prop_details.get("default", None)
+                            nested_field_kwargs["default"] = nested_default
+                            if nested_field_kwargs and any(k != "default" for k in nested_field_kwargs):
+                                nested_field_definitions[nested_prop_name] = (
+                                    nested_python_type,
+                                    Field(**nested_field_kwargs),
+                                )
+                            else:
+                                nested_field_definitions[nested_prop_name] = (nested_python_type, nested_default)
+
+                    # Create and return the nested Pydantic model
+                    return create_model(nested_model_name, **nested_field_definitions)
+
+                # If no properties defined, return bare dict
                 return dict
             case _:
                 return str  # default
@@ -334,19 +408,13 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     for prop_name, prop_details in properties.items():
         prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
 
-        python_type = resolve_type(prop_details)
+        python_type = resolve_type(prop_details, f"{tool.name}_{prop_name}")
         description = prop_details.get("description", "")
 
-        # Build field kwargs (description, array items schema, etc.)
+        # Build field kwargs (description, etc.)
         field_kwargs: dict[str, Any] = {}
         if description:
             field_kwargs["description"] = description
-
-        # Preserve array items schema if present
-        if prop_details.get("type") == "array" and "items" in prop_details:
-            items_schema = prop_details["items"]
-            if items_schema and items_schema != {}:
-                field_kwargs["json_schema_extra"] = {"items": items_schema}
 
         # Create field definition for create_model
         if prop_name in required:

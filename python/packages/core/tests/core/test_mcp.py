@@ -9,7 +9,7 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, ValidationError
+from pydantic import AnyUrl, BaseModel, ValidationError
 
 from agent_framework import (
     ChatMessage,
@@ -401,8 +401,11 @@ def test_get_input_model_from_mcp_tool_with_nested_object():
 
     # Create an instance to verify the model works with nested objects
     instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+
+    # Nested objects should now be Pydantic models (issue #2747)
+    assert hasattr(instance.params, "customer_id")
+    assert instance.params.customer_id == 251
+    assert isinstance(instance.params, BaseModel)
 
     # Verify model_dump produces the correct nested structure
     dumped = instance.model_dump()
@@ -437,8 +440,11 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
 
     # Create an instance to verify the model works with $ref schemas
     instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+
+    # $ref resolved objects should now be Pydantic models (issue #2747)
+    assert hasattr(instance.params, "customer_id")
+    assert instance.params.customer_id == 251
+    assert isinstance(instance.params, BaseModel)
 
     # Verify model_dump produces the correct nested structure
     dumped = instance.model_dump()
@@ -473,6 +479,447 @@ def test_get_input_model_from_mcp_tool_with_simple_array():
     tags_property = json_schema["properties"]["tags"]
     assert "items" in tags_property
     assert tags_property["items"]["type"] == "string"
+
+
+# NEW TESTS FOR ISSUE #2747
+
+
+def test_get_input_model_nested_object_with_proper_types():
+    """Test that nested objects create proper Pydantic models with typed fields, not bare dict.
+
+    Issue #2747: Nested objects should preserve their schema structure,
+    allowing LLMs to see required fields and their types.
+    """
+    tool = types.Tool(
+        name="fetch_news",
+        description="Fetch news articles",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "news_request": {
+                    "type": "object",
+                    "description": "News request parameters",
+                    "properties": {
+                        "identifiers": {
+                            "type": "array",
+                            "description": "Article identifiers",
+                            "items": {"type": "string"},
+                        },
+                        "max_results": {
+                            "type": "integer",
+                            "description": "Maximum number of results",
+                        },
+                    },
+                    "required": ["identifiers"],
+                }
+            },
+            "required": ["news_request"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Verify the model can be instantiated with proper nested structure
+    instance = model(news_request={"identifiers": ["abc123", "def456"], "max_results": 10})
+
+    # Verify the nested structure is preserved
+    assert hasattr(instance, "news_request")
+    assert instance.news_request.identifiers == ["abc123", "def456"]
+    assert instance.news_request.max_results == 10
+
+    # Verify that the JSON schema shows the nested structure
+    json_schema = model.model_json_schema()
+    news_request_schema = json_schema["properties"]["news_request"]
+
+    # Should have properties defined, not just be a dict
+    assert "properties" in news_request_schema or "$ref" in news_request_schema
+
+    # If using $defs, verify the definition exists
+    if "$ref" in news_request_schema:
+        ref_name = news_request_schema["$ref"].split("/")[-1]
+        assert ref_name in json_schema.get("$defs", {})
+        nested_def = json_schema["$defs"][ref_name]
+        assert "properties" in nested_def
+        assert "identifiers" in nested_def["properties"]
+        assert "max_results" in nested_def["properties"]
+    else:
+        assert "identifiers" in news_request_schema["properties"]
+        assert "max_results" in news_request_schema["properties"]
+
+    # Verify validation works for required nested fields
+    with pytest.raises(ValidationError) as exc_info:
+        model(news_request={})  # Missing required 'identifiers'
+
+    errors = exc_info.value.errors()
+    # Should have a validation error about missing 'identifiers' field
+    assert any("identifiers" in str(error) for error in errors)
+
+
+def test_get_input_model_array_of_strings_typed():
+    """Test that array of strings is properly typed as list[str], not bare list.
+
+    Issue #2747: Arrays should preserve item type information.
+    """
+    tool = types.Tool(
+        name="process_tags",
+        description="Process tags",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "description": "List of string tags",
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["tags"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Verify type annotations
+    field_info = model.model_fields["tags"]
+
+    # The annotation should be list[str] or List[str], not just list
+    annotation_str = str(field_info.annotation)
+    assert "list" in annotation_str.lower()
+    assert "str" in annotation_str.lower()
+
+    # Verify JSON schema preserves item type
+    json_schema = model.model_json_schema()
+    tags_property = json_schema["properties"]["tags"]
+    assert tags_property["type"] == "array"
+    assert "items" in tags_property
+    assert tags_property["items"]["type"] == "string"
+
+
+def test_get_input_model_array_of_integers_typed():
+    """Test that array of integers is properly typed as list[int], not bare list.
+
+    Issue #2747: Arrays should preserve item type information.
+    """
+    tool = types.Tool(
+        name="process_numbers",
+        description="Process numbers",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "description": "List of integers",
+                    "items": {"type": "integer"},
+                }
+            },
+            "required": ["numbers"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Verify type annotations
+    field_info = model.model_fields["numbers"]
+    annotation_str = str(field_info.annotation)
+    assert "list" in annotation_str.lower()
+    assert "int" in annotation_str.lower()
+
+    # Verify JSON schema preserves item type
+    json_schema = model.model_json_schema()
+    numbers_property = json_schema["properties"]["numbers"]
+    assert numbers_property["type"] == "array"
+    assert "items" in numbers_property
+    assert numbers_property["items"]["type"] == "integer"
+
+
+def test_get_input_model_array_of_objects_typed():
+    """Test that array of objects creates typed list[NestedModel], not bare list.
+
+    Issue #2747: Arrays of complex types should preserve structure.
+    """
+    tool = types.Tool(
+        name="process_users",
+        description="Process user data",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "users": {
+                    "type": "array",
+                    "description": "List of users",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer", "description": "User ID"},
+                            "name": {"type": "string", "description": "User name"},
+                        },
+                        "required": ["id", "name"],
+                    },
+                }
+            },
+            "required": ["users"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create instance with array of objects
+    instance = model(users=[{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}])
+
+    # Verify nested objects are properly typed
+    assert len(instance.users) == 2
+    assert instance.users[0].id == 1
+    assert instance.users[0].name == "Alice"
+    assert instance.users[1].id == 2
+    assert instance.users[1].name == "Bob"
+
+    # Verify validation works for nested required fields
+    with pytest.raises(ValidationError) as exc_info:
+        model(users=[{"id": 1}])  # Missing required 'name'
+
+    errors = exc_info.value.errors()
+    assert any("name" in str(error) for error in errors)
+
+    # Verify JSON schema preserves nested structure
+    json_schema = model.model_json_schema()
+    users_property = json_schema["properties"]["users"]
+    assert users_property["type"] == "array"
+    assert "items" in users_property
+
+    items_schema = users_property["items"]
+    # Should have properties defined or a $ref
+    if "$ref" in items_schema:
+        ref_name = items_schema["$ref"].split("/")[-1]
+        assert ref_name in json_schema.get("$defs", {})
+        item_def = json_schema["$defs"][ref_name]
+        assert "properties" in item_def
+        assert "id" in item_def["properties"]
+        assert "name" in item_def["properties"]
+        assert "required" in item_def
+        assert "id" in item_def["required"]
+        assert "name" in item_def["required"]
+    else:
+        assert "properties" in items_schema
+        assert "id" in items_schema["properties"]
+        assert "name" in items_schema["properties"]
+
+
+def test_get_input_model_deeply_nested_objects():
+    """Test multiple levels of nested objects preserve structure.
+
+    Issue #2747: Should handle arbitrary nesting depth.
+    """
+    tool = types.Tool(
+        name="complex_query",
+        description="Complex nested query",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "object",
+                    "description": "Query parameters",
+                    "properties": {
+                        "filters": {
+                            "type": "object",
+                            "description": "Filter criteria",
+                            "properties": {
+                                "date_range": {
+                                    "type": "object",
+                                    "description": "Date range filter",
+                                    "properties": {
+                                        "start": {"type": "string", "description": "Start date"},
+                                        "end": {"type": "string", "description": "End date"},
+                                    },
+                                    "required": ["start", "end"],
+                                },
+                                "categories": {
+                                    "type": "array",
+                                    "description": "Category filters",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["date_range"],
+                        }
+                    },
+                    "required": ["filters"],
+                }
+            },
+            "required": ["query"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create instance with deeply nested structure
+    instance = model(
+        query={
+            "filters": {
+                "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                "categories": ["tech", "science"],
+            }
+        }
+    )
+
+    # Verify deep nesting is preserved with proper types
+    assert instance.query.filters.date_range.start == "2024-01-01"
+    assert instance.query.filters.date_range.end == "2024-12-31"
+    assert instance.query.filters.categories == ["tech", "science"]
+
+    # Verify validation works at all nesting levels
+    with pytest.raises(ValidationError) as exc_info:
+        model(query={"filters": {"date_range": {}}})  # Missing required 'start' and 'end'
+
+    errors = exc_info.value.errors()
+    assert any("start" in str(error) or "end" in str(error) for error in errors)
+
+
+def test_get_input_model_ref_with_nested_structure():
+    """Test that $ref resolution preserves nested structure.
+
+    Issue #2747: $ref schemas should be recursively processed like inline schemas.
+    """
+    tool = types.Tool(
+        name="create_order",
+        description="Create an order",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "order": {"$ref": "#/$defs/OrderParams"},
+            },
+            "required": ["order"],
+            "$defs": {
+                "OrderParams": {
+                    "type": "object",
+                    "properties": {
+                        "customer": {"$ref": "#/$defs/Customer"},
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/$defs/OrderItem"},
+                        },
+                    },
+                    "required": ["customer", "items"],
+                },
+                "Customer": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "email": {"type": "string"},
+                    },
+                    "required": ["id", "email"],
+                },
+                "OrderItem": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {"type": "string"},
+                        "quantity": {"type": "integer"},
+                    },
+                    "required": ["product_id", "quantity"],
+                },
+            },
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create instance with nested refs
+    instance = model(
+        order={
+            "customer": {"id": 123, "email": "test@example.com"},
+            "items": [
+                {"product_id": "prod1", "quantity": 2},
+                {"product_id": "prod2", "quantity": 1},
+            ],
+        }
+    )
+
+    # Verify nested structure through $refs is preserved
+    assert instance.order.customer.id == 123
+    assert instance.order.customer.email == "test@example.com"
+    assert len(instance.order.items) == 2
+    assert instance.order.items[0].product_id == "prod1"
+    assert instance.order.items[0].quantity == 2
+
+    # Verify validation works for nested required fields
+    with pytest.raises(ValidationError) as exc_info:
+        model(order={"customer": {"id": 123}, "items": []})  # Missing email
+
+    errors = exc_info.value.errors()
+    assert any("email" in str(error) for error in errors)
+
+
+def test_get_input_model_mixed_types_complex():
+    """Test complex schema with mixed primitives, arrays, and nested objects.
+
+    Issue #2747: Real-world schemas combine multiple patterns.
+    """
+    tool = types.Tool(
+        name="complex_tool",
+        description="Tool with complex mixed types",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "simple_string": {"type": "string", "description": "A simple string"},
+                "simple_number": {"type": "integer", "description": "A simple number"},
+                "string_array": {
+                    "type": "array",
+                    "description": "Array of strings",
+                    "items": {"type": "string"},
+                },
+                "nested_config": {
+                    "type": "object",
+                    "description": "Nested configuration",
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["enabled"],
+                },
+            },
+            "required": ["simple_string", "nested_config"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create instance with all types
+    instance = model(
+        simple_string="test",
+        simple_number=42,
+        string_array=["a", "b"],
+        nested_config={"enabled": True, "options": ["opt1", "opt2"]},
+    )
+
+    # Verify all types are properly preserved
+    assert instance.simple_string == "test"
+    assert instance.simple_number == 42
+    assert instance.string_array == ["a", "b"]
+    assert instance.nested_config.enabled is True
+    assert instance.nested_config.options == ["opt1", "opt2"]
+
+    # Verify JSON schema preserves all structures
+    json_schema = model.model_json_schema()
+
+    # Check simple types
+    assert json_schema["properties"]["simple_string"]["type"] == "string"
+    assert json_schema["properties"]["simple_number"]["type"] == "integer"
+
+    # Check array type
+    string_array_prop = json_schema["properties"]["string_array"]
+    assert string_array_prop["type"] == "array"
+    assert string_array_prop["items"]["type"] == "string"
+
+    # Check nested object structure is preserved
+    nested_config_prop = json_schema["properties"]["nested_config"]
+    if "$ref" in nested_config_prop:
+        ref_name = nested_config_prop["$ref"].split("/")[-1]
+        nested_def = json_schema["$defs"][ref_name]
+        assert "enabled" in nested_def["properties"]
+        assert "options" in nested_def["properties"]
+    else:
+        assert "properties" in nested_config_prop
+        assert "enabled" in nested_config_prop["properties"]
+        assert "options" in nested_config_prop["properties"]
 
 
 def test_get_input_model_from_mcp_prompt():
