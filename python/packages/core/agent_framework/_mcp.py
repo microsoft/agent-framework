@@ -9,7 +9,7 @@ from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from mcp import types
 from mcp.client.session import ClientSession
@@ -397,7 +397,7 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
                                 nested_field_definitions[nested_prop_name] = (nested_python_type, nested_default)
 
                     # Create and return the nested Pydantic model
-                    return create_model(nested_model_name, **nested_field_definitions)
+                    return cast(type[BaseModel], create_model(nested_model_name, **nested_field_definitions))
 
                 # If no properties defined, return bare dict
                 return dict
