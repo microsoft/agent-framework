@@ -499,9 +499,9 @@ class ConcurrentBuilder:
                 factory_name = uuid.uuid4().hex
                 factory_names.append(factory_name)
                 if isinstance(p, Executor):
-                    builder.register_executor(lambda p=p: p, name=factory_name)
+                    builder.register_executor(lambda executor=p: executor, name=factory_name)  # type: ignore[misc]
                 else:
-                    builder.register_agent(lambda p=p: p, name=factory_name)
+                    builder.register_agent(lambda agent=p: agent, name=factory_name)  # type: ignore[misc]
             # Register the dispatcher and the aggregator
             builder.register_executor(lambda: dispatcher, name="dispatcher")
             builder.register_executor(lambda: aggregator, name="aggregator")
