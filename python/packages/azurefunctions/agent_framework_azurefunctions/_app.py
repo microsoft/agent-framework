@@ -10,14 +10,13 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework import AgentProtocol, get_logger
-
-from ._callbacks import AgentResponseCallbackProtocol
-from ._constants import (
+from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
     MIMETYPE_APPLICATION_JSON,
@@ -28,11 +27,14 @@ from ._constants import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
+    AgentResponseCallbackProtocol,
+    DurableAgentState,
+    RunRequest,
 )
-from ._durable_agent_state import DurableAgentState
+
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._models import AgentSessionId, RunRequest
+from ._models import AgentSessionId
 from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
 
 logger = get_logger("agent_framework.azurefunctions")
@@ -858,6 +860,7 @@ class AgentFunctionApp(DFAppBase):
             enable_tool_calls=enable_tool_calls,
             thread_id=thread_id,
             correlation_id=correlation_id,
+            created_at=datetime.utcnow(),
         ).to_dict()
 
     def _build_accepted_response(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:

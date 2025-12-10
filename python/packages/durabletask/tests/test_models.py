@@ -1,148 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Unit tests for data models (AgentSessionId, RunRequest, AgentResponse)."""
+"""Unit tests for data models (RunRequest)."""
 
-import azure.durable_functions as df
 import pytest
 from agent_framework import Role
-from agent_framework_durabletask import RunRequest
 from pydantic import BaseModel
 
-from agent_framework_azurefunctions._models import AgentSessionId
+from agent_framework_durabletask._models import RunRequest
 
 
 class ModuleStructuredResponse(BaseModel):
     value: int
-
-
-class TestAgentSessionId:
-    """Test suite for AgentSessionId."""
-
-    def test_init_creates_session_id(self) -> None:
-        """Test that AgentSessionId initializes correctly."""
-        session_id = AgentSessionId(name="AgentEntity", key="test-key-123")
-
-        assert session_id.name == "AgentEntity"
-        assert session_id.key == "test-key-123"
-
-    def test_with_random_key_generates_guid(self) -> None:
-        """Test that with_random_key generates a GUID."""
-        session_id = AgentSessionId.with_random_key(name="AgentEntity")
-
-        assert session_id.name == "AgentEntity"
-        assert len(session_id.key) == 32  # UUID hex is 32 chars
-        # Verify it's a valid hex string
-        int(session_id.key, 16)
-
-    def test_with_random_key_unique_keys(self) -> None:
-        """Test that with_random_key generates unique keys."""
-        session_id1 = AgentSessionId.with_random_key(name="AgentEntity")
-        session_id2 = AgentSessionId.with_random_key(name="AgentEntity")
-
-        assert session_id1.key != session_id2.key
-
-    def test_to_entity_id_conversion(self) -> None:
-        """Test conversion to EntityId."""
-        session_id = AgentSessionId(name="AgentEntity", key="test-key")
-        entity_id = session_id.to_entity_id()
-
-        assert isinstance(entity_id, df.EntityId)
-        assert entity_id.name == "dafx-AgentEntity"
-        assert entity_id.key == "test-key"
-
-    def test_from_entity_id_conversion(self) -> None:
-        """Test creation from EntityId."""
-        entity_id = df.EntityId(name="dafx-AgentEntity", key="test-key")
-        session_id = AgentSessionId.from_entity_id(entity_id)
-
-        assert isinstance(session_id, AgentSessionId)
-        assert session_id.name == "AgentEntity"
-        assert session_id.key == "test-key"
-
-    def test_round_trip_entity_id_conversion(self) -> None:
-        """Test round-trip conversion to and from EntityId."""
-        original = AgentSessionId(name="AgentEntity", key="test-key")
-        entity_id = original.to_entity_id()
-        restored = AgentSessionId.from_entity_id(entity_id)
-
-        assert restored.name == original.name
-        assert restored.key == original.key
-
-    def test_str_representation(self) -> None:
-        """Test string representation."""
-        session_id = AgentSessionId(name="AgentEntity", key="test-key-123")
-        str_repr = str(session_id)
-
-        assert str_repr == "@AgentEntity@test-key-123"
-
-    def test_repr_representation(self) -> None:
-        """Test repr representation."""
-        session_id = AgentSessionId(name="AgentEntity", key="test-key")
-        repr_str = repr(session_id)
-
-        assert "AgentSessionId" in repr_str
-        assert "AgentEntity" in repr_str
-        assert "test-key" in repr_str
-
-    def test_parse_valid_session_id(self) -> None:
-        """Test parsing valid session ID string."""
-        session_id = AgentSessionId.parse("@AgentEntity@test-key-123")
-
-        assert session_id.name == "AgentEntity"
-        assert session_id.key == "test-key-123"
-
-    def test_parse_invalid_format_no_prefix(self) -> None:
-        """Test parsing invalid format without @ prefix."""
-        with pytest.raises(ValueError) as exc_info:
-            AgentSessionId.parse("AgentEntity@test-key")
-
-        assert "Invalid agent session ID format" in str(exc_info.value)
-
-    def test_parse_invalid_format_single_part(self) -> None:
-        """Test parsing invalid format with single part."""
-        with pytest.raises(ValueError) as exc_info:
-            AgentSessionId.parse("@AgentEntity")
-
-        assert "Invalid agent session ID format" in str(exc_info.value)
-
-    def test_parse_with_multiple_at_signs_in_key(self) -> None:
-        """Test parsing with @ signs in the key."""
-        session_id = AgentSessionId.parse("@AgentEntity@key-with@symbols")
-
-        assert session_id.name == "AgentEntity"
-        assert session_id.key == "key-with@symbols"
-
-    def test_parse_round_trip(self) -> None:
-        """Test round-trip parse and string conversion."""
-        original = AgentSessionId(name="AgentEntity", key="test-key")
-        str_repr = str(original)
-        parsed = AgentSessionId.parse(str_repr)
-
-        assert parsed.name == original.name
-        assert parsed.key == original.key
-
-    def test_to_entity_name_adds_prefix(self) -> None:
-        """Test that to_entity_name adds the dafx- prefix."""
-        entity_name = AgentSessionId.to_entity_name("TestAgent")
-        assert entity_name == "dafx-TestAgent"
-
-    def test_from_entity_id_strips_prefix(self) -> None:
-        """Test that from_entity_id strips the dafx- prefix."""
-        entity_id = df.EntityId(name="dafx-TestAgent", key="key123")
-        session_id = AgentSessionId.from_entity_id(entity_id)
-
-        assert session_id.name == "TestAgent"
-        assert session_id.key == "key123"
-
-    def test_from_entity_id_raises_without_prefix(self) -> None:
-        """Test that from_entity_id raises ValueError when entity name lacks the prefix."""
-        entity_id = df.EntityId(name="TestAgent", key="key123")
-
-        with pytest.raises(ValueError) as exc_info:
-            AgentSessionId.from_entity_id(entity_id)
-
-        assert "not a valid agent session ID" in str(exc_info.value)
-        assert "dafx-" in str(exc_info.value)
 
 
 class TestRunRequest:
@@ -401,19 +269,6 @@ class TestRunRequest:
         assert restored.correlation_id == original.correlation_id
         assert restored.orchestration_id == original.orchestration_id
         assert restored.thread_id == original.thread_id
-
-
-class TestModelIntegration:
-    """Test suite for integration between models."""
-
-    def test_run_request_with_session_id(self) -> None:
-        """Test using RunRequest with AgentSessionId."""
-        session_id = AgentSessionId.with_random_key("AgentEntity")
-        request = RunRequest(message="Test message", thread_id=str(session_id))
-
-        assert request.thread_id is not None
-        assert request.thread_id == str(session_id)
-        assert request.thread_id.startswith("@AgentEntity@")
 
 
 if __name__ == "__main__":

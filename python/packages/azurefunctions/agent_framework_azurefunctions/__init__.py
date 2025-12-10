@@ -2,8 +2,9 @@
 
 import importlib.metadata
 
+from agent_framework_durabletask import AgentCallbackContext, AgentResponseCallbackProtocol
+
 from ._app import AgentFunctionApp
-from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
 from ._orchestration import DurableAIAgent
 
 try:

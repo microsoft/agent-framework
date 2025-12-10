@@ -56,7 +56,7 @@ from dateutil import parser as date_parser
 from ._constants import ApiResponseFields, ContentTypes, DurableStateFields
 from ._models import RunRequest, serialize_response_format
 
-logger = get_logger("agent_framework.azurefunctions.durable_agent_state")
+logger = get_logger("agent_framework.durabletask.durable_agent_state")
 
 
 class DurableAgentStateEntryJsonType(str, Enum):
@@ -82,7 +82,10 @@ def _parse_created_at(value: Any) -> datetime:
         except (ValueError, TypeError):
             pass
 
-    logger.warning("Invalid or missing created_at value in durable agent state; defaulting to current UTC time.")
+    logger.error(
+        f"Invalid or missing created_at value in durable agent state; defaulting to current UTC time, {value}",
+        stack_info=True,
+    )
     return datetime.now(tz=timezone.utc)
 
 
