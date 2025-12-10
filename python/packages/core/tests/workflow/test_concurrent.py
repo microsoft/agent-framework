@@ -52,6 +52,20 @@ def test_concurrent_builder_rejects_duplicate_executors() -> None:
         ConcurrentBuilder().participants([a, b])
 
 
+def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None:
+    """Test that duplicate executor IDs from factories are detected at build time."""
+
+    def create_dup1() -> Executor:
+        return _FakeAgentExec("dup", "A")
+
+    def create_dup2() -> Executor:
+        return _FakeAgentExec("dup", "B")  # same executor id
+
+    builder = ConcurrentBuilder().register_participants([create_dup1, create_dup2])
+    with pytest.raises(ValueError, match="Duplicate"):
+        builder.build()
+
+
 async def test_concurrent_default_aggregator_emits_single_user_and_assistants() -> None:
     # Three synthetic agent executors
     e1 = _FakeAgentExec("agentA", "Alpha")
@@ -232,7 +246,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
 
 
 async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> None:
-    """Test with_aggregator using an Executor factory."""
+    """Test with_aggregator using an Executor class directly as factory (with default __init__ parameters)."""
 
     class CustomAggregator(Executor):
         def __init__(self, id: str = "default_aggregator") -> None:

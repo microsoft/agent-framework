@@ -237,13 +237,12 @@ class ConcurrentBuilder:
     ) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
 
-        Accepts AgentProtocol instances (e.g., created by a chat client) or Executor
-        factories. Each participant created by a factory is wired as a parallel branch
-        using fan-out edges from an internal dispatcher.
+        Accepts factories (callables) that return AgentProtocol instances (e.g., created
+        by a chat client) or Executor instances. Each participant created by a factory
+        is wired as a parallel branch using fan-out edges from an internal dispatcher.
 
         Raises:
-            ValueError: if `participant_factories` is empty, contains duplicates, or `.participants()` was called
-            TypeError: if any entry is not AgentProtocol or Executor
+            ValueError: if `participant_factories` is empty or `.participants()` was called
 
         Example:
 
@@ -267,7 +266,7 @@ class ConcurrentBuilder:
             wf = ConcurrentBuilder().register_participants([create_researcher, create_marketer, create_legal]).build()
 
             # Mixing agent(s) and executor(s) is supported
-            wf2 = ConcurrentBuilder().register_participants([create_researcher, my_custom_executor]).build()
+            wf2 = ConcurrentBuilder().register_participants([create_researcher, MyCustomExecutor]).build()
         """
         if self._participants:
             raise ValueError(
@@ -441,6 +440,10 @@ class ConcurrentBuilder:
         if self._participant_factories:
             for factory in self._participant_factories:
                 p = factory()
+                if not isinstance(p, (AgentProtocol, Executor)):
+                    raise TypeError(
+                        f"Participant factory must return AgentProtocol or Executor; got {type(p).__name__}"
+                    )
                 participants.append(p)
         else:
             participants = self._participants

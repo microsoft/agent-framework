@@ -80,7 +80,7 @@ def create_legal() -> ChatAgent:
 class SummarizationExecutor(Executor):
     """Custom aggregator executor that synthesizes expert outputs into a concise summary."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(id="summarization_executor")
         self.chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
