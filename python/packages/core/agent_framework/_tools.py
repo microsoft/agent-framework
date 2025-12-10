@@ -628,6 +628,12 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
         self._forward_runtime_kwargs: bool = False
+        if self.func:
+            sig = inspect.signature(self.func)
+            for param in sig.parameters.values():
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    self._forward_runtime_kwargs = True
+                    break
 
     @property
     def declaration_only(self) -> bool:
@@ -916,6 +922,7 @@ def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[B
         )
         for pname, param in sig.parameters.items()
         if pname not in {"self", "cls"}
+        and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
     }
     return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
 
