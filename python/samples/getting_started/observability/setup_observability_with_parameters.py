@@ -6,7 +6,7 @@ from contextlib import suppress
 from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
-from agent_framework import ai_function
+from agent_framework import ai_function, setup_logging
 from agent_framework.observability import get_tracer, setup_observability
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
@@ -98,6 +98,8 @@ async def run_ai_function() -> None:
 async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_function", "all"] = "all"):
     """Run the selected scenario(s)."""
 
+    # Setup the logging with the more complete format
+    setup_logging()
     # This will enable tracing and create the necessary tracing, logging and metrics providers
     # based on the provided parameters.
     setup_observability(

@@ -5,7 +5,7 @@ from collections.abc import MutableSequence, Sequence
 from typing import Any
 
 from agent_framework import ChatAgent, ChatClientProtocol, ChatMessage, ChatOptions, Context, ContextProvider
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 
@@ -47,7 +47,8 @@ class UserInfoMemory(ContextProvider):
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
                     chat_options=ChatOptions(
-                        instructions="Extract the user's name and age from the message if present. If not present return nulls.",
+                        instructions="Extract the user's name and age from the message if present. "
+                        "If not present return nulls.",
                         response_format=UserInfo,
                     ),
                 )
@@ -90,7 +91,7 @@ class UserInfoMemory(ContextProvider):
 
 async def main():
     async with AzureCliCredential() as credential:
-        chat_client = AzureAIAgentClient(async_credential=credential)
+        chat_client = AzureAIClient(credential=credential)
 
         # Create the memory provider
         memory_provider = UserInfoMemory(chat_client)

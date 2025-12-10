@@ -2,22 +2,21 @@
 
 import asyncio
 import logging
+from typing import cast
 
 from agent_framework import (
+    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
+    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
+    AgentRunUpdateEvent,
     ChatAgent,
+    ChatMessage,
     HostedCodeInterpreterTool,
-    MagenticAgentDeltaEvent,
-    MagenticAgentMessageEvent,
     MagenticBuilder,
-    MagenticCallbackEvent,
-    MagenticCallbackMode,
-    MagenticFinalResultEvent,
-    MagenticOrchestratorMessageEvent,
     WorkflowOutputEvent,
 )
 from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 """
@@ -66,39 +65,13 @@ async def main() -> None:
         tools=HostedCodeInterpreterTool(),
     )
 
-    # Unified callback
-    async def on_event(event: MagenticCallbackEvent) -> None:
-        """
-        The `on_event` callback processes events emitted by the workflow.
-        Events include: orchestrator messages, agent delta updates, agent messages, and final result events.
-        """
-        nonlocal last_stream_agent_id, stream_line_open
-        if isinstance(event, MagenticOrchestratorMessageEvent):
-            print(f"\n[ORCH:{event.kind}]\n\n{getattr(event.message, 'text', '')}\n{'-' * 26}")
-        elif isinstance(event, MagenticAgentDeltaEvent):
-            if last_stream_agent_id != event.agent_id or not stream_line_open:
-                if stream_line_open:
-                    print()
-                print(f"\n[STREAM:{event.agent_id}]: ", end="", flush=True)
-                last_stream_agent_id = event.agent_id
-                stream_line_open = True
-            print(event.text, end="", flush=True)
-        elif isinstance(event, MagenticAgentMessageEvent):
-            if stream_line_open:
-                print(" (final)")
-                stream_line_open = False
-                print()
-            msg = event.message
-            if msg is not None:
-                response_text = (msg.text or "").replace("\n", " ")
-                print(f"\n[AGENT:{event.agent_id}] {msg.role.value}\n\n{response_text}\n{'-' * 26}")
-        elif isinstance(event, MagenticFinalResultEvent):
-            print("\n" + "=" * 50)
-            print("FINAL RESULT:")
-            print("=" * 50)
-            if event.message is not None:
-                print(event.message.text)
-            print("=" * 50)
+    # Create a manager agent for orchestration
+    manager_agent = ChatAgent(
+        name="MagenticManager",
+        description="Orchestrator that coordinates the research and coding workflow",
+        instructions="You coordinate a team to complete complex tasks efficiently.",
+        chat_client=OpenAIChatClient(),
+    )
 
     print("\nBuilding Magentic Workflow...")
 
@@ -109,9 +82,8 @@ async def main() -> None:
     workflow = (
         MagenticBuilder()
         .participants(researcher=researcher_agent, coder=coder_agent)
-        .on_event(on_event, mode=MagenticCallbackMode.STREAMING)
         .with_standard_manager(
-            chat_client=OpenAIChatClient(),
+            agent=manager_agent,
             max_round_count=10,
             max_stall_count=3,
             max_reset_count=2,
@@ -134,9 +106,34 @@ async def main() -> None:
     try:
         output: str | None = None
         async for event in workflow.run_stream(task):
-            print(event)
-            if isinstance(event, WorkflowOutputEvent):
-                output = str(event.data)
+            if isinstance(event, AgentRunUpdateEvent):
+                props = event.data.additional_properties if event.data else None
+                event_type = props.get("magentic_event_type") if props else None
+
+                if event_type == MAGENTIC_EVENT_TYPE_ORCHESTRATOR:
+                    kind = props.get("orchestrator_message_kind", "") if props else ""
+                    text = event.data.text if event.data else ""
+                    print(f"\n[ORCH:{kind}]\n\n{text}\n{'-' * 26}")
+                elif event_type == MAGENTIC_EVENT_TYPE_AGENT_DELTA:
+                    agent_id = props.get("agent_id", event.executor_id) if props else event.executor_id
+                    if last_stream_agent_id != agent_id or not stream_line_open:
+                        if stream_line_open:
+                            print()
+                        print(f"\n[STREAM:{agent_id}]: ", end="", flush=True)
+                        last_stream_agent_id = agent_id
+                        stream_line_open = True
+                    if event.data and event.data.text:
+                        print(event.data.text, end="", flush=True)
+                elif event.data and event.data.text:
+                    print(event.data.text, end="", flush=True)
+            elif isinstance(event, WorkflowOutputEvent):
+                output_messages = cast(list[ChatMessage], event.data)
+                if output_messages:
+                    output = output_messages[-1].text
+
+        if stream_line_open:
+            print()
+            stream_line_open = False
 
         if output is not None:
             print(f"Workflow completed with result:\n\n{output}")

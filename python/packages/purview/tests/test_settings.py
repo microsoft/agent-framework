@@ -18,7 +18,6 @@ class TestPurviewSettings:
         assert settings.graph_base_uri == "https://graph.microsoft.com/v1.0/"
         assert settings.tenant_id is None
         assert settings.purview_app_location is None
-        assert settings.process_inline is False
 
     def test_settings_with_custom_values(self) -> None:
         """Test PurviewSettings with custom values."""
@@ -28,13 +27,11 @@ class TestPurviewSettings:
             app_name="Test App",
             graph_base_uri="https://graph.microsoft-ppe.com",
             tenant_id="test-tenant-id",
-            process_inline=True,
             purview_app_location=app_location,
         )
 
         assert settings.graph_base_uri == "https://graph.microsoft-ppe.com"
         assert settings.tenant_id == "test-tenant-id"
-        assert settings.process_inline is True
         assert settings.purview_app_location.location_value == "app-123"
 
     @pytest.mark.parametrize(

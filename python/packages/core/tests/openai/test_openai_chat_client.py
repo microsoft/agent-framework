@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import os
 from typing import Annotated
 from unittest.mock import MagicMock, patch
@@ -98,18 +97,6 @@ def test_init_base_url_from_settings_env() -> None:
         client = OpenAIChatClient()
         assert client.model_id == "gpt-5"
         assert str(client.client.base_url) == "https://custom-openai-endpoint.com/v1/"
-
-
-def test_openai_chat_client_instructions_sent_once(openai_unit_test_env: dict[str, str]) -> None:
-    """Ensure instructions are only included once for OpenAI chat requests."""
-    client = OpenAIChatClient()
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert json.dumps(request_options).count(instructions) == 1
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_CHAT_MODEL_ID"]], indirect=True)
@@ -702,12 +689,15 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
     # Test with exception (no result)
     test_exception = ValueError("Test error message")
     message_with_exception = ChatMessage(
-        role="tool", contents=[FunctionResultContent(call_id="call-123", exception=test_exception)]
+        role="tool",
+        contents=[
+            FunctionResultContent(call_id="call-123", result="Error: Function failed.", exception=test_exception)
+        ],
     )
 
     openai_messages = client._openai_chat_message_parser(message_with_exception)
     assert len(openai_messages) == 1
-    assert openai_messages[0]["content"] == "Error: Test error message"
+    assert openai_messages[0]["content"] == "Error: Function failed."
     assert openai_messages[0]["tool_call_id"] == "call-123"
 
 

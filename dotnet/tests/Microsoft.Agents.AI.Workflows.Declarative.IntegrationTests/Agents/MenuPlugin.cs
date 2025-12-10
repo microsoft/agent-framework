@@ -5,32 +5,33 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using Microsoft.Extensions.AI;
-using Microsoft.SemanticKernel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
+
+#pragma warning disable CA1822
 
 public sealed class MenuPlugin
 {
     public IEnumerable<AIFunction> GetTools()
     {
-        yield return AIFunctionFactory.Create(this.GetMenu, name: $"{nameof(MenuPlugin)}_{nameof(GetMenu)}");
-        yield return AIFunctionFactory.Create(this.GetSpecials, name: $"{nameof(MenuPlugin)}_{nameof(GetSpecials)}");
-        yield return AIFunctionFactory.Create(this.GetItemPrice, name: $"{nameof(MenuPlugin)}_{nameof(GetItemPrice)}");
+        yield return AIFunctionFactory.Create(this.GetMenu);
+        yield return AIFunctionFactory.Create(this.GetSpecials);
+        yield return AIFunctionFactory.Create(this.GetItemPrice);
     }
 
-    [KernelFunction, Description("Provides a list items on the menu.")]
+    [Description("Provides a list items on the menu.")]
     public MenuItem[] GetMenu()
     {
         return s_menuItems;
     }
 
-    [KernelFunction, Description("Provides a list of specials from the menu.")]
+    [Description("Provides a list of specials from the menu.")]
     public MenuItem[] GetSpecials()
     {
         return [.. s_menuItems.Where(i => i.IsSpecial)];
     }
 
-    [KernelFunction, Description("Provides the price of the requested menu item.")]
+    [Description("Provides the price of the requested menu item.")]
     public float? GetItemPrice(
         [Description("The name of the menu item.")]
         string name)

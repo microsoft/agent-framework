@@ -115,6 +115,26 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     assert result_messages[1].text == "Test"
 
 
+async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: ChatClientProtocol) -> None:
+    tool = HostedCodeInterpreterTool()
+    agent = ChatAgent(chat_client=chat_client, tools=[tool])
+
+    assert agent.chat_options.tools is not None
+    base_tools = agent.chat_options.tools
+    thread = agent.get_new_thread()
+
+    _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=thread,
+        input_messages=[ChatMessage(role=Role.USER, text="Test")],
+    )
+
+    assert prepared_chat_options.tools is not None
+    assert base_tools is not prepared_chat_options.tools
+
+    prepared_chat_options.tools.append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
+    assert len(agent.chat_options.tools) == 1
+
+
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
     mock_response = ChatResponse(
         messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],

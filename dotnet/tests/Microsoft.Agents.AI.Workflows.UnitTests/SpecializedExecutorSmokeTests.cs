@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
@@ -116,7 +117,7 @@ public class SpecializedExecutorSmokeTests
     {
         private readonly StateManager _stateManager = new();
 
-        public List<List<ChatMessage>> Updates { get; } = [];
+        public List<ChatMessage> Updates { get; } = [];
 
         public ValueTask AddEventAsync(WorkflowEvent workflowEvent, CancellationToken cancellationToken = default) =>
             default;
@@ -145,11 +146,11 @@ public class SpecializedExecutorSmokeTests
         {
             if (message is List<ChatMessage> messages)
             {
-                this.Updates.Add(messages);
+                this.Updates.AddRange(messages);
             }
             else if (message is ChatMessage chatMessage)
             {
-                this.Updates.Add([chatMessage]);
+                this.Updates.Add(chatMessage);
             }
 
             return default;
@@ -176,15 +177,6 @@ public class SpecializedExecutorSmokeTests
             "Quisque dignissim ante odio, at facilisis orci porta a. Duis mi augue, fringilla eu egestas a, pellentesque sed lacus."
         ];
 
-        string[][] splits = MessageStrings.Select(t => t.Split()).ToArray();
-        foreach (string[] messageSplits in splits)
-        {
-            for (int i = 0; i < messageSplits.Length - 1; i++)
-            {
-                messageSplits[i] += ' ';
-            }
-        }
-
         List<ChatMessage> expected = TestAIAgent.ToChatMessages(MessageStrings);
 
         TestAIAgent agent = new(expected);
@@ -192,7 +184,7 @@ public class SpecializedExecutorSmokeTests
 
         TestWorkflowContext collectingContext = new(host.Id);
 
-        await host.TakeTurnAsync(new TurnToken(emitEvents: false), collectingContext);
+        await host.TakeTurnAsync(new TurnToken(emitEvents: true), collectingContext);
 
         // The first empty message is skipped.
         collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
@@ -200,28 +192,55 @@ public class SpecializedExecutorSmokeTests
         for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
-            string[] expectedSplits = splits[i];
+            ChatMessage collected = collectingContext.Updates[i - 1];
 
-            ChatMessage equivalent = expected[i];
-            List<ChatMessage> collected = collectingContext.Updates[i - 1];
-
-            collected.Should().HaveCount(1);
-            collected[0].Text.Should().Be(expectedText);
-            collected[0].Contents.Should().HaveCount(splits[i].Length);
-
-            Action<AIContent>[] splitCheckActions = splits[i].Select(MakeSplitCheckAction).ToArray();
-            Assert.Collection(collected[0].Contents, splitCheckActions);
+            collected.Text.Should().Be(expectedText);
         }
+    }
 
-        Action<AIContent> MakeSplitCheckAction(string splitString)
-        {
-            return Check;
+    [Fact]
+    public async Task Test_AIAgent_ExecutorId_Use_Agent_NameAsync()
+    {
+        const string AgentAName = "TestAgentAName";
+        const string AgentBName = "TestAgentBName";
+        TestAIAgent agentA = new(name: AgentAName);
+        TestAIAgent agentB = new(name: AgentBName);
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
 
-            void Check(AIContent content)
-            {
-                TextContent? text = content as TextContent;
-                text!.Text.Should().Be(splitString);
-            }
-        }
+        // Verify that the agent host executor registration IDs in the workflow definition
+        // match the agent names when agent names are provided.
+        // The property DisplayName falls back to using the agent ID when Name is not set.
+        agentA.GetDescriptiveId().Should().Contain(AgentAName);
+        agentB.GetDescriptiveId().Should().Contain(AgentBName);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+
+        // This will create an instance of the start agent and verify that the ID
+        // of the executor instance matches the ID of the registration.
+        var protocolDescriptor = await workflow.DescribeProtocolAsync();
+        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
+    }
+
+    [Fact]
+    public async Task Test_AIAgent_ExecutorId_Use_Agent_ID_When_Name_Not_ProvidedAsync()
+    {
+        TestAIAgent agentA = new();
+        TestAIAgent agentB = new();
+        var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
+        var definition = workflow.ToWorkflowInfo();
+
+        // Verify that the agent host executor registration IDs in the workflow definition
+        // match the agent IDs when agent names are not provided.
+        // The property DisplayName falls back to using the agent ID when Name is not set.
+        agentA.GetDescriptiveId().Should().Contain(agentA.Id);
+        agentB.GetDescriptiveId().Should().Contain(agentB.Id);
+        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
+        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+
+        // This will create an instance of the start agent and verify that the ID
+        // of the executor instance matches the ID of the registration.
+        var protocolDescriptor = await workflow.DescribeProtocolAsync();
+        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
     }
 }

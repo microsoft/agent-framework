@@ -42,6 +42,6 @@ public static class A2ACardResolverExtensions
         // Obtain the agent card from the resolver.
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
 
-        return await agentCard.GetAIAgentAsync(httpClient, loggerFactory).ConfigureAwait(false);
+        return agentCard.GetAIAgent(httpClient, loggerFactory);
     }
 }

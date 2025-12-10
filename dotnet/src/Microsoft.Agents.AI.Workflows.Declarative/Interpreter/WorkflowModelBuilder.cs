@@ -19,12 +19,12 @@ internal sealed class WorkflowModelBuilder : IModelBuilder<Func<object?, bool>>
         Debug.WriteLine($"> CONNECT: {source.Id} => {target.Id}{(condition is null ? string.Empty : " (?)")}");
 
         this.WorkflowBuilder.AddEdge(
-            GetExecutorIsh(source),
-            GetExecutorIsh(target),
+            GetExecutorBinding(source),
+            GetExecutorBinding(target),
             condition);
     }
 
-    private static ExecutorIsh GetExecutorIsh(IModeledAction action) =>
+    private static ExecutorBinding GetExecutorBinding(IModeledAction action) =>
         action switch
         {
             RequestPortAction port => port.RequestPort,

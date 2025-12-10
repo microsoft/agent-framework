@@ -1,0 +1,72 @@
+{
+  "id": "resp_0bfaafe9c7aec7b30068f6fb3a5bdc8196bee8c7b919ff76e7",
+  "object": "response",
+  "created_at": 1761016634,
+  "status": "completed",
+  "background": false,
+  "billing": {
+    "payer": "developer"
+  },
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": 500,
+  "max_tool_calls": null,
+  "model": "o3-mini-2025-01-31",
+  "output": [
+    {
+      "id": "rs_0bfaafe9c7aec7b30068f6fb3cb76881968b021761281f36e4",
+      "type": "reasoning",
+      "summary": []
+    },
+    {
+      "id": "msg_0bfaafe9c7aec7b30068f6fb3d69748196920ec7bd9cfc5a87",
+      "type": "message",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "The first 10 prime numbers are:\n\n2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\n\nWhen you add these together, you get:\n\n2 + 3 + 5 + 7 + 11 + 13 + 17 + 19 + 23 + 29 = 129.\n\nSo, the sum of the first 10 prime numbers is 129."
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "reasoning": {
+    "effort": "medium",
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": true,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": "medium"
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 18,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 222,
+    "output_tokens_details": {
+      "reasoning_tokens": 128
+    },
+    "total_tokens": 240
+  },
+  "user": null,
+  "metadata": {}
+}

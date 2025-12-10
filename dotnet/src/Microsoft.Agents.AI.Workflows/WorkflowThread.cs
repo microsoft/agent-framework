@@ -68,9 +68,6 @@ internal sealed class WorkflowThread : AgentThread
 
     public CheckpointInfo? LastCheckpoint { get; set; }
 
-    protected override Task MessagesReceivedAsync(IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken = default)
-        => this.MessageStore.AddMessagesAsync(newMessages, cancellationToken);
-
     public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);
@@ -102,6 +99,8 @@ internal sealed class WorkflowThread : AgentThread
 
     private async ValueTask<Checkpointed<StreamingRun>> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
+        // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the thread,
+        // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
             Checkpointed<StreamingRun> checkpointed =
@@ -151,13 +150,27 @@ internal sealed class WorkflowThread : AgentThread
                     case AgentRunUpdateEvent agentUpdate:
                         yield return agentUpdate.Update;
                         break;
+
                     case RequestInfoEvent requestInfo:
                         FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
                         AgentRunResponseUpdate update = this.CreateUpdate(this.LastResponseId, fcContent);
                         yield return update;
                         break;
+
                     case SuperStepCompletedEvent stepCompleted:
                         this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
+                        goto default;
+
+                    default:
+                        // Emit all other workflow events for observability (DevUI, logging, etc.)
+                        yield return new AgentRunResponseUpdate(ChatRole.Assistant, [])
+                        {
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            MessageId = Guid.NewGuid().ToString("N"),
+                            Role = ChatRole.Assistant,
+                            ResponseId = this.LastResponseId,
+                            RawRepresentation = evt
+                        };
                         break;
                 }
             }

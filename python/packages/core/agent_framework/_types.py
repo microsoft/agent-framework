@@ -561,7 +561,7 @@ class BaseContent(SerializationMixin):
     def __init__(
         self,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -651,7 +651,7 @@ class TextContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextContent instance.
@@ -793,7 +793,7 @@ class TextReasoningContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextReasoningContent instance.
@@ -897,6 +897,9 @@ class TextReasoningContent(BaseContent):
         return self
 
 
+TDataContent = TypeVar("TDataContent", bound="DataContent")
+
+
 class DataContent(BaseContent):
     """Represents binary data content with an associated media type (also known as a MIME type).
 
@@ -936,7 +939,7 @@ class DataContent(BaseContent):
         self,
         *,
         uri: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -962,7 +965,7 @@ class DataContent(BaseContent):
         *,
         data: bytes,
         media_type: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -989,7 +992,7 @@ class DataContent(BaseContent):
         uri: str | None = None,
         data: bytes | None = None,
         media_type: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1050,6 +1053,70 @@ class DataContent(BaseContent):
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
 
+    @staticmethod
+    def detect_image_format_from_base64(image_base64: str) -> str:
+        """Detect image format from base64 data by examining the binary header.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Image format as string (png, jpeg, webp, gif) with png as fallback
+        """
+        try:
+            # Constants for image format detection
+            # ~75 bytes of binary data should be enough to detect most image formats
+            FORMAT_DETECTION_BASE64_CHARS = 100
+
+            # Decode a small portion to detect format
+            decoded_data = base64.b64decode(image_base64[:FORMAT_DETECTION_BASE64_CHARS])
+            if decoded_data.startswith(b"\x89PNG"):
+                return "png"
+            if decoded_data.startswith(b"\xff\xd8\xff"):
+                return "jpeg"
+            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                return "webp"
+            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                return "gif"
+            return "png"  # Default fallback
+        except Exception:
+            return "png"  # Fallback if decoding fails
+
+    @staticmethod
+    def create_data_uri_from_base64(image_base64: str) -> tuple[str, str]:
+        """Create a data URI and media type from base64 image data.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Tuple of (data_uri, media_type)
+        """
+        format_type = DataContent.detect_image_format_from_base64(image_base64)
+        uri = f"data:image/{format_type};base64,{image_base64}"
+        media_type = f"image/{format_type}"
+        return uri, media_type
+
+    def get_data_bytes_as_str(self) -> str:
+        """Extracts and returns the base64-encoded data from the data URI.
+
+        Returns:
+            The binary data as str.
+        """
+        match = URI_PATTERN.match(self.uri)
+        if not match:
+            raise ValueError(f"Invalid data URI format: {self.uri}")
+        return match.group("base64_data")
+
+    def get_data_bytes(self) -> bytes:
+        """Extracts and returns the binary data from the data URI.
+
+        Returns:
+            The binary data as bytes.
+        """
+        base64_data = self.get_data_bytes_as_str()
+        return base64.b64decode(base64_data)
+
 
 class UriContent(BaseContent):
     """Represents a URI content.
@@ -1093,7 +1160,7 @@ class UriContent(BaseContent):
         uri: str,
         media_type: str,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1187,7 +1254,7 @@ class ErrorContent(BaseContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1271,7 +1338,7 @@ class FunctionCallContent(BaseContent):
         name: str,
         arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1380,7 +1447,7 @@ class FunctionResultContent(BaseContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1438,7 +1505,7 @@ class UsageContent(BaseContent):
         self,
         details: UsageDetails | MutableMapping[str, Any],
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1556,7 +1623,7 @@ class BaseUserInputRequest(BaseContent):
         self,
         *,
         id: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1610,7 +1677,7 @@ class FunctionApprovalResponseContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1674,7 +1741,7 @@ class FunctionApprovalRequestContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1738,6 +1805,8 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
     if isinstance(content, dict):
         return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if isinstance(content, BaseModel):
+        return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
     return content
@@ -1906,6 +1975,7 @@ class ChatMessage(SerializationMixin):
         author_name: The name of the author of the message.
         message_id: The ID of the chat message.
         additional_properties: Any additional properties associated with the chat message.
+            Additional properties are used within Agent Framework, they are not sent to services.
         raw_representation: The raw representation of the chat message from an underlying implementation.
 
     Examples:
@@ -1966,6 +2036,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -1992,6 +2063,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -2019,6 +2091,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             kwargs: will be combined with additional_properties if provided.
         """
@@ -2050,6 +2123,38 @@ class ChatMessage(SerializationMixin):
             This property concatenates the text of all TextContent objects in Contents.
         """
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
+
+
+def prepare_messages(
+    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+) -> list[ChatMessage]:
+    """Convert various message input formats into a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats.
+        system_instructions: The system instructions. They will be inserted to the start of the messages list.
+
+    Returns:
+        A list of ChatMessage objects.
+    """
+    if system_instructions is not None:
+        if isinstance(system_instructions, str):
+            system_instructions = [system_instructions]
+        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+    else:
+        system_instruction_messages = []
+
+    if isinstance(messages, str):
+        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
+    if isinstance(messages, ChatMessage):
+        return [*system_instruction_messages, messages]
+
+    return_messages: list[ChatMessage] = system_instruction_messages
+    for msg in messages:
+        if isinstance(msg, str):
+            msg = ChatMessage(role="user", text=msg)
+        return_messages.append(msg)
+    return return_messages
 
 
 # region ChatResponse
@@ -3085,6 +3190,40 @@ class ChatOptions(SerializationMixin):
         self.top_p = top_p
         self.user = user
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
+        """Create a runtime-safe copy without deep-copying tool instances."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for key, value in self.__dict__.items():
+            if key == "_tools":
+                setattr(clone, key, list(value) if value is not None else None)
+                continue
+            if key in {"logit_bias", "metadata", "additional_properties"}:
+                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
+                continue
+            setattr(clone, key, self._safe_deepcopy_value(value, memo))
+        return clone
+
+    @staticmethod
+    def _safe_deepcopy_mapping(
+        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
+    ) -> MutableMapping[str, Any] | None:
+        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
+        if value is None:
+            return None
+        try:
+            return deepcopy(value, memo)  # type: ignore[arg-type]
+        except Exception:
+            return dict(value)
+
+    @staticmethod
+    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
+        """Deep copy helper that avoids failing on non-copyable instances."""
+        try:
+            return deepcopy(value, memo)
+        except Exception:
+            return value
+
     @property
     def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
         """Return the tools that are specified."""
@@ -3125,7 +3264,7 @@ class ChatOptions(SerializationMixin):
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | str | None:
+    ) -> ToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ToolMode."""
         if not tool_choice:
             return None

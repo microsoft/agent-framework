@@ -129,6 +129,27 @@ public static class WorkflowProvider
         }
     }
     
+    /// <summary>
+    /// Formats a message template and sends an activity event.
+    /// </summary>
+    internal sealed class ActivityFinalExecutor(FormulaSession session) : ActionExecutor(id: "activity_final", session)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string activityText =
+                await context.FormatTemplateAsync(
+                    """
+                    All done!
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
+    
+            return default;
+        }
+    }
+    
     public static Workflow CreateWorkflow<TInput>(
         DeclarativeWorkflowOptions options,
         Func<TInput, ChatMessage>? inputTransform = null) 
@@ -147,7 +168,7 @@ public static class WorkflowProvider
         DelegateExecutor conditionItemEvenactions = new(id: "conditionItem_evenActions", myWorkflowRoot.Session);
         SendactivityEvenExecutor sendActivityEven = new(myWorkflowRoot.Session);
         DelegateExecutor conditionGroupTestPost = new(id: "conditionGroup_test_Post", myWorkflowRoot.Session);
-        DelegateExecutor endAll = new(id: "end_all", myWorkflowRoot.Session);
+        ActivityFinalExecutor activityFinal = new(myWorkflowRoot.Session);
         DelegateExecutor conditionItemOddPost = new(id: "conditionItem_odd_Post", myWorkflowRoot.Session);
         DelegateExecutor conditionItemEvenPost = new(id: "conditionItem_even_Post", myWorkflowRoot.Session);
         DelegateExecutor conditionItemOddactionsPost = new(id: "conditionItem_oddActions_Post", myWorkflowRoot.Session);
@@ -166,7 +187,7 @@ public static class WorkflowProvider
         builder.AddEdge(conditionItemOddactions, sendActivityOdd);
         builder.AddEdge(conditionItemEven, conditionItemEvenactions);
         builder.AddEdge(conditionItemEvenactions, sendActivityEven);
-        builder.AddEdge(conditionGroupTestPost, endAll);
+        builder.AddEdge(conditionGroupTestPost, activityFinal);
         builder.AddEdge(conditionItemOddPost, conditionGroupTestPost);
         builder.AddEdge(conditionItemEvenPost, conditionGroupTestPost);
         builder.AddEdge(sendActivityOdd, conditionItemOddactionsPost);
@@ -175,6 +196,6 @@ public static class WorkflowProvider
         builder.AddEdge(conditionItemEvenactionsPost, conditionItemEvenPost);
 
         // Build the workflow
-        return builder.Build();
+        return builder.Build(validateOrphans: false);
     }
 }

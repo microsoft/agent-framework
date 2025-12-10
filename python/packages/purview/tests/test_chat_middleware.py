@@ -74,7 +74,8 @@ class TestPurviewChatPolicyMiddleware:
             await middleware.process(chat_context, mock_next)
             assert chat_context.terminate
             assert chat_context.result
-            msg = chat_context.result[0]  # type: ignore[index]
+            assert hasattr(chat_context.result, "messages")
+            msg = chat_context.result.messages[0]
             assert msg.role in ("system", Role.SYSTEM)
             assert "blocked" in msg.text.lower()
 
@@ -112,7 +113,7 @@ class TestPurviewChatPolicyMiddleware:
             chat_options=chat_options,
             is_streaming=True,
         )
-        with patch.object(middleware._processor, "process_messages", return_value=False) as mock_proc:
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")) as mock_proc:
 
             async def mock_next(ctx: ChatContext) -> None:
                 ctx.result = MagicMock()
@@ -123,7 +124,10 @@ class TestPurviewChatPolicyMiddleware:
     async def test_chat_middleware_handles_post_check_exception(
         self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
     ) -> None:
-        """Test that exceptions in post-check are logged but don't affect result."""
+        """Test that exceptions in post-check are logged but don't affect result when ignore_exceptions=True."""
+        # Set ignore_exceptions to True to test exception suppression
+        middleware._settings.ignore_exceptions = True
+
         call_count = 0
 
         async def mock_process_messages(*args, **kwargs):
@@ -136,7 +140,6 @@ class TestPurviewChatPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
 
             async def mock_next(ctx: ChatContext) -> None:
-                # Create a mock result with messages attribute
                 result = MagicMock()
                 result.messages = [ChatMessage(role=Role.ASSISTANT, text="Response")]
                 ctx.result = result
@@ -147,3 +150,127 @@ class TestPurviewChatPolicyMiddleware:
             assert call_count == 2
             # Result should still be set
             assert chat_context.result is not None
+
+    async def test_chat_middleware_uses_consistent_user_id(
+        self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
+    ) -> None:
+        """Test that the same user_id from pre-check is used in post-check."""
+        captured_user_ids = []
+
+        async def mock_process_messages(messages, activity, user_id=None):
+            captured_user_ids.append(user_id)
+            return (False, "resolved-user-123")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                result = MagicMock()
+                result.messages = [ChatMessage(role=Role.ASSISTANT, text="Response")]
+                ctx.result = result
+
+            await middleware.process(chat_context, mock_next)
+
+            # Should have been called twice
+            assert len(captured_user_ids) == 2
+            # First call should have None (no user_id provided yet)
+            assert captured_user_ids[0] is None
+            # Second call should have the resolved user_id from first call
+            assert captured_user_ids[1] == "resolved-user-123"
+
+    async def test_chat_middleware_handles_payment_required_pre_check(self, mock_credential: AsyncMock) -> None:
+        """Test that 402 in pre-check is handled based on settings."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        # Test with ignore_payment_required=False
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=False)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+        )
+
+        async def mock_process_messages(*args, **kwargs):
+            raise PurviewPaymentRequiredError("Payment required")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                raise AssertionError("next should not be called")
+
+            # Should raise the exception
+            with pytest.raises(PurviewPaymentRequiredError):
+                await middleware.process(context, mock_next)
+
+    async def test_chat_middleware_ignores_payment_required_when_configured(self, mock_credential: AsyncMock) -> None:
+        """Test that 402 is ignored when ignore_payment_required=True."""
+        from agent_framework_purview._exceptions import PurviewPaymentRequiredError
+
+        settings = PurviewSettings(app_name="Test App", ignore_payment_required=True)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+        )
+
+        async def mock_process_messages(*args, **kwargs):
+            raise PurviewPaymentRequiredError("Payment required")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                result = MagicMock()
+                result.messages = [ChatMessage(role=Role.ASSISTANT, text="Response")]
+                context.result = result
+
+            # Should not raise, just log
+            await middleware.process(context, mock_next)
+            # Next should have been called
+            assert context.result is not None
+
+    async def test_chat_middleware_handles_result_without_messages_attribute(
+        self, middleware: PurviewChatPolicyMiddleware, chat_context: ChatContext
+    ) -> None:
+        """Test middleware handles result that doesn't have messages attribute."""
+        with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                # Set result to something without messages attribute
+                ctx.result = "Some string result"
+
+            await middleware.process(chat_context, mock_next)
+
+            # Should not crash, result should be unchanged
+            assert chat_context.result == "Some string result"
+
+    async def test_chat_middleware_with_ignore_exceptions(self, mock_credential: AsyncMock) -> None:
+        """Test that middleware respects ignore_exceptions setting."""
+        settings = PurviewSettings(app_name="Test App", ignore_exceptions=True)
+        middleware = PurviewChatPolicyMiddleware(mock_credential, settings)
+
+        chat_client = DummyChatClient()
+        chat_options = MagicMock()
+        chat_options.model = "test-model"
+        context = ChatContext(
+            chat_client=chat_client, messages=[ChatMessage(role=Role.USER, text="Hello")], chat_options=chat_options
+        )
+
+        async def mock_process_messages(*args, **kwargs):
+            raise ValueError("Some error")
+
+        with patch.object(middleware._processor, "process_messages", side_effect=mock_process_messages):
+
+            async def mock_next(ctx: ChatContext) -> None:
+                result = MagicMock()
+                result.messages = [ChatMessage(role=Role.ASSISTANT, text="Response")]
+                context.result = result
+
+            # Should not raise, just log
+            await middleware.process(context, mock_next)
+            # Next should have been called
+            assert context.result is not None

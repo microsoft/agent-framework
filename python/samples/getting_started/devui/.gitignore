@@ -1,0 +1,19 @@
+# Auto-generated Dockerfiles from DevUI deployment
+*/Dockerfile
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment files (may contain secrets)
+.env
+*.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

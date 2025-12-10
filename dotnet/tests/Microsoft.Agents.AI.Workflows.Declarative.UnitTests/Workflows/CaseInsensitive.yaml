@@ -1,0 +1,29 @@
+kind: WORKFLOW
+trigger:
+
+  kind: onconversationstart
+  id: my_workflow
+  actions:
+  
+    - kind: SETVARIABLE
+      id: set_input1
+      variable: Local.TestValue1
+      value: =3
+  
+    - kind: setvariable
+      id: set_input2
+      variable: Local.TestValue2
+      value: =4
+
+    - kind: ConditionGroup
+      id: condition_test
+      conditions:
+        - id: condition_match
+          condition: =Local.TestValue1 + Local.TestValue2 = 7
+          actions:
+            - kind: EndWorkflow
+              id: end_when_match
+
+    - kind: SendActivity
+      id: activity_error
+      activity: Unexpected

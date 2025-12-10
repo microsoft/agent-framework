@@ -156,15 +156,22 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
         this._eventStream.SignalInput();
     }
 
+    public async ValueTask CancelRunAsync()
+    {
+        this._endRunSource.Cancel();
+
+        await this._eventStream.StopAsync().ConfigureAwait(false);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref this._isDisposed, 1) == 0)
         {
-            this._endRunSource.Cancel();
+            // Cancel the run if it is still running
+            await this.CancelRunAsync().ConfigureAwait(false);
 
-            await this._eventStream.StopAsync().ConfigureAwait(false);
+            // These actually release and clean up resources
             await this._stepRunner.RequestEndRunAsync().ConfigureAwait(false);
-
             this._endRunSource.Dispose();
 
             await this._eventStream.DisposeAsync().ConfigureAwait(false);

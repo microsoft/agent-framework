@@ -382,11 +382,12 @@ public class AgentWorkflowBuilderTests
     }
 
     private static async Task<(string UpdateText, List<ChatMessage>? Result)> RunWorkflowAsync(
-        Workflow workflow, List<ChatMessage> input)
+        Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
     {
         StringBuilder sb = new();
 
-        await using StreamingRun run = await InProcessExecution.Lockstep.StreamAsync(workflow, input);
+        IWorkflowExecutionEnvironment environment = executionEnvironment.ToWorkflowExecutionEnvironment();
+        await using StreamingRun run = await environment.StreamAsync(workflow, input);
         await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
 
         WorkflowOutputEvent? output = null;

@@ -17,7 +17,7 @@ one of the following categories:
 
 - [**gaia**](./gaia/): Evaluate your agents using the GAIA benchmark for general assistant tasks
 - [**tau2**](./tau2/): Evaluate your agents using the TAU2 benchmark for customer support tasks
-- [**lightning**](./lightning/): RL training for agents (in development)
+- [**lightning**](./lightning/): RL training for agents using Agent Lightning
 
 ## Repository Structure
 
@@ -44,15 +44,13 @@ This structure maintains a single PyPI package `agent-framework-lab` while suppo
 
 ## Installation
 
-Install from source:
+To install each lab module, use the extras syntax with `pip`:
 
 ```bash
-git clone https://github.com/microsoft/agent-framework.git
-cd agent-framework/python/packages/lab
-pip install -e .
+pip install "agent-framework-lab[gaia]"
+pip install "agent-framework-lab[tau2]"
+pip install "agent-framework-lab[lightning]"
 ```
-
-For details on installing individual modules, see their respective README files listed above.
 
 ## Usage
 

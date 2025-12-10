@@ -3,7 +3,7 @@
 import os
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from mcp import types
@@ -33,14 +33,16 @@ from agent_framework._mcp import (
     _mcp_type_to_ai_content,
     _normalize_mcp_name,
 )
-from agent_framework.exceptions import ToolExecutionException
+from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true" or os.getenv("LOCAL_MCP_URL", "") == "",
-    reason="No LOCAL_MCP_URL provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    reason=(
+        "No LOCAL_MCP_URL provided; skipping integration tests."
+        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
+        else "Integration tests are disabled."
+    ),
 )
 
 
@@ -86,10 +88,128 @@ def test_mcp_call_tool_result_to_ai_contents():
     assert ai_contents[1].media_type == "image/png"
 
 
+def test_mcp_call_tool_result_with_meta_error():
+    """Test conversion from MCP tool result with _meta field containing isError=True."""
+    # Create a mock CallToolResult with _meta field containing error information
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Error occurred")],
+        _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
+    )
+
+    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+
+    assert len(ai_contents) == 1
+    assert isinstance(ai_contents[0], TextContent)
+    assert ai_contents[0].text == "Error occurred"
+
+    # Check that _meta data is merged into additional_properties
+    assert ai_contents[0].additional_properties is not None
+    assert ai_contents[0].additional_properties["isError"] is True
+    assert ai_contents[0].additional_properties["errorCode"] == "TOOL_ERROR"
+    assert ai_contents[0].additional_properties["errorMessage"] == "Tool execution failed"
+
+
+def test_mcp_call_tool_result_with_meta_arbitrary_data():
+    """Test conversion from MCP tool result with _meta field containing arbitrary metadata.
+
+    Note: The _meta field is optional and can contain any structure that a specific
+    MCP server chooses to provide. This test uses example metadata to verify that
+    whatever is provided gets preserved in additional_properties.
+    """
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Success result")],
+        _meta={
+            "serverVersion": "2.1.0",
+            "executionId": "exec_abc123",
+            "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
+            "source": "example-mcp-server",
+            "customField": "arbitrary_value",
+        },
+    )
+
+    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+
+    assert len(ai_contents) == 1
+    assert isinstance(ai_contents[0], TextContent)
+    assert ai_contents[0].text == "Success result"
+
+    # Check that _meta data is preserved in additional_properties
+    props = ai_contents[0].additional_properties
+    assert props is not None
+    assert props["serverVersion"] == "2.1.0"
+    assert props["executionId"] == "exec_abc123"
+    assert props["metrics"] == {"responseTime": 1.25, "memoryUsed": "64MB"}
+    assert props["source"] == "example-mcp-server"
+    assert props["customField"] == "arbitrary_value"
+
+
+def test_mcp_call_tool_result_with_meta_merging_existing_properties():
+    """Test that _meta data merges correctly with existing additional_properties."""
+    # Create content with existing additional_properties
+    text_content = types.TextContent(type="text", text="Test content")
+    mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
+
+    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+
+    assert len(ai_contents) == 1
+    content = ai_contents[0]
+
+    # Check that _meta data is present in additional_properties
+    assert content.additional_properties is not None
+    assert content.additional_properties["newField"] == "newValue"
+    assert content.additional_properties["isError"] is False
+
+
+def test_mcp_call_tool_result_with_meta_none():
+    """Test that missing _meta field is handled gracefully."""
+    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
+    # No _meta field set
+
+    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+
+    assert len(ai_contents) == 1
+    assert isinstance(ai_contents[0], TextContent)
+    assert ai_contents[0].text == "No meta test"
+
+    # Should handle gracefully when no _meta field exists
+    # additional_properties may be None or empty dict
+    props = ai_contents[0].additional_properties
+    assert props is None or props == {}
+
+
+def test_mcp_call_tool_result_regression_successful_workflow():
+    """Regression test to ensure existing successful workflows remain unchanged."""
+    # Test the original successful workflow still works
+    mcp_result = types.CallToolResult(
+        content=[
+            types.TextContent(type="text", text="Success message"),
+            types.ImageContent(type="image", data="data:image/jpeg;base64,abc123", mimeType="image/jpeg"),
+        ]
+    )
+
+    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+
+    # Verify basic conversion still works correctly
+    assert len(ai_contents) == 2
+
+    text_content = ai_contents[0]
+    assert isinstance(text_content, TextContent)
+    assert text_content.text == "Success message"
+
+    image_content = ai_contents[1]
+    assert isinstance(image_content, DataContent)
+    assert image_content.uri == "data:image/jpeg;base64,abc123"
+    assert image_content.media_type == "image/jpeg"
+
+    # Should have no additional_properties when no _meta field
+    assert text_content.additional_properties is None or text_content.additional_properties == {}
+    assert image_content.additional_properties is None or image_content.additional_properties == {}
+
+
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Sample text"
@@ -99,7 +219,7 @@ def test_mcp_content_types_to_ai_content_text():
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
     mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:image/jpeg;base64,abc"
@@ -110,7 +230,7 @@ def test_mcp_content_types_to_ai_content_image():
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
     mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:audio/wav;base64,def"
@@ -126,7 +246,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
         name="test_resource",
         mimeType="application/json",
     )
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, UriContent)
     assert ai_content.uri == "https://example.com/resource"
@@ -137,10 +257,12 @@ def test_mcp_content_types_to_ai_content_resource_link():
 def test_mcp_content_types_to_ai_content_embedded_resource_text():
     """Test conversion of MCP embedded text resource to AI content."""
     text_resource = types.TextResourceContents(
-        uri=AnyUrl("file://test.txt"), mimeType="text/plain", text="Embedded text content"
+        uri=AnyUrl("file://test.txt"),
+        mimeType="text/plain",
+        text="Embedded text content",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=text_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Embedded text content"
@@ -156,7 +278,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=blob_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
@@ -198,7 +320,10 @@ def test_ai_content_to_mcp_content_types_data_audio():
 
 def test_ai_content_to_mcp_content_types_data_binary():
     """Test conversion of AI data content to MCP content."""
-    ai_content = DataContent(uri="data:application/octet-stream;base64,xyz", media_type="application/octet-stream")
+    ai_content = DataContent(
+        uri="data:application/octet-stream;base64,xyz",
+        media_type="application/octet-stream",
+    )
     mcp_content = _ai_content_to_mcp_types(ai_content)
 
     assert isinstance(mcp_content, types.EmbeddedResource)
@@ -221,7 +346,10 @@ def test_ai_content_to_mcp_content_types_uri():
 def test_chat_message_to_mcp_types():
     message = ChatMessage(
         role="user",
-        contents=[TextContent(text="test"), DataContent(uri="data:image/png;base64,xyz", media_type="image/png")],
+        contents=[
+            TextContent(text="test"),
+            DataContent(uri="data:image/png;base64,xyz", media_type="image/png"),
+        ],
     )
     mcp_contents = _chat_message_to_mcp_types(message)
     assert len(mcp_contents) == 2
@@ -315,6 +443,36 @@ def test_get_input_model_from_mcp_tool_with_ref_schema():
     # Verify model_dump produces the correct nested structure
     dumped = instance.model_dump()
     assert dumped == {"params": {"customer_id": 251}}
+
+
+def test_get_input_model_from_mcp_tool_with_simple_array():
+    """Test array with simple items schema (items schema should be preserved in json_schema_extra)."""
+    tool = types.Tool(
+        name="simple_array_tool",
+        description="Tool with simple array",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "description": "List of tags",
+                    "items": {"type": "string"},  # Simple string array
+                }
+            },
+            "required": ["tags"],
+        },
+    )
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create an instance
+    instance = model(tags=["tag1", "tag2", "tag3"])
+    assert instance.tags == ["tag1", "tag2", "tag3"]
+
+    # Verify JSON schema still preserves items for simple types
+    json_schema = model.model_json_schema()
+    tags_property = json_schema["properties"]["tags"]
+    assert "items" in tags_property
+    assert tags_property["items"]["type"] == "string"
 
 
 def test_get_input_model_from_mcp_prompt():
@@ -428,6 +586,58 @@ async def test_local_mcp_server_load_prompts():
         await server.load_prompts()
         assert len(server.functions) == 1
         assert server.functions[0].name == "test_prompt"
+
+
+async def test_mcp_tool_call_tool_with_meta_integration():
+    """Test that call_tool method properly integrates with enhanced metadata extraction."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+
+            # Create a CallToolResult with _meta field
+            tool_result = types.CallToolResult(
+                content=[types.TextContent(type="text", text="Tool executed with metadata")],
+                _meta={"executionTime": 1.5, "cost": {"usd": 0.002}, "isError": False, "toolVersion": "1.2.3"},
+            )
+
+            self.session.call_tool = AsyncMock(return_value=tool_result)
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+        result = await func.invoke(param="test_value")
+
+        assert len(result) == 1
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == "Tool executed with metadata"
+
+        # Verify that _meta data is present in additional_properties
+        props = result[0].additional_properties
+        assert props is not None
+        assert props["executionTime"] == 1.5
+        assert props["cost"] == {"usd": 0.002}
+        assert props["isError"] is False
+        assert props["toolVersion"] == "1.2.3"
 
 
 async def test_local_mcp_server_function_execution():
@@ -583,7 +793,10 @@ async def test_local_mcp_server_prompt_execution():
                 return_value=types.GetPromptResult(
                     description="Generated prompt",
                     messages=[
-                        types.PromptMessage(role="user", content=types.TextContent(type="text", text="Test message"))
+                        types.PromptMessage(
+                            role="user",
+                            content=types.TextContent(type="text", text="Test message"),
+                        )
                     ],
                 )
             )
@@ -607,10 +820,16 @@ async def test_local_mcp_server_prompt_execution():
 @pytest.mark.parametrize(
     "approval_mode,expected_approvals",
     [
-        ("always_require", {"tool_one": "always_require", "tool_two": "always_require"}),
+        (
+            "always_require",
+            {"tool_one": "always_require", "tool_two": "always_require"},
+        ),
         ("never_require", {"tool_one": "never_require", "tool_two": "never_require"}),
         (
-            {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+            {
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_two"],
+            },
             {"tool_one": "always_require", "tool_two": "never_require"},
         ),
     ],
@@ -664,9 +883,17 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
 @pytest.mark.parametrize(
     "allowed_tools,expected_count,expected_names",
     [
-        (None, 3, ["tool_one", "tool_two", "tool_three"]),  # None means all tools are allowed
+        (
+            None,
+            3,
+            ["tool_one", "tool_two", "tool_three"],
+        ),  # None means all tools are allowed
         (["tool_one"], 1, ["tool_one"]),  # Only tool_one is allowed
-        (["tool_one", "tool_three"], 2, ["tool_one", "tool_three"]),  # Two tools allowed
+        (
+            ["tool_one", "tool_three"],
+            2,
+            ["tool_one", "tool_three"],
+        ),  # Two tools allowed
         (["nonexistent_tool"], 0, []),  # No matching tools
     ],
 )
@@ -776,3 +1003,449 @@ async def test_streamable_http_integration():
 
         result = await func.invoke(query="What is Agent Framework?")
         assert result[0].text is not None
+
+
+async def test_mcp_tool_message_handler_notification():
+    """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
+    notifications."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock the load_tools and load_prompts methods
+    tool.load_tools = AsyncMock()
+    tool.load_prompts = AsyncMock()
+
+    # Test tools list changed notification
+    tools_notification = Mock(spec=types.ServerNotification)
+    tools_notification.root = Mock()
+    tools_notification.root.method = "notifications/tools/list_changed"
+
+    result = await tool.message_handler(tools_notification)
+    assert result is None
+    tool.load_tools.assert_called_once()
+
+    # Reset mock
+    tool.load_tools.reset_mock()
+
+    # Test prompts list changed notification
+    prompts_notification = Mock(spec=types.ServerNotification)
+    prompts_notification.root = Mock()
+    prompts_notification.root.method = "notifications/prompts/list_changed"
+
+    result = await tool.message_handler(prompts_notification)
+    assert result is None
+    tool.load_prompts.assert_called_once()
+
+    # Test unhandled notification
+    unknown_notification = Mock(spec=types.ServerNotification)
+    unknown_notification.root = Mock()
+    unknown_notification.root.method = "notifications/unknown"
+
+    result = await tool.message_handler(unknown_notification)
+    assert result is None
+
+
+async def test_mcp_tool_message_handler_error():
+    """Test that message_handler gracefully handles exceptions by logging and returning None."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Test with exception message
+    test_exception = RuntimeError("Test error message")
+
+    # The message handler should log the error and return None
+    result = await tool.message_handler(test_exception)
+    assert result is None
+
+
+async def test_mcp_tool_sampling_callback_no_client():
+    """Test sampling callback error path when no chat client is available."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Create minimal params mock
+    params = Mock()
+    params.messages = []
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "No chat client available" in result.message
+
+
+async def test_mcp_tool_sampling_callback_chat_client_exception():
+    """Test sampling callback when chat client raises exception."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock chat client that raises exception
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.side_effect = RuntimeError("Chat client error")
+
+    tool.chat_client = mock_chat_client
+
+    # Create mock params
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "Failed to get chat message content: Chat client error" in result.message
+
+
+async def test_mcp_tool_sampling_callback_no_valid_content():
+    """Test sampling callback when response has no valid content types."""
+    from agent_framework import ChatMessage, DataContent, Role
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Mock chat client with response containing only invalid content types
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [
+        ChatMessage(
+            role=Role.ASSISTANT,
+            contents=[
+                DataContent(
+                    uri="data:application/json;base64,e30K",
+                    media_type="application/json",
+                )
+            ],
+        )
+    ]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.chat_client = mock_chat_client
+
+    # Create mock params
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+    assert result.code == types.INTERNAL_ERROR
+    assert "Failed to get right content types from the response." in result.message
+
+
+# Test error handling in connect() method
+
+
+async def test_connect_session_creation_failure():
+    """Test connect() raises ToolException when ClientSession creation fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())  # (read_stream, write_stream)
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock ClientSession to raise an exception
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.side_effect = RuntimeError("Session creation failed")
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        assert "Failed to create MCP session" in str(exc_info.value)
+        assert "Session creation failed" in str(exc_info.value.__cause__)
+
+
+async def test_connect_initialization_failure_http_no_command():
+    """Test connect() when session.initialize() fails for HTTP tool (no command attribute)."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock successful session creation but failed initialization
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=ConnectionError("Server not ready"))
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        # Should use generic error message since HTTP tool doesn't have command
+        assert "MCP server failed to initialize" in str(exc_info.value)
+        assert "Server not ready" in str(exc_info.value)
+
+
+async def test_connect_cleanup_on_transport_failure():
+    """Test that _exit_stack.aclose() is called when transport creation fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock _exit_stack.aclose to verify it's called
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock get_mcp_client to raise an exception
+    tool.get_mcp_client = Mock(side_effect=RuntimeError("Transport failed"))
+
+    with pytest.raises(ToolException):
+        await tool.connect()
+
+    # Verify cleanup was called
+    tool._exit_stack.aclose.assert_called_once()
+
+
+async def test_connect_cleanup_on_initialization_failure():
+    """Test that _exit_stack.aclose() is called when initialization fails."""
+    tool = MCPStdioTool(name="test", command="test-command")
+
+    # Mock _exit_stack.aclose to verify it's called
+    tool._exit_stack.aclose = AsyncMock()
+
+    # Mock successful transport creation
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    # Mock successful session creation but failed initialization
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=RuntimeError("Init failed"))
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException):
+            await tool.connect()
+
+        # Verify cleanup was called
+        tool._exit_stack.aclose.assert_called_once()
+
+
+def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
+    """Test MCPStdioTool.get_mcp_client() with environment variables and client kwargs."""
+    env_vars = {"PATH": "/usr/bin", "DEBUG": "1"}
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        env=env_vars,
+        custom_param="value1",
+        another_param=42,
+    )
+
+    with patch("agent_framework._mcp.stdio_client"), patch("agent_framework._mcp.StdioServerParameters") as mock_params:
+        tool.get_mcp_client()
+
+        # Verify all parameters including custom kwargs were passed
+        mock_params.assert_called_once_with(
+            command="test-command",
+            args=[],
+            env=env_vars,
+            custom_param="value1",
+            another_param=42,
+        )
+
+
+def test_mcp_streamable_http_tool_get_mcp_client_all_params():
+    """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com",
+        headers={"Auth": "token"},
+        timeout=30.0,
+        sse_read_timeout=10.0,
+        terminate_on_close=True,
+        custom_param="test",
+    )
+
+    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+        tool.get_mcp_client()
+
+        # Verify all parameters were passed
+        mock_http_client.assert_called_once_with(
+            url="http://example.com",
+            headers={"Auth": "token"},
+            timeout=30.0,
+            sse_read_timeout=10.0,
+            terminate_on_close=True,
+            custom_param="test",
+        )
+
+
+def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
+    """Test MCPWebsocketTool.get_mcp_client() with client kwargs."""
+    tool = MCPWebsocketTool(
+        name="test",
+        url="wss://example.com",
+        max_size=1024,
+        ping_interval=30,
+        compression="deflate",
+    )
+
+    with patch("agent_framework._mcp.websocket_client") as mock_ws_client:
+        tool.get_mcp_client()
+
+        # Verify all kwargs were passed
+        mock_ws_client.assert_called_once_with(
+            url="wss://example.com",
+            max_size=1024,
+            ping_interval=30,
+            compression="deflate",
+        )
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_deduplication():
+    """Test that MCP tools are not duplicated in MCPTool"""
+    from agent_framework._mcp import MCPTool
+    from agent_framework._tools import AIFunction
+
+    # Create MCPStreamableHTTPTool instance
+    tool = MCPTool(name="test_mcp_tool")
+
+    # Manually set up functions list
+    tool._functions = []
+
+    # Add initial functions
+    func1 = AIFunction(
+        func=lambda x: f"Result: {x}",
+        name="analyze_content",
+        description="Analyzes content",
+    )
+    func2 = AIFunction(
+        func=lambda x: f"Extract: {x}",
+        name="extract_info",
+        description="Extracts information",
+    )
+
+    tool._functions.append(func1)
+    tool._functions.append(func2)
+
+    # Verify initial state
+    assert len(tool._functions) == 2
+    assert len({f.name for f in tool._functions}) == 2
+
+    # Simulate deduplication logic
+    existing_names = {func.name for func in tool._functions}
+
+    # Attempt to add duplicates
+    test_tools = [
+        ("analyze_content", "Duplicate"),
+        ("extract_info", "Duplicate"),
+        ("new_function", "New"),
+    ]
+
+    added_count = 0
+    for tool_name, description in test_tools:
+        if tool_name in existing_names:
+            continue  # Skip duplicates
+
+        new_func = AIFunction(func=lambda x: f"Process: {x}", name=tool_name, description=description)
+        tool._functions.append(new_func)
+        existing_names.add(tool_name)
+        added_count += 1
+
+    # Verify results
+    final_names = [f.name for f in tool._functions]
+    unique_names = set(final_names)
+
+    # Should have exactly 3 functions (2 original + 1 new)
+    assert len(tool._functions) == 3
+    assert len(unique_names) == 3
+    assert len(final_names) == len(unique_names)  # No duplicates
+    assert added_count == 1  # Only 1 new function added
+
+
+@pytest.mark.asyncio
+async def test_load_tools_prevents_multiple_calls():
+    """Test that connect() prevents calling load_tools() multiple times"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Verify initial state
+    assert tool._tools_loaded is False
+
+    # Mock the session and list_tools
+    mock_session = AsyncMock()
+    mock_tool_list = MagicMock()
+    mock_tool_list.tools = []
+    mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
+    mock_session.initialize = AsyncMock()
+
+    tool.session = mock_session
+    tool.load_tools_flag = True
+    tool.load_prompts_flag = False
+
+    # Simulate connect() behavior
+    if tool.load_tools_flag and not tool._tools_loaded:
+        await tool.load_tools()
+        tool._tools_loaded = True
+
+    assert tool._tools_loaded is True
+    assert mock_session.list_tools.call_count == 1
+
+    # Second call to connect should be skipped
+    if tool.load_tools_flag and not tool._tools_loaded:
+        await tool.load_tools()
+        tool._tools_loaded = True
+
+    assert mock_session.list_tools.call_count == 1  # Still 1, not incremented
+
+
+@pytest.mark.asyncio
+async def test_load_prompts_prevents_multiple_calls():
+    """Test that connect() prevents calling load_prompts() multiple times"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    # Verify initial state
+    assert tool._prompts_loaded is False
+
+    # Mock the session and list_prompts
+    mock_session = AsyncMock()
+    mock_prompt_list = MagicMock()
+    mock_prompt_list.prompts = []
+    mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
+
+    tool.session = mock_session
+    tool.load_tools_flag = False
+    tool.load_prompts_flag = True
+
+    # Simulate connect() behavior
+    if tool.load_prompts_flag and not tool._prompts_loaded:
+        await tool.load_prompts()
+        tool._prompts_loaded = True
+
+    assert tool._prompts_loaded is True
+    assert mock_session.list_prompts.call_count == 1
+
+    # Second call to connect should be skipped
+    if tool.load_prompts_flag and not tool._prompts_loaded:
+        await tool.load_prompts()
+        tool._prompts_loaded = True
+
+    assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented

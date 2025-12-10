@@ -13,7 +13,7 @@ public static partial class AgentWorkflowBuilder
     /// Provides an executor that batches received chat messages that it then publishes as the final result
     /// when receiving a <see cref="TurnToken"/>.
     /// </summary>
-    internal sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages"), IResettableExecutor
+    internal sealed class OutputMessagesExecutor() : ChatProtocolExecutor("OutputMessages", declareCrossRunShareable: true), IResettableExecutor
     {
         protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
             => context.YieldOutputAsync(messages, cancellationToken);

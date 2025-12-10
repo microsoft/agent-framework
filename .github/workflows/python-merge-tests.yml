@@ -43,8 +43,8 @@ jobs:
       - name: not python tests
         if: steps.filter.outputs.python != 'true'
         run: echo "NOT python file"
-  python-tests-main:
-    name: Python Tests - Main
+  python-tests-core:
+    name: Python Tests - Core
     needs: paths-filter
     if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
@@ -60,7 +60,17 @@ jobs:
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
+      # For Azure Functions integration tests
+      FUNCTIONS_WORKER_RUNTIME: "python"
+      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
+      AzureWebJobsStorage: "UseDevelopmentStorage=true"
+
     defaults:
       run:
         working-directory: python
@@ -75,14 +85,24 @@ jobs:
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
+      - name: Azure CLI Login
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Set up Azure Functions Integration Test Emulators
+        uses: ./.github/actions/azure-functions-integration-setup
+        id: azure-functions-setup
       - name: Test with pytest
         timeout-minutes: 10
         run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
         working-directory: ./python
-      - name: Test main samples
+      - name: Test core samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "openai"
+        run: uv run pytest tests/samples/ -m "openai" -m "azure"
         working-directory: ./python
       - name: Surface failing tests
         if: always()
@@ -95,7 +115,7 @@ jobs:
           title: Test results
 
   python-tests-azure-ai:
-    name: Python Tests - Azure
+    name: Python Tests - Azure AI
     needs: paths-filter
     if: github.event_name != 'pull_request' && needs.paths-filter.outputs.pythonChanges == 'true'
     runs-on: ${{ matrix.os }}
@@ -110,9 +130,6 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -137,12 +154,12 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 10
-        run: uv run poe all-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
+        run: uv run poe azure-ai-tests -n logical --dist loadfile --dist worksteal --timeout 300 --retries 3 --retry-delay 10
         working-directory: ./python
-      - name: Test azure samples
+      - name: Test Azure AI samples
         timeout-minutes: 10
         if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure-ai" -m "azure"
+        run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Surface failing tests
         if: always()
@@ -161,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       [
-        python-tests-main,
+        python-tests-core,
         python-tests-azure-ai
       ]
     steps:

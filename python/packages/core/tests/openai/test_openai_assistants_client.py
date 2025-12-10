@@ -193,18 +193,6 @@ def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env
         assert chat_client.client.default_headers[key] == value
 
 
-def test_openai_assistants_client_instructions_sent_once(mock_async_openai: MagicMock) -> None:
-    """Ensure instructions are only included once for OpenAI Assistants requests."""
-    chat_client = create_test_openai_assistants_client(mock_async_openai)
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
-    run_options, _ = chat_client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert run_options.get("instructions") == instructions
-
-
 async def test_openai_assistants_client_get_assistant_id_or_create_existing_assistant(
     mock_async_openai: MagicMock,
 ) -> None:
@@ -884,36 +872,36 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_mismat
     assert tool_outputs[0].get("tool_call_id") == "call-456"
 
 
-def test_openai_assistants_client_update_agent_name(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method updates assistant_name when not already set."""
+def test_openai_assistants_client_update_agent_name_and_description(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method updates assistant_name when not already set."""
     # Test updating agent name when assistant_name is None
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name=None)
 
     # Call the private method to update agent name
-    chat_client._update_agent_name("New Assistant Name")  # type: ignore
+    chat_client._update_agent_name_and_description("New Assistant Name")  # type: ignore
 
     assert chat_client.assistant_name == "New Assistant Name"
 
 
-def test_openai_assistants_client_update_agent_name_existing(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method doesn't override existing assistant_name."""
+def test_openai_assistants_client_update_agent_name_and_description_existing(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method doesn't override existing assistant_name."""
     # Test that existing assistant_name is not overridden
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name="Existing Assistant")
 
     # Call the private method to update agent name
-    chat_client._update_agent_name("New Assistant Name")  # type: ignore
+    chat_client._update_agent_name_and_description("New Assistant Name")  # type: ignore
 
     # Should keep the existing name
     assert chat_client.assistant_name == "Existing Assistant"
 
 
-def test_openai_assistants_client_update_agent_name_none(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method with None agent_name parameter."""
+def test_openai_assistants_client_update_agent_name_and_description_none(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method with None agent_name parameter."""
     # Test that None agent_name doesn't change anything
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name=None)
 
     # Call the private method with None
-    chat_client._update_agent_name(None)  # type: ignore
+    chat_client._update_agent_name_and_description(None)  # type: ignore
 
     # Should remain None
     assert chat_client.assistant_name is None

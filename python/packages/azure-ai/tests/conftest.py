@@ -44,31 +44,30 @@ def azure_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict): 
 
 
 @fixture
-def mock_ai_project_client() -> MagicMock:
-    """Fixture that provides a mock AIProjectClient."""
+def mock_agents_client() -> MagicMock:
+    """Fixture that provides a mock AgentsClient."""
     mock_client = MagicMock()
 
     # Mock agents property
-    mock_client.agents = MagicMock()
-    mock_client.agents.create_agent = AsyncMock()
-    mock_client.agents.delete_agent = AsyncMock()
+    mock_client.create_agent = AsyncMock()
+    mock_client.delete_agent = AsyncMock()
 
     # Mock agent creation response
     mock_agent = MagicMock()
     mock_agent.id = "test-agent-id"
-    mock_client.agents.create_agent.return_value = mock_agent
+    mock_client.create_agent.return_value = mock_agent
 
     # Mock threads property
-    mock_client.agents.threads = MagicMock()
-    mock_client.agents.threads.create = AsyncMock()
-    mock_client.agents.messages.create = AsyncMock()
+    mock_client.threads = MagicMock()
+    mock_client.threads.create = AsyncMock()
+    mock_client.messages.create = AsyncMock()
 
     # Mock runs property
-    mock_client.agents.runs = MagicMock()
-    mock_client.agents.runs.list = AsyncMock()
-    mock_client.agents.runs.cancel = AsyncMock()
-    mock_client.agents.runs.stream = AsyncMock()
-    mock_client.agents.runs.submit_tool_outputs_stream = AsyncMock()
+    mock_client.runs = MagicMock()
+    mock_client.runs.list = AsyncMock()
+    mock_client.runs.cancel = AsyncMock()
+    mock_client.runs.stream = AsyncMock()
+    mock_client.runs.submit_tool_outputs_stream = AsyncMock()
 
     return mock_client
 

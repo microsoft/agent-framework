@@ -1,0 +1,10 @@
+{
+  "id": "conv_68fb96fe1a488195bf48df8f7666551604cbf45151194822",
+  "object": "conversation",
+  "created_at": 1761318654,
+  "metadata": {
+    "test_type": "basic_conversation",
+    "updated": "true",
+    "update_timestamp": "2025-10-24"
+  }
+}

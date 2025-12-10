@@ -1,70 +1,44 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Buffers;
-using System.ClientModel.Primitives;
+using System;
 using System.Collections.Generic;
-using System.Diagnostics;
+using System.Linq;
 using System.Net.ServerSentEvents;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Utils;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Converters;
+using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
-using OpenAI.Chat;
-using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 
-internal sealed class AIAgentChatCompletionsProcessor
+internal static class AIAgentChatCompletionsProcessor
 {
-    private readonly AIAgent _agent;
-
-    public AIAgentChatCompletionsProcessor(AIAgent agent)
+    public static async Task<IResult> CreateChatCompletionAsync(AIAgent agent, CreateChatCompletion request, CancellationToken cancellationToken)
     {
-        this._agent = agent;
-    }
+        ArgumentNullException.ThrowIfNull(agent);
 
-    public async Task<IResult> CreateChatCompletionAsync(ChatCompletionOptions chatCompletionOptions, CancellationToken cancellationToken)
-    {
-        AgentThread? agentThread = null; // not supported to resolve from conversationId
+        var chatMessages = request.Messages.Select(i => i.ToChatMessage());
+        var chatClientAgentRunOptions = request.BuildOptions();
 
-        var inputItems = chatCompletionOptions.GetMessages();
-        var chatMessages = inputItems.AsChatMessages();
-
-        if (chatCompletionOptions.GetStream())
+        if (request.Stream == true)
         {
-            return new OpenAIStreamingChatCompletionResult(this._agent, chatMessages);
+            return new StreamingResponse(agent, request, chatMessages, chatClientAgentRunOptions);
         }
 
-        var agentResponse = await this._agent.RunAsync(chatMessages, agentThread, cancellationToken: cancellationToken).ConfigureAwait(false);
-        return new OpenAIChatCompletionResult(agentResponse);
+        var response = await agent.RunAsync(chatMessages, options: chatClientAgentRunOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return Results.Ok(response.ToChatCompletion(request));
     }
 
-    private sealed class OpenAIChatCompletionResult(AgentRunResponse agentRunResponse) : IResult
-    {
-        public async Task ExecuteAsync(HttpContext httpContext)
-        {
-            // note: OpenAI SDK types provide their own serialization implementation
-            // so we cant simply return IResult wrap for the typed-object.
-            // instead writing to the response body can be done.
-
-            var cancellationToken = httpContext.RequestAborted;
-            var response = httpContext.Response;
-
-            var chatResponse = agentRunResponse.AsChatResponse();
-            var openAIChatCompletion = chatResponse.AsOpenAIChatCompletion();
-            var openAIChatCompletionJsonModel = openAIChatCompletion as IJsonModel<ChatCompletion>;
-            Debug.Assert(openAIChatCompletionJsonModel is not null);
-
-            var writer = new Utf8JsonWriter(response.BodyWriter, new JsonWriterOptions { SkipValidation = false });
-            openAIChatCompletionJsonModel.Write(writer, ModelReaderWriterOptions.Json);
-            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private sealed class OpenAIStreamingChatCompletionResult(AIAgent agent, IEnumerable<ChatMessage> chatMessages) : IResult
+    private sealed class StreamingResponse(
+        AIAgent agent,
+        CreateChatCompletion request,
+        IEnumerable<ChatMessage> chatMessages,
+        ChatClientAgentRunOptions? options) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
@@ -79,26 +53,99 @@ internal sealed class AIAgentChatCompletionsProcessor
             httpContext.Features.GetRequiredFeature<IHttpResponseBodyFeature>().DisableBuffering();
 
             return SseFormatter.WriteAsync(
-                source: this.GetStreamingResponsesAsync(cancellationToken),
+                source: this.GetStreamingChunksAsync(cancellationToken),
                 destination: response.Body,
                 itemFormatter: (sseItem, bufferWriter) =>
                 {
-                    var sseDataJsonModel = (IJsonModel<StreamingChatCompletionUpdate>)sseItem.Data;
-                    var json = sseDataJsonModel.Write(ModelReaderWriterOptions.Json);
-                    bufferWriter.Write(json);
+                    using var writer = new Utf8JsonWriter(bufferWriter);
+                    JsonSerializer.Serialize(writer, sseItem.Data, ChatCompletionsJsonContext.Default.ChatCompletionChunk);
+                    writer.Flush();
                 },
                 cancellationToken);
         }
 
-        private async IAsyncEnumerable<SseItem<StreamingChatCompletionUpdate>> GetStreamingResponsesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        private async IAsyncEnumerable<SseItem<ChatCompletionChunk>> GetStreamingChunksAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            AgentThread? agentThread = null;
+            // The Unix timestamp (in seconds) of when the chat completion was created. Each chunk has the same timestamp.
+            DateTimeOffset? createdAt = null;
+            var chunkId = IdGenerator.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13);
 
-            var agentRunResponseUpdates = agent.RunStreamingAsync(chatMessages, thread: agentThread, cancellationToken: cancellationToken);
-            var chatResponseUpdates = agentRunResponseUpdates.AsChatResponseUpdatesAsync();
-            await foreach (var streamingChatCompletionUpdate in chatResponseUpdates.AsOpenAIStreamingChatCompletionUpdatesAsync(cancellationToken).ConfigureAwait(false))
+            await foreach (var agentRunResponseUpdate in agent.RunStreamingAsync(chatMessages, options: options, cancellationToken: cancellationToken).WithCancellation(cancellationToken))
             {
-                yield return new SseItem<StreamingChatCompletionUpdate>(streamingChatCompletionUpdate);
+                var finishReason = (agentRunResponseUpdate.RawRepresentation is ChatResponseUpdate { FinishReason: not null } chatResponseUpdate)
+                    ? chatResponseUpdate.FinishReason.ToString()
+                    : "stop";
+
+                var choiceChunks = new List<ChatCompletionChoiceChunk>();
+                CompletionUsage? usageDetails = null;
+
+                createdAt ??= agentRunResponseUpdate.CreatedAt;
+
+                foreach (var content in agentRunResponseUpdate.Contents)
+                {
+                    // usage content is handled separately
+                    if (content is UsageContent usageContent && usageContent.Details != null)
+                    {
+                        usageDetails = usageContent.Details.ToCompletionUsage();
+                        continue;
+                    }
+
+                    ChatCompletionDelta? delta = content switch
+                    {
+                        TextContent textContent => new() { Content = textContent.Text },
+
+                        // image
+                        DataContent imageContent when imageContent.HasTopLevelMediaType("image") => new() { Content = imageContent.Base64Data.ToString() },
+                        UriContent urlContent when urlContent.HasTopLevelMediaType("image") => new() { Content = urlContent.Uri.ToString() },
+
+                        // audio
+                        DataContent audioContent when audioContent.HasTopLevelMediaType("audio") => new() { Content = audioContent.Base64Data.ToString() },
+
+                        // file
+                        DataContent fileContent => new() { Content = fileContent.Base64Data.ToString() },
+                        HostedFileContent fileContent => new() { Content = fileContent.FileId },
+
+                        // function call
+                        FunctionCallContent functionCallContent => new()
+                        {
+                            ToolCalls = [functionCallContent.ToChoiceMessageToolCall()]
+                        },
+
+                        // function result. ChatCompletions dont provide the results of function result per API reference
+                        FunctionResultContent functionResultContent => null,
+
+                        // ignore
+                        _ => null
+                    };
+
+                    if (delta is null)
+                    {
+                        // unsupported but expected content type.
+                        continue;
+                    }
+
+                    delta.Role = agentRunResponseUpdate.Role?.Value ?? "user";
+
+                    var choiceChunk = new ChatCompletionChoiceChunk
+                    {
+                        Index = 0,
+                        Delta = delta,
+                        FinishReason = finishReason
+                    };
+
+                    choiceChunks.Add(choiceChunk);
+                }
+
+                var chunk = new ChatCompletionChunk
+                {
+                    Id = chunkId,
+                    Created = (createdAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+                    Model = request.Model,
+                    Choices = choiceChunks,
+                    Usage = usageDetails
+                };
+
+                yield return new(chunk);
             }
         }
     }

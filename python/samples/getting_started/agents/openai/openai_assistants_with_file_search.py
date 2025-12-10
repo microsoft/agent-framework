@@ -39,6 +39,8 @@ async def delete_vector_store(client: OpenAIAssistantsClient, file_id: str, vect
 
 
 async def main() -> None:
+    print("=== OpenAI Assistants Client Agent with File Search Example ===\n")
+
     client = OpenAIAssistantsClient()
     async with ChatAgent(
         chat_client=client,

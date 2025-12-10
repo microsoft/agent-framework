@@ -1,0 +1,18 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is 2+2?"
+    },
+    {
+      "role": "assistant",
+      "content": "2+2 equals 4."
+    },
+    {
+      "role": "user",
+      "content": "What about 3+3?"
+    }
+  ],
+  "max_completion_tokens": 50
+}

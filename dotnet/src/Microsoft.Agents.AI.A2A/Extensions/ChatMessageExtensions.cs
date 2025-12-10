@@ -17,7 +17,7 @@ internal static class ChatMessageExtensions
 
         foreach (var message in messages)
         {
-            if (message.Contents.ToA2AParts() is { Count: > 0 } ps)
+            if (message.Contents.ToParts() is { Count: > 0 } ps)
             {
                 allParts.AddRange(ps);
             }

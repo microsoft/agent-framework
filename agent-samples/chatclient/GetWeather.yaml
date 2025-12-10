@@ -1,0 +1,29 @@
+kind: Prompt
+name: Assistant
+description: Helpful assistant
+instructions: You are a helpful assistant. You answer questions using the tools provided.
+model:
+    options:
+        temperature: 0.9
+        topP: 0.95
+        allowMultipleToolCalls: true
+        chatToolMode: auto
+tools:
+  - kind: function
+    name: GetWeather
+    description: Get the weather for a given location.
+    bindings:
+      get_weather: get_weather
+    parameters:
+      properties:
+        location:
+          kind: string
+          description: The city and state, e.g. San Francisco, CA
+          required: true
+        unit:
+          kind: string
+          description: The unit of temperature. Possible values are 'celsius' and 'fahrenheit'.
+          required: false
+          enum:
+            - celsius
+            - fahrenheit

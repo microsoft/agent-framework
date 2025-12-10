@@ -1,0 +1,4 @@
+# Code ownership assignments
+# https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+python/packages/azurefunctions/ @microsoft/agentframework-durabletask-developers

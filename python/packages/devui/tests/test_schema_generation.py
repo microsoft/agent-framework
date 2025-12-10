@@ -4,13 +4,14 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 # Add parent package to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agent_framework_devui._utils import generate_input_schema
+from agent_framework_devui._utils import extract_response_type_from_executor, generate_input_schema
 
 
 @dataclass
@@ -130,6 +131,99 @@ def test_schema_generation_error_handling():
     except (TypeError, ValueError, AttributeError):
         # It's acceptable for this to raise an error
         pass
+
+
+def test_extract_response_type_from_executor():
+    """Test extraction of response type from @response_handler methods."""
+    try:
+        from agent_framework import Executor, WorkflowContext, handler, response_handler
+        from pydantic import BaseModel, Field
+
+        # Define test request and response types
+        @dataclass
+        class TestApprovalRequest:
+            """Test request for approval."""
+
+            prompt: str
+            context: str
+
+        class TestDecision(BaseModel):
+            """Test decision response."""
+
+            decision: Literal["approve", "reject"] = Field(description="User's decision")
+            reason: str = Field(description="Reason for decision", default="")
+
+        # Create test executor with @response_handler
+        class TestExecutor(Executor):
+            """Test executor with response handler."""
+
+            def __init__(self):
+                super().__init__(id="test_executor")
+
+            @handler
+            async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+                """Regular handler to satisfy executor requirements."""
+                # Request info that will be handled by response_handler
+                request = TestApprovalRequest(prompt="Test", context="Test context")
+                await ctx.request_info(request, TestDecision)
+
+            @response_handler
+            async def handle_approval(
+                self, original_request: TestApprovalRequest, response: TestDecision, ctx: WorkflowContext
+            ) -> None:
+                """Handle approval response."""
+                pass
+
+        # Test extraction
+        executor = TestExecutor()
+        extracted_type = extract_response_type_from_executor(executor, TestApprovalRequest)
+
+        # Verify correct type was extracted
+        assert extracted_type is not None, "Should extract response type from @response_handler"
+        assert extracted_type == TestDecision, f"Expected TestDecision, got {extracted_type}"
+
+        # Test full schema generation pipeline
+        schema = generate_input_schema(extracted_type)
+        assert schema is not None
+        assert isinstance(schema, dict)
+        assert "properties" in schema
+        assert "decision" in schema["properties"]
+        assert "enum" in schema["properties"]["decision"]
+        assert schema["properties"]["decision"]["enum"] == ["approve", "reject"]
+
+    except ImportError as e:
+        pytest.skip(f"Required dependencies not available: {e}")
+
+
+def test_extract_response_type_no_match():
+    """Test that extraction returns None when no matching handler exists."""
+    try:
+        from agent_framework import Executor, WorkflowContext, handler
+
+        @dataclass
+        class UnmatchedRequest:
+            """Request type with no handler."""
+
+            data: str
+
+        class MinimalExecutor(Executor):
+            """Executor with a handler but no matching response_handler."""
+
+            def __init__(self):
+                super().__init__(id="minimal_executor")
+
+            @handler
+            async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
+                """Regular handler."""
+                pass
+
+        executor = MinimalExecutor()
+        extracted_type = extract_response_type_from_executor(executor, UnmatchedRequest)
+
+        assert extracted_type is None, "Should return None when no matching handler exists"
+
+    except ImportError as e:
+        pytest.skip(f"Required dependencies not available: {e}")
 
 
 if __name__ == "__main__":

@@ -2,10 +2,23 @@
 
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from a2a.types import Artifact, DataPart, FilePart, FileWithUri, Message, Part, Task, TaskState, TaskStatus, TextPart
+import httpx
+from a2a.types import (
+    AgentCard,
+    Artifact,
+    DataPart,
+    FilePart,
+    FileWithUri,
+    Message,
+    Part,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+)
 from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentRunResponse,
@@ -515,3 +528,78 @@ def test_auth_interceptor_parameter() -> None:
     # Verify the agent was created successfully
     assert agent.name == "test-agent"
     assert agent.client is not None
+
+
+def test_transport_negotiation_both_fail() -> None:
+    """Test that RuntimeError is raised when both primary and fallback transport negotiation fail."""
+    # Create a mock agent card
+    mock_agent_card = MagicMock(spec=AgentCard)
+    mock_agent_card.url = "http://test-agent.example.com"
+
+    # Mock the factory to simulate both primary and fallback failures
+    mock_factory = MagicMock()
+
+    # Both calls to factory.create() fail
+    primary_error = Exception("no compatible transports found")
+    fallback_error = Exception("fallback also failed")
+    mock_factory.create.side_effect = [primary_error, fallback_error]
+
+    with (
+        patch("agent_framework_a2a._agent.ClientFactory", return_value=mock_factory),
+        patch("agent_framework_a2a._agent.minimal_agent_card"),
+        patch("agent_framework_a2a._agent.httpx.AsyncClient"),
+        raises(RuntimeError, match="A2A transport negotiation failed"),
+    ):
+        # Attempt to create A2AAgent - should raise RuntimeError
+        A2AAgent(
+            name="test-agent",
+            agent_card=mock_agent_card,
+        )
+
+
+def test_create_timeout_config_httpx_timeout() -> None:
+    """Test _create_timeout_config with httpx.Timeout object returns it unchanged."""
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+
+    custom_timeout = httpx.Timeout(connect=15.0, read=180.0, write=20.0, pool=8.0)
+    timeout_config = agent._create_timeout_config(custom_timeout)
+
+    assert timeout_config is custom_timeout  # Same object reference
+    assert timeout_config.connect == 15.0
+    assert timeout_config.read == 180.0
+    assert timeout_config.write == 20.0
+    assert timeout_config.pool == 8.0
+
+
+def test_create_timeout_config_invalid_type() -> None:
+    """Test _create_timeout_config with invalid type raises TypeError."""
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+
+    with raises(TypeError, match="Invalid timeout type: <class 'str'>. Expected float, httpx.Timeout, or None."):
+        agent._create_timeout_config("invalid")
+
+
+def test_a2a_agent_initialization_with_timeout_parameter() -> None:
+    """Test A2AAgent initialization with timeout parameter."""
+    # Test with URL to trigger httpx client creation
+    with (
+        patch("agent_framework_a2a._agent.httpx.AsyncClient") as mock_async_client,
+        patch("agent_framework_a2a._agent.ClientFactory") as mock_factory,
+    ):
+        # Mock the factory and client creation
+        mock_client_instance = MagicMock()
+        mock_factory.return_value.create.return_value = mock_client_instance
+
+        # Create agent with custom timeout
+        A2AAgent(name="Test Agent", url="https://test-agent.example.com", timeout=120.0)
+
+        # Verify httpx.AsyncClient was called with the configured timeout
+        mock_async_client.assert_called_once()
+        call_args = mock_async_client.call_args
+
+        # Check that timeout parameter was passed
+        assert "timeout" in call_args.kwargs
+        timeout_arg = call_args.kwargs["timeout"]
+
+        # Verify it's an httpx.Timeout object with our custom timeout applied to all components
+        assert isinstance(timeout_arg, httpx.Timeout)

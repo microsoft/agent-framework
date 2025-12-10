@@ -7,7 +7,21 @@ from typing import Any
 
 
 class SharedState:
-    """A class to manage shared state in a workflow."""
+    """A class to manage shared state in a workflow.
+
+    SharedState provides thread-safe access to workflow state data that needs to be
+    shared across executors during workflow execution.
+
+    Reserved Keys:
+        The following keys are reserved for internal framework use and should not be
+        modified by user code:
+
+        - `_executor_state`: Stores executor state for checkpointing (managed by Runner)
+
+    Warning:
+        Do not use keys starting with underscore (_) as they may be reserved for
+        internal framework operations.
+    """
 
     def __init__(self) -> None:
         """Initialize the shared state."""
@@ -33,6 +47,24 @@ class SharedState:
         """Delete a key from the shared state."""
         async with self._shared_state_lock:
             await self.delete_within_hold(key)
+
+    async def clear(self) -> None:
+        """Clear the entire shared state."""
+        async with self._shared_state_lock:
+            self._state.clear()
+
+    async def export_state(self) -> dict[str, Any]:
+        """Get a serialized copy of the entire shared state."""
+        async with self._shared_state_lock:
+            return dict(self._state)
+
+    async def import_state(self, state: dict[str, Any]) -> None:
+        """Populate the shared state from a serialized state dictionary.
+
+        This replaces the entire current state with the provided state.
+        """
+        async with self._shared_state_lock:
+            self._state.update(state)
 
     @asynccontextmanager
     async def hold(self) -> AsyncIterator["SharedState"]:

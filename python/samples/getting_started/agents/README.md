@@ -8,7 +8,8 @@ This folder contains examples demonstrating how to create and use agents with di
 
 | Folder | Description |
 |--------|-------------|
-| **[`azure_ai/`](azure_ai/)** | Create agents using Azure AI Foundry Agent Service with various tools including function tools, code interpreter, MCP integration, and thread management |
+| **[`azure_ai_agent/`](azure_ai_agent/)** | Create agents using Azure AI Agent Service (based on `azure-ai-agents` V1 package) including function tools, code interpreter, MCP integration, thread management, and more. |
+| **[`azure_ai/`](azure_ai/)** | Create agents using Azure AI Agent Service (based on `azure-ai-projects` [V2](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/CHANGELOG.md#200b1-2025-11-11) package) including function tools, code interpreter, MCP integration, thread management, and more. |
 
 ### Microsoft Copilot Studio Examples
 

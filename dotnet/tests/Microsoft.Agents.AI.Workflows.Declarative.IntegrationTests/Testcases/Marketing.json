@@ -10,6 +10,7 @@
     "conversation_count": 1,
     "min_action_count": 3,
     "min_response_count": 3,
+    "min_message_count": 6,
     "actions": {
       "start": [
         "invoke_analyst",

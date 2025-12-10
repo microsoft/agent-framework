@@ -64,6 +64,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         model_id: str | None = None,
         assistant_id: str | None = None,
         assistant_name: str | None = None,
+        assistant_description: str | None = None,
         thread_id: str | None = None,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
@@ -82,6 +83,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             assistant_id: The ID of an OpenAI assistant to use.
                 If not provided, a new assistant will be created (and deleted after the request).
             assistant_name: The name to use when creating new assistants.
+            assistant_description: The description to use when creating new assistants.
             thread_id: Default thread ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
                 If not provided, a new thread will be created (and deleted after the request).
@@ -147,6 +149,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         )
         self.assistant_id: str | None = assistant_id
         self.assistant_name: str | None = assistant_name
+        self.assistant_description: str | None = assistant_description
         self.thread_id: str | None = thread_id
         self._should_delete_assistant: bool = False
 
@@ -161,7 +164,8 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     async def close(self) -> None:
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
-            await self.client.beta.assistants.delete(self.assistant_id)
+            client = await self.ensure_client()
+            await client.beta.assistants.delete(self.assistant_id)
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
@@ -215,7 +219,15 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
-            created_assistant = await self.client.beta.assistants.create(name=self.assistant_name, model=self.model_id)
+            if not self.model_id:
+                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+
+            client = await self.ensure_client()
+            created_assistant = await client.beta.assistants.create(
+                model=self.model_id,
+                description=self.assistant_description,
+                name=self.assistant_name,
+            )
             self.assistant_id = created_assistant.id
             self._should_delete_assistant = True
 
@@ -233,6 +245,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
+        client = await self.ensure_client()
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
@@ -240,7 +253,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
-            stream = self.client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
                 run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
             )
             final_thread_id = thread_run.thread_id
@@ -249,7 +262,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
 
             # Now create a new run and stream the results.
-            stream = self.client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
+            stream = client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
                 assistant_id=assistant_id, thread_id=final_thread_id, **run_options
             )
 
@@ -257,19 +270,21 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
         """Get any active run for the given thread."""
+        client = await self.ensure_client()
         if thread_id is None:
             return None
 
-        async for run in self.client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
+        async for run in client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
             if run.status not in ["completed", "cancelled", "failed", "expired"]:
                 return run
         return None
 
     async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
+        client = await self.ensure_client()
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
-            thread = await self.client.beta.threads.create(  # type: ignore[reportDeprecated]
+            thread = await client.beta.threads.create(  # type: ignore[reportDeprecated]
                 messages=run_options["additional_messages"],
                 tool_resources=run_options.get("tool_resources"),
                 metadata=run_options.get("metadata"),
@@ -280,7 +295,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None:
             # There was an active run; we need to cancel it before starting a new run.
-            await self.client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
+            await client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
 
         return thread_id
 
@@ -408,7 +423,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     run_options["tools"] = tool_definitions
 
                 if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice
+                    run_options["tool_choice"] = chat_options.tool_choice.mode
                 elif (
                     isinstance(chat_options.tool_choice, ToolMode)
                     and chat_options.tool_choice == "required"
@@ -502,21 +517,22 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     tool_outputs = []
                 if function_result_content.result:
                     output = prepare_function_call_results(function_result_content.result)
-                elif function_result_content.exception:
-                    output = "Error: " + str(function_result_content.exception)
                 else:
                     output = "No output received."
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
 
-    def _update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
         """Update the agent name in the chat client.
 
         Args:
             agent_name: The new name for the agent.
+            description: The new description for the agent.
         """
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.assistant_name:
-            object.__setattr__(self, "assistant_name", agent_name)
+            self.assistant_name = agent_name
+        if description and not self.assistant_description:
+            self.assistant_description = description

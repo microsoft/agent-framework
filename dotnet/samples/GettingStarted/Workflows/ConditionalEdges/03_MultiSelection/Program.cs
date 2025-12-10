@@ -60,13 +60,13 @@ public static class Program
         WorkflowBuilder builder = new(emailAnalysisExecutor);
         builder.AddFanOutEdge(
             emailAnalysisExecutor,
-            targets: [
+            [
                 handleSpamExecutor,
                 emailAssistantExecutor,
                 emailSummaryExecutor,
                 handleUncertainExecutor,
             ],
-            partitioner: GetPartitioner()
+            GetTargetAssigner()
         )
         // After the email assistant writes a response, it will be sent to the send email executor
         .AddEdge(emailAssistantExecutor, sendEmailExecutor)
@@ -105,7 +105,7 @@ public static class Program
     /// Creates a partitioner for routing messages based on the analysis result.
     /// </summary>
     /// <returns>A function that takes an analysis result and returns the target partitions.</returns>
-    private static Func<AnalysisResult?, int, IEnumerable<int>> GetPartitioner()
+    private static Func<AnalysisResult?, int, IEnumerable<int>> GetTargetAssigner()
     {
         return (analysisResult, targetCount) =>
         {
@@ -140,10 +140,11 @@ public static class Program
     /// </summary>
     /// <returns>A ChatClientAgent configured for email analysis</returns>
     private static ChatClientAgent GetEmailAnalysisAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions(instructions: "You are a spam detection assistant that identifies spam emails.")
+        new(chatClient, new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                Instructions = "You are a spam detection assistant that identifies spam emails.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<AnalysisResult>()
             }
         });
@@ -153,10 +154,11 @@ public static class Program
     /// </summary>
     /// <returns>A ChatClientAgent configured for email assistance</returns>
     private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions(instructions: "You are an email assistant that helps users draft responses to emails with professionalism.")
+        new(chatClient, new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                Instructions = "You are an email assistant that helps users draft responses to emails with professionalism.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }
         });
@@ -166,10 +168,11 @@ public static class Program
     /// </summary>
     /// <returns>A ChatClientAgent configured for email summarization</returns>
     private static ChatClientAgent GetEmailSummaryAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions(instructions: "You are an assistant that helps users summarize emails.")
+        new(chatClient, new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                Instructions = "You are an assistant that helps users summarize emails.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailSummary>()
             }
         });

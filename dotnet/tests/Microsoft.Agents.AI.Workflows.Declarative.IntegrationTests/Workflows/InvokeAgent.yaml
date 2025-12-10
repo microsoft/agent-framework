@@ -8,27 +8,25 @@ trigger:
     - kind: InvokeAzureAgent
       id: invoke_inner1
       agent:
-        name: =Env.FOUNDRY_AGENT_TEST
+        name: TestAgent
       input:
         messages: =UserMessage("Can an LLM think of funny jokes?")
-      output:
-        autoSend: false
 
     - kind: InvokeAzureAgent
       id: invoke_inner2
       agent:
-        name: =Env.FOUNDRY_AGENT_TEST
+        name: TestAgent
       input:
         messages: =UserMessage("Do you know the joke about the chicken crossing the road? Tell me an improved version of that joke.")
+      output:
+        autoSend: true
 
     - kind: InvokeAzureAgent
       id: invoke_external
       conversationId: =System.ConversationId
       agent:
-        name: =Env.FOUNDRY_AGENT_TEST
+        name: TestAgent
       input:
-        additionalInstructions: |-
-          Rate the originality of this well known joke that is being re-told on a scale of 1 to 10.
-          Take note on where improvements or changes were made.
+        messages: =UserMessage("Rate the originality of this well known joke that is being re-told on a scale of 1 to 10. Take note on where improvements or changes were made.")
       output:
         messages: Local.RatingResponse

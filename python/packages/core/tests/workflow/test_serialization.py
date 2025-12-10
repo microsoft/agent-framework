@@ -6,12 +6,14 @@ from typing import Any
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, handler
+from agent_framework._workflows._const import INTERNAL_SOURCE_ID
 from agent_framework._workflows._edge import (
     Case,
     Default,
     Edge,
     FanInEdgeGroup,
     FanOutEdgeGroup,
+    InternalEdgeGroup,
     SingleEdgeGroup,
     SwitchCaseEdgeGroup,
     SwitchCaseEdgeGroupCase,
@@ -557,16 +559,32 @@ class TestSerializationWorkflowClasses:
 
         # Verify edge groups contain edges
         edge_groups = data["edge_groups"]
-        assert len(edge_groups) == 1, "Should have exactly one edge group"
-        edge_group = edge_groups[0]
-        assert "edges" in edge_group, "Edge group should contain 'edges' field"
-        assert len(edge_group["edges"]) == 1, "Should have exactly one edge"
 
-        edge = edge_group["edges"][0]
-        assert "source_id" in edge, "Edge should have source_id"
-        assert "target_id" in edge, "Edge should have target_id"
-        assert edge["source_id"] == "executor1", f"Expected source_id 'executor1', got {edge['source_id']}"
-        assert edge["target_id"] == "executor2", f"Expected target_id 'executor2', got {edge['target_id']}"
+        single_edge_groups = [SingleEdgeGroup.from_dict(eg) for eg in edge_groups if eg["type"] == "SingleEdgeGroup"]
+        internal_edge_groups = [
+            InternalEdgeGroup.from_dict(eg) for eg in edge_groups if eg["type"] == "InternalEdgeGroup"
+        ]
+
+        assert len(single_edge_groups) == 1, "Should have exactly one SingleEdgeGroup for the added edge"
+        assert len(internal_edge_groups) == 2, (
+            "Should have exactly two (one per executor) InternalEdgeGroups for request/response handling"
+        )
+
+        for edge_group in single_edge_groups:
+            assert len(edge_group.edges) == 1, "Should have exactly one edge"
+
+            edge = edge_group.edges[0]
+
+            assert edge.source_id == "executor1", f"Expected source_id 'executor1', got {edge.source_id}"
+            assert edge.target_id == "executor2", f"Expected target_id 'executor2', got {edge.target_id}"
+
+        for edge_group in internal_edge_groups:
+            assert len(edge_group.edges) == 1, "Each InternalEdgeGroup should have exactly one edge"
+
+            edge = edge_group.edges[0]
+
+            assert edge.source_id == INTERNAL_SOURCE_ID(edge.target_id)
+            assert edge.target_id in [executor1.id, executor2.id]
 
         # Test model_dump_json
         json_str = workflow.to_json()
@@ -577,12 +595,21 @@ class TestSerializationWorkflowClasses:
 
         # Verify edges are preserved in JSON serialization
         json_edge_groups = parsed["edge_groups"]
-        assert len(json_edge_groups) == 1, "JSON should have exactly one edge group"
-        json_edge_group = json_edge_groups[0]
-        assert "edges" in json_edge_group, "JSON edge group should contain 'edges' field"
-        json_edge = json_edge_group["edges"][0]
-        assert json_edge["source_id"] == "executor1", "JSON should preserve edge source_id"
-        assert json_edge["target_id"] == "executor2", "JSON should preserve edge target_id"
+        assert len(json_edge_groups) == 1 + 2, "JSON should have exactly one SingleEdgeGroup and two InternalEdgeGroups"
+
+        for json_edge_group in json_edge_groups:
+            assert "edges" in json_edge_group, "JSON edge group should contain 'edges' field"
+            assert len(json_edge_group["edges"]) == 1, "Each JSON edge group should have exactly one edge"
+            if json_edge_group["type"] == "SingleEdgeGroup":
+                json_edge = json_edge_group["edges"][0]
+                assert json_edge["source_id"] == "executor1", "JSON should preserve edge source_id"
+                assert json_edge["target_id"] == "executor2", "JSON should preserve edge target_id"
+            elif json_edge_group["type"] == "InternalEdgeGroup":
+                json_edge = json_edge_group["edges"][0]
+                assert json_edge["source_id"] == INTERNAL_SOURCE_ID(json_edge["target_id"])
+                assert json_edge["target_id"] in [executor1.id, executor2.id]
+            else:
+                pytest.fail(f"Unexpected edge group type: {json_edge_group['type']}")
 
     def test_workflow_serialization_excludes_non_serializable_fields(self) -> None:
         """Test that non-serializable fields are excluded from serialization."""

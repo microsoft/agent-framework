@@ -8,7 +8,15 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
-from ._edge import Edge, EdgeGroup, FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup, SwitchCaseEdgeGroup
+from ._edge import (
+    Edge,
+    EdgeGroup,
+    FanInEdgeGroup,
+    FanOutEdgeGroup,
+    InternalEdgeGroup,
+    SingleEdgeGroup,
+    SwitchCaseEdgeGroup,
+)
 from ._executor import Executor
 from ._runner_context import Message, RunnerContext
 from ._shared_state import SharedState
@@ -44,11 +52,11 @@ class EdgeRunner(ABC):
         """
         raise NotImplementedError
 
-    def _can_handle(self, executor_id: str, message_data: Any) -> bool:
+    def _can_handle(self, executor_id: str, message: Message) -> bool:
         """Check if an executor can handle the given message data."""
         if executor_id not in self._executors:
             return False
-        return self._executors[executor_id].can_handle(message_data)
+        return self._executors[executor_id].can_handle(message)
 
     async def _execute_on_target(
         self,
@@ -66,7 +74,7 @@ class EdgeRunner(ABC):
 
         # Execute with trace context parameters
         await target_executor.execute(
-            message.data,
+            message,
             source_ids,  # source_executor_ids
             shared_state,  # shared_state
             ctx,  # runner_context
@@ -78,15 +86,15 @@ class EdgeRunner(ABC):
 class SingleEdgeRunner(EdgeRunner):
     """Runner for single edge groups."""
 
-    def __init__(self, edge_group: SingleEdgeGroup, executors: dict[str, Executor]) -> None:
+    def __init__(self, edge_group: SingleEdgeGroup | InternalEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edge = edge_group.edges[0]
 
     async def send_message(self, message: Message, shared_state: SharedState, ctx: RunnerContext) -> bool:
         """Send a message through the single edge."""
         should_execute = False
-        target_id = None
-        source_id = None
+        target_id: str | None = None
+        source_id: str | None = None
         with create_edge_group_processing_span(
             self._edge_group.__class__.__name__,
             edge_group_id=self._edge_group.id,
@@ -103,7 +111,7 @@ class SingleEdgeRunner(EdgeRunner):
                     })
                     return False
 
-                if self._can_handle(self._edge.target_id, message.data):
+                if self._can_handle(self._edge.target_id, message):
                     if self._edge.should_route(message.data):
                         span.set_attributes({
                             OtelAttr.EDGE_GROUP_DELIVERED: True,
@@ -183,7 +191,7 @@ class FanOutEdgeRunner(EdgeRunner):
                     # If the target ID is specified and the selection result contains it, send the message to that edge
                     if message.target_id in selection_results:
                         edge = self._target_map.get(message.target_id)
-                        if edge and self._can_handle(edge.target_id, message.data):
+                        if edge and self._can_handle(edge.target_id, message):
                             if edge.should_route(message.data):
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: True,
@@ -215,7 +223,7 @@ class FanOutEdgeRunner(EdgeRunner):
                     # If no target ID, send the message to the selected targets
                     for target_id in selection_results:
                         edge = self._target_map[target_id]
-                        if self._can_handle(edge.target_id, message.data) and edge.should_route(message.data):
+                        if self._can_handle(edge.target_id, message) and edge.should_route(message.data):
                             deliverable_edges.append(edge)
 
                     if len(deliverable_edges) > 0:
@@ -291,7 +299,9 @@ class FanInEdgeRunner(EdgeRunner):
                     return False
 
                 # Check if target can handle list of message data (fan-in aggregates multiple messages)
-                if self._can_handle(self._edges[0].target_id, [message.data]):
+                if self._can_handle(
+                    self._edges[0].target_id, Message(data=[message.data], source_id=message.source_id)
+                ):
                     # If the edge can handle the data, buffer the message
                     self._buffer[message.source_id].append(message)
                     span.set_attributes({
@@ -374,7 +384,7 @@ def create_edge_runner(edge_group: EdgeGroup, executors: dict[str, Executor]) ->
     Returns:
         The appropriate EdgeRunner instance.
     """
-    if isinstance(edge_group, SingleEdgeGroup):
+    if isinstance(edge_group, (SingleEdgeGroup, InternalEdgeGroup)):
         return SingleEdgeRunner(edge_group, executors)
     if isinstance(edge_group, SwitchCaseEdgeGroup):
         return SwitchCaseEdgeRunner(edge_group, executors)

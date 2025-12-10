@@ -68,14 +68,14 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         string name = "HelpfulAssistant",
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null) =>
-            new ChatClientAgent(
+            new(
                 this._openAIResponseClient.AsIChatClient(),
                 options: new()
                 {
                     Name = name,
-                    Instructions = instructions,
                     ChatOptions = new ChatOptions
                     {
+                        Instructions = instructions,
                         Tools = aiTools,
                         RawRepresentationFactory = new Func<IChatClient, object>(_ => new ResponseCreationOptions() { StoredOutputEnabled = store })
                     },

@@ -38,9 +38,6 @@ public class AgentRunResponseUpdate
     /// <summary>The response update content items.</summary>
     private IList<AIContent>? _contents;
 
-    /// <summary>The name of the author of the update.</summary>
-    private string? _authorName;
-
     /// <summary>Initializes a new instance of the <see cref="AgentRunResponseUpdate"/> class.</summary>
     [JsonConstructor]
     public AgentRunResponseUpdate()
@@ -78,13 +75,14 @@ public class AgentRunResponseUpdate
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
         this.Role = chatResponseUpdate.Role;
+        this.ContinuationToken = chatResponseUpdate.ContinuationToken;
     }
 
     /// <summary>Gets or sets the name of the author of the response update.</summary>
     public string? AuthorName
     {
-        get => this._authorName;
-        set => this._authorName = string.IsNullOrWhiteSpace(value) ? null : value;
+        get => field;
+        set => field = string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     /// <summary>Gets or sets the role of the author of the response update.</summary>
@@ -147,6 +145,21 @@ public class AgentRunResponseUpdate
 
     /// <summary>Gets or sets a timestamp for the response update.</summary>
     public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the continuation token for resuming the streamed agent response of which this update is a part.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="AIAgent"/> implementations that support background responses will return
+    /// a continuation token on each update if background responses are allowed in <see cref="AgentRunOptions.AllowBackgroundResponses"/>
+    /// except for the last update, for which the token will be <see langword="null"/>.
+    /// <para>
+    /// This property should be used for stream resumption, where the continuation token of the latest received update should be
+    /// passed to <see cref="AgentRunOptions.ContinuationToken"/> on subsequent calls to <see cref="AIAgent.RunStreamingAsync(AgentThread?, AgentRunOptions?, System.Threading.CancellationToken)"/>
+    /// to resume streaming from the point of interruption.
+    /// </para>
+    /// </remarks>
+    public ResponseContinuationToken? ContinuationToken { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;
