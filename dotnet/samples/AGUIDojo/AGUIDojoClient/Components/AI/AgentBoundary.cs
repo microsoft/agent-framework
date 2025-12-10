@@ -29,13 +29,10 @@ public partial class AgentStateBoundary<TState> : IComponent, IDisposable
     /// </summary>
     [Parameter] public EventCallback<IAgentBoundaryContext> OnContextCreated { get; set; }
 
-    [Inject] private ILogger<AgentStateBoundary<TState>> Logger { get; set; } = default!;
-
     public void Attach(RenderHandle renderHandle)
     {
         this._renderHandle = renderHandle;
         this._renderWithState = this.RenderWithState;
-        Log.AgentBoundaryAttached(this.Logger);
     }
 
     // Agent boundary renders once when it receives the initial set of parameters
@@ -62,17 +59,6 @@ public partial class AgentStateBoundary<TState> : IComponent, IDisposable
 
         bool refresh = agentChanged || threadChanged || stateChanged;
 
-        Log.AgentBoundaryRefreshCheck(
-            this.Logger,
-            refresh,
-            agentChanged,
-            threadChanged,
-            stateChanged,
-            this.Agent?.GetHashCode() ?? 0,
-            this._currentAgent?.GetHashCode() ?? 0,
-            thread?.GetHashCode() ?? 0,
-            this._currentThread?.GetHashCode() ?? 0);
-
         if (refresh)
         {
             this._context?.Dispose();
@@ -80,14 +66,12 @@ public partial class AgentStateBoundary<TState> : IComponent, IDisposable
             this._currentThread = null;
         }
 
-        Log.AgentBoundaryParametersSet(this.Logger, refresh);
-
         this._currentAgent = this.Agent;
         this._currentThread = thread;
 
         // Agent is validated non-null above, thread is either from Thread parameter or GetNewThread()
         bool isNewContext = this._context == null;
-        this._context ??= new AgentBoundaryContext<TState>(this.Agent!, thread!, this.Logger);
+        this._context ??= new AgentBoundaryContext<TState>(this.Agent!, thread!);
         this._context.CurrentState = this.State;
 
         // Invoke the context created callback if we created a new context
@@ -106,7 +90,6 @@ public partial class AgentStateBoundary<TState> : IComponent, IDisposable
 
     private void Render()
     {
-        Log.AgentBoundaryRendering(this.Logger);
         this._renderHandle.Render(builder =>
         {
             builder.OpenComponent<CascadingValue<AgentBoundaryContext<TState>>>(0);
@@ -138,29 +121,10 @@ public partial class AgentStateBoundary<TState> : IComponent, IDisposable
         {
             if (disposing)
             {
-                Log.AgentBoundaryDisposed(this.Logger);
                 this._context?.Dispose();
             }
             this._disposed = true;
         }
-    }
-
-    private static partial class Log
-    {
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentStateBoundary attached to render handle")]
-        public static partial void AgentBoundaryAttached(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentStateBoundary refresh check: refresh={Refresh}, agentChanged={AgentChanged}, threadChanged={ThreadChanged}, stateChanged={StateChanged}, agentHash={AgentHash}, currentAgentHash={CurrentAgentHash}, threadHash={ThreadHash}, currentThreadHash={CurrentThreadHash}")]
-        public static partial void AgentBoundaryRefreshCheck(ILogger logger, bool refresh, bool agentChanged, bool threadChanged, bool stateChanged, int agentHash, int currentAgentHash, int threadHash, int currentThreadHash);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentStateBoundary parameters set, refresh required: {RefreshRequired}")]
-        public static partial void AgentBoundaryParametersSet(ILogger logger, bool refreshRequired);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentStateBoundary rendering")]
-        public static partial void AgentBoundaryRendering(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentStateBoundary disposed")]
-        public static partial void AgentBoundaryDisposed(ILogger logger);
     }
 }
 

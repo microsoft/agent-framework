@@ -6,10 +6,8 @@
 @using AGUIDojoClient.Components.Shared
 @using System.Text.Json
 @using System.ComponentModel
-@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject IServiceProvider ServiceProvider
-@inject ILogger<PredictiveStateUpdatesDemo> Logger
 
 <PageTitle>AI Document Editor</PageTitle>
 
@@ -148,7 +146,6 @@
                     string.Equals(call.Name, "confirm_changes", StringComparison.OrdinalIgnoreCase))
                 {
                     // Show confirmation dialog when confirm_changes is called
-                    Logger.LogInformation("Detected confirm_changes call, showing confirmation dialog");
                     awaitingConfirmation = true;
                     isStreaming = false;
                 }

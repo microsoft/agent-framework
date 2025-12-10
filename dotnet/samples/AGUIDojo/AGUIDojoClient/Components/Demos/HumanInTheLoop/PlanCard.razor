@@ -1,10 +1,8 @@
 @* Copyright (c) Microsoft. All rights reserved. *@
 @using Microsoft.AspNetCore.Components.AI
 @using Microsoft.Extensions.AI
-@using Microsoft.Extensions.Logging
 @using System.Text.Json
 @implements IDisposable
-@inject ILogger<PlanCard> Logger
 
 @if (IsWaitingForPlan)
 {
@@ -139,21 +137,13 @@ else if (WasRejected)
 
     protected override void OnInitialized()
     {
-        Logger.LogInformation("PlanCard OnInitialized called");
-        Logger.LogInformation("BoundaryContext is {Status}", BoundaryContext is null ? "NULL" : "present");
-        Logger.LogInformation("Invocation is {Status}, HasResult: {HasResult}", 
-            Invocation is null ? "NULL" : "present",
-            Invocation?.HasResult ?? false);
-
         // The plan comes from the create_plan function result
         if (Invocation?.HasResult == true)
         {
-            Logger.LogInformation("Invocation already has result, parsing plan");
             TryParsePlanFromResult();
         }
         else if (Invocation is not null)
         {
-            Logger.LogInformation("Subscribing to Invocation.ResultArrived");
             // Subscribe to wait for the result
             Invocation.ResultArrived += OnCreatePlanResultArrived;
         }
@@ -161,18 +151,12 @@ else if (WasRejected)
         // Subscribe to response updates to detect confirm_plan and update_plan_step calls
         if (BoundaryContext is not null)
         {
-            Logger.LogInformation("Subscribing to response updates");
             _responseSubscription = BoundaryContext.SubscribeToResponseUpdates(OnResponseUpdate);
-        }
-        else
-        {
-            Logger.LogWarning("BoundaryContext is null, cannot subscribe to response updates!");
         }
     }
 
     private void OnCreatePlanResultArrived()
     {
-        Logger.LogInformation("OnCreatePlanResultArrived called");
         TryParsePlanFromResult();
         InvokeAsync(StateHasChanged);
     }
@@ -180,7 +164,6 @@ else if (WasRejected)
     private void TryParsePlanFromResult()
     {
         var plan = Invocation?.GetResult<Plan>();
-        Logger.LogInformation("TryParsePlanFromResult: plan is {Status}", plan is null ? "NULL" : $"present with {plan.Steps.Count} steps");
         if (plan is not null)
         {
             CurrentPlan = plan;
@@ -201,42 +184,30 @@ else if (WasRejected)
                     selectedSteps.Add(i);
                 }
             }
-            Logger.LogInformation("InitializeSelectedSteps: selected {Count} steps", selectedSteps.Count);
         }
     }
 
     private void OnResponseUpdate()
     {
-        Logger.LogInformation("OnResponseUpdate called");
-        
         // Check the current update for tool calls
         var update = BoundaryContext?.CurrentUpdate;
         if (update is null)
         {
-            Logger.LogInformation("CurrentUpdate is null");
             return;
         }
 
-        Logger.LogInformation("CurrentUpdate has {Count} contents", update.Contents?.Count ?? 0);
-        
         if (update.Contents is not null)
         {
             foreach (var content in update.Contents)
             {
-                Logger.LogInformation("Content type: {Type}", content.GetType().Name);
-                
                 if (content is FunctionCallContent call)
                 {
-                    Logger.LogInformation("Found FunctionCallContent: {Name}, CallId: {CallId}", call.Name, call.CallId);
-                    
                     if (string.Equals(call.Name, "confirm_plan", StringComparison.OrdinalIgnoreCase))
                     {
-                        Logger.LogInformation("Detected confirm_plan call!");
                         HandleConfirmPlanCall(call);
                     }
                     else if (string.Equals(call.Name, "update_plan_step", StringComparison.OrdinalIgnoreCase))
                     {
-                        Logger.LogInformation("Detected update_plan_step call!");
                         HandleUpdatePlanStepCall(call);
                     }
                 }
@@ -248,15 +219,11 @@ else if (WasRejected)
 
     private void HandleConfirmPlanCall(FunctionCallContent call)
     {
-        Logger.LogInformation("HandleConfirmPlanCall: AwaitingConfirmation={Awaiting}, WasRejected={Rejected}, _confirmPlanCallId={CallId}",
-            AwaitingConfirmation, WasRejected, _confirmPlanCallId);
-            
         // When confirm_plan is called, show the confirmation UI
         if (!AwaitingConfirmation && !WasRejected && _confirmPlanCallId is null)
         {
             _confirmPlanCallId = call.CallId;
             AwaitingConfirmation = true;
-            Logger.LogInformation("Set AwaitingConfirmation to true, _confirmPlanCallId={CallId}", _confirmPlanCallId);
         }
     }
 
@@ -264,14 +231,12 @@ else if (WasRejected)
     {
         if (CurrentPlan is null)
         {
-            Logger.LogWarning("HandleUpdatePlanStepCall: CurrentPlan is null");
             return;
         }
 
         // Get the index and status from arguments
         if (call.Arguments is null)
         {
-            Logger.LogWarning("HandleUpdatePlanStepCall: Arguments is null");
             return;
         }
 
@@ -298,9 +263,6 @@ else if (WasRejected)
             else if (descObj is JsonElement je && je.ValueKind == JsonValueKind.String) description = je.GetString();
         }
 
-        Logger.LogInformation("HandleUpdatePlanStepCall: index={Index}, status={Status}, description={Description}",
-            index, status, description);
-
         // Apply the update
         if (index.HasValue && index.Value >= 0 && index.Value < CurrentPlan.Steps.Count)
         {
@@ -312,7 +274,6 @@ else if (WasRejected)
             {
                 CurrentPlan.Steps[index.Value].Description = description;
             }
-            Logger.LogInformation("Updated step {Index}", index.Value);
         }
     }
 
@@ -331,7 +292,6 @@ else if (WasRejected)
 
     private void ConfirmPlan()
     {
-        Logger.LogInformation("ConfirmPlan called with {Count} selected steps", selectedSteps.Count);
         AwaitingConfirmation = false;
         var result = new PlanConfirmationResult
         {
@@ -343,7 +303,6 @@ else if (WasRejected)
 
     private void RejectPlan()
     {
-        Logger.LogInformation("RejectPlan called");
         WasRejected = true;
         AwaitingConfirmation = false;
         var result = new PlanConfirmationResult
@@ -356,7 +315,6 @@ else if (WasRejected)
 
     public void Dispose()
     {
-        Logger.LogInformation("PlanCard Dispose called");
         if (Invocation is not null)
         {
             Invocation.ResultArrived -= OnCreatePlanResultArrived;

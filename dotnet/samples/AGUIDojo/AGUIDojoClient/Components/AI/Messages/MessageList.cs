@@ -34,8 +34,6 @@ internal sealed partial class MessageList : IComponent, IDisposable
         // Subscribe to message updates and response updates for streaming
         this._messageSubscription = this.MessageListContext.AgentBoundaryContext.SubscribeToMessageChanges(this.ProcessUpdate);
         this._responseSubscription = this.MessageListContext.AgentBoundaryContext.SubscribeToResponseUpdates(this.ProcessUpdate);
-        Log.MessageListAttached(this.MessageListContext.AgentBoundaryContext.Logger);
-        Log.MessageListSubscribed(this.MessageListContext.AgentBoundaryContext.Logger);
 
         // Initial render. This component will only render once since the only parameter is a cascading parameter and it's fixed.
         this._renderHandle.Render(this.Render);
@@ -77,32 +75,12 @@ internal sealed partial class MessageList : IComponent, IDisposable
 
     public void Render(RenderTreeBuilder builder)
     {
-        Log.MessageListRendering(
-            this.MessageListContext.AgentBoundaryContext.Logger,
-            this.MessageListContext.AgentBoundaryContext.CompletedMessages.Count,
-            this.MessageListContext.AgentBoundaryContext.PendingMessages.Count);
-
         // Track all render keys to detect duplicates
         var allRenderKeys = new HashSet<string?>();
 
         foreach (var message in this.MessageListContext.AgentBoundaryContext.CompletedMessages)
         {
             var renderKey = GetUniqueRenderKey(message);
-
-            Log.RenderingCompletedMessage(
-                this.MessageListContext.AgentBoundaryContext.Logger,
-                message.MessageId,
-                renderKey,
-                message.Role.Value,
-                message.Contents.Count);
-
-            if (renderKey != null && !allRenderKeys.Add(renderKey))
-            {
-                Log.DuplicateRenderKeyDetected(
-                    this.MessageListContext.AgentBoundaryContext.Logger,
-                    renderKey,
-                    "completed");
-            }
 
             // Calling GetTemplate will stop template collection on the first message if it
             // was still ongoing.
@@ -115,21 +93,6 @@ internal sealed partial class MessageList : IComponent, IDisposable
         foreach (var message in this.MessageListContext.AgentBoundaryContext.PendingMessages)
         {
             var renderKey = GetUniqueRenderKey(message);
-
-            Log.RenderingPendingMessage(
-                this.MessageListContext.AgentBoundaryContext.Logger,
-                message.MessageId,
-                renderKey,
-                message.Role.Value,
-                message.Contents.Count);
-
-            if (renderKey != null && !allRenderKeys.Add(renderKey))
-            {
-                Log.DuplicateRenderKeyDetected(
-                    this.MessageListContext.AgentBoundaryContext.Logger,
-                    renderKey,
-                    "pending");
-            }
 
             builder.OpenComponent<ContentBlock>(1);
             builder.SetKey(renderKey);
@@ -162,32 +125,7 @@ internal sealed partial class MessageList : IComponent, IDisposable
 
     public void Dispose()
     {
-        Log.MessageListDisposed(this.MessageListContext.AgentBoundaryContext.Logger);
         ((IDisposable)this._messageSubscription).Dispose();
         ((IDisposable)this._responseSubscription).Dispose();
-    }
-
-    private static partial class Log
-    {
-        [LoggerMessage(Level = LogLevel.Debug, Message = "MessageList attached to render handle")]
-        public static partial void MessageListAttached(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "MessageList subscribed to message changes")]
-        public static partial void MessageListSubscribed(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "MessageList rendering, completed: {CompletedCount}, pending: {PendingCount}")]
-        public static partial void MessageListRendering(ILogger logger, int completedCount, int pendingCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Rendering completed message: MessageId={MessageId}, RenderKey={RenderKey}, Role={Role}, ContentCount={ContentCount}")]
-        public static partial void RenderingCompletedMessage(ILogger logger, string? messageId, string? renderKey, string role, int contentCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Rendering pending message: MessageId={MessageId}, RenderKey={RenderKey}, Role={Role}, ContentCount={ContentCount}")]
-        public static partial void RenderingPendingMessage(ILogger logger, string? messageId, string? renderKey, string role, int contentCount);
-
-        [LoggerMessage(Level = LogLevel.Warning, Message = "DUPLICATE RenderKey detected: {RenderKey} in {Location} messages")]
-        public static partial void DuplicateRenderKeyDetected(ILogger logger, string renderKey, string location);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "MessageList disposed")]
-        public static partial void MessageListDisposed(ILogger logger);
     }
 }

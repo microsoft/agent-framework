@@ -10,7 +10,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     private readonly AIAgent _agent;
     private readonly AgentThread _thread;
     private readonly CancellationTokenSource _cancellationTokenSource;
-    private readonly ILogger _logger;
     private readonly List<ChatMessage> _messages = [];
     private readonly List<ChatMessage> _pendingMessages = [];
     private readonly List<Action> _messageChangeSubscribers = [];
@@ -30,15 +29,11 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
 
     public ChatResponseUpdate? CurrentUpdate { get; private set; }
 
-    ILogger IAgentBoundaryContext.Logger => this._logger;
-
-    public AgentBoundaryContext(AIAgent agent, AgentThread thread, ILogger logger)
+    public AgentBoundaryContext(AIAgent agent, AgentThread thread)
     {
         this._agent = agent;
         this._thread = thread;
         this._cancellationTokenSource = new CancellationTokenSource();
-        this._logger = logger;
-        Log.AgentBoundaryContextCreated(this._logger);
     }
 
     /// <summary>
@@ -49,7 +44,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     {
         ArgumentNullException.ThrowIfNull(tool);
         this._tools.Add(tool);
-        Log.ToolRegistered(this._logger, tool.Name);
     }
 
     /// <summary>
@@ -73,7 +67,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     {
         var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         this._pendingResponses[key] = tcs;
-        Log.WaitForResponseStarted(this._logger, key);
         return tcs.Task;
     }
 
@@ -90,17 +83,14 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
         {
             this._pendingResponses.Remove(key);
             tcs.TrySetResult(response);
-            Log.ResponseProvided(this._logger, key);
             return true;
         }
 
-        Log.ResponseNotFound(this._logger, key);
         return false;
     }
 
     public void Dispose()
     {
-        Log.AgentBoundaryContextDisposed(this._logger);
         this._cancellationTokenSource.Cancel();
         this._cancellationTokenSource.Dispose();
         GC.SuppressFinalize(this);
@@ -108,8 +98,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
 
     public async Task SendAsync(params ChatMessage[] userMessages)
     {
-        Log.SendAsyncStarted(this._logger, userMessages.Length);
-
         // This starts a new turn. Once completed, we will add the new messages to the conversation.
         this._pendingMessages.Clear();
         this._pendingMessages.AddRange(userMessages);
@@ -125,7 +113,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
             {
                 Tools = [.. this._tools]
             });
-            Log.RunningWithTools(this._logger, this._tools.Count);
         }
 
         // Start a turn. Collect all updates as we stream them.
@@ -138,16 +125,14 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
             var chatUpdate = update.AsChatResponseUpdate();
 
             this.CurrentUpdate = chatUpdate;
-            Log.ChatResponseUpdateReceived(this._logger);
 
             // Notify subscribers of the new update, this always happens before a new message is created/updated.
             this.TriggerChatResponseUpdate();
 
             // This creates or adds a new message to the pending messages as needed.
-            var isNewMessage = MessageHelpers.ProcessUpdate(chatUpdate, this._pendingMessages, this._logger);
+            var isNewMessage = MessageHelpers.ProcessUpdate(chatUpdate, this._pendingMessages);
             if (isNewMessage)
             {
-                Log.NewMessageCreated(this._logger, this._pendingMessages.Count);
                 this.CurrentMessage = this._pendingMessages[this._pendingMessages.Count - 1];
 
                 // Finalize the previous message's content if we have 2 or more messages now.
@@ -178,13 +163,10 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
         // Notify subscribers
         this.TriggerChatResponseUpdate();
         this.TriggerMessageChanges();
-
-        Log.SendAsyncCompleted(this._logger, this._messages.Count);
     }
 
     private void TriggerChatResponseUpdate()
     {
-        Log.ResponseUpdateSubscribersNotified(this._logger, this._responseUpdateSubscribers.Count);
         // Iterate backwards to avoid issues if subscribers are removed during iteration
         for (var i = this._responseUpdateSubscribers.Count - 1; i >= 0; i--)
         {
@@ -194,7 +176,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
 
     private void TriggerMessageChanges()
     {
-        Log.MessageChangeSubscribersNotified(this._logger, this._messageChangeSubscribers.Count);
         // Iterate backwards to avoid issues if subscribers are removed during iteration
         for (var i = this._messageChangeSubscribers.Count - 1; i >= 0; i--)
         {
@@ -210,48 +191,6 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     public ResponseUpdateSubscription SubscribeToResponseUpdates(Action onChatResponse)
     {
         return new ResponseUpdateSubscription(this._responseUpdateSubscribers, onChatResponse);
-    }
-
-    private static partial class Log
-    {
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentBoundaryContext created for thread")]
-        public static partial void AgentBoundaryContextCreated(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "AgentBoundaryContext disposed")]
-        public static partial void AgentBoundaryContextDisposed(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "SendAsync started with {MessageCount} user message(s)")]
-        public static partial void SendAsyncStarted(ILogger logger, int messageCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "SendAsync completed, total messages: {TotalMessages}")]
-        public static partial void SendAsyncCompleted(ILogger logger, int totalMessages);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "New message created during streaming, pending count: {PendingCount}")]
-        public static partial void NewMessageCreated(ILogger logger, int pendingCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Chat response update received")]
-        public static partial void ChatResponseUpdateReceived(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Message change subscribers notified, subscriber count: {SubscriberCount}")]
-        public static partial void MessageChangeSubscribersNotified(ILogger logger, int subscriberCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Response update subscribers notified, subscriber count: {SubscriberCount}")]
-        public static partial void ResponseUpdateSubscribersNotified(ILogger logger, int subscriberCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Tool registered: {ToolName}")]
-        public static partial void ToolRegistered(ILogger logger, string toolName);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Running with {ToolCount} registered tool(s)")]
-        public static partial void RunningWithTools(ILogger logger, int toolCount);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "WaitForResponse started for key: {Key}")]
-        public static partial void WaitForResponseStarted(ILogger logger, string key);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Response provided for key: {Key}")]
-        public static partial void ResponseProvided(ILogger logger, string key);
-
-        [LoggerMessage(Level = LogLevel.Warning, Message = "No pending response found for key: {Key}")]
-        public static partial void ResponseNotFound(ILogger logger, string key);
     }
 }
 
@@ -270,8 +209,6 @@ public interface IAgentBoundaryContext
     ChatMessage? CurrentMessage { get; }
 
     ChatResponseUpdate? CurrentUpdate { get; }
-
-    ILogger Logger { get; }
 
     // Triggered any time there is a change on a message.
     MessageSubscription SubscribeToMessageChanges(Action onNewMessage);

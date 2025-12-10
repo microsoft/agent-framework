@@ -53,9 +53,7 @@ public partial class Messages : IComponent
 
         if (this._messageListContext == null)
         {
-            Log.MessagesAttached(this._context.Logger);
             this._messageListContext = new MessageListContext(this.AgentContext);
-            Log.MessagesInitialized(this._context.Logger);
             this.Render();
         }
 
@@ -64,7 +62,6 @@ public partial class Messages : IComponent
 
     private void Render()
     {
-        Log.MessagesRendering(this._context?.Logger!);
         this._renderHandle.Render(this.RenderCore);
     }
 
@@ -85,17 +82,5 @@ public partial class Messages : IComponent
         builder.AddContent(2, this.ContentTemplates);
         builder.OpenComponent<MessageList>(3);
         builder.CloseComponent();
-    }
-
-    private static partial class Log
-    {
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Messages component attached to render handle")]
-        public static partial void MessagesAttached(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Messages component initialized with MessageListContext")]
-        public static partial void MessagesInitialized(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Messages component rendering")]
-        public static partial void MessagesRendering(ILogger logger);
     }
 }
