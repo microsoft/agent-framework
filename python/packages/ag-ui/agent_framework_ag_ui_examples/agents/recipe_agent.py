@@ -51,8 +51,8 @@ class Recipe(BaseModel):
 @ai_function
 def update_recipe(
     recipe: Recipe,
-    current_special_preferences: list[str] | None = None,
-    user_selected_preferences: list[str] | None = None,
+    current_preferences: list[str] | None = None,
+    desired_preferences: list[str] | None = None,
     instruction: str | None = None
 ) -> str:
     """Update the recipe with new or modified content.
@@ -63,16 +63,16 @@ def update_recipe(
 
     Args:
         recipe: The complete recipe object with all details
-        current_special_preferences: The agent's current preferences (for comparison)
-        user_selected_preferences: The user's desired preferences (for prompt generation)
+        current_preferences: The agent's current preferences (for comparison)
+        desired_preferences: The user's desired preferences (for prompt generation)
         instruction: Optional explicit instruction (if provided, use it directly)
 
     Returns:
         Confirmation that the recipe was updated
     """
     # Generate intelligent prompt if not provided
-    if not instruction and current_special_preferences is not None and user_selected_preferences is not None:
-        instruction = _generate_preference_instruction(current_special_preferences, user_selected_preferences)
+    if not instruction and current_preferences is not None and desired_preferences is not None:
+        instruction = _generate_preference_instruction(current_preferences, desired_preferences)
         print(f"Generated instruction: {instruction}")
 
     # In a real implementation, this would save the recipe
@@ -136,7 +136,9 @@ def _generate_preference_instruction(current: list[str], desired: list[str]) -> 
         current = []
     if not desired:
         desired = []
-
+    
+    print(f"Current preferences: {current}, Desired preferences: {desired}")
+    
     # Find differences
     to_add = [p for p in desired if p not in current]
     to_remove = [p for p in current if p not in desired]
@@ -213,8 +215,8 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     SPECIAL PREFERENCES HANDLING - AUTOMATIC INTELLIGENCE:
     The update_recipe tool accepts these parameters:
     - recipe: The complete recipe object
-    - current_special_preferences: Your current preferences (extract from your state)
-    - user_selected_preferences: User's desired preferences (extract from message)
+    - current_preferences: Your current preferences (extract from your state)
+    - desired_preferences: User's desired preferences (extract from message)
     - instruction: Generated prompt (tool will generate automatically if not provided)
 
     EXTRACTION FROM MESSAGE:
@@ -238,8 +240,8 @@ _RECIPE_INSTRUCTIONS = """You are a helpful recipe assistant that creates and mo
     # Call tool with all parameters
     update_recipe(
         recipe=updated_recipe,
-        current_special_preferences=current,
-        user_selected_preferences=desired_pref
+        current_preferences=current,
+        desired_preferences=desired_pref
     )
     ```
 
