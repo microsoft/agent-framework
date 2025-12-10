@@ -83,7 +83,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 throw new InvalidOperationException($"Task entity dispatcher binding is missing for the invocation {context.InvocationId}.");
             }
 
-            await BuiltInFunctions.InvokeAgentAsync(
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeAgentAsync(
                 durableTaskClient,
                 dispatcher,
                 context);

@@ -23,7 +23,7 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
     // Exposed as an entity trigger via AgentFunctionsProvider
-    public static Task InvokeAgentAsync(
+    public static Task<string> InvokeAgentAsync(
         [DurableClient] DurableTaskClient client,
         string dispatcher,
         FunctionContext functionContext)
