@@ -39,6 +39,12 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
         async for ev in wf.run_stream(0):
             events.append(ev)
 
+    # ExecutorFailedEvent should be emitted before WorkflowFailedEvent
+    executor_failed_events = [e for e in events if isinstance(e, ExecutorFailedEvent)]
+    assert executor_failed_events, "ExecutorFailedEvent should be emitted when start executor fails"
+    assert executor_failed_events[0].executor_id == "f"
+    assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK
+
     # Workflow-level failure and FAILED status should be surfaced
     failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
     assert failed_events
@@ -46,6 +52,11 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.FAILED
     assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
+
+    # Verify ExecutorFailedEvent comes before WorkflowFailedEvent
+    executor_failed_idx = events.index(executor_failed_events[0])
+    workflow_failed_idx = events.index(failed_events[0])
+    assert executor_failed_idx < workflow_failed_idx, "ExecutorFailedEvent should be emitted before WorkflowFailedEvent"
 
 
 async def test_executor_failed_event_emitted_on_direct_execute():
@@ -63,6 +74,42 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     failed = [e for e in drained if isinstance(e, ExecutorFailedEvent)]
     assert failed
     assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed)
+
+
+class PassthroughExecutor(Executor):
+    """Executor that passes message to the next executor."""
+
+    @handler
+    async def passthrough(self, msg: int, ctx: WorkflowContext[int]) -> None:
+        await ctx.send_message(msg)
+
+
+async def test_executor_failed_event_from_second_executor_in_chain():
+    """Test that ExecutorFailedEvent is emitted when a non-start executor fails."""
+    passthrough = PassthroughExecutor(id="passthrough")
+    failing = FailingExecutor(id="failing")
+    wf: Workflow = WorkflowBuilder().set_start_executor(passthrough).add_edge(passthrough, failing).build()
+
+    events: list[object] = []
+    with pytest.raises(RuntimeError, match="boom"):
+        async for ev in wf.run_stream(0):
+            events.append(ev)
+
+    # ExecutorFailedEvent should be emitted for the failing executor
+    executor_failed_events = [e for e in events if isinstance(e, ExecutorFailedEvent)]
+    assert executor_failed_events, "ExecutorFailedEvent should be emitted when second executor fails"
+    assert executor_failed_events[0].executor_id == "failing"
+    assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK
+
+    # Workflow-level failure should also be surfaced
+    failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
+    assert failed_events
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed_events)
+
+    # Verify ExecutorFailedEvent comes before WorkflowFailedEvent
+    executor_failed_idx = events.index(executor_failed_events[0])
+    workflow_failed_idx = events.index(failed_events[0])
+    assert executor_failed_idx < workflow_failed_idx, "ExecutorFailedEvent should be emitted before WorkflowFailedEvent"
 
 
 class SimpleExecutor(Executor):

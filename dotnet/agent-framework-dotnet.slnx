@@ -52,6 +52,7 @@
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIChatCompletion/Agent_With_AzureOpenAIChatCompletion.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_AzureOpenAIResponses/Agent_With_AzureOpenAIResponses.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
+    <Project Path="samples/GettingStarted/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
     <Project Path="samples/GettingStarted/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
@@ -78,6 +79,33 @@
     <Project Path="samples/GettingStarted/Agents/Agent_Step16_ChatReduction/Agent_Step16_ChatReduction.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step17_BackgroundResponses/Agent_Step17_BackgroundResponses.csproj" />
     <Project Path="samples/GettingStarted/Agents/Agent_Step18_DeepResearch/Agent_Step18_DeepResearch.csproj" />
+    <Project Path="samples/GettingStarted/Agents/Agent_Step19_Declarative/Agent_Step19_Declarative.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
+    <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/">
+    <File Path="samples/GettingStarted/AGUI/README.md" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step01_GettingStarted/">
+    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step02_BackendTools/">
+    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step03_FrontendTools/">
+    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step04_HumanInLoop/">
+    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step05_StateManagement/">
+    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Server/Server.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
@@ -99,6 +127,8 @@
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
   </Folder>
   <Folder Name="/Samples/Purview/" />
   <Folder Name="/Samples/Purview/AgentWithPurview/">
@@ -168,7 +198,7 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
-    <File Path="../workflow-samples/ConfirmInput.yaml" />
+    <File Path="../workflow-samples/CustomerSupport.yaml" />
     <File Path="../workflow-samples/DeepResearch.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />
@@ -348,6 +378,8 @@
     <Project Path="src/Microsoft.Agents.AI.AzureAI.Persistent/Microsoft.Agents.AI.AzureAI.Persistent.csproj" />
     <Project Path="src/Microsoft.Agents.AI.AzureAI/Microsoft.Agents.AI.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.CopilotStudio/Microsoft.Agents.AI.CopilotStudio.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DurableTask/Microsoft.Agents.AI.DurableTask.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/Microsoft.Agents.AI.Hosting.A2A.AspNetCore.csproj" />
@@ -387,6 +419,8 @@
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.UnitTests/Microsoft.Agents.AI.AzureAI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.Declarative.UnitTests/Microsoft.Agents.AI.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DurableTask.UnitTests/Microsoft.Agents.AI.DurableTask.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />

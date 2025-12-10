@@ -8,7 +8,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
-    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <NoWarn>$(NoWarn);NU5128;CS8002</NoWarn>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <TargetFrameworksCore>net10.0;net9.0;net8.0</TargetFrameworksCore>
     <TargetFrameworks>$(TargetFrameworksCore);netstandard2.0;net472</TargetFrameworks>

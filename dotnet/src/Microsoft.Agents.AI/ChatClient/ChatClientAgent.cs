@@ -59,13 +59,13 @@ public sealed partial class ChatClientAgent : AIAgent
               chatClient,
               new ChatClientAgentOptions
               {
-                  Name = name,
-                  Description = description,
-                  Instructions = instructions,
-                  ChatOptions = tools is null ? null : new ChatOptions
+                  ChatOptions = (tools is null && string.IsNullOrWhiteSpace(instructions)) ? null : new ChatOptions
                   {
                       Tools = tools,
-                  }
+                      Instructions = instructions
+                  },
+                  Name = name,
+                  Description = description
               },
               loggerFactory,
               services)
@@ -141,7 +141,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// These instructions are typically provided to the AI model as system messages to establish
     /// the context and expected behavior for the agent's responses.
     /// </remarks>
-    public string? Instructions => this._agentOptions?.Instructions;
+    public string? Instructions => this._agentOptions?.ChatOptions?.Instructions;
 
     /// <summary>
     /// Gets of the default <see cref="ChatOptions"/> used by the agent.
@@ -203,6 +203,8 @@ public sealed partial class ChatClientAgent : AIAgent
 
         (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> inputMessagesForChatClient, IList<ChatMessage>? aiContextProviderMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
+
+        ValidateStreamResumptionAllowed(chatOptions?.ContinuationToken, safeThread);
 
         var chatClient = this.ChatClient;
 
@@ -490,7 +492,6 @@ public sealed partial class ChatClientAgent : AIAgent
         requestChatOptions.AllowMultipleToolCalls ??= this._agentOptions.ChatOptions.AllowMultipleToolCalls;
         requestChatOptions.ConversationId ??= this._agentOptions.ChatOptions.ConversationId;
         requestChatOptions.FrequencyPenalty ??= this._agentOptions.ChatOptions.FrequencyPenalty;
-        requestChatOptions.Instructions ??= this._agentOptions.ChatOptions.Instructions;
         requestChatOptions.MaxOutputTokens ??= this._agentOptions.ChatOptions.MaxOutputTokens;
         requestChatOptions.ModelId ??= this._agentOptions.ChatOptions.ModelId;
         requestChatOptions.PresencePenalty ??= this._agentOptions.ChatOptions.PresencePenalty;
@@ -500,6 +501,13 @@ public sealed partial class ChatClientAgent : AIAgent
         requestChatOptions.TopP ??= this._agentOptions.ChatOptions.TopP;
         requestChatOptions.TopK ??= this._agentOptions.ChatOptions.TopK;
         requestChatOptions.ToolMode ??= this._agentOptions.ChatOptions.ToolMode;
+
+        // Merge instructions by concatenating them if both are present.
+        requestChatOptions.Instructions = !string.IsNullOrWhiteSpace(requestChatOptions.Instructions) && !string.IsNullOrWhiteSpace(this.Instructions)
+            ? $"{this.Instructions}\n{requestChatOptions.Instructions}"
+            : (!string.IsNullOrWhiteSpace(requestChatOptions.Instructions)
+            ? requestChatOptions.Instructions
+            : this.Instructions);
 
         // Merge only the additional properties from the agent if they are not already set in the request options.
         if (requestChatOptions.AdditionalProperties is not null && this._agentOptions.ChatOptions.AdditionalProperties is not null)
@@ -621,6 +629,12 @@ public sealed partial class ChatClientAgent : AIAgent
         {
             throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
         }
+
+        if (chatOptions?.ContinuationToken is not null && typedThread.ConversationId is null && typedThread.MessageStore is null)
+        {
+            throw new InvalidOperationException("Continuation tokens are not allowed to be used for initial runs.");
+        }
+
         List<ChatMessage> inputMessagesForChatClient = [];
         IList<ChatMessage>? aiContextProviderMessages = null;
 
@@ -677,12 +691,6 @@ public sealed partial class ChatClientAgent : AIAgent
                 """);
         }
 
-        if (!string.IsNullOrWhiteSpace(this.Instructions))
-        {
-            chatOptions ??= new();
-            chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? this.Instructions : $"{this.Instructions}\n{chatOptions.Instructions}";
-        }
-
         // Only create or update ChatOptions if we have an id on the thread and we don't have the same one already in ChatOptions.
         if (!string.IsNullOrWhiteSpace(typedThread.ConversationId) && typedThread.ConversationId != chatOptions?.ConversationId)
         {
@@ -729,6 +737,28 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return Task.CompletedTask;
+    }
+
+    private static void ValidateStreamResumptionAllowed(ResponseContinuationToken? continuationToken, ChatClientAgentThread safeThread)
+    {
+        if (continuationToken is null)
+        {
+            return;
+        }
+
+        // Streaming resumption is only supported with chat history managed by the agent service because, currently, there's no good solution
+        // to collect updates received in failed runs and pass them to the last successful run so it can store them to the message store.
+        if (safeThread.ConversationId is null)
+        {
+            throw new NotSupportedException("Streaming resumption is only supported when chat history is stored and managed by the underlying AI service.");
+        }
+
+        // Similarly, streaming resumption is not supported when a context provider is used because, currently, there's no good solution
+        // to collect updates received in failed runs and pass them to the last successful run so it can notify the context provider of the updates.
+        if (safeThread.AIContextProvider is not null)
+        {
+            throw new NotSupportedException("Using context provider with streaming resumption is not supported.");
+        }
     }
 
     private string GetLoggingAgentName() => this.Name ?? "UnnamedAgent";

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, TypeVar
 
@@ -90,7 +90,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         client = await self.ensure_client()
-        run_options = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options, **kwargs)
         response_format = run_options.pop("response_format", None)
         text_config = run_options.pop("text", None)
         text_format, text_config = self._prepare_text_config(response_format=response_format, text_config=text_config)
@@ -135,7 +135,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         client = await self.ensure_client()
-        run_options = await self.prepare_options(messages, chat_options)
+        run_options = await self.prepare_options(messages, chat_options, **kwargs)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         response_format = run_options.pop("response_format", None)
         text_config = run_options.pop("text", None)
@@ -248,7 +248,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
     ) -> str | None:
         """Get the conversation ID from the response if store is True."""
-        return response.id if store else None
+        return None if store is False else response.id
 
     # region Prep methods
 
@@ -386,9 +386,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         return mcp
 
     async def prepare_options(
-        self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
+        conversation_id = kwargs.pop("conversation_id", None)
+
+        if conversation_id:
+            chat_options.conversation_id = conversation_id
+
         run_options: dict[str, Any] = chat_options.to_dict(
             exclude={
                 "type",
@@ -437,8 +445,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             for key, value in additional_properties.items():
                 if value is not None:
                     run_options[key] = value
-        if "store" not in run_options:
-            run_options["store"] = False
         if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
             run_options["tool_choice"] = tool_choice["mode"]
         return run_options
@@ -809,14 +815,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
-            "created_at": datetime.fromtimestamp(response.created_at).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
             "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
         }
-        if chat_options.store:
-            args["conversation_id"] = self.get_conversation_id(response, chat_options.store)
+
+        conversation_id = self.get_conversation_id(response, chat_options.store)
+
+        if conversation_id:
+            args["conversation_id"] = conversation_id
         if response.usage and (usage_details := self._usage_details_from_openai(response.usage)):
             args["usage_details"] = usage_details
         if structured_response:

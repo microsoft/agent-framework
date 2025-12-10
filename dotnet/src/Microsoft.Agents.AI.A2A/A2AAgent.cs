@@ -75,11 +75,7 @@ internal sealed class A2AAgent : AIAgent
     {
         _ = Throw.IfNull(messages);
 
-        thread ??= this.GetNewThread();
-        if (thread is not A2AAgentThread typedThread)
-        {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
-        }
+        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunAsync), this.Id, this.Name);
 
@@ -142,11 +138,7 @@ internal sealed class A2AAgent : AIAgent
     {
         _ = Throw.IfNull(messages);
 
-        thread ??= this.GetNewThread();
-        if (thread is not A2AAgentThread typedThread)
-        {
-            throw new InvalidOperationException("The provided thread is not compatible with the agent. Only threads created by the agent can be used.");
-        }
+        A2AAgentThread typedThread = this.GetA2AThread(thread, options);
 
         this._logger.LogA2AAgentInvokingAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -216,6 +208,26 @@ internal sealed class A2AAgent : AIAgent
 
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
+
+    private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
+    {
+        // Aligning with other agent implementations that support background responses, where
+        // a thread is required for background responses to prevent inconsistent experience
+        // for callers if they forget to provide the thread for initial or follow-up runs.
+        if (options?.AllowBackgroundResponses is true && thread is null)
+        {
+            throw new InvalidOperationException("A thread must be provided when AllowBackgroundResponses is enabled.");
+        }
+
+        thread ??= this.GetNewThread();
+
+        if (thread is not A2AAgentThread typedThread)
+        {
+            throw new InvalidOperationException($"The provided thread type {thread.GetType()} is not compatible with the agent. Only A2A agent created threads are supported.");
+        }
+
+        return typedThread;
+    }
 
     private static void UpdateThread(A2AAgentThread? thread, string? contextId, string? taskId = null)
     {

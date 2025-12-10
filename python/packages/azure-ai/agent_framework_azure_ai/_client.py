@@ -62,10 +62,11 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         project_client: AIProjectClient | None = None,
         agent_name: str | None = None,
         agent_version: str | None = None,
+        agent_description: str | None = None,
         conversation_id: str | None = None,
         project_endpoint: str | None = None,
         model_deployment_name: str | None = None,
-        async_credential: AsyncTokenCredential | None = None,
+        credential: AsyncTokenCredential | None = None,
         use_latest_version: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -77,6 +78,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             project_client: An existing AIProjectClient to use. If not provided, one will be created.
             agent_name: The name to use when creating new agents or using existing agents.
             agent_version: The version of the agent to use.
+            agent_description: The description to use when creating new agents.
             conversation_id: Default conversation ID to use for conversations. Can be overridden by
                 conversation_id property when making a request.
             project_endpoint: The Azure AI Project endpoint URL.
@@ -84,7 +86,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 Ignored when a project_client is passed.
             model_deployment_name: The model deployment name to use for agent creation.
                 Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            async_credential: Azure async credential to use for authentication.
+            credential: Azure async credential to use for authentication.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             env_file_path: Path to environment file for loading settings.
@@ -101,17 +103,17 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
                 # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
                 credential = DefaultAzureCredential()
-                client = AzureAIClient(async_credential=credential)
+                client = AzureAIClient(credential=credential)
 
                 # Or passing parameters directly
                 client = AzureAIClient(
                     project_endpoint="https://your-project.cognitiveservices.azure.com",
                     model_deployment_name="gpt-4",
-                    async_credential=credential,
+                    credential=credential,
                 )
 
                 # Or loading from a .env file
-                client = AzureAIClient(async_credential=credential, env_file_path="path/to/.env")
+                client = AzureAIClient(credential=credential, env_file_path="path/to/.env")
         """
         try:
             azure_ai_settings = AzureAISettings(
@@ -133,11 +135,11 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 )
 
             # Use provided credential
-            if not async_credential:
+            if not credential:
                 raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
             project_client = AIProjectClient(
                 endpoint=azure_ai_settings.project_endpoint,
-                credential=async_credential,
+                credential=credential,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             should_close_client = True
@@ -150,12 +152,17 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # Initialize instance variables
         self.agent_name = agent_name
         self.agent_version = agent_version
+        self.agent_description = agent_description
         self.use_latest_version = use_latest_version
         self.project_client = project_client
-        self.credential = async_credential
+        self.credential = credential
         self.model_id = azure_ai_settings.model_deployment_name
         self.conversation_id = conversation_id
-        self._should_close_client = should_close_client  # Track whether we should close client connection
+
+        # Track whether the application endpoint is used
+        self._is_application_endpoint = "/applications/" in project_client._config.endpoint  # type: ignore
+        # Track whether we should close client connection
+        self._should_close_client = should_close_client
 
     async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
         """Use this method to setup tracing in your Azure AI Project.
@@ -276,7 +283,9 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 args["instructions"] = "".join(combined_instructions)
 
             created_agent = await self.project_client.agents.create_version(
-                agent_name=self.agent_name, definition=PromptAgentDefinition(**args)
+                agent_name=self.agent_name,
+                definition=PromptAgentDefinition(**args),
+                description=self.agent_description,
             )
 
             self.agent_version = created_agent.version
@@ -308,15 +317,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return result, instructions
 
     async def prepare_options(
-        self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
-        chat_options.store = bool(chat_options.store or chat_options.store is None)
         prepared_messages, instructions = self._prepare_input(messages)
-        run_options = await super().prepare_options(prepared_messages, chat_options)
-        agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+        run_options = await super().prepare_options(prepared_messages, chat_options, **kwargs)
 
-        run_options["extra_body"] = {"agent": agent_reference}
+        if not self._is_application_endpoint:
+            # Application-scoped response APIs do not support "agent" property.
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+            run_options["extra_body"] = {"agent": agent_reference}
 
         conversation_id = chat_options.conversation_id or self.conversation_id
 
@@ -344,16 +357,19 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Initialize OpenAI client."""
         self.client = self.project_client.get_openai_client()  # type: ignore
 
-    def _update_agent_name(self, agent_name: str | None) -> None:
+    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
         """Update the agent name in the chat client.
 
         Args:
             agent_name: The new name for the agent.
+            description: The new description for the agent.
         """
         # This is a no-op in the base class, but can be overridden by subclasses
         # to update the agent name in the client.
         if agent_name and not self.agent_name:
             self.agent_name = agent_name
+        if description and not self.agent_description:
+            self.agent_description = description
 
     def get_mcp_tool(self, tool: HostedMCPTool) -> Any:
         """Get MCP tool from HostedMCPTool."""
@@ -378,12 +394,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
     ) -> str | None:
         """Get the conversation ID from the response if store is True."""
-        if store:
-            # If conversation ID exists, it means that we operate with conversation
-            # so we use conversation ID as input and output.
-            if response.conversation and response.conversation.id:
-                return response.conversation.id
-            # If conversation ID doesn't exist, we operate with responses
-            # so we use response ID as input and output.
-            return response.id
-        return None
+        if store is False:
+            return None
+        # If conversation ID exists, it means that we operate with conversation
+        # so we use conversation ID as input and output.
+        if response.conversation and response.conversation.id:
+            return response.conversation.id
+        # If conversation ID doesn't exist, we operate with responses
+        # so we use response ID as input and output.
+        return response.id

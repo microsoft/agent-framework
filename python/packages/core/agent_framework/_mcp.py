@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -22,7 +22,16 @@ from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, Field, create_model
 
 from ._tools import AIFunction, HostedMCPSpecificApproval
-from ._types import ChatMessage, Contents, DataContent, Role, TextContent, UriContent
+from ._types import (
+    ChatMessage,
+    Contents,
+    DataContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    Role,
+    TextContent,
+    UriContent,
+)
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -61,7 +70,7 @@ def _mcp_prompt_message_to_chat_message(
     """Convert a MCP container type to a Agent Framework type."""
     return ChatMessage(
         role=Role(value=mcp_type.role),
-        contents=[_mcp_type_to_ai_content(mcp_type.content)],
+        contents=_mcp_type_to_ai_content(mcp_type.content),
         raw_representation=mcp_type,
     )
 
@@ -87,8 +96,7 @@ def _mcp_call_tool_result_to_ai_contents(
         A list of Agent Framework content items with metadata merged into
         additional_properties.
     """
-    # Extract _meta field using getattr for compatibility
-    meta_data = getattr(mcp_type, "_meta", None)
+    meta_data = mcp_type.meta
 
     # Prepare merged metadata once if present
     merged_meta_props = None
@@ -104,53 +112,104 @@ def _mcp_call_tool_result_to_ai_contents(
     # Convert each content item and merge metadata
     result_contents = []
     for item in mcp_type.content:
-        content = _mcp_type_to_ai_content(item)
+        contents = _mcp_type_to_ai_content(item)
 
         if merged_meta_props:
-            existing_props = getattr(content, "additional_properties", None) or {}
-            # Merge with content-specific properties, letting content-specific props override
-            final_props = merged_meta_props.copy()
-            final_props.update(existing_props)
-            content.additional_properties = final_props
-        result_contents.append(content)
-
+            for content in contents:
+                existing_props = getattr(content, "additional_properties", None) or {}
+                # Merge with content-specific properties, letting content-specific props override
+                final_props = merged_meta_props.copy()
+                final_props.update(existing_props)
+                content.additional_properties = final_props
+        result_contents.extend(contents)
     return result_contents
 
 
 def _mcp_type_to_ai_content(
-    mcp_type: types.ImageContent | types.TextContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink,
-) -> Contents:
+    mcp_type: types.ImageContent
+    | types.TextContent
+    | types.AudioContent
+    | types.EmbeddedResource
+    | types.ResourceLink
+    | types.ToolUseContent
+    | types.ToolResultContent
+    | Sequence[
+        types.ImageContent
+        | types.TextContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+        | types.ToolResultContent
+    ],
+) -> list[Contents]:
     """Convert a MCP type to a Agent Framework type."""
-    match mcp_type:
-        case types.TextContent():
-            return TextContent(text=mcp_type.text, raw_representation=mcp_type)
-        case types.ImageContent() | types.AudioContent():
-            return DataContent(
-                uri=mcp_type.data,
-                media_type=mcp_type.mimeType,
-                raw_representation=mcp_type,
-            )
-        case types.ResourceLink():
-            return UriContent(
-                uri=str(mcp_type.uri),
-                media_type=mcp_type.mimeType or "application/json",
-                raw_representation=mcp_type,
-            )
-        case _:
-            match mcp_type.resource:
-                case types.TextResourceContents():
-                    return TextContent(
-                        text=mcp_type.resource.text,
+    mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
+    return_types: list[Contents] = []
+    for mcp_type in mcp_types:
+        match mcp_type:
+            case types.TextContent():
+                return_types.append(TextContent(text=mcp_type.text, raw_representation=mcp_type))
+            case types.ImageContent() | types.AudioContent():
+                return_types.append(
+                    DataContent(
+                        uri=mcp_type.data,
+                        media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
-                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
-                case types.BlobResourceContents():
-                    return DataContent(
-                        uri=mcp_type.resource.blob,
-                        media_type=mcp_type.resource.mimeType,
+                )
+            case types.ResourceLink():
+                return_types.append(
+                    UriContent(
+                        uri=str(mcp_type.uri),
+                        media_type=mcp_type.mimeType or "application/json",
                         raw_representation=mcp_type,
-                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
+                )
+            case types.ToolUseContent():
+                return_types.append(
+                    FunctionCallContent(
+                        call_id=mcp_type.id,
+                        name=mcp_type.name,
+                        arguments=mcp_type.input,
+                        raw_representation=mcp_type,
+                    )
+                )
+            case types.ToolResultContent():
+                return_types.append(
+                    FunctionResultContent(
+                        call_id=mcp_type.toolUseId,
+                        result=_mcp_type_to_ai_content(mcp_type.content)
+                        if mcp_type.content
+                        else mcp_type.structuredContent,
+                        exception=Exception() if mcp_type.isError else None,
+                        raw_representation=mcp_type,
+                    )
+                )
+            case types.EmbeddedResource():
+                match mcp_type.resource:
+                    case types.TextResourceContents():
+                        return_types.append(
+                            TextContent(
+                                text=mcp_type.resource.text,
+                                raw_representation=mcp_type,
+                                additional_properties=(
+                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                ),
+                            )
+                        )
+                    case types.BlobResourceContents():
+                        return_types.append(
+                            DataContent(
+                                uri=mcp_type.resource.blob,
+                                media_type=mcp_type.resource.mimeType,
+                                raw_representation=mcp_type,
+                                additional_properties=(
+                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                ),
+                            )
+                        )
+    return return_types
 
 
 def _ai_content_to_mcp_types(
