@@ -52,6 +52,7 @@ from ._executor import (
     handler,
 )
 from ._message_utils import normalize_messages_input
+from ._orchestration_request_info import RequestInfoInterceptor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -76,9 +77,7 @@ class _InputToConversation(Executor):
         messages: list[str | ChatMessage],
         ctx: WorkflowContext[list[ChatMessage]],
     ) -> None:
-        # Make a copy to avoid mutation downstream
-        normalized = normalize_messages_input(messages)
-        await ctx.send_message(list(normalized))
+        await ctx.send_message(normalize_messages_input(messages))
 
 
 class _ResponseToConversation(Executor):
@@ -119,11 +118,24 @@ class SequentialBuilder:
 
         # Enable checkpoint persistence
         workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
+
+        # Enable request info for mid-workflow feedback (pauses before each agent)
+        workflow = SequentialBuilder().participants([agent1, agent2]).with_request_info().build()
+
+        # Enable request info only for specific agents
+        workflow = (
+            SequentialBuilder()
+            .participants([agent1, agent2, agent3])
+            .with_request_info(agents=[agent2])  # Only pause before agent2
+            .build()
+        )
     """
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = None
+        self._request_info_enabled: bool = False
+        self._request_info_filter: set[str] | None = None
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
         """Define the ordered participants for this sequential workflow.
@@ -157,14 +169,56 @@ class SequentialBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | AgentProtocol | Executor] | None = None,
+    ) -> "SequentialBuilder":
+        """Enable request info before agents run in the workflow.
+
+        When enabled, the workflow pauses before each agent runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and
+        optionally inject guidance before the agent responds. The caller provides
+        input via the standard response_handler/request_info pattern.
+
+        Args:
+            agents: Optional filter - only pause before these specific agents/executors.
+                   Accepts agent names (str), agent instances, or executor instances.
+                   If None (default), pauses before every agent.
+
+        Returns:
+            self: The builder instance for fluent chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            # Pause before all agents
+            workflow = SequentialBuilder().participants([a1, a2]).with_request_info().build()
+
+            # Pause only before specific agents
+            workflow = (
+                SequentialBuilder()
+                .participants([drafter, reviewer, finalizer])
+                .with_request_info(agents=[reviewer])  # Only pause before reviewer
+                .build()
+            )
+        """
+        from ._orchestration_request_info import resolve_request_info_filter
+
+        self._request_info_enabled = True
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
+        return self
+
     def build(self) -> Workflow:
         """Build and validate the sequential workflow.
 
         Wiring pattern:
         - _InputToConversation normalizes the initial input into list[ChatMessage]
         - For each participant in order:
-            - If Agent (or AgentExecutor): pass conversation to the agent, then convert response
-              to conversation via _ResponseToConversation
+            - If Agent (or AgentExecutor): pass conversation to the agent, then optionally
+              route through human input interceptor, then convert response to conversation
+              via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
@@ -184,12 +238,22 @@ class SequentialBuilder:
         for p in self._participants:
             # Agent-like branch: either explicitly an AgentExecutor or any non-AgentExecutor
             if not (isinstance(p, Executor) and not isinstance(p, AgentExecutor)):
-                # input conversation -> (agent) -> response -> conversation
-                builder.add_edge(prior, p)
-                # Give the adapter a deterministic, self-describing id
+                # input conversation -> [human_input_interceptor] -> (agent) -> response -> conversation
                 label: str
                 label = p.id if isinstance(p, Executor) else getattr(p, "name", None) or p.__class__.__name__
                 resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
+
+                if self._request_info_enabled:
+                    # Insert request info interceptor BEFORE the agent
+                    interceptor = RequestInfoInterceptor(
+                        executor_id=f"request_info:{label}",
+                        agent_filter=self._request_info_filter,
+                    )
+                    builder.add_edge(prior, interceptor)
+                    builder.add_edge(interceptor, p)
+                else:
+                    builder.add_edge(prior, p)
+
                 builder.add_edge(p, resp_to_conv)
                 prior = resp_to_conv
             elif isinstance(p, Executor):

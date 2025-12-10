@@ -111,7 +111,8 @@ def test_add_agent_with_custom_parameters():
     builder = WorkflowBuilder()
 
     # Add agent with custom parameters
-    result = builder.add_agent(agent, output_response=True, id="my_custom_id")
+    with pytest.deprecated_call():
+        result = builder.add_agent(agent, output_response=True, id="my_custom_id")
 
     # Verify that add_agent returns the builder for chaining
     assert result is builder
@@ -133,7 +134,8 @@ def test_add_agent_reuses_same_wrapper():
     builder = WorkflowBuilder()
 
     # Add agent with specific parameters
-    builder.add_agent(agent, output_response=True, id="agent_exec")
+    with pytest.deprecated_call():
+        builder.add_agent(agent, output_response=True, id="agent_exec")
 
     # Use the same agent instance in add_edge - should reuse the same wrapper
     builder.set_start_executor(agent)
@@ -158,8 +160,9 @@ def test_add_agent_then_use_in_edges():
     builder = WorkflowBuilder()
 
     # Add agents with specific settings
-    builder.add_agent(agent1, output_response=False, id="exec1")
-    builder.add_agent(agent2, output_response=True, id="exec2")
+    with pytest.deprecated_call():
+        builder.add_agent(agent1, output_response=False, id="exec1")
+        builder.add_agent(agent2, output_response=True, id="exec2")
 
     # Use the same agent instances to create edges
     workflow = builder.set_start_executor(agent1).add_edge(agent1, agent2).build()
@@ -183,7 +186,8 @@ def test_add_agent_without_explicit_id_uses_agent_name():
     agent = DummyAgent(id="agent_x", name="named_agent")
     builder = WorkflowBuilder()
 
-    result = builder.add_agent(agent)
+    with pytest.deprecated_call():
+        result = builder.add_agent(agent)
 
     # Verify that add_agent returns the builder for chaining
     assert result is builder
@@ -203,10 +207,11 @@ def test_add_agent_duplicate_id_raises_error():
     builder = WorkflowBuilder()
 
     # Add first agent
-    builder.add_agent(agent1)
+    with pytest.deprecated_call():
+        builder.add_agent(agent1)
 
     # Adding second agent with same name should raise ValueError
-    with pytest.raises(ValueError, match="Duplicate executor ID"):
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="Duplicate executor ID"):
         builder.add_agent(agent2)
 
 

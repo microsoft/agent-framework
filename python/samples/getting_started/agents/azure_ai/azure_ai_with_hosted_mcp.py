@@ -64,7 +64,7 @@ async def run_hosted_mcp_without_approval() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyLearnDocsAgent",
             instructions="You are a helpful assistant that can help with Microsoft documentation questions.",
             tools=HostedMCPTool(
@@ -89,7 +89,7 @@ async def run_hosted_mcp_with_approval_and_thread() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIClient(async_credential=credential).create_agent(
+        AzureAIClient(credential=credential).create_agent(
             name="MyApiSpecsAgent",
             instructions="You are a helpful agent that can use MCP tools to assist users.",
             tools=HostedMCPTool(

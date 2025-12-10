@@ -22,7 +22,7 @@ async def suspend_resume_service_managed_thread() -> None:
     # AzureAIAgentClient supports service-managed threads.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential).create_agent(
+        AzureAIAgentClient(credential=credential).create_agent(
             name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
         ) as agent,
     ):
