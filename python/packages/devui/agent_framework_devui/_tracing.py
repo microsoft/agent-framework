@@ -8,14 +8,14 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from opentelemetry.sdk._logs.export import LogExporter, LogExportResult
+from opentelemetry.sdk._logs import ReadableLogRecord
+from opentelemetry.sdk._logs.export import LogRecordExporter, LogRecordExportResult
 from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from .models import ResponseTraceEvent
 
 if TYPE_CHECKING:
-    from opentelemetry.sdk._logs import LogData
     from opentelemetry.sdk.metrics.export import MetricsData
 
 logger = logging.getLogger(__name__)
@@ -42,16 +42,16 @@ class NoOpSpanExporter(SpanExporter):
         return True
 
 
-class NoOpLogExporter(LogExporter):
+class NoOpLogExporter(LogRecordExporter):
     """A no-op log exporter that discards all logs.
 
     Used when tracing is enabled for local capture but no external
     OTLP endpoint is configured.
     """
 
-    def export(self, batch: Sequence["LogData"]) -> LogExportResult:
+    def export(self, batch: Sequence[ReadableLogRecord]) -> LogRecordExportResult:
         """Discard logs and return success."""
-        return LogExportResult.SUCCESS
+        return LogRecordExportResult.SUCCESS
 
     def shutdown(self) -> None:
         """No-op shutdown."""

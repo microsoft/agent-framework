@@ -176,6 +176,31 @@ class ConversationStore(ABC):
         """
         pass
 
+    @abstractmethod
+    def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
+        """Add a trace event to the conversation for context inspection.
+
+        Traces capture execution metadata like token usage, timing, and LLM context
+        that isn't stored in the AgentThread but is useful for debugging.
+
+        Args:
+            conversation_id: Conversation ID
+            trace_event: Trace event data (from ResponseTraceEvent.data)
+        """
+        pass
+
+    @abstractmethod
+    def get_traces(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Get all trace events for a conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            List of trace event dicts, or empty list if not found
+        """
+        pass
+
 
 class InMemoryConversationStore(ConversationStore):
     """In-memory conversation storage wrapping AgentThread.
