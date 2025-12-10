@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
