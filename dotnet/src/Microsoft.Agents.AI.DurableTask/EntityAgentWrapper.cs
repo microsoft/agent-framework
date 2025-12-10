@@ -27,7 +27,7 @@ internal sealed class EntityAgentWrapper(
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        AgentRunResponse response = await base.RunAsync(
+        AgentRunResponse response = await base.RunCoreAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),
@@ -43,7 +43,7 @@ internal sealed class EntityAgentWrapper(
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (AgentRunResponseUpdate update in base.RunStreamingAsync(
+        await foreach (AgentRunResponseUpdate update in base.RunCoreStreamingAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),
