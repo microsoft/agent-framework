@@ -281,6 +281,16 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
     assert output == "One | Two"
 
 
+def test_concurrent_with_aggregator_executor_factory_fail_with_type_mismatch() -> None:
+    """Test with_aggregator using an Executor class directly as factory (with default __init__ parameters)."""
+
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    with pytest.raises(TypeError):
+        ConcurrentBuilder().participants([e1, e2]).with_aggregator(lambda: "Mock Aggregator").build()  # type: ignore
+
+
 async def test_concurrent_checkpoint_resume_round_trip() -> None:
     storage = InMemoryCheckpointStorage()
 

@@ -449,14 +449,20 @@ class ConcurrentBuilder:
             # Case 1: Executor instance - use directly
             aggregator = self._aggregator
         elif callable(self._aggregator):
-            # Distinguish between an aggregator factory and callback-based aggregator
-            # by checking the signature: factory has 0 params, callback has 1-2 params
-            sig = inspect.signature(self._aggregator)
-            param_count = len(sig.parameters)
+            # Distinguish between an aggregator factory (could also be a class) and callback-based aggregator
+            if inspect.isclass(self._aggregator):
+                aggregator = self._aggregator()
+            else:
+                # Check the signature: factory has 0 params, callback has 1-2 params
+                sig = inspect.signature(self._aggregator)
+                param_count = len(sig.parameters)
 
-            # Case 2: Executor factory (no parameters) - call it to create the executor
-            # Case 3: Callback with parameters (1-2 params) - wrap in _CallbackAggregator
-            aggregator = self._aggregator() if param_count == 0 else _CallbackAggregator(self._aggregator)  # type: ignore
+                # Case 2: Executor factory (no parameters) - call it to create the executor
+                # Case 3: Callback with parameters (1-2 params) - wrap in _CallbackAggregator
+                aggregator = self._aggregator() if param_count == 0 else _CallbackAggregator(self._aggregator)  # type: ignore
+
+            if not isinstance(aggregator, Executor):
+                raise TypeError(f"Aggregator factory must return an Executor; got {type(aggregator).__name__}")
         else:
             # Case 4: No custom aggregator provided - use the default one
             aggregator = _AggregateAgentConversations(id="aggregator")
