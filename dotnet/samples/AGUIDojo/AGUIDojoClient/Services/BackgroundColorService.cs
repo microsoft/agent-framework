@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 namespace AGUIDojoClient.Services;
 
@@ -13,7 +13,7 @@ public class BackgroundColorChangedEventArgs : EventArgs
     /// <param name="color">The new background color.</param>
     public BackgroundColorChangedEventArgs(string color)
     {
-        Color = color;
+        this.Color = color;
     }
 
     /// <summary>
@@ -59,7 +59,7 @@ public class BackgroundColorService : IBackgroundColorService
     /// <inheritdoc/>
     public void SetColor(string color)
     {
-        CurrentColor = color;
+        this.CurrentColor = color;
         ColorChanged?.Invoke(this, new BackgroundColorChangedEventArgs(color));
     }
 }

@@ -1,8 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.AI;
-using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.Extensions.AI;
 
 namespace AGUIDojoClient.Components.Demos.HumanInTheLoop;

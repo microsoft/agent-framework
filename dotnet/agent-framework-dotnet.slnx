@@ -23,6 +23,8 @@
     <Project Path="samples/AGUIClientServer/AGUIServer/AGUIServer.csproj" />
   </Folder>
   <Folder Name="/Samples/AGUIDojo/">
+    <File Path="samples/AGUIDojo/Design.md" />
+    <File Path="samples/AGUIDojo/Plan.md" />
     <Project Path="samples/AGUIDojo/AGUIDojoClient/AGUIDojoClient.csproj" />
     <Project Path="samples/AGUIDojo/AGUIDojoServer/AGUIDojoServer.csproj" />
   </Folder>
@@ -109,29 +111,6 @@
   <Folder Name="/Samples/GettingStarted/AGUI/Step05_StateManagement/">
     <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Client/Client.csproj" />
     <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Server/Server.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/">
-    <File Path="samples/GettingStarted/AGUI/README.md" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step01_GettingStarted/">
-    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Server/Server.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Client/Client.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step02_BackendTools/">
-    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Server/Server.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Client/Client.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step03_FrontendTools/">
-    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Server/Server.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Client/Client.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step04_HumanInLoop/">
-    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
-  </Folder>
-  <Folder Name="/Samples/GettingStarted/AGUI/Step05_StateManagement/">
-    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Server/Server.csproj" />
-    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Client/Client.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />

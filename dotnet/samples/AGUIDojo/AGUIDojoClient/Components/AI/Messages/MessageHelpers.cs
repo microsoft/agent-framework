@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Components.AI;
 

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
 
@@ -27,37 +27,61 @@ public sealed class WeatherInfo
     /// <summary>
     /// Gets the temperature in Fahrenheit.
     /// </summary>
-    public double TemperatureFahrenheit => (Temperature * 9.0 / 5.0) + 32;
+    public double TemperatureFahrenheit => (this.Temperature * 9.0 / 5.0) + 32;
 
     /// <summary>
     /// Gets an emoji icon based on weather conditions.
     /// </summary>
-    public string ConditionIcon => GetConditionIcon(Conditions);
+    public string ConditionIcon => GetConditionIcon(this.Conditions);
 
     private static string GetConditionIcon(string conditions)
     {
         if (string.Equals(conditions, "sunny", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "clear", StringComparison.OrdinalIgnoreCase))
+        {
             return "☀️";
+        }
+
         if (string.Equals(conditions, "cloudy", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "overcast", StringComparison.OrdinalIgnoreCase))
+        {
             return "☁️";
+        }
+
         if (string.Equals(conditions, "rainy", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "rain", StringComparison.OrdinalIgnoreCase))
+        {
             return "🌧️";
+        }
+
         if (string.Equals(conditions, "stormy", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "thunderstorm", StringComparison.OrdinalIgnoreCase))
+        {
             return "⛈️";
+        }
+
         if (string.Equals(conditions, "snowy", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "snow", StringComparison.OrdinalIgnoreCase))
+        {
             return "❄️";
+        }
+
         if (string.Equals(conditions, "foggy", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(conditions, "fog", StringComparison.OrdinalIgnoreCase))
+        {
             return "🌫️";
+        }
+
         if (string.Equals(conditions, "windy", StringComparison.OrdinalIgnoreCase))
+        {
             return "💨";
+        }
+
         if (string.Equals(conditions, "partly cloudy", StringComparison.OrdinalIgnoreCase))
+        {
             return "⛅";
+        }
+
         return "🌡️";
     }
 }

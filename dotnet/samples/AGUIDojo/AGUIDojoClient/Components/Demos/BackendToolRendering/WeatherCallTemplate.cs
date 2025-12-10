@@ -1,6 +1,5 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using AGUIDojoClient.Components.Shared;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.AspNetCore.Components.AI;

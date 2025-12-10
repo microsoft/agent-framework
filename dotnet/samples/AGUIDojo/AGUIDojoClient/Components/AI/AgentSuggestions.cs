@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Extensions.AI;
 
@@ -16,8 +16,8 @@ public readonly struct Suggestion : IEquatable<Suggestion>
     /// <param name="message">The message to send when the suggestion is selected.</param>
     public Suggestion(string text, ChatMessage message)
     {
-        Text = text;
-        Message = message;
+        this.Text = text;
+        this.Message = message;
     }
 
     /// <summary>
@@ -26,8 +26,8 @@ public readonly struct Suggestion : IEquatable<Suggestion>
     /// <param name="text">The display text for the suggestion, also used as the message content.</param>
     public Suggestion(string text)
     {
-        Text = text;
-        Message = new ChatMessage(ChatRole.User, text);
+        this.Text = text;
+        this.Message = new ChatMessage(ChatRole.User, text);
     }
 
     /// <summary>
@@ -41,13 +41,13 @@ public readonly struct Suggestion : IEquatable<Suggestion>
     public ChatMessage Message { get; }
 
     /// <inheritdoc/>
-    public override bool Equals(object? obj) => obj is Suggestion other && Equals(other);
+    public override bool Equals(object? obj) => obj is Suggestion other && this.Equals(other);
 
     /// <inheritdoc/>
-    public bool Equals(Suggestion other) => Text == other.Text;
+    public bool Equals(Suggestion other) => this.Text == other.Text;
 
     /// <inheritdoc/>
-    public override int GetHashCode() => Text?.GetHashCode() ?? 0;
+    public override int GetHashCode() => this.Text?.GetHashCode() ?? 0;
 
     /// <summary>
     /// Determines whether two <see cref="Suggestion"/> instances are equal.

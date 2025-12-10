@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
@@ -19,8 +19,8 @@ public sealed class DemoService
     /// <param name="httpClientFactory">Factory for creating HTTP clients.</param>
     public DemoService(IHttpClientFactory httpClientFactory)
     {
-        _httpClientFactory = httpClientFactory;
-        _scenarios = InitializeScenarios();
+        this._httpClientFactory = httpClientFactory;
+        this._scenarios = InitializeScenarios();
     }
 
     /// <summary>

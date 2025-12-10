@@ -35,7 +35,7 @@ builder.Services.AddChatClient(sp =>
 builder.Services.AddKeyedSingleton<AIAgent>("agentic-chat", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "agentic_chat");
+    AGUIChatClient aguiChatClient = new(httpClient, "agentic_chat");
 
     // Get the background color service for the frontend tool
     IBackgroundColorService backgroundService = sp.GetRequiredService<IBackgroundColorService>();
@@ -61,7 +61,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("agentic-chat", (sp, key) =>
 builder.Services.AddKeyedSingleton<AIAgent>("backend-tool-rendering", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "backend_tool_rendering");
+    AGUIChatClient aguiChatClient = new(httpClient, "backend_tool_rendering");
 
     return aguiChatClient.CreateAIAgent(
         name: "BackendToolRenderingAssistant",
@@ -72,7 +72,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("backend-tool-rendering", (sp, key) 
 builder.Services.AddKeyedSingleton<AIAgent>("human-in-the-loop", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "human_in_the_loop");
+    AGUIChatClient aguiChatClient = new(httpClient, "human_in_the_loop");
 
     // Create the base agent and wrap it with a delegating agent that adds instructions
     AIAgent baseAgent = aguiChatClient.CreateAIAgent(
@@ -86,7 +86,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("human-in-the-loop", (sp, key) =>
 builder.Services.AddKeyedSingleton<AIAgent>("tool-based-generative-ui", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "tool_based_generative_ui");
+    AGUIChatClient aguiChatClient = new(httpClient, "tool_based_generative_ui");
 
     return aguiChatClient.CreateAIAgent(
         name: "ToolBasedGenerativeUIAssistant",
@@ -97,7 +97,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("tool-based-generative-ui", (sp, key
 builder.Services.AddKeyedSingleton<AIAgent>("agentic-generative-ui", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "agentic_generative_ui");
+    AGUIChatClient aguiChatClient = new(httpClient, "agentic_generative_ui");
 
     return aguiChatClient.CreateAIAgent(
         name: "AgenticGenerativeUIAssistant",
@@ -108,7 +108,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("agentic-generative-ui", (sp, key) =
 builder.Services.AddKeyedSingleton<AIAgent>("shared-state", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "shared_state");
+    AGUIChatClient aguiChatClient = new(httpClient, "shared_state");
 
     return aguiChatClient.CreateAIAgent(
         name: "SharedStateAssistant",
@@ -119,7 +119,7 @@ builder.Services.AddKeyedSingleton<AIAgent>("shared-state", (sp, key) =>
 builder.Services.AddKeyedSingleton<AIAgent>("predictive-state-updates", (sp, key) =>
 {
     HttpClient httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver");
-    AGUIChatClient aguiChatClient = new AGUIChatClient(httpClient, "predictive_state_updates");
+    AGUIChatClient aguiChatClient = new(httpClient, "predictive_state_updates");
 
     return aguiChatClient.CreateAIAgent(
         name: "PredictiveStateUpdatesAssistant",
