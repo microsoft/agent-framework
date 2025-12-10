@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI;
 internal class ChatClientAgentContinuationToken : ResponseContinuationToken
 {
     private const string TokenTypeName = "chatClientAgentContinuationToken";
-    private const string TypeDescriminator = "type";
+    private const string TypeDiscriminator = "type";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatClientAgentContinuationToken"/> class.
@@ -36,7 +36,7 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
         writer.WriteStartObject();
 
         // This property should be the first one written to identify the type during deserialization.
-        writer.WriteString(TypeDescriminator, TokenTypeName);
+        writer.WriteString(TypeDiscriminator, TokenTypeName);
 
         writer.WriteString("innerToken", JsonSerializer.Serialize(this.InnerToken, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken))));
 
@@ -137,7 +137,7 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
             _ = reader.Read();
 
             // If the first property name is not "type", or its value does not match this token type name, then we know its not this token type.
-            if (reader.GetString() != TypeDescriminator || !reader.Read() || reader.GetString() != TokenTypeName)
+            if (reader.GetString() != TypeDiscriminator || !reader.Read() || reader.GetString() != TokenTypeName)
             {
                 Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it is not of the correct type.");
             }
