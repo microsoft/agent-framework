@@ -337,7 +337,7 @@ def test_agent_decorator_with_valid_class():
 
     # Create a mock class with the required methods
     class MockChatClientAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"
@@ -367,7 +367,7 @@ def test_agent_decorator_with_missing_methods():
     """Test that agent decorator handles classes missing required methods gracefully."""
 
     class MockAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
     # Apply the decorator - should not raise an error
     with pytest.raises(AgentInitializationError):
@@ -379,7 +379,7 @@ def test_agent_decorator_with_partial_methods():
     from agent_framework.observability import use_agent_observability
 
     class MockAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"
@@ -401,7 +401,7 @@ def mock_chat_agent():
     """Create a mock chat client agent for testing."""
 
     class MockChatClientAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"

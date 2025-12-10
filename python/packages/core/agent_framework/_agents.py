@@ -516,7 +516,7 @@ class BaseAgent(SerializationMixin):
 
 
 @use_agent_middleware
-@use_agent_observability
+@use_agent_observability(capture_usage=False)
 class ChatAgent(BaseAgent):
     """A Chat Client Agent.
 
@@ -583,7 +583,7 @@ class ChatAgent(BaseAgent):
                 print(update.text, end="")
     """
 
-    AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
+    AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
 
     def __init__(
         self,

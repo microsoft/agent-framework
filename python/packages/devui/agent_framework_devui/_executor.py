@@ -82,8 +82,8 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_OTEL is set
-        if os.environ.get("ENABLE_OTEL"):
+        # Configure Agent Framework tracing only if ENABLE_OBSERVABILITY is set
+        if os.environ.get("ENABLE_OBSERVABILITY"):
             try:
                 from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
 
@@ -102,7 +102,7 @@ class AgentFrameworkExecutor:
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("ENABLE_OTEL not set, skipping observability setup")
+            logger.debug("ENABLE_OBSERVABILITY not set, skipping observability setup")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.

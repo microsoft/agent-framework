@@ -164,7 +164,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # Track whether we should close client connection
         self._should_close_client = should_close_client
 
-    async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
+    async def setup_azure_ai_observability(
+        self,
+        enable_sensitive_data: bool | None = None,
+        enable_live_metrics: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Use this method to setup tracing in your Azure AI Project.
 
         This will take the connection string from the project project_client.
@@ -180,10 +185,21 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             )
             return
         from agent_framework.observability import setup_observability
+        # from azure.monitor.opentelemetry import configure_azure_monitor
 
         setup_observability(
-            applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data
+            applicationinsights_connection_string=conn_string,
+            applicationinsights_live_metrics=enable_live_metrics,
+            enable_sensitive_data=enable_sensitive_data,
+            enable_console_as_fallback=False,
+            **kwargs,
         )
+        # configure_azure_monitor(
+        #     connection_string=conn_string,
+        #     enable_live_metrics=enable_live_metrics,
+        #     resource=OBSERVABILITY_SETTINGS.resource,
+        # )
+        # if enable_live_metrics:
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""

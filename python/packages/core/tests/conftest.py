@@ -10,7 +10,7 @@ from pytest import fixture
 
 
 @fixture
-def enable_otel(request: Any) -> bool:
+def enable_observability(request: Any) -> bool:
     """Fixture that returns a boolean indicating if Otel is enabled."""
     return request.param if hasattr(request, "param") else True
 
@@ -22,11 +22,11 @@ def enable_sensitive_data(request: Any) -> bool:
 
 
 @fixture
-def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
+def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
     """Fixture to remove environment variables for ObservabilitySettings."""
 
     env_vars = [
-        "ENABLE_OTEL",
+        "ENABLE_OBSERVABILITY",
         "ENABLE_SENSITIVE_DATA",
         "OTLP_ENDPOINT",
         "APPLICATIONINSIGHTS_CONNECTION_STRING",
@@ -34,8 +34,8 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
 
     for key in env_vars:
         monkeypatch.delenv(key, raising=False)  # type: ignore
-    monkeypatch.setenv("ENABLE_OTEL", str(enable_otel))  # type: ignore
-    if not enable_otel:
+    monkeypatch.setenv("ENABLE_OBSERVABILITY", str(enable_observability))  # type: ignore
+    if not enable_observability:
         # we overwrite sensitive data for tests
         enable_sensitive_data = False
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", str(enable_sensitive_data))  # type: ignore
@@ -59,7 +59,7 @@ def span_exporter(monkeypatch, enable_otel: bool, enable_sensitive_data: bool) -
         patch("agent_framework.observability.setup_observability"),
     ):
         exporter = InMemorySpanExporter()
-        if enable_otel or enable_sensitive_data:
+        if enable_observability or enable_sensitive_data:
             tracer_provider = trace.get_tracer_provider()
             if not hasattr(tracer_provider, "add_span_processor"):
                 raise RuntimeError("Tracer provider does not support adding span processors.")

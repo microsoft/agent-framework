@@ -22,13 +22,13 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
-        OBSERVABILITY_SETTINGS.enable_otel = True
+        OBSERVABILITY_SETTINGS.enable_observability = True
         super().init()
 
     def teardown(self) -> None:
         """Teardown the agent-framework-lab-lightning for training."""
         super().teardown()
-        OBSERVABILITY_SETTINGS.enable_otel = False
+        OBSERVABILITY_SETTINGS.enable_observability = False
 
 
 __all__: list[str] = ["AgentFrameworkTracer"]

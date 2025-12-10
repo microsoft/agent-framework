@@ -42,7 +42,7 @@ No additional dependencies are required to enable telemetry. The necessary packa
 
 The following environment variables are used to turn on/off observability of the Agent Framework:
 
-- ENABLE_OTEL=true
+- ENABLE_OBSERVABILITY=true
 - ENABLE_SENSITIVE_DATA=true
 
 The framework will emit observability data when one of the above environment variables is set to true.
@@ -93,7 +93,7 @@ exporter = OTLPSpanExporter(endpoint="another-otlp-endpoint")
 setup_observability(exporters=[exporter])
 ```
 
-> Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OTEL` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
+> Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OBSERVABILITY` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
 
 #### Logging
 Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
@@ -245,7 +245,7 @@ OTLP_ENDPOINT=http://localhost:4317
 Or set it as an environment variable when running your samples:
 
 ```bash
-ENABLE_OTEL=true OTLP_ENDPOINT=http://localhost:4317 python 01-zero_code.py
+ENABLE_OBSERVABILITY=true OTLP_ENDPOINT=http://localhost:4317 python 01-zero_code.py
 ```
 
 ### Viewing telemetry data
