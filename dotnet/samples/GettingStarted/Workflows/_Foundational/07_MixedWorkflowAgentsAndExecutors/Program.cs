@@ -229,14 +229,16 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// Executor that synchronizes agent output and prepares it for the next stage.
 /// This demonstrates how executors can process agent outputs and forward to the next agent.
 /// </summary>
+/// Disable RCS1168 to allow different naming from base class
+#pragma warning disable RCS1168
 internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
     public override async ValueTask HandleAsync(
-        List<ChatMessage> message,
+        List<ChatMessage> messages,
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
     {
-        ChatMessage agentReply = message.LastOrDefault(m => m.Role == ChatRole.Assistant)
+        ChatMessage agentReply = messages.LastOrDefault(m => m.Role == ChatRole.Assistant)
             ?? throw new InvalidOperationException("Detector returned no assistant message.");
 
         Console.WriteLine(); // New line after agent streaming
@@ -285,12 +287,12 @@ internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("Jai
 /// </summary>
 internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string>("FinalOutput")
 {
-    public override ValueTask<string> HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    public override ValueTask<string> HandleAsync(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Console.WriteLine(); // New line after agent streaming
         Console.ForegroundColor = ConsoleColor.Green;
 
-        var assistantOutput = message.LastOrDefault(m => m.Role == ChatRole.Assistant)
+        var assistantOutput = messages.LastOrDefault(m => m.Role == ChatRole.Assistant)
             ?? throw new InvalidOperationException("Response agent returned no assistant message.");
 
         Console.WriteLine($"\n[{this.Id}] Final Response:");
@@ -301,3 +303,4 @@ internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string
         return ValueTask.FromResult(assistantOutput.Text ?? string.Empty);
     }
 }
+#pragma warning restore RCS116
