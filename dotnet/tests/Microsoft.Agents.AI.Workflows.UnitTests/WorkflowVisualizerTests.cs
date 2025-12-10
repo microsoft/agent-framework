@@ -448,6 +448,7 @@ public class WorkflowVisualizerTests
 
         // Should convert newline to <br/>
         mermaidContent.Should().Contain("Line 1<br/>Line 2");
-        mermaidContent.Should().NotContain("\n");
+        // Should not contain literal newline in the label (but the overall output has newlines between statements)
+        mermaidContent.Should().NotContain("Line 1\nLine 2");
     }
 }
