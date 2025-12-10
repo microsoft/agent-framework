@@ -134,7 +134,11 @@ public sealed class TextSearchProvider : AIContextProvider
             // Search
             var results = await this._searchAsync(input, cancellationToken).ConfigureAwait(false);
             IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
-            this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
+
+            if (this._logger?.IsEnabled(LogLevel.Information) is true)
+            {
+                this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
+            }
 
             if (materialized.Count == 0)
             {
@@ -144,7 +148,10 @@ public sealed class TextSearchProvider : AIContextProvider
             // Format search results
             string formatted = this.FormatResults(materialized);
 
-            this._logger?.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
+            if (this._logger?.IsEnabled(LogLevel.Trace) is true)
+            {
+                this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
+            }
 
             return new AIContext
             {
@@ -230,8 +237,15 @@ public sealed class TextSearchProvider : AIContextProvider
         IList<TextSearchResult> materialized = results as IList<TextSearchResult> ?? results.ToList();
         string outputText = this.FormatResults(materialized);
 
-        this._logger?.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
-        this._logger?.LogTrace("TextSearchProvider Input:{UserQuestion}\nOutput:{MessageText}", userQuestion, outputText);
+        if (this._logger?.IsEnabled(LogLevel.Information) is true)
+        {
+            this._logger.LogInformation("TextSearchProvider: Retrieved {Count} search results.", materialized.Count);
+
+            if (this._logger.IsEnabled(LogLevel.Trace))
+            {
+                this._logger.LogTrace("TextSearchProvider Input:{UserQuestion}\nOutput:{MessageText}", userQuestion, outputText);
+            }
+        }
 
         return outputText;
     }

@@ -481,7 +481,7 @@ public class WorkflowBuilder
         }
 
         // Make sure that all nodes are connected to the start executor (transitively)
-        HashSet<string> remainingExecutors = new(this._executorBindings.Keys);
+        HashSet<string> remainingExecutors = [.. this._executorBindings.Keys];
         Queue<string> toVisit = new([this._startExecutorId]);
 
         if (!validateOrphans)

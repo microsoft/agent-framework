@@ -59,7 +59,11 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         AIAgent? agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
         if (agent is null)
         {
-            this._logger.LogWarning("Failed to resolve agent with name '{AgentName}'", agentName);
+            if (this._logger.IsEnabled(LogLevel.Warning))
+            {
+                this._logger.LogWarning("Failed to resolve agent with name '{AgentName}'", agentName);
+            }
+
             return ValueTask.FromResult<ResponseError?>(new ResponseError
             {
                 Code = "agent_not_found",
