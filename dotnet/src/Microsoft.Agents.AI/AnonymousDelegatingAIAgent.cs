@@ -85,7 +85,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -132,7 +132,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
