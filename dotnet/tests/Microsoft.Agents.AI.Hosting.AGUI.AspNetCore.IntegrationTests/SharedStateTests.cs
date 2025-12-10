@@ -344,7 +344,7 @@ internal sealed class FakeStateAgent : AIAgent
 
     protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
     }
 
     protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(

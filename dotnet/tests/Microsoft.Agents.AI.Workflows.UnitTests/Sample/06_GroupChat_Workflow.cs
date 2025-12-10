@@ -69,7 +69,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         IEnumerable<AgentRunResponseUpdate> update = [
-            await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+            await this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
                       .SingleAsync(cancellationToken)
                       .ConfigureAwait(false)];
 
