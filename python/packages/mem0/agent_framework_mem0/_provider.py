@@ -55,10 +55,6 @@ class Mem0Provider(ContextProvider):
             user_id: The user ID for scoping memories or None.
             scope_to_per_operation_thread_id: Whether to scope memories to per-operation thread ID.
             context_prompt: The prompt to prepend to retrieved memories.
-
-        Note:
-            Currently, filters are set at initialization time via user_id, agent_id, thread_id,
-            and application_id. Run-level filtering support is planned for a future release.
         """
         should_close_client = False
         if mem0_client is None:
