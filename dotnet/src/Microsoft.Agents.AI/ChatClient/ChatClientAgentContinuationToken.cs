@@ -119,7 +119,7 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
 
         if (innerToken is null)
         {
-            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it does not contain an innerObject.");
+            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it does not contain an inner token.");
         }
 
         return new ChatClientAgentContinuationToken(innerToken)
