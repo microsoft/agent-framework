@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, Never, cast
+from typing import Any, cast
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutorRequest,
