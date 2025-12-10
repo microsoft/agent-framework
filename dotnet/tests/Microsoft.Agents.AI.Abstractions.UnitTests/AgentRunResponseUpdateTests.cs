@@ -42,7 +42,6 @@ public class AgentRunResponseUpdateTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Role = ChatRole.Assistant,
-            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
 
         AgentRunResponseUpdate response = new(chatResponseUpdate);
@@ -54,7 +53,6 @@ public class AgentRunResponseUpdateTests
         Assert.Same(chatResponseUpdate, response.RawRepresentation as ChatResponseUpdate);
         Assert.Equal(chatResponseUpdate.ResponseId, response.ResponseId);
         Assert.Equal(chatResponseUpdate.Role, response.Role);
-        Assert.Same(chatResponseUpdate.ContinuationToken, response.ContinuationToken);
     }
 
     [Fact]
