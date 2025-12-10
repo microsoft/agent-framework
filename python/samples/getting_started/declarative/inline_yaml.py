@@ -34,7 +34,7 @@ model:
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,
-        AgentFactory(client_kwargs={"async_credential": credential}).create_agent_from_yaml(yaml_definition) as agent,
+        AgentFactory(client_kwargs={"credential": credential}).create_agent_from_yaml(yaml_definition) as agent,
     ):
         response = await agent.run("What can you do for me?")
         print("Agent response:", response.text)
