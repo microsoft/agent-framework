@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Purview.UnitTests;
 
@@ -295,11 +296,12 @@ public sealed class PurviewWrapperTests : IDisposable
         var mockAgent = new Mock<AIAgent>();
         var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Sensitive response"));
 
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
 
         this._mockProcessor.SetupSequence(x => x.ProcessMessagesAsync(
@@ -333,11 +335,12 @@ public sealed class PurviewWrapperTests : IDisposable
         var mockAgent = new Mock<AIAgent>();
         var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Safe response"));
 
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
 
         this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
@@ -375,11 +378,12 @@ public sealed class PurviewWrapperTests : IDisposable
 
         var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response from inner agent"));
         var mockAgent = new Mock<AIAgent>();
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
 
         this._mockProcessor.SetupSequence(x => x.ProcessMessagesAsync(
@@ -441,11 +445,12 @@ public sealed class PurviewWrapperTests : IDisposable
 
         var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
         var mockAgent = new Mock<AIAgent>();
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
 
         this._mockProcessor.Setup(x => x.ProcessMessagesAsync(
@@ -482,11 +487,12 @@ public sealed class PurviewWrapperTests : IDisposable
 
         var expectedResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
         var mockAgent = new Mock<AIAgent>();
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(expectedResponse);
 
         string? capturedThreadId = null;
@@ -521,11 +527,12 @@ public sealed class PurviewWrapperTests : IDisposable
         var mockAgent = new Mock<AIAgent>();
         var innerResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Response"));
 
-        mockAgent.Setup(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread>(),
-            It.IsAny<AgentRunOptions>(),
-            It.IsAny<CancellationToken>()))
+        mockAgent.Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread>(),
+                It.IsAny<AgentRunOptions>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(innerResponse);
 
         var callCount = 0;

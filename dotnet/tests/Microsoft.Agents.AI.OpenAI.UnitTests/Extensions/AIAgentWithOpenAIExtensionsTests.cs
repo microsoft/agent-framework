@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Moq;
+using Moq.Protected;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
 using OpenAIChatMessage = OpenAI.Chat.ChatMessage;
@@ -76,7 +77,12 @@ public sealed class AIAgentWithOpenAIExtensionsTests
         var responseMessage = new ChatMessage(ChatRole.Assistant, [new TextContent(ResponseText)]);
 
         mockAgent
-            .Setup(a => a.RunAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<AgentThread?>(), It.IsAny<AgentRunOptions?>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<Task<AgentRunResponse>>("RunAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread?>(),
+                It.IsAny<AgentRunOptions?>(),
+                It.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentRunResponse([responseMessage]));
 
         // Act
@@ -160,7 +166,12 @@ public sealed class AIAgentWithOpenAIExtensionsTests
         };
 
         mockAgent
-            .Setup(a => a.RunStreamingAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<AgentThread?>(), It.IsAny<AgentRunOptions?>(), It.IsAny<CancellationToken>()))
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunStreamingAsync",
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<AgentThread?>(),
+                It.IsAny<AgentRunOptions?>(),
+                It.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         // Act
