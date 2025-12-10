@@ -95,6 +95,10 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
                 break;
             }
 
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
             switch (reader.GetString())
             {
                 case "innerToken":
