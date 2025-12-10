@@ -843,7 +843,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         Assert.Single(capturedContinuationTokens[0].ResponseUpdates!);
         Assert.Equal("Once", capturedContinuationTokens[0].ResponseUpdates!.Last().Text);
 
-        // Vewrify the last continuation token has the input and all updates
+        // Verify the last continuation token has the input and all updates
         var lastToken = capturedContinuationTokens[^1];
         Assert.NotNull(lastToken.InputMessages);
         Assert.Single(lastToken.InputMessages!);
