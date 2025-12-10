@@ -95,6 +95,10 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
                 break;
             }
 
+            if (reader.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
             switch (reader.GetString())
             {
                 case "innerToken":
@@ -119,7 +123,7 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
 
         if (innerToken is null)
         {
-            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it does not contain an innerObject.");
+            Throw.ArgumentException(nameof(token), "Failed to create ChatClientAgentContinuationToken from provided token because it does not contain an inner token.");
         }
 
         return new ChatClientAgentContinuationToken(innerToken)
@@ -154,12 +158,12 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
     internal ResponseContinuationToken InnerToken { get; }
 
     /// <summary>
-    /// Gets or sets the input messages user for streaming run.
+    /// Gets or sets the input messages used for streaming run.
     /// </summary>
-    internal IReadOnlyCollection<ChatMessage>? InputMessages { set; get; }
+    internal IReadOnlyCollection<ChatMessage>? InputMessages { get; set; }
 
     /// <summary>
     /// Gets or sets the response updates received so far.
     /// </summary>
-    internal IReadOnlyCollection<ChatResponseUpdate>? ResponseUpdates { set; get; }
+    internal IReadOnlyCollection<ChatResponseUpdate>? ResponseUpdates { get; set; }
 }

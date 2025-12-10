@@ -20,7 +20,7 @@ IChatClient anthropic = new Anthropic.AnthropicClient(
     .AsIChatClient("claude-sonnet-4-20250514");
 
 IChatClient openai = new OpenAI.OpenAIClient(
-    Environment.GetEnvironmentVariable("OPENAI_APIKEY")!).GetChatClient("gpt-4o-mini")
+    Environment.GetEnvironmentVariable("OPENAI_API_KEY")!).GetChatClient("gpt-4o-mini")
     .AsIChatClient();
 
 // Define our agents.
