@@ -42,7 +42,7 @@ async def main() -> None:
     """Example showing Hosted MCP tools for a Azure AI Agent."""
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(async_credential=credential) as chat_client,
+        AzureAIAgentClient(credential=credential) as chat_client,
     ):
         agent = chat_client.create_agent(
             name="DocsAgent",

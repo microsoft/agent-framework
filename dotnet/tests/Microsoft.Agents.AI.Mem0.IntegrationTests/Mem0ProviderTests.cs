@@ -49,14 +49,14 @@ public sealed class Mem0ProviderTests : IDisposable
         var sut = new Mem0Provider(this._httpClient, storageScope);
 
         await sut.ClearStoredMemoriesAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
+        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(new[] { input }, aiContextProviderMessages: null));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext([input], aiContextProviderMessages: null));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
         await sut.ClearStoredMemoriesAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
+        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
 
         // Assert
         Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
@@ -73,14 +73,14 @@ public sealed class Mem0ProviderTests : IDisposable
         var sut = new Mem0Provider(this._httpClient, storageScope);
 
         await sut.ClearStoredMemoriesAsync();
-        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
+        var ctxBefore = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         Assert.DoesNotContain("Caoimhe", ctxBefore.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut.InvokedAsync(new AIContextProvider.InvokedContext(new[] { assistantIntro }, aiContextProviderMessages: null));
+        await sut.InvokedAsync(new AIContextProvider.InvokedContext([assistantIntro], aiContextProviderMessages: null));
         var ctxAfterAdding = await GetContextWithRetryAsync(sut, question);
         await sut.ClearStoredMemoriesAsync();
-        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
+        var ctxAfterClearing = await sut.InvokingAsync(new AIContextProvider.InvokingContext([question]));
 
         // Assert
         Assert.Contains("Caoimhe", ctxAfterAdding.Messages?[0].Text ?? string.Empty);
@@ -99,13 +99,13 @@ public sealed class Mem0ProviderTests : IDisposable
         await sut1.ClearStoredMemoriesAsync();
         await sut2.ClearStoredMemoriesAsync();
 
-        var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
-        var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }));
+        var ctxBefore1 = await sut1.InvokingAsync(new AIContextProvider.InvokingContext([question]));
+        var ctxBefore2 = await sut2.InvokingAsync(new AIContextProvider.InvokingContext([question]));
         Assert.DoesNotContain("Caoimhe", ctxBefore1.Messages?[0].Text ?? string.Empty);
         Assert.DoesNotContain("Caoimhe", ctxBefore2.Messages?[0].Text ?? string.Empty);
 
         // Act
-        await sut1.InvokedAsync(new AIContextProvider.InvokedContext(new[] { assistantIntro }, aiContextProviderMessages: null));
+        await sut1.InvokedAsync(new AIContextProvider.InvokedContext([assistantIntro], aiContextProviderMessages: null));
         var ctxAfterAdding1 = await GetContextWithRetryAsync(sut1, question);
         var ctxAfterAdding2 = await GetContextWithRetryAsync(sut2, question);
 
@@ -123,7 +123,7 @@ public sealed class Mem0ProviderTests : IDisposable
         AIContext? ctx = null;
         for (int i = 0; i < attempts; i++)
         {
-            ctx = await provider.InvokingAsync(new AIContextProvider.InvokingContext(new[] { question }), CancellationToken.None);
+            ctx = await provider.InvokingAsync(new AIContextProvider.InvokingContext([question]), CancellationToken.None);
             var text = ctx.Messages?[0].Text;
             if (!string.IsNullOrEmpty(text) && text.IndexOf("Caoimhe", StringComparison.OrdinalIgnoreCase) >= 0)
             {
