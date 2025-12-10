@@ -277,6 +277,9 @@ class ConcurrentBuilder:
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
 
+        if self._participant_factories:
+            raise ValueError("register_participants() has already been called on this builder instance.")
+
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
@@ -307,6 +310,9 @@ class ConcurrentBuilder:
             raise ValueError(
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
+
+        if self._participants:
+            raise ValueError("participants() has already been called on this builder instance.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
