@@ -878,8 +878,9 @@ class ChatAgent(BaseAgent):
             user=user,
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
-        # Filter chat_options from kwargs to prevent duplicate keyword argument
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
+        # Filter chat_options and filters from kwargs to prevent duplicate keyword argument
+        # filters is for context providers only, not for chat client
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ("chat_options", "filters")}
         response = await self.chat_client.get_response(
             messages=thread_messages,
             chat_options=co,

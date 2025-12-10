@@ -9,6 +9,7 @@ This folder contains examples demonstrating how to use the Mem0 context provider
 | File | Description |
 |------|-------------|
 | [`mem0_basic.py`](mem0_basic.py) | Basic example of using Mem0 context provider to store and retrieve user preferences across different conversation threads. |
+| [`mem0_filters.py`](mem0_filters.py) | Example demonstrating advanced filtering capabilities with Mem0, including OR logic and date-based filters for precise memory retrieval. |
 | [`mem0_threads.py`](mem0_threads.py) | Advanced example demonstrating different thread scoping strategies with Mem0. Covers global thread scope (memories shared across all operations), per-operation thread scope (memories isolated per thread), and multiple agents with different memory configurations for personal vs. work contexts. |
 | [`mem0_oss.py`](mem0_oss.py) | Example of using the Mem0 Open Source self-hosted version as the context provider. Demonstrates setup and configuration for local deployment. |
 
