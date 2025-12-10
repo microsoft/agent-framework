@@ -246,7 +246,8 @@ class ConcurrentBuilder:
         is wired as a parallel branch using fan-out edges from an internal dispatcher.
 
         Raises:
-            ValueError: if `participant_factories` is empty or `.participants()` was called
+            ValueError: if `participant_factories` is empty or `.participants()`
+                       or `.register_participants()` were already called
 
         Example:
 
@@ -294,7 +295,8 @@ class ConcurrentBuilder:
         from an internal dispatcher.
 
         Raises:
-            ValueError: if `participants` is empty, contains duplicates, or `.register_participants()` was called
+            ValueError: if `participants` is empty, contains duplicates, or `.register_participants()`
+                       or `.participants()` were already called
             TypeError: if any entry is not AgentProtocol or Executor
 
         Example:
