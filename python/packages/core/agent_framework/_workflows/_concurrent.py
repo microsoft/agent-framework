@@ -14,6 +14,7 @@ from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
+from ._orchestration_request_info import RequestInfoInterceptor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -209,15 +210,18 @@ class ConcurrentBuilder:
 
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_custom_aggregator(summarize).build()
 
-
         # Enable checkpoint persistence so runs can resume
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
+
+        # Enable request info before aggregation
+        workflow = ConcurrentBuilder().participants([agent1, agent2]).with_request_info().build()
     """
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
         self._aggregator: Executor | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
+        self._request_info_enabled: bool = False
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "ConcurrentBuilder":
         r"""Define the parallel participants for this concurrent workflow.
@@ -296,12 +300,33 @@ class ConcurrentBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
+    def with_request_info(self) -> "ConcurrentBuilder":
+        """Enable request info before aggregation in the workflow.
+
+        When enabled, the workflow pauses after all parallel agents complete,
+        emitting a RequestInfoEvent that allows the caller to review and optionally
+        modify the combined results before aggregation. The caller provides feedback
+        via the standard response_handler/request_info pattern.
+
+        Note:
+            Unlike SequentialBuilder and GroupChatBuilder, ConcurrentBuilder does not
+            support per-agent filtering since all agents run in parallel and results
+            are collected together. The pause occurs once with all agent outputs received.
+
+        Returns:
+            self: The builder instance for fluent chaining.
+        """
+        self._request_info_enabled = True
+        return self
+
     def build(self) -> Workflow:
         r"""Build and validate the concurrent workflow.
 
         Wiring pattern:
         - Dispatcher (internal) fans out the input to all `participants`
-        - Fan-in aggregator collects `AgentExecutorResponse` objects
+        - Fan-in collects `AgentExecutorResponse` objects from all participants
+        - If request info is enabled, the orchestration emits a request info event with outputs from all participants
+            before sending the outputs to the aggregator
         - Aggregator yields output and the workflow becomes idle. The output is either:
           - list[ChatMessage] (default aggregator: one user + one assistant per agent)
           - custom payload from the provided callback/executor
@@ -327,7 +352,16 @@ class ConcurrentBuilder:
         builder = WorkflowBuilder()
         builder.set_start_executor(dispatcher)
         builder.add_fan_out_edges(dispatcher, list(self._participants))
-        builder.add_fan_in_edges(list(self._participants), aggregator)
+
+        if self._request_info_enabled:
+            # Insert interceptor between fan-in and aggregator
+            # participants -> fan-in -> interceptor -> aggregator
+            request_info_interceptor = RequestInfoInterceptor(executor_id="request_info")
+            builder.add_fan_in_edges(list(self._participants), request_info_interceptor)
+            builder.add_edge(request_info_interceptor, aggregator)
+        else:
+            # Direct fan-in to aggregator
+            builder.add_fan_in_edges(list(self._participants), aggregator)
 
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
