@@ -169,7 +169,7 @@ public class OpenTelemetryAgentTests
         Assert.Equal("localhost", activity.GetTagItem("server.address"));
         Assert.Equal(12345, (int)activity.GetTagItem("server.port")!);
 
-        Assert.Equal($"invoke_agent {agent.Id}(TestAgent)", activity.DisplayName);
+        Assert.Equal($"invoke_agent {agent.Name}({agent.Id})", activity.DisplayName);
         Assert.Equal("invoke_agent", activity.GetTagItem("gen_ai.operation.name"));
         Assert.Equal("TestAgentProviderFromAIAgentMetadata", activity.GetTagItem("gen_ai.provider.name"));
         Assert.Equal(innerAgent.Name, activity.GetTagItem("gen_ai.agent.name"));
@@ -436,7 +436,7 @@ public class OpenTelemetryAgentTests
         }
         else
         {
-            Assert.Equal($"invoke_agent {innerAgent.Id}({innerAgent.Name})", activity.DisplayName);
+            Assert.Equal($"invoke_agent {innerAgent.Name}({innerAgent.Id})", activity.DisplayName);
         }
 
         Assert.Equal("invoke_agent", activity.GetTagItem("gen_ai.operation.name"));

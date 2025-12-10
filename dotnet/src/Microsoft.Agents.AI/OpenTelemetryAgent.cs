@@ -116,7 +116,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         activity.DisplayName = string.IsNullOrWhiteSpace(this.Name)
             ? $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Id}"
-            : $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Id}({this.Name})";
+            : $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Name}({this.Id})";
         activity.SetTag(OpenTelemetryConsts.GenAI.Operation.Name, OpenTelemetryConsts.GenAI.InvokeAgent);
 
         if (!string.IsNullOrWhiteSpace(this._providerName))
