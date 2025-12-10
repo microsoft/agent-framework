@@ -227,3 +227,23 @@ def orchestrator(context: OrchestrationContext):
     
     return result
 ```
+
+## Additional Styles Considered
+
+### Inheritance Pattern for worker and client (like `DurableAIAgentWorker`, `DurableAIAgentClient`, etc)
+
+We investigated inheriting `DurableAIAgentWorker` directly from `TaskHubGrpcWorker` (or `DurableTaskSchedulerWorker`) to provide a unified API where the agent worker *is* a durable task worker (and similarly the client).
+
+**Why we chose Composition over Inheritance:**
+
+1.  **Initialization Divergence:** The `durabletask` package has two distinct worker classes with incompatible `__init__` signatures:
+    *   `TaskHubGrpcWorker`: Requires `host_address`, `metadata`, etc.
+    *   `DurableTaskSchedulerWorker`: Requires `host_address`, `taskhub`, `token_credential`, etc.
+    
+    To support both via inheritance, we would need to maintain two separate classes (e.g., `DurableAIAgentGrpcWorker` and `DurableAIAgentSchedulerWorker`) or use a complex Mixin approach. This increases the API surface area and maintenance burden.
+
+2.  **Encapsulation:** The logic for Azure Managed DTS (authentication, routing) is currently encapsulated in an internal interceptor class within `durabletask`. Without changes to the upstream package to expose this logic, we cannot create a single "Universal" worker class that inherits from the base worker but supports Azure features.
+
+3.  **Flexibility:** The Composition pattern allows `DurableAIAgentWorker` to accept *any* instance of a worker that satisfies the required interface. This makes it forward-compatible with future worker implementations or custom subclasses without requiring code changes in our package.
+
+4.  **Simplicity:** While Composition requires a two-step setup (instantiate worker, then wrap it), it keeps the `agent-framework-durabletask` package simple, focused, and loosely coupled from the implementation details of the underlying `durabletask` workers.
