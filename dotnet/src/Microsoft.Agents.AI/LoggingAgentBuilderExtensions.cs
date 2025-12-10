@@ -35,6 +35,10 @@ public static class LoggingAgentBuilderExtensions
     /// <see cref="LogLevel.Trace"/> is disabled by default and should never be enabled in a production environment.
     /// Messages and options are not logged at other logging levels.
     /// </para>
+    /// <para>
+    /// If the resolved or provided <see cref="ILoggerFactory"/> is <see cref="NullLoggerFactory"/>, this will be a no-op where
+    /// logging will be effectively disabled. In this case, the <see cref="LoggingAgent"/> will not be added.
+    /// </para>
     /// </remarks>
     public static AIAgentBuilder UseLogging(
         this AIAgentBuilder builder,
