@@ -17,18 +17,18 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
 {
-    /// <summary>The delegate to use as the implementation of RunAsync.</summary>
+    /// <summary>The delegate to use as the implementation of <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.</summary>
     private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, Task<AgentRunResponse>>? _runFunc;
 
-    /// <summary>The delegate to use as the implementation of RunStreamingAsync.</summary>
+    /// <summary>The delegate to use as the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.</summary>
     /// <remarks>
-    /// When non-<see langword="null"/>, this delegate is used as the implementation of RunStreamingAsync and
+    /// When non-<see langword="null"/>, this delegate is used as the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and
     /// will be invoked with the same arguments as the method itself.
-    /// When <see langword="null"/>, RunStreamingAsync will delegate directly to the inner agent.
+    /// When <see langword="null"/>, <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> will delegate directly to the inner agent.
     /// </remarks>
     private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, AIAgent, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>>? _runStreamingFunc;
 
-    /// <summary>The delegate to use as the implementation of both RunAsync and RunStreamingAsync.</summary>
+    /// <summary>The delegate to use as the implementation of both <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.</summary>
     private readonly Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task>, CancellationToken, Task>? _sharedFunc;
 
     /// <summary>
@@ -36,7 +36,7 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     /// </summary>
     /// <param name="innerAgent">The inner agent.</param>
     /// <param name="sharedFunc">
-    /// A delegate that provides the implementation for both RunAsync and RunStreamingAsync.
+    /// A delegate that provides the implementation for both <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/> and <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>.
     /// In addition to the arguments for the operation, it's provided with a delegate to the inner agent that should be
     /// used to perform the operation on the inner agent. It will handle both the non-streaming and streaming cases.
     /// </param>
@@ -61,13 +61,13 @@ internal sealed class AnonymousDelegatingAIAgent : DelegatingAIAgent
     /// </summary>
     /// <param name="innerAgent">The inner agent.</param>
     /// <param name="runFunc">
-    /// A delegate that provides the implementation for RunAsync. When <see langword="null"/>,
-    /// <paramref name="runStreamingFunc"/> must be non-null, and the implementation of RunAsync
+    /// A delegate that provides the implementation for <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>. When <see langword="null"/>,
+    /// <paramref name="runStreamingFunc"/> must be non-null, and the implementation of <see cref="AIAgent.RunAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>
     /// will use <paramref name="runStreamingFunc"/> for the implementation.
     /// </param>
     /// <param name="runStreamingFunc">
-    /// A delegate that provides the implementation for RunStreamingAsync. When <see langword="null"/>,
-    /// <paramref name="runFunc"/> must be non-null, and the implementation of RunStreamingAsync
+    /// A delegate that provides the implementation for <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>. When <see langword="null"/>,
+    /// <paramref name="runFunc"/> must be non-null, and the implementation of <see cref="AIAgent.RunStreamingAsync(IEnumerable{ChatMessage}, AgentThread?, AgentRunOptions?, CancellationToken)"/>
     /// will use <paramref name="runFunc"/> for the implementation.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="innerAgent"/> is <see langword="null"/>.</exception>
