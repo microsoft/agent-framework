@@ -49,7 +49,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
         GenerateContentResponse generateResult = await this._models.GenerateContentAsync(modelId!, contents, config).ConfigureAwait(false);
 
         // Create the response.
-        ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, new List<AIContent>()))
+        ChatResponse chatResponse = new(new ChatMessage(ChatRole.Assistant, []))
         {
             CreatedAt = generateResult.CreateTime is { } dt ? new DateTimeOffset(dt) : null,
             ModelId = !string.IsNullOrWhiteSpace(generateResult.ModelVersion) ? generateResult.ModelVersion : modelId,
@@ -82,7 +82,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
         await foreach (GenerateContentResponse generateResult in this._models.GenerateContentStreamAsync(modelId!, contents, config).WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             // Create a response update for each result in the stream.
-            ChatResponseUpdate responseUpdate = new(ChatRole.Assistant, new List<AIContent>())
+            ChatResponseUpdate responseUpdate = new(ChatRole.Assistant, [])
             {
                 CreatedAt = generateResult.CreateTime is { } dt ? new DateTimeOffset(dt) : null,
                 ModelId = !string.IsNullOrWhiteSpace(generateResult.ModelVersion) ? generateResult.ModelVersion : modelId,
@@ -148,7 +148,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
         // create the request instance, allowing the caller to populate it with GenAI-specific options. Otherwise, create
         // a new instance directly.
         string? model = this._defaultModelId;
-        List<Content> contents = new();
+        List<Content> contents = [];
         GenerateContentConfig config = options?.RawRepresentationFactory?.Invoke(this) as GenerateContentConfig ?? new();
 
         if (options is not null)
@@ -160,7 +160,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
 
             if (options.Instructions is { } instructions)
             {
-                ((config.SystemInstruction ??= new()).Parts ??= new()).Add(new() { Text = instructions });
+                ((config.SystemInstruction ??= new()).Parts ??= []).Add(new() { Text = instructions });
             }
 
             if (options.MaxOutputTokens is { } maxOutputTokens)
@@ -185,7 +185,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
 
             if (options.StopSequences is { } stopSequences)
             {
-                (config.StopSequences ??= new()).AddRange(stopSequences);
+                (config.StopSequences ??= []).AddRange(stopSequences);
             }
 
             if (options.Temperature is { } temperature)
@@ -213,7 +213,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
                     switch (tool)
                     {
                         case AIFunctionDeclaration af:
-                            functionDeclarations ??= new();
+                            functionDeclarations ??= [];
                             functionDeclarations.Add(new()
                             {
                                 Name = af.Name,
@@ -223,15 +223,15 @@ internal sealed class GoogleGenAIChatClient : IChatClient
                             break;
 
                         case HostedCodeInterpreterTool:
-                            (config.Tools ??= new()).Add(new() { CodeExecution = new() });
+                            (config.Tools ??= []).Add(new() { CodeExecution = new() });
                             break;
 
                         case HostedFileSearchTool:
-                            (config.Tools ??= new()).Add(new() { Retrieval = new() });
+                            (config.Tools ??= []).Add(new() { Retrieval = new() });
                             break;
 
                         case HostedWebSearchTool:
-                            (config.Tools ??= new()).Add(new() { GoogleSearch = new() });
+                            (config.Tools ??= []).Add(new() { GoogleSearch = new() });
                             break;
                     }
                 }
@@ -240,8 +240,8 @@ internal sealed class GoogleGenAIChatClient : IChatClient
             if (functionDeclarations is { Count: > 0 })
             {
                 Tool functionTools = new();
-                (functionTools.FunctionDeclarations ??= new()).AddRange(functionDeclarations);
-                (config.Tools ??= new()).Add(functionTools);
+                (functionTools.FunctionDeclarations ??= []).AddRange(functionDeclarations);
+                (config.Tools ??= []).Add(functionTools);
             }
 
             // Transfer over the tool mode if there are any tools.
@@ -261,7 +261,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
                         config.ToolConfig = new() { FunctionCallingConfig = new() { Mode = FunctionCallingConfigMode.ANY } };
                         if (required.RequiredFunctionName is not null)
                         {
-                            ((config.ToolConfig.FunctionCallingConfig ??= new()).AllowedFunctionNames ??= new()).Add(required.RequiredFunctionName);
+                            ((config.ToolConfig.FunctionCallingConfig ??= new()).AllowedFunctionNames ??= []).Add(required.RequiredFunctionName);
                         }
                         break;
                 }
@@ -287,14 +287,14 @@ internal sealed class GoogleGenAIChatClient : IChatClient
                 string instruction = message.Text;
                 if (!string.IsNullOrWhiteSpace(instruction))
                 {
-                    ((config.SystemInstruction ??= new()).Parts ??= new()).Add(new() { Text = instruction });
+                    ((config.SystemInstruction ??= new()).Parts ??= []).Add(new() { Text = instruction });
                 }
 
                 continue;
             }
 
             Content content = new() { Role = message.Role == ChatRole.Assistant ? "model" : "user" };
-            content.Parts ??= new();
+            content.Parts ??= [];
             AddPartsForAIContents(ref callIdToFunctionNames, message.Contents, content.Parts);
 
             contents.Add(content);
@@ -367,7 +367,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
                     break;
 
                 case FunctionCallContent functionCallContent:
-                    (callIdToFunctionNames ??= new())[functionCallContent.CallId] = functionCallContent.Name;
+                    (callIdToFunctionNames ??= [])[functionCallContent.CallId] = functionCallContent.Name;
                     callIdToFunctionNames[""] = functionCallContent.Name; // track last function name in case calls don't have IDs
 
                     part = new()
@@ -480,22 +480,22 @@ internal sealed class GoogleGenAIChatClient : IChatClient
             {
                 foreach (var citation in citations)
                 {
-                    textContent.Annotations = new List<AIAnnotation>()
-          {
-              new CitationAnnotation()
-              {
-                  Title = citation.Title,
-                  Url = Uri.TryCreate(citation.Uri, UriKind.Absolute, out Uri? uri) ? uri : null,
-                  AnnotatedRegions = new List<AnnotatedRegion>()
-                  {
-                      new TextSpanAnnotatedRegion()
-                      {
-                          StartIndex = citation.StartIndex,
-                          EndIndex = citation.EndIndex,
-                      }
-                  },
-              }
-          };
+                    textContent.Annotations =
+                    [
+                        new CitationAnnotation()
+                        {
+                            Title = citation.Title,
+                            Url = Uri.TryCreate(citation.Uri, UriKind.Absolute, out Uri? uri) ? uri : null,
+                            AnnotatedRegions =
+                            [
+                                new TextSpanAnnotatedRegion()
+                                {
+                                    StartIndex = citation.StartIndex,
+                                    EndIndex = citation.EndIndex,
+                                }
+                            ],
+                        }
+                    ];
                 }
             }
         }
@@ -551,7 +551,7 @@ internal sealed class GoogleGenAIChatClient : IChatClient
         {
             if (value is int i)
             {
-                (details.AdditionalCounts ??= new())[key] = i;
+                (details.AdditionalCounts ??= [])[key] = i;
             }
         }
     }
