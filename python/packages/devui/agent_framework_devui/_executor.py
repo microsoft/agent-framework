@@ -93,10 +93,22 @@ class AgentFrameworkExecutor:
                     # This handles the case where env vars are set after ObservabilitySettings was imported
                     otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-                    # Pass the endpoint explicitly to setup_observability
-                    # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
-                    logger.info("Enabled Agent Framework observability")
+                    if otlp_endpoint:
+                        # User provided an OTLP endpoint - use it
+                        setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                        logger.info(f"Enabled Agent Framework observability with OTLP endpoint: {otlp_endpoint}")
+                    else:
+                        # No OTLP endpoint - use NoOp exporters to enable tracing without
+                        # console spam or failed connection attempts.
+                        # DevUI's SimpleTraceCollector will still capture spans via the
+                        # TracerProvider's span processors.
+                        from ._tracing import NoOpLogExporter, NoOpMetricExporter, NoOpSpanExporter
+
+                        setup_observability(
+                            enable_sensitive_data=True,
+                            exporters=[NoOpSpanExporter(), NoOpLogExporter(), NoOpMetricExporter()],  # type: ignore[list-item]
+                        )
+                        logger.info("Enabled Agent Framework observability with local-only tracing")
                 else:
                     logger.debug("Agent Framework observability already configured")
             except Exception as e:
@@ -196,11 +208,11 @@ class AgentFrameworkExecutor:
 
             logger.info(f"Executing {entity_info.type}: {entity_id}")
 
-            # Extract session_id from request for trace context
-            session_id = getattr(request.extra_body, "session_id", None) if request.extra_body else None
+            # Extract response_id from request for trace context (added by _server.py)
+            response_id = request.extra_body.get("response_id") if request.extra_body else None
 
             # Use simplified trace capture
-            with capture_traces(session_id=session_id, entity_id=entity_id) as trace_collector:
+            with capture_traces(response_id=response_id, entity_id=entity_id) as trace_collector:
                 if entity_info.type == "agent":
                     async for event in self._execute_agent(entity_obj, request, trace_collector):
                         yield event

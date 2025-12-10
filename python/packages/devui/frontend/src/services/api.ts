@@ -398,7 +398,11 @@ class ApiClient {
   async listConversationItems(
     conversationId: string,
     options?: { limit?: number; after?: string; order?: "asc" | "desc" }
-  ): Promise<{ data: unknown[]; has_more: boolean }> {
+  ): Promise<{
+    data: unknown[];
+    has_more: boolean;
+    metadata?: { traces?: unknown[] };
+  }> {
     const params = new URLSearchParams();
     if (options?.limit) params.set("limit", options.limit.toString());
     if (options?.after) params.set("after", options.after);
@@ -409,7 +413,11 @@ class ApiClient {
       queryString ? `?${queryString}` : ""
     }`;
 
-    return this.request<{ data: unknown[]; has_more: boolean }>(url);
+    return this.request<{
+      data: unknown[];
+      has_more: boolean;
+      metadata?: { traces?: unknown[] };
+    }>(url);
   }
 
   async getConversationItem(

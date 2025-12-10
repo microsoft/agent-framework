@@ -376,9 +376,10 @@ export const useDevUIStore = create<DevUIStore>()(
             // Generate unique timestamp for each event
             // Use current time + small increment to ensure uniqueness even for rapid events
             const baseTimestamp = Math.floor(Date.now() / 1000);
-            const lastTimestamp = state.debugEvents.length > 0
-              ? (state.debugEvents[state.debugEvents.length - 1] as any)._uiTimestamp || 0
-              : 0;
+            const lastEvent = state.debugEvents.length > 0
+              ? state.debugEvents[state.debugEvents.length - 1] as { _uiTimestamp?: number }
+              : null;
+            const lastTimestamp = lastEvent?._uiTimestamp ?? 0;
             // Ensure new timestamp is always greater than the last one
             const uniqueTimestamp = Math.max(baseTimestamp, lastTimestamp + 1);
 

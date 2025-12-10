@@ -185,9 +185,10 @@ def serve(
             os.environ["ENABLE_SENSITIVE_DATA"] = "true"
             logger.info("Set ENABLE_SENSITIVE_DATA=true for tracing")
 
-        if not os.environ.get("OTLP_ENDPOINT"):
-            os.environ["OTLP_ENDPOINT"] = "http://localhost:4317"
-            logger.info("Set OTLP_ENDPOINT=http://localhost:4317 for tracing")
+        # Note: We intentionally do NOT set a default OTLP_ENDPOINT here.
+        # If the user wants to export traces to an external collector, they
+        # should set OTLP_ENDPOINT explicitly. Otherwise, DevUI uses NoOp
+        # exporters to enable local trace capture without connection errors.
 
     # Create server with direct parameters
     server = DevServer(
