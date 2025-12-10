@@ -230,7 +230,7 @@ public abstract class AIAgent
     /// The agent's response will also be added to <paramref name="thread"/> if one is provided.
     /// </para>
     /// </remarks>
-    public virtual Task<AgentRunResponse> RunAsync(
+    public Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -352,7 +352,7 @@ public abstract class AIAgent
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
     /// </para>
     /// </remarks>
-    public virtual IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
