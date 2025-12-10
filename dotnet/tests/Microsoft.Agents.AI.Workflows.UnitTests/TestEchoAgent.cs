@@ -47,7 +47,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
               select
                     UpdateThread(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
                     {
-                        AuthorName = this.DisplayName,
+                        AuthorName = this.Name ?? this.Id,
                         CreatedAt = DateTimeOffset.Now,
                         MessageId = Guid.NewGuid().ToString("N")
                     }, thread as InMemoryAgentThread);
