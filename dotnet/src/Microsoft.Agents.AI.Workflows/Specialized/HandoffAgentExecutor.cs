@@ -67,7 +67,7 @@ internal sealed class HandoffAgentExecutor(
             List<AgentRunResponseUpdate> updates = [];
             List<ChatMessage> allMessages = handoffState.Messages;
 
-            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this.Id);
+            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
             await foreach (var update in this._agent.RunStreamingAsync(allMessages,
                                                                        options: this._agentOptions,
