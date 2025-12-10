@@ -171,22 +171,59 @@ class DurableAIAgent(AgentProtocol):
 
 ## Usage Experience
 
-**Scenario A: Client Side**
+**Scenario A: Worker Side**
 ```python
-client = TaskHubGrpcClient(...)
+# 1. Define your agent
+# The agent can be any implementation of AgentProtocol.
+# For example, a standard Agent with a model and instructions.
+my_agent = Agent(
+    name="my_agent", 
+    instructions="You are a helpful assistant.",
+    model=openai_model
+)
+
+# 2. Create the worker and the agent worker wrapper
+with DurableTaskSchedulerWorker(...) as worker:
+    
+    agent_worker = DurableAIAgentWorker(worker)
+    
+    # 3. Register the agent
+    agent_worker.add_agent(my_agent)
+    
+    # 4. Start the worker
+    worker.start()
+    
+    # ... keep running ...
+```
+
+**Scenario B: Client Side**
+```python
+# 1. Configure the Durable Task client
+client = DurableTaskSchedulerClient(...)
+
+# 2. Create the Agent Client wrapper
 agent_client = DurableAIAgentClient(client)
+
+# 3. Get a reference to the agent
 agent = await agent_client.get_agent("my_agent")
 
-# Returns a Task-like object, so we await it
+# 4. Run the agent
+# The returned object is designed to be compatible with both `await` (Client) 
+# and `yield` (Orchestrator). Implementation details on this unified return type will follow.
 response = await agent.run("Hello")
 ```
 
-**Scenario B: Orchestration Side**
+**Scenario C: Orchestration Side**
 ```python
-def orchestrator(context):
+def orchestrator(context: OrchestrationContext):
+    # 1. Create the Agent Orchestrator wrapper
     agent_orch = DurableAIAgentOrchestrator(context)
+    
+    # 2. Get a reference to the agent
     agent = agent_orch.get_agent("my_agent")
 
-    # Returns a Task, so we yield it
+    # 3. Run the agent (returns a Task, so we yield it)
     result = yield agent.run("Hello")
+    
+    return result
 ```

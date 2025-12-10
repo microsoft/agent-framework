@@ -852,16 +852,19 @@ class AgentFunctionApp(DFAppBase):
         enable_tool_calls_value = req_body.get("enable_tool_calls")
         enable_tool_calls = True if enable_tool_calls_value is None else self._coerce_to_bool(enable_tool_calls_value)
 
-        return RunRequest(
-            message=message,
-            role=req_body.get("role"),
-            request_response_format=request_response_format,
-            response_format=req_body.get("response_format"),
-            enable_tool_calls=enable_tool_calls,
-            thread_id=thread_id,
-            correlation_id=correlation_id,
-            created_at=datetime.utcnow(),
-        ).to_dict()
+        return cast(
+            dict[str, Any],
+            RunRequest(
+                message=message,
+                role=req_body.get("role"),
+                request_response_format=request_response_format,
+                response_format=req_body.get("response_format"),
+                enable_tool_calls=enable_tool_calls,
+                thread_id=thread_id,
+                correlation_id=correlation_id,
+                created_at=datetime.utcnow(),
+            ).to_dict(),
+        )
 
     def _build_accepted_response(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:
         """Build the response returned when not waiting for completion."""
@@ -994,8 +997,8 @@ class AgentFunctionApp(DFAppBase):
     def _select_request_response_format(body_format: str, prefers_json: bool) -> str:
         """Combine body format and accept preference to determine response format."""
         if body_format == REQUEST_RESPONSE_FORMAT_JSON or prefers_json:
-            return REQUEST_RESPONSE_FORMAT_JSON
-        return REQUEST_RESPONSE_FORMAT_TEXT
+            return str(REQUEST_RESPONSE_FORMAT_JSON)
+        return str(REQUEST_RESPONSE_FORMAT_TEXT)
 
     @staticmethod
     def _parse_json_body(req: func.HttpRequest) -> tuple[dict[str, Any], str]:
