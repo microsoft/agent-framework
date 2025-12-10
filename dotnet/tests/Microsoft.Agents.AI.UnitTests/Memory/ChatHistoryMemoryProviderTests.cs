@@ -36,6 +36,10 @@ public class ChatHistoryMemoryProviderTests
             .Setup(f => f.CreateLogger(typeof(ChatHistoryMemoryProvider).FullName!))
             .Returns(this._loggerMock.Object);
 
+        this._loggerMock
+            .Setup(f => f.IsEnabled(It.IsAny<LogLevel>()))
+            .Returns(true);
+
         this._vectorStoreCollectionMock = new(MockBehavior.Strict);
         this._vectorStoreMock = new(MockBehavior.Strict);
 
@@ -218,8 +222,8 @@ public class ChatHistoryMemoryProviderTests
     [Theory]
     [InlineData(false, false, 0)]
     [InlineData(true, false, 0)]
-    [InlineData(false, true, 1)]
-    [InlineData(true, true, 1)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
     public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
     {
         // Arrange
@@ -259,6 +263,11 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
             var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
             Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
@@ -385,10 +394,10 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Theory]
-    [InlineData(false, false, 1)]
-    [InlineData(true, false, 1)]
-    [InlineData(false, true, 1)]
-    [InlineData(true, true, 1)]
+    [InlineData(false, false, 2)]
+    [InlineData(true, false, 2)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
     public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
     {
         // Arrange
@@ -442,7 +451,12 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
-            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
             Assert.Equal(enableSensitiveTelemetryData ? "user1" : "<redacted>", userIdValue);
 
