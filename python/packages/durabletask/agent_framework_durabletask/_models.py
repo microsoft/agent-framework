@@ -114,7 +114,7 @@ class RunRequest:
     enable_tool_calls: bool = True
     thread_id: str | None = None
     correlation_id: str | None = None
-    created_at: datetime | str | None = None
+    created_at: datetime | None = None
     orchestration_id: str | None = None
 
     def __init__(
@@ -126,7 +126,7 @@ class RunRequest:
         enable_tool_calls: bool = True,
         thread_id: str | None = None,
         correlation_id: str | None = None,
-        created_at: datetime | str | None = None,
+        created_at: datetime | None = None,
         orchestration_id: str | None = None,
     ) -> None:
         self.message = message
@@ -166,9 +166,7 @@ class RunRequest:
         if self.correlation_id:
             result["correlationId"] = self.correlation_id
         if self.created_at:
-            result["created_at"] = (
-                self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at
-            )
+            result["created_at"] = self.created_at.isoformat()
         if self.orchestration_id:
             result["orchestrationId"] = self.orchestration_id
 
@@ -177,6 +175,13 @@ class RunRequest:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RunRequest:
         """Create RunRequest from dictionary."""
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                created_at = None
+
         return cls(
             message=data.get("message", ""),
             request_response_format=data.get("request_response_format", REQUEST_RESPONSE_FORMAT_TEXT),
@@ -185,6 +190,6 @@ class RunRequest:
             enable_tool_calls=data.get("enable_tool_calls", True),
             thread_id=data.get("thread_id"),
             correlation_id=data.get("correlationId"),
-            created_at=data.get("created_at"),
+            created_at=created_at,
             orchestration_id=data.get("orchestrationId"),
         )

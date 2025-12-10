@@ -87,7 +87,7 @@ class AgentEntity:
             True if the entry is a response containing error content, False otherwise
         """
         if isinstance(entry, DurableAgentStateResponse):
-            return bool(entry.is_error)
+            return entry.is_error
         return False
 
     async def run_agent(
