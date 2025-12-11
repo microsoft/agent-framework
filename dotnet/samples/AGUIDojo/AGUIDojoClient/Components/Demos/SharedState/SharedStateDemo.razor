@@ -15,95 +15,99 @@
                     CurrentState="@currentRecipe"
                     OnSnapshot="@DeserializeRecipe"
                     CurrentStateChanged="@OnRecipeChanged">
-            <div class="recipe-panel">
-                <div class="recipe-header">
-                    <input type="text" class="recipe-title" @bind="currentRecipe.Title" @bind:event="oninput" placeholder="Recipe name" />
-                    <div class="recipe-meta">
-                        <div class="meta-item">
-                            <span class="meta-icon">🕒</span>
-                            <select @bind="currentRecipe.CookingTime">
-                                <option value="5 min">5 min</option>
-                                <option value="15 min">15 min</option>
-                                <option value="30 min">30 min</option>
-                                <option value="45 min">45 min</option>
-                                <option value="60+ min">60+ min</option>
-                            </select>
+            <div class="recipe-panel-container">
+                <div class="recipe-panel">
+                    <div class="recipe-header">
+                        <input type="text" class="recipe-title" @bind="currentRecipe.Title" @bind:event="oninput" placeholder="Recipe name" />
+                        <div class="recipe-meta">
+                            <div class="meta-item">
+                                <span class="meta-icon">🕒</span>
+                                <select @bind="currentRecipe.CookingTime">
+                                    <option value="5 min">5 min</option>
+                                    <option value="15 min">15 min</option>
+                                    <option value="30 min">30 min</option>
+                                    <option value="45 min">45 min</option>
+                                    <option value="60+ min">60+ min</option>
+                                </select>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-icon">🏆</span>
+                                <select @bind="currentRecipe.SkillLevel">
+                                    <option value="Beginner">Beginner</option>
+                                    <option value="Intermediate">Intermediate</option>
+                                    <option value="Advanced">Advanced</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="meta-item">
-                            <span class="meta-icon">🏆</span>
-                            <select @bind="currentRecipe.SkillLevel">
-                                <option value="Beginner">Beginner</option>
-                                <option value="Intermediate">Intermediate</option>
-                                <option value="Advanced">Advanced</option>
-                            </select>
+                    </div>
+
+                    <div class="preferences-section">
+                        <h2>Dietary Preferences</h2>
+                        <div class="preferences-grid">
+                            @foreach (var pref in dietaryPreferences)
+                            {
+                                <label class="preference-item">
+                                    <input type="checkbox" 
+                                           checked="@currentRecipe.SpecialPreferences.Contains(pref)"
+                                           @onchange="@(e => TogglePreference(pref, (bool?)e.Value ?? false))" />
+                                    <span>@pref</span>
+                                </label>
+                            }
                         </div>
                     </div>
-                </div>
 
-                <div class="preferences-section">
-                    <h2>Dietary Preferences</h2>
-                    <div class="preferences-grid">
-                        @foreach (var pref in dietaryPreferences)
-                        {
-                            <label class="preference-item">
-                                <input type="checkbox" 
-                                       checked="@currentRecipe.SpecialPreferences.Contains(pref)"
-                                       @onchange="@(e => TogglePreference(pref, (bool?)e.Value ?? false))" />
-                                <span>@pref</span>
-                            </label>
-                        }
-                    </div>
-                </div>
-
-                <div class="ingredients-section">
-                    <div class="section-header">
-                        <h2>Ingredients</h2>
-                        <button class="add-button" @onclick="AddIngredient">+ Add Ingredient</button>
-                    </div>
-                    <div class="ingredients-list">
-                        @for (int i = 0; i < currentRecipe.Ingredients.Count; i++)
-                        {
-                            var index = i;
-                            var ingredient = currentRecipe.Ingredients[index];
-                            <div class="ingredient-row">
-                                <span class="ingredient-icon">@ingredient.Icon</span>
-                                <div class="ingredient-inputs">
-                                    <input type="text" placeholder="Ingredient name"
-                                           value="@ingredient.Name"
-                                           @onchange="@(e => UpdateIngredientName(index, e.Value?.ToString() ?? ""))" />
-                                    <input type="text" placeholder="Amount"
-                                           value="@ingredient.Amount"
-                                           @onchange="@(e => UpdateIngredientAmount(index, e.Value?.ToString() ?? ""))" />
+                    <div class="ingredients-section">
+                        <div class="section-header">
+                            <h2>Ingredients</h2>
+                            <button class="add-button" @onclick="AddIngredient">+ Add Ingredient</button>
+                        </div>
+                        <div class="ingredients-list">
+                            @for (int i = 0; i < currentRecipe.Ingredients.Count; i++)
+                            {
+                                var index = i;
+                                var ingredient = currentRecipe.Ingredients[index];
+                                <div class="ingredient-row">
+                                    <span class="ingredient-icon">@ingredient.Icon</span>
+                                    <div class="ingredient-inputs">
+                                        <input type="text" placeholder="Ingredient name"
+                                               value="@ingredient.Name"
+                                               @onchange="@(e => UpdateIngredientName(index, e.Value?.ToString() ?? ""))" />
+                                        <input type="text" placeholder="Amount"
+                                               value="@ingredient.Amount"
+                                               @onchange="@(e => UpdateIngredientAmount(index, e.Value?.ToString() ?? ""))" />
+                                    </div>
+                                    <button class="remove-button" @onclick="@(() => RemoveIngredient(index))">×</button>
                                 </div>
-                                <button class="remove-button" @onclick="@(() => RemoveIngredient(index))">×</button>
-                            </div>
-                        }
+                            }
+                        </div>
                     </div>
-                </div>
 
-                <div class="instructions-section">
-                    <div class="section-header">
-                        <h2>Instructions</h2>
-                        <button class="add-button" @onclick="AddInstruction">+ Add Step</button>
+                    <div class="instructions-section">
+                        <div class="section-header">
+                            <h2>Instructions</h2>
+                            <button class="add-button" @onclick="AddInstruction">+ Add Step</button>
+                        </div>
+                        <div class="instructions-list">
+                            @for (int i = 0; i < currentRecipe.Instructions.Count; i++)
+                            {
+                                var index = i;
+                                <div class="instruction-row">
+                                    <span class="step-number">@(index + 1)</span>
+                                    <div class="instruction-input-wrapper">
+                                        <input type="text"
+                                               value="@currentRecipe.Instructions[index]"
+                                               @onchange="@(e => UpdateInstruction(index, e.Value?.ToString() ?? ""))" />
+                                        <button class="remove-button" @onclick="@(() => RemoveInstruction(index))">×</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
                     </div>
-                    <div class="instructions-list">
-                        @for (int i = 0; i < currentRecipe.Instructions.Count; i++)
-                        {
-                            var index = i;
-                            <div class="instruction-row">
-                                <span class="step-number">@(index + 1)</span>
-                                <input type="text"
-                                       value="@currentRecipe.Instructions[index]"
-                                       @onchange="@(e => UpdateInstruction(index, e.Value?.ToString() ?? ""))" />
-                                <button class="remove-button" @onclick="@(() => RemoveInstruction(index))">×</button>
-                            </div>
-                        }
-                    </div>
-                </div>
 
-                <button class="improve-button" @onclick="ImproveWithAI" disabled="@isProcessing">
-                    @(isProcessing ? "Please Wait..." : "Improve with AI")
-                </button>
+                    <button class="improve-button" @onclick="ImproveWithAI" disabled="@isProcessing">
+                        @(isProcessing ? "Please Wait..." : "Improve with AI")
+                    </button>
+                </div>
             </div>
 
             <div class="chat-panel">

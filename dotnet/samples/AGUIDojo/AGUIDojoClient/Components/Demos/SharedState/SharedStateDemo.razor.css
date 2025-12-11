@@ -2,37 +2,45 @@
 .shared-state-layout {
     display: flex;
     height: 100%;
-    gap: 16px;
-    padding: 16px;
-    background-color: #f8f9fa;
+    gap: 0;
+    background-color: #f5f5f5;
 }
 
-/* Recipe Panel */
-.recipe-panel {
+/* Recipe Panel Container - centers the card */
+.recipe-panel-container {
     flex: 1;
     display: flex;
-    flex-direction: column;
-    gap: 20px;
-    background-color: white;
-    border-radius: 12px;
+    align-items: flex-start;
+    justify-content: center;
     padding: 24px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     overflow-y: auto;
+}
+
+/* Recipe Panel - the actual card */
+.recipe-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    background-color: white;
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    width: 100%;
+    max-width: 700px;
 }
 
 /* Recipe Header */
 .recipe-header {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
 }
 
 .recipe-title {
-    font-size: 24px;
+    font-size: 28px;
     font-weight: 600;
     border: none;
-    border-bottom: 2px solid #e5e7eb;
-    padding: 8px 0;
+    padding: 0;
     background: transparent;
     color: #111827;
     width: 100%;
@@ -40,12 +48,15 @@
 
 .recipe-title:focus {
     outline: none;
-    border-bottom-color: #3b82f6;
+}
+
+.recipe-title::placeholder {
+    color: #9ca3af;
 }
 
 .recipe-meta {
     display: flex;
-    gap: 16px;
+    gap: 24px;
 }
 
 .meta-item {
@@ -59,18 +70,18 @@
 }
 
 .meta-item select {
-    padding: 6px 12px;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    background-color: white;
+    padding: 4px 8px;
+    border: none;
+    background-color: transparent;
     font-size: 14px;
     color: #374151;
     cursor: pointer;
+    appearance: auto;
+    min-width: 80px;
 }
 
 .meta-item select:focus {
     outline: none;
-    border-color: #3b82f6;
 }
 
 /* Section Styles */
@@ -89,153 +100,242 @@
     font-weight: 600;
     color: #111827;
     margin: 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #f97316;
+    display: inline-block;
+    width: fit-content;
 }
 
 .section-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
 }
 
 /* Dietary Preferences */
 .preferences-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(5, auto);
+    gap: 8px 32px;
+    justify-content: start;
 }
 
 .preference-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
-    background-color: #f3f4f6;
-    border-radius: 20px;
     font-size: 14px;
     color: #374151;
     cursor: pointer;
-    transition: background-color 0.2s;
-}
-
-.preference-item:hover {
-    background-color: #e5e7eb;
+    white-space: nowrap;
 }
 
 .preference-item input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
     accent-color: #3b82f6;
+    cursor: pointer;
+    margin: 0;
 }
 
 /* Ingredients */
 .ingredients-list {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 12px;
 }
 
 .ingredient-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px;
-    background-color: #f9fafb;
-    border-radius: 8px;
+    gap: 10px;
+    padding: 10px 12px;
+    background-color: white;
+    border: 1px solid #f0f0f0;
+    border-radius: 10px;
+    min-width: 0;
+    flex: 1 1 calc(33.333% - 8px);
+    max-width: calc(33.333% - 8px);
+    position: relative;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: box-shadow 0.2s;
+}
+
+.ingredient-row:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Hide ingredient remove button by default, show on hover */
+.ingredient-row .remove-button {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.ingredient-row:hover .remove-button {
+    opacity: 1;
 }
 
 .ingredient-icon {
     font-size: 20px;
-    width: 32px;
-    text-align: center;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background-color: #fef3e2;
+    border-radius: 50%;
 }
 
 .ingredient-inputs {
     flex: 1;
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
 }
 
 .ingredient-inputs input {
-    flex: 1;
-    padding: 8px 12px;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    border: none;
+    background: transparent;
     font-size: 14px;
     color: #374151;
+    padding: 0;
+    width: 100%;
+}
+
+.ingredient-inputs input:first-child {
+    font-weight: 500;
+    color: #111827;
+}
+
+.ingredient-inputs input:last-child {
+    font-size: 13px;
+    color: #6b7280;
 }
 
 .ingredient-inputs input:focus {
     outline: none;
-    border-color: #3b82f6;
+}
+
+.ingredient-inputs input::placeholder {
+    color: #9ca3af;
 }
 
 /* Instructions */
 .instructions-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 0;
+    position: relative;
+    padding-left: 12px;
+}
+
+/* Vertical connecting line */
+.instructions-list::before {
+    content: '';
+    position: absolute;
+    left: 23px;
+    top: 20px;
+    bottom: 20px;
+    width: 2px;
+    border-left: 2px dashed #fdba74;
 }
 
 .instruction-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
-    padding: 8px;
-    background-color: #f9fafb;
-    border-radius: 8px;
+    padding: 8px 0;
+    position: relative;
 }
 
 .step-number {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: #3b82f6;
+    background-color: #f97316;
     color: white;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     border-radius: 50%;
     flex-shrink: 0;
+    margin-top: 8px;
+    position: relative;
+    z-index: 1;
 }
 
-.instruction-row input {
+/* Instruction input wrapper for positioning delete button inside */
+.instruction-input-wrapper {
     flex: 1;
-    padding: 8px 12px;
+    position: relative;
+}
+
+.instruction-input-wrapper input,
+.instruction-input-wrapper textarea {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
     border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 14px;
     color: #374151;
+    resize: vertical;
+    min-height: 40px;
+    font-family: inherit;
+    box-sizing: border-box;
 }
 
-.instruction-row input:focus {
+.instruction-input-wrapper input:focus,
+.instruction-input-wrapper textarea:focus {
     outline: none;
-    border-color: #3b82f6;
+    border-color: #f97316;
+}
+
+/* Instruction remove button - hidden by default, shown on hover, positioned inside textarea */
+.instruction-input-wrapper .remove-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 1;
+}
+
+.instruction-input-wrapper:hover .remove-button,
+.instruction-input-wrapper:focus-within .remove-button {
+    opacity: 1;
 }
 
 /* Buttons */
 .add-button {
-    padding: 6px 12px;
-    background-color: #e5e7eb;
-    border: none;
-    border-radius: 6px;
+    padding: 8px 16px;
+    background-color: transparent;
+    border: 1px solid #f97316;
+    border-radius: 8px;
     font-size: 14px;
-    color: #374151;
+    color: #f97316;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: all 0.2s;
+    white-space: nowrap;
 }
 
 .add-button:hover {
-    background-color: #d1d5db;
+    background-color: #fff7ed;
 }
 
 .remove-button {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     display: flex;
     align-items: center;
     justify-content: center;
     background-color: transparent;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    border: none;
     font-size: 18px;
     color: #9ca3af;
     cursor: pointer;
@@ -244,14 +344,12 @@
 }
 
 .remove-button:hover {
-    background-color: #fef2f2;
-    border-color: #fca5a5;
     color: #ef4444;
 }
 
 .improve-button {
-    padding: 12px 24px;
-    background-color: #3b82f6;
+    padding: 14px 32px;
+    background-color: #f97316;
     border: none;
     border-radius: 8px;
     font-size: 16px;
@@ -259,31 +357,31 @@
     color: white;
     cursor: pointer;
     transition: background-color 0.2s;
-    margin-top: auto;
+    align-self: center;
+    margin-top: 8px;
 }
 
 .improve-button:hover:not(:disabled) {
-    background-color: #2563eb;
+    background-color: #ea580c;
 }
 
 .improve-button:disabled {
-    background-color: #93c5fd;
+    background-color: #fdba74;
     cursor: not-allowed;
 }
 
 /* Chat Panel */
 .chat-panel {
-    width: 400px;
+    width: 320px;
     display: flex;
     flex-direction: column;
     background-color: white;
-    border-radius: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    overflow: hidden;
+    border-left: 1px solid #e5e7eb;
+    flex-shrink: 0;
 }
 
 .chat-header {
-    padding: 16px;
+    padding: 16px 20px;
     border-bottom: 1px solid #e5e7eb;
 }
 
