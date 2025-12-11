@@ -102,6 +102,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Ollama with OpenAI Chat Client Example |
+| [`packages/ollama/getting_started/ollama_agent_basic.py`](../packages/ollama/getting_started/ollama_agent_basic.py) | (Experimental) Ollama Agent with AgentFramework Ollama Chat Client |
+| [`packages/ollama/getting_started/ollama_agent_reasoning.py`](../packages/ollama/getting_started/ollama_agent_reasoning.py) | (Experimental) Ollama Reasoning Agent with AgentFramework Ollama Chat Client |
 
 ### OpenAI
 
