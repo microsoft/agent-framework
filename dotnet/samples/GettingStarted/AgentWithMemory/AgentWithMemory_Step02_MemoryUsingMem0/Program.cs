@@ -4,13 +4,14 @@
 // The sample stores conversation messages in a Mem0 service and retrieves relevant memories
 // for subsequent invocations, even across new threads.
 
+using System.ClientModel.Primitives;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Mem0;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -24,9 +25,9 @@ using HttpClient mem0HttpClient = new();
 mem0HttpClient.BaseAddress = new Uri(mem0ServiceUri);
 mem0HttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", mem0ApiKey);
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions()
     {

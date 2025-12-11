@@ -6,21 +6,22 @@
 // The component adds a prompt to ask for this information if it is not already known
 // and provides it to the model before each invocation if known.
 
+using System.ClientModel.Primitives;
 using System.Text;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 using SampleApp;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-ChatClient chatClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+ChatClient chatClient = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName);
 
 // Create the agent and provide a factory to add our custom memory component to

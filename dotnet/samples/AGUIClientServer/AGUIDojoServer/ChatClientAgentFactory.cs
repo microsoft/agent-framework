@@ -1,22 +1,23 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
 using AGUIDojoServer.AgenticUI;
 using AGUIDojoServer.BackendToolRendering;
 using AGUIDojoServer.PredictiveStateUpdates;
 using AGUIDojoServer.SharedState;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using ChatClient = OpenAI.Chat.ChatClient;
 
 namespace AGUIDojoServer;
 
 internal static class ChatClientAgentFactory
 {
-    private static AzureOpenAIClient? s_azureOpenAIClient;
+    private static OpenAIClient? s_openAIClient;
     private static string? s_deploymentName;
 
     public static void Initialize(IConfiguration configuration)
@@ -24,14 +25,14 @@ internal static class ChatClientAgentFactory
         string endpoint = configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         s_deploymentName = configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
-        s_azureOpenAIClient = new AzureOpenAIClient(
-            new Uri(endpoint),
-            new DefaultAzureCredential());
+        s_openAIClient = new OpenAIClient(
+            new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+            new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
     }
 
     public static ChatClientAgent CreateAgenticChat()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "AgenticChat",
@@ -40,7 +41,7 @@ internal static class ChatClientAgentFactory
 
     public static ChatClientAgent CreateBackendToolRendering()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "BackendToolRenderer",
@@ -54,7 +55,7 @@ internal static class ChatClientAgentFactory
 
     public static ChatClientAgent CreateHumanInTheLoop()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "HumanInTheLoopAgent",
@@ -63,7 +64,7 @@ internal static class ChatClientAgentFactory
 
     public static ChatClientAgent CreateToolBasedGenerativeUI()
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         return chatClient.AsIChatClient().CreateAIAgent(
             name: "ToolBasedGenerativeUIAgent",
@@ -72,7 +73,7 @@ internal static class ChatClientAgentFactory
 
     public static AIAgent CreateAgenticUI(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
             Name = "AgenticUIAgent",
@@ -114,7 +115,7 @@ internal static class ChatClientAgentFactory
 
     public static AIAgent CreateSharedState(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(
             name: "SharedStateAgent",
@@ -125,7 +126,7 @@ internal static class ChatClientAgentFactory
 
     public static AIAgent CreatePredictiveStateUpdates(JsonSerializerOptions options)
     {
-        ChatClient chatClient = s_azureOpenAIClient!.GetChatClient(s_deploymentName!);
+        ChatClient chatClient = s_openAIClient!.GetChatClient(s_deploymentName!);
 
         var baseAgent = chatClient.AsIChatClient().CreateAIAgent(new ChatClientAgentOptions
         {
