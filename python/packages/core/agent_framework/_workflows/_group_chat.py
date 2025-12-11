@@ -134,9 +134,7 @@ class ManagerSelectionResponse(BaseModel):
     model_config = {
         "extra": "forbid",
         # OpenAI strict mode requires all properties to be in required array
-        "json_schema_extra": {
-            "required": ["selected_participant", "instruction", "finish", "final_message"]
-        },
+        "json_schema_extra": {"required": ["selected_participant", "instruction", "finish", "final_message"]},
     }
 
     selected_participant: str | None = None
