@@ -46,7 +46,10 @@ filterwarnings = []
 timeout = 120
 
 [tool.ruff]
-extend = "../../pyproject.toml"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
 
 [tool.coverage.run]
 omit = [

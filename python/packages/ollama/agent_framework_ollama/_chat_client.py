@@ -1,7 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import AsyncIterable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from collections.abc import (
+    AsyncIterable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    Sequence,
+)
 from itertools import chain
 from typing import Any, ClassVar
 
@@ -26,7 +33,11 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework._pydantic import AFBaseSettings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.exceptions import (
+    ServiceInitializationError,
+    ServiceInvalidRequestError,
+    ServiceResponseException,
+)
 from agent_framework.observability import use_observability
 from ollama import AsyncClient
 
@@ -79,7 +90,10 @@ class OllamaChatClient(BaseChatClient):
         """
         try:
             ollama_settings = OllamaSettings(
-                host=host, model_id=model_id, env_file_encoding=env_file_encoding, env_file_path=env_file_path
+                host=host,
+                model_id=model_id,
+                env_file_encoding=env_file_encoding,
+                env_file_path=env_file_path,
             )
         except ValidationError as ex:
             raise ServiceInitializationError("Failed to create Ollama settings.", ex) from ex
@@ -177,13 +191,13 @@ class OllamaChatClient(BaseChatClient):
         return list(chain.from_iterable(ollama_messages))
 
     def _agent_framework_message_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
-        MESSAGE_CONVERTERS: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
+        message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
             Role.SYSTEM.value: self._format_system_message,
             Role.USER.value: self._format_user_message,
             Role.ASSISTANT.value: self._format_assistant_message,
             Role.TOOL.value: self._format_tool_message,
         }
-        return MESSAGE_CONVERTERS[message.role.value](message)
+        return message_converters[message.role.value](message)
 
     def _format_system_message(self, message: ChatMessage) -> list[OllamaMessage]:
         return [OllamaMessage(role="system", content=message.text)]
@@ -207,7 +221,6 @@ class OllamaChatClient(BaseChatClient):
         return [user_message]
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
-
         text_content = message.text
         reasoning_contents = "".join(c.text for c in message.contents if isinstance(c, TextReasoningContent))
 

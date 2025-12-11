@@ -18,7 +18,11 @@ from agent_framework import (
     UriContent,
     chat_middleware,
 )
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError, ServiceResponseException
+from agent_framework.exceptions import (
+    ServiceInitializationError,
+    ServiceInvalidRequestError,
+    ServiceResponseException,
+)
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
@@ -325,7 +329,10 @@ async def test_cmc_streaming_with_tool_call(
     mock_streaming_chat_completion_response: AsyncStream[OllamaChatResponse],
     mock_streaming_chat_completion_tool_call: AsyncStream[OllamaChatResponse],
 ) -> None:
-    mock_chat.side_effect = [mock_streaming_chat_completion_tool_call, mock_streaming_chat_completion_response]
+    mock_chat.side_effect = [
+        mock_streaming_chat_completion_tool_call,
+        mock_streaming_chat_completion_response,
+    ]
 
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
@@ -365,7 +372,8 @@ async def test_cmc_with_hosted_tool_call(
 
         ollama_client = OllamaChatClient()
         await ollama_client.get_response(
-            messages=chat_history, tools=[HostedWebSearchTool(additional_properties=additional_properties)]
+            messages=chat_history,
+            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
         )
 
 
@@ -378,7 +386,10 @@ async def test_cmc_with_data_content_type(
 ) -> None:
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
-        ChatMessage(contents=[DataContent(uri="data:image/png;base64,xyz", media_type="image/png")], role="user")
+        ChatMessage(
+            contents=[DataContent(uri="data:image/png;base64,xyz", media_type="image/png")],
+            role="user",
+        )
     )
 
     ollama_client = OllamaChatClient()
@@ -398,7 +409,10 @@ async def test_cmc_with_invalid_data_content_media_type(
         mock_chat.return_value = mock_streaming_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(contents=[DataContent(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")], role="user")
+            ChatMessage(
+                contents=[DataContent(uri="data:audio/mp3;base64,xyz", media_type="audio/mp3")],
+                role="user",
+            )
         )
 
         ollama_client = OllamaChatClient()
@@ -418,7 +432,10 @@ async def test_cmc_with_invalid_content_type(
         mock_chat.return_value = mock_chat_completion_response
         # Remote Uris are not supported by Ollama client
         chat_history.append(
-            ChatMessage(contents=[UriContent(uri="http://example.com/image.png", media_type="image/png")], role="user")
+            ChatMessage(
+                contents=[UriContent(uri="http://example.com/image.png", media_type="image/png")],
+                role="user",
+            )
         )
 
         ollama_client = OllamaChatClient()

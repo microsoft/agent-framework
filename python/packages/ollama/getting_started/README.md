@@ -17,19 +17,19 @@ This folder contains examples demonstrating how to use Ollama models with the Ag
 | File | Description |
 |------|-------------|
 | [`ollama_agent_basic.py`](ollama_agent_basic.py) | Demonstrates basic Ollama agent usage with the native Ollama Chat Client. Shows both streaming and non-streaming responses with tool calling capabilities. |
+| [`ollama_agent_reasoning.py`](ollama_agent_reasoning.py) | Demonstrates Ollama agent with reasoning capabilities using the native Ollama Chat Client. Shows how to enable thinking/reasoning mode. |
 
 ## Configuration
 
 The examples use environment variables for configuration. Set the appropriate variables based on which example you're running:
 
-
-### For OpenAI Client with Ollama (`ollama_with_openai_chat_client.py`)
+### For Native Ollama Examples (`ollama_agent_basic.py`, `ollama_agent_reasoning.py`)
 
 Set the following environment variables:
 
-- `OLLAMA_ENDPOINT`: The base URL for your Ollama server with `/v1/` suffix
-  - Example: `export OLLAMA_ENDPOINT="http://localhost:11434/v1/"`
+- `OLLAMA_HOST`: The base URL for your Ollama server (optional, defaults to `http://localhost:11434`)
+  - Example: `export OLLAMA_HOST="http://localhost:11434"`
 
-- `OLLAMA_MODEL`: The model name to use
-  - Example: `export OLLAMA_MODEL="mistral"`
+- `OLLAMA_CHAT_MODEL_ID`: The model name to use
+  - Example: `export OLLAMA_CHAT_MODEL_ID="qwen2.5:8b"`
   - Must be a model you have pulled with Ollama
