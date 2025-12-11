@@ -516,8 +516,8 @@ class BaseAgent(SerializationMixin):
 
 
 @use_agent_middleware
-@use_agent_observability(capture_usage=False)
-class ChatAgent(BaseAgent):
+@use_agent_observability(capture_usage=False)  # type: ignore[arg-type,misc]
+class ChatAgent(BaseAgent):  # type: ignore[misc]
     """A Chat Client Agent.
 
     This is the primary agent implementation that uses a chat client to interact

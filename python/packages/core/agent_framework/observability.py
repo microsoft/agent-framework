@@ -320,9 +320,11 @@ def _create_otlp_exporters(
     if protocol in ("grpc", "http/protobuf"):
         # Import all gRPC exporters
         try:
-            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter as GRPCMetricExporter,
+            )
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCSpanExporter
         except ImportError as exc:
             raise ImportError(
                 "opentelemetry-exporter-otlp-proto-grpc is required for OTLP gRPC exporters. "
@@ -331,21 +333,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                OTLPLogExporter(
+                GRPCLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                OTLPSpanExporter(
+                GRPCSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                OTLPMetricExporter(
+                GRPCMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )
@@ -354,9 +356,11 @@ def _create_otlp_exporters(
     elif protocol == "http":
         # Import all HTTP exporters
         try:
-            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
-            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HTTPLogExporter
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                OTLPMetricExporter as HTTPMetricExporter,
+            )
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPSpanExporter
         except ImportError as exc:
             raise ImportError(
                 "opentelemetry-exporter-otlp-proto-http is required for OTLP HTTP exporters. "
@@ -365,21 +369,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                OTLPLogExporter(
+                HTTPLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                OTLPSpanExporter(
+                HTTPSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                OTLPMetricExporter(
+                HTTPMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )
@@ -723,8 +727,8 @@ class ObservabilitySettings(AFBaseSettings):
         # Logging
         if log_exporters:
             logger_provider = LoggerProvider(resource=self._resource)
-            for exporter in log_exporters:
-                logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+            for log_exporter in log_exporters:
+                logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
             logger = logging.getLogger()
             handler = LoggingHandler(logger_provider=logger_provider)
@@ -1711,14 +1715,14 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
                 "type": "uri",
                 "uri": content.uri,
                 "mime_type": content.media_type,
-                "modality": content.media_type.split("/")[0],
+                "modality": content.media_type.split("/")[0] if content.media_type else None,
             }
         case "data":
             return {
                 "type": "blob",
                 "content": content.get_data_bytes_as_str(),
                 "mime_type": content.media_type,
-                "modality": content.media_type.split("/")[0],
+                "modality": content.media_type.split("/")[0] if content.media_type else None,
             }
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}

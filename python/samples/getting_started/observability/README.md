@@ -201,12 +201,11 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | **Recommended starting point**: Shows how to setup telemetry using standard OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_*`). |
 | [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | Shows how to create custom exporters with specific configuration and pass them to `setup_observability()`. Useful for advanced scenarios. |
 | [agent_observability.py](./agent_observability.py) | Shows telemetry collection for an agentic application with tool calls using environment variables. |
-| [agent_observability_http_exporters.py](./agent_observability_http_exporters.py) | Shows how to use HTTP/protobuf OTLP exporters instead of the default gRPC exporters. Useful for backends like Langfuse. |
-| [workflow_observability.py](./workflow_observability.py) | Shows telemetry collection for a workflow with multiple executors and message passing. |
-| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | Shows Azure Monitor integration using `AzureAIClient.setup_azure_ai_observability()` for Azure AI projects. |
-| [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | Shows Azure Monitor integration for a chat client with an Azure AI project. |
+| [agent_with_foundry_tracing.py](./agent_with_foundry_tracing.py) | Shows Azure Monitor integration with Foundry for any chat client. |
+| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | Shows Azure Monitor integration for a AzureAIClient. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | Advanced: Shows manual setup of exporters and providers with console output. Useful for understanding how observability works under the hood. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | Advanced: Shows zero-code telemetry setup using the `opentelemetry-instrument` CLI tool. |
+| [workflow_observability.py](./workflow_observability.py) | Shows telemetry collection for a workflow with multiple executors and message passing. |
 
 ### Running the samples
 
@@ -355,6 +354,7 @@ If you're updating from a previous version of the Agent Framework, here are the 
 
 **Before (Deprecated):**
 ```python
+from agent_framework.observability import setup_observability
 # Via parameter
 setup_observability(otlp_endpoint="http://localhost:4317")
 
@@ -365,6 +365,7 @@ setup_observability()
 
 **After (Current):**
 ```python
+from agent_framework.observability import setup_observability
 # Via standard OTEL environment variable (recommended)
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 setup_observability()
@@ -385,6 +386,8 @@ setup_observability(exporters=[
 
 **Before (Deprecated):**
 ```python
+from agent_framework.observability import setup_observability
+
 setup_observability(
     applicationinsights_connection_string="InstrumentationKey=...",
     applicationinsights_live_metrics=True,
@@ -419,12 +422,16 @@ setup_observability()
 
 **Before (Deprecated):**
 ```python
+from agent_framework.observability import setup_observability
+
 # Console was used as automatic fallback
 setup_observability()  # Would output to console if no exporters configured
 ```
 
 **After (Current):**
 ```python
+from agent_framework.observability import setup_observability
+
 # Console exporters are now opt-in
 # ENABLE_CONSOLE_EXPORTERS=true
 setup_observability()

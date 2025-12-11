@@ -30,7 +30,6 @@ class GAIATelemetryConfig:
         self,
         enable_tracing: bool = False,
         otlp_endpoint: str | None = None,
-        applicationinsights_connection_string: str | None = None,
         trace_to_file: bool = False,
         file_path: str | None = None,
     ):
@@ -39,13 +38,16 @@ class GAIATelemetryConfig:
         Args:
             enable_tracing: Whether to enable OpenTelemetry tracing
             otlp_endpoint: OTLP endpoint for trace export
-            applicationinsights_connection_string: Azure Monitor connection string
             trace_to_file: Whether to export traces to local file
             file_path: Path for local file export (defaults to gaia_traces.json)
+
+        Note:
+            For Azure Monitor integration, configure using environment variables
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.setup_azure_ai_observability()
+            before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing
         self.otlp_endpoint = otlp_endpoint
-        self.applicationinsights_connection_string = applicationinsights_connection_string
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
 
@@ -54,9 +56,9 @@ class GAIATelemetryConfig:
         if not self.enable_tracing:
             return
 
-        # If only file tracing is requested (no OTLP or Application Insights),
+        # If only file tracing is requested (no OTLP),
         # skip the default setup_observability which adds console exporter
-        if self.trace_to_file and not self.otlp_endpoint and not self.applicationinsights_connection_string:
+        if self.trace_to_file and not self.otlp_endpoint:
             # Set up minimal tracing with only file export
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.trace import set_tracer_provider
@@ -65,13 +67,17 @@ class GAIATelemetryConfig:
             set_tracer_provider(tracer_provider)
             self._setup_file_export()
         else:
-            # Use full observability setup for OTLP/AppInsights
+            # Use full observability setup for OTLP
             from agent_framework.observability import setup_observability
+
+            # Set OTLP endpoint env var if provided
+            if self.otlp_endpoint:
+                import os
+
+                os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", self.otlp_endpoint)
 
             setup_observability(
                 enable_sensitive_data=True,  # Enable for detailed task traces
-                otlp_endpoint=self.otlp_endpoint,
-                applicationinsights_connection_string=self.applicationinsights_connection_string,
             )
 
             # Set up local file export if requested

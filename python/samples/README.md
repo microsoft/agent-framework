@@ -241,8 +241,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/observability/advanced_manual_setup_console_output.py`](./getting_started/observability/advanced_manual_setup_console_output.py) | Advanced manual observability setup with console output |
 | [`getting_started/observability/advanced_zero_code.py`](./getting_started/observability/advanced_zero_code.py) | Zero-code observability setup example |
 | [`getting_started/observability/agent_observability.py`](./getting_started/observability/agent_observability.py) | Agent observability example |
+| [`getting_started/observability/agent_with_foundry_tracing.py`](./getting_started/observability/agent_with_foundry_tracing.py) | Any chat client setup with Azure Foundry Observability |
 | [`getting_started/observability/azure_ai_agent_observability.py`](./getting_started/observability/azure_ai_agent_observability.py) | Azure AI agent observability example |
-| [`getting_started/observability/azure_ai_chat_client_with_observability.py`](./getting_started/observability/azure_ai_chat_client_with_observability.py) | Azure AI chat client with observability example |
 | [`getting_started/observability/setup_observability_with_env_var.py`](./getting_started/observability/setup_observability_with_env_var.py) | Setup observability using environment variables |
 | [`getting_started/observability/setup_observability_with_parameters.py`](./getting_started/observability/setup_observability_with_parameters.py) | Setup observability using parameters |
 | [`getting_started/observability/workflow_observability.py`](./getting_started/observability/workflow_observability.py) | Workflow observability example |
