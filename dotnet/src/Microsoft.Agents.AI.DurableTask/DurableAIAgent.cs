@@ -98,7 +98,11 @@ public sealed class DurableAIAgent : AIAgent
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
 
-        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
+        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames)
+        {
+            OrchestrationId = this._context.InstanceId
+        };
+
         try
         {
             return await this._context.Entities.CallEntityAsync<AgentRunResponse>(

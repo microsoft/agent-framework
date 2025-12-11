@@ -495,3 +495,20 @@ class TestRedisChatMessageStore:
         # Verify rpush was called for each message
         pipeline_mock = mock_redis_client.pipeline.return_value.__aenter__.return_value
         assert pipeline_mock.rpush.call_count >= 2
+
+    async def test_serialize_with_agent_thread(self, redis_store, sample_messages):
+        """Test that RedisChatMessageStore can be serialized within an AgentThread.
+
+        This test verifies the fix for issue #1991 where calling thread.serialize()
+        with a RedisChatMessageStore would fail with "Messages should be a list" error.
+        """
+        from agent_framework import AgentThread
+
+        thread = AgentThread(message_store=redis_store)
+        await thread.on_new_messages(sample_messages)
+
+        serialized = await thread.serialize()
+
+        assert serialized is not None
+        assert "chat_message_store_state" in serialized
+        assert serialized["chat_message_store_state"] is not None

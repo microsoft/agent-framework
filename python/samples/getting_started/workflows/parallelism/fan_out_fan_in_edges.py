@@ -4,19 +4,20 @@ import asyncio
 from dataclasses import dataclass
 
 from agent_framework import (  # Core chat primitives to build LLM requests
-    AgentExecutor,  # Wraps an LLM agent for use inside a workflow
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
-    AgentRunEvent,  # Tracing event for agent execution steps
+    ChatAgent,  # Tracing event for agent execution steps
     ChatMessage,  # Chat message structure
     Executor,  # Base class for custom Python executors
+    ExecutorCompletedEvent,
+    ExecutorInvokedEvent,
     Role,  # Enum of chat roles (user, assistant, system)
     WorkflowBuilder,  # Fluent builder for wiring the workflow graph
     WorkflowContext,  # Per run context and event bus
     WorkflowOutputEvent,  # Event emitted when workflow yields output
     handler,  # Decorator to mark an Executor method as invokable
 )
-from agent_framework.azure import AzureOpenAIChatClient  # Client wrapper for Azure OpenAI chat models
+from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from typing_extensions import Never
 
@@ -42,20 +43,11 @@ Prerequisites:
 class DispatchToExperts(Executor):
     """Dispatches the incoming prompt to all expert agent executors for parallel processing (fan out)."""
 
-    def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id=id or "dispatch_to_experts")
-        self._expert_ids = expert_ids
-
     @handler
     async def dispatch(self, prompt: str, ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         # Wrap the incoming prompt as a user message for each expert and request a response.
-        # Each send_message targets a different AgentExecutor by id so that branches run in parallel.
         initial_message = ChatMessage(Role.USER, text=prompt)
-        for expert_id in self._expert_ids:
-            await ctx.send_message(
-                AgentExecutorRequest(messages=[initial_message], should_respond=True),
-                target_id=expert_id,
-            )
+        await ctx.send_message(AgentExecutorRequest(messages=[initial_message], should_respond=True))
 
 
 @dataclass
@@ -69,10 +61,6 @@ class AggregatedInsights:
 
 class AggregateInsights(Executor):
     """Aggregates expert agent responses into a single consolidated result (fan in)."""
-
-    def __init__(self, expert_ids: list[str], id: str | None = None):
-        super().__init__(id=id or "aggregate_insights")
-        self._expert_ids = expert_ids
 
     @handler
     async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
@@ -104,57 +92,61 @@ class AggregateInsights(Executor):
         await ctx.yield_output(consolidated)
 
 
+def create_researcher_agent() -> ChatAgent:
+    """Creates a research domain expert agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=(
+            "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
+            " opportunities, and risks."
+        ),
+        name="researcher",
+    )
+
+
+def create_marketer_agent() -> ChatAgent:
+    """Creates a marketing domain expert agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=(
+            "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
+            " aligned to the prompt."
+        ),
+        name="marketer",
+    )
+
+
+def create_legal_agent() -> ChatAgent:
+    """Creates a legal/compliance domain expert agent."""
+    return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
+        instructions=(
+            "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
+            " based on the prompt."
+        ),
+        name="legal",
+    )
+
+
 async def main() -> None:
-    # 1) Create agent executors for domain experts
-    chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
-    researcher = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
-                " opportunities, and risks."
-            ),
-        ),
-        id="researcher",
-    )
-    marketer = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
-                " aligned to the prompt."
-            ),
-        ),
-        id="marketer",
-    )
-    legal = AgentExecutor(
-        chat_client.create_agent(
-            instructions=(
-                "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
-                " based on the prompt."
-            ),
-        ),
-        id="legal",
-    )
-
-    expert_ids = [researcher.id, marketer.id, legal.id]
-
-    dispatcher = DispatchToExperts(expert_ids=expert_ids, id="dispatcher")
-    aggregator = AggregateInsights(expert_ids=expert_ids, id="aggregator")
-
-    # 2) Build a simple fan out and fan in workflow
+    # 1) Build a simple fan out and fan in workflow
     workflow = (
         WorkflowBuilder()
-        .set_start_executor(dispatcher)
-        .add_fan_out_edges(dispatcher, [researcher, marketer, legal])  # Parallel branches
-        .add_fan_in_edges([researcher, marketer, legal], aggregator)  # Join at the aggregator
+        .register_agent(create_researcher_agent, name="researcher")
+        .register_agent(create_marketer_agent, name="marketer")
+        .register_agent(create_legal_agent, name="legal")
+        .register_executor(lambda: DispatchToExperts(id="dispatcher"), name="dispatcher")
+        .register_executor(lambda: AggregateInsights(id="aggregator"), name="aggregator")
+        .set_start_executor("dispatcher")
+        .add_fan_out_edges("dispatcher", ["researcher", "marketer", "legal"])  # Parallel branches
+        .add_fan_in_edges(["researcher", "marketer", "legal"], "aggregator")  # Join at the aggregator
         .build()
     )
 
     # 3) Run with a single prompt and print progress plus the final consolidated output
     async for event in workflow.run_stream("We are launching a new budget-friendly electric bike for urban commuters."):
-        if isinstance(event, AgentRunEvent):
-            # Show which agent ran and what step completed for lightweight observability.
-            print(event)
+        if isinstance(event, ExecutorInvokedEvent):
+            # Show when executors are invoked and completed for lightweight observability.
+            print(f"{event.executor_id} invoked")
+        elif isinstance(event, ExecutorCompletedEvent):
+            print(f"{event.executor_id} completed")
         elif isinstance(event, WorkflowOutputEvent):
             print("===== Final Aggregated Output =====")
             print(event.data)

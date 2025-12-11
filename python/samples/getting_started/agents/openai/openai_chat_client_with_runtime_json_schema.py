@@ -73,7 +73,7 @@ async def streaming_example() -> None:
     query = "Give a brief weather digest for Portland."
     print(f"User: {query}")
 
-    chunks = []
+    chunks: list[str] = []
     async for chunk in agent.run_stream(
         query,
         additional_chat_options={

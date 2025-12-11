@@ -46,9 +46,10 @@ export interface ResponseCompletedEvent {
   type: "response.completed";
   response: {
     id: string;
-    status: "completed";
+    status?: "completed";
     usage?: any;  // Optional usage information
     model?: string;  // Optional model information
+    [key: string]: any; // Allow any additional fields
   };
   sequence_number?: number;
 }
@@ -537,7 +538,7 @@ export interface Conversation {
   id: string;
   object: "conversation";
   created_at: number;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 // List response

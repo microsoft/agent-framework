@@ -81,6 +81,7 @@ export default function App() {
 
   // Toast state and actions
   const toasts = useDevUIStore((state) => state.toasts);
+  const addToast = useDevUIStore((state) => state.addToast);
   const removeToast = useDevUIStore((state) => state.removeToast);
 
   // Initialize app - load agents and workflows
@@ -107,6 +108,7 @@ export default function App() {
           runtime: meta.runtime,
           capabilities: meta.capabilities,
           authRequired: meta.auth_required,
+          version: meta.version,
         });
 
         // Single API call instead of two parallel calls to same endpoint
@@ -173,6 +175,12 @@ export default function App() {
                 `Failed to load full info for first entity ${selectedEntity.id}:`,
                 error
               );
+              // Show toast for entity load errors (don't use setEntityError - that kills the whole UI)
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              addToast({
+                type: "error",
+                message: `Failed to load "${selectedEntity.id}": ${errorMessage}`,
+              });
             }
           }
         }
@@ -193,7 +201,7 @@ export default function App() {
     };
 
     loadData();
-  }, [setAgents, setWorkflows, selectEntity, updateAgent, updateWorkflow, setIsLoadingEntities, setEntityError, setShowEntityNotFoundToast]);
+  }, [setAgents, setWorkflows, selectEntity, updateAgent, updateWorkflow, setIsLoadingEntities, setEntityError, setShowEntityNotFoundToast, addToast, setEntities]);
 
   // Handle auth token submission
   const handleAuthTokenSubmit = useCallback(async () => {
@@ -283,10 +291,16 @@ export default function App() {
           }
         } catch (error) {
           console.error(`Failed to load full info for ${item.id}:`, error);
+          // Show toast for entity load errors (don't use setEntityError - that kills the whole UI)
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          addToast({
+            type: "error",
+            message: `Failed to load "${item.id}": ${errorMessage}`,
+          });
         }
       }
     },
-    [selectEntity, updateAgent, updateWorkflow]
+    [selectEntity, updateAgent, updateWorkflow, addToast]
   );
 
   // Handle debug events from active view
@@ -329,6 +343,17 @@ export default function App() {
   if (entityError) {
     const currentBackendUrl = apiClient.getBaseUrl();
     const isAuthError = entityError === "UNAUTHORIZED" || authRequired;
+
+    // Extract port from the backend URL for the command suggestion
+    let backendPort = "8080"; // default fallback
+    try {
+      if (currentBackendUrl) {
+        const url = new URL(currentBackendUrl);
+        backendPort = url.port || (url.protocol === "https:" ? "443" : "80");
+      }
+    } catch {
+      // If URL parsing fails, keep default
+    }
 
     return (
       <div className="h-screen flex flex-col bg-background">
@@ -429,7 +454,7 @@ export default function App() {
                       Start the backend:
                     </p>
                     <code className="block bg-background px-3 py-2 rounded border text-sm font-mono text-foreground">
-                      devui ./agents --port 8080
+                      devui ./agents --port {backendPort}
                     </code>
                     <p className="text-xs text-muted-foreground">
                       Or launch programmatically with{" "}

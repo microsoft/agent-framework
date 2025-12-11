@@ -464,8 +464,11 @@ class AgentFrameworkExecutor:
                     except Exception as e:
                         logger.warning(f"Could not convert HIL responses to proper types: {e}")
 
-                    # Step 2: Now send responses to the in-memory workflow
                     async for event in workflow.send_responses_streaming(hil_responses):
+                        # Enrich new RequestInfoEvents that may come from subsequent HIL requests
+                        if isinstance(event, RequestInfoEvent):
+                            self._enrich_request_info_event_with_response_schema(event, workflow)
+
                         for trace_event in trace_collector.get_pending_events():
                             yield trace_event
                         yield event
@@ -639,12 +642,26 @@ class AgentFrameworkExecutor:
                                             media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
+                                    # Include filename in additional_properties for OpenAI/Azure file handling
+                                    additional_props = {"filename": filename} if filename else None
                                     if file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
-                                        contents.append(DataContent(uri=data_uri, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=data_uri,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
                                     elif file_url:
-                                        contents.append(DataContent(uri=file_url, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=file_url,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)
@@ -719,6 +736,20 @@ class AgentFrameworkExecutor:
             return json.dumps(input_data)
         return str(input_data)
 
+    def _is_openai_multimodal_format(self, input_data: Any) -> bool:
+        """Check if input is OpenAI ResponseInputParam format (list with message items).
+
+        Args:
+            input_data: Input data to check
+
+        Returns:
+            True if input is OpenAI multimodal format
+        """
+        if not isinstance(input_data, list) or not input_data:
+            return False
+        first_item = input_data[0]
+        return isinstance(first_item, dict) and first_item.get("type") == "message"
+
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
 
@@ -730,9 +761,26 @@ class AgentFrameworkExecutor:
             Parsed input appropriate for the workflow
         """
         try:
-            # Handle structured input
+            # Handle JSON string input (from frontend api.ts JSON.stringify)
+            if isinstance(raw_input, str):
+                try:
+                    parsed = json.loads(raw_input)
+                    raw_input = parsed
+                except (json.JSONDecodeError, TypeError):
+                    # Plain text string, continue with string handling
+                    pass
+
+            # Check for OpenAI multimodal format (list with type: "message")
+            # This handles ChatMessage inputs with images, files, etc.
+            if self._is_openai_multimodal_format(raw_input):
+                logger.debug("Detected OpenAI multimodal format, converting to ChatMessage")
+                return self._convert_input_to_chat_message(raw_input)
+
+            # Handle structured input (dict)
             if isinstance(raw_input, dict):
                 return self._parse_structured_workflow_input(workflow, raw_input)
+
+            # Handle string input
             return self._parse_raw_workflow_input(workflow, str(raw_input))
 
         except Exception as e:

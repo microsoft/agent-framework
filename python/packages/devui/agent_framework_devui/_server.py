@@ -2,14 +2,17 @@
 
 """FastAPI server implementation."""
 
+import asyncio
+import importlib.metadata
 import inspect
 import json
 import logging
 import os
 import secrets
+import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +28,12 @@ from .models import AgentFrameworkRequest, MetaResponse, OpenAIError
 from .models._discovery_models import Deployment, DeploymentConfig, DiscoveryResponse, EntityInfo
 
 logger = logging.getLogger(__name__)
+
+# Get package version
+try:
+    __version__ = importlib.metadata.version("agent-framework-devui")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0"  # Fallback for development mode
 
 
 # No AuthMiddleware class needed - we'll use the decorator pattern instead
@@ -70,6 +79,7 @@ class DevServer:
         self.deployment_manager = DeploymentManager()
         self._app: FastAPI | None = None
         self._pending_entities: list[Any] | None = None
+        self._running_tasks: dict[str, asyncio.Task[Any]] = {}  # Track running response tasks for cancellation
 
     def _is_dev_mode(self) -> bool:
         """Check if running in developer mode.
@@ -142,7 +152,7 @@ class DevServer:
                 discovery = self.executor.entity_discovery
                 for entity in self._pending_entities:
                     try:
-                        entity_info = await discovery.create_entity_info_from_object(entity, source="in-memory")
+                        entity_info = await discovery.create_entity_info_from_object(entity, source="in_memory")
                         discovery.register_entity(entity_info.id, entity_info, entity)
                         logger.info(f"Registered in-memory entity: {entity_info.id}")
                     except Exception as e:
@@ -293,7 +303,7 @@ class DevServer:
         app = FastAPI(
             title="Agent Framework Server",
             description="OpenAI-compatible API server for Agent Framework and other AI frameworks",
-            version="1.0.0",
+            version=__version__,
             lifespan=lifespan,
         )
 
@@ -387,8 +397,6 @@ class DevServer:
         async def get_meta() -> MetaResponse:
             """Get server metadata and configuration."""
             import os
-
-            from . import __version__
 
             # Ensure executors are initialized to check capabilities
             openai_executor = await self._ensure_openai_executor()
@@ -529,9 +537,14 @@ class DevServer:
             except HTTPException:
                 raise
             except ValueError as e:
-                # ValueError from load_entity indicates entity not found or invalid
+                # ValueError from load_entity - could be "not found" or "failed to load"
+                error_str = str(e)
                 error_msg = self._format_error(e, "Entity loading")
-                raise HTTPException(status_code=404, detail=error_msg) from e
+                # Use 404 for "not found", 422 for load failures (entity exists but can't load)
+                if "not found" in error_str.lower() and "failed to load" not in error_str.lower():
+                    raise HTTPException(status_code=404, detail=error_msg) from e
+                # Entity exists but failed to load (e.g., missing env vars, import errors)
+                raise HTTPException(status_code=422, detail=error_msg) from e
             except Exception as e:
                 error_msg = self._format_error(e, "Entity info retrieval")
                 raise HTTPException(status_code=500, detail=error_msg) from e
@@ -551,6 +564,14 @@ class DevServer:
                 entity_info = executor.get_entity_info(entity_id)
                 if not entity_info:
                     raise HTTPException(status_code=404, detail=f"Entity {entity_id} not found")
+
+                # Check if entity is in-memory (cannot be reloaded)
+                if entity_info.source == "in_memory":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="In-memory entities cannot be reloaded. "
+                        "They only exist in memory and have no source files to reload from.",
+                    )
 
                 # Invalidate cache
                 executor.entity_discovery.invalidate_entity(entity_id)
@@ -723,13 +744,18 @@ class DevServer:
 
                 # Execute request
                 if request.stream:
+                    # Generate response ID for tracking
+                    response_id = f"resp_{uuid.uuid4().hex[:8]}"
+                    logger.info(f"[CANCELLATION] Creating response {response_id} for entity {entity_id}")
+
                     return StreamingResponse(
-                        self._stream_execution(executor, request),
+                        self._stream_with_cancellation(executor, request, response_id),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
                             "Connection": "keep-alive",
                             "Access-Control-Allow-Origin": "*",
+                            "X-Response-ID": response_id,  # Include ID for debugging/tracking
                         },
                     )
                 return await executor.execute_sync(request)
@@ -738,6 +764,30 @@ class DevServer:
                 error_msg = self._format_error(e, "Request execution")
                 error = OpenAIError.create(error_msg)
                 return JSONResponse(status_code=500, content=error.to_dict())
+
+        @app.post("/v1/responses/{response_id}/cancel")
+        async def cancel_response(response_id: str) -> dict[str, Any]:
+            """Cancel a running response execution.
+
+            This endpoint allows explicit cancellation of a running stream.
+            Note: Cancellation also happens automatically when the client disconnects.
+            """
+            logger.info(f"[CANCELLATION] Cancel request received for {response_id}")
+
+            if task := self._running_tasks.get(response_id):
+                if not task.done():
+                    logger.info(f"[CANCELLATION] Cancelling task for {response_id}")
+                    task.cancel()
+                    # Wait briefly for cancellation to propagate
+                    try:  # noqa: SIM105
+                        await asyncio.wait_for(task, timeout=0.5)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+                    return {"status": "cancelled", "response_id": response_id}
+                logger.warning(f"[CANCELLATION] Task already completed for {response_id}")
+                return {"status": "already_completed", "response_id": response_id}
+            logger.warning(f"[CANCELLATION] No task found for {response_id}")
+            return {"status": "not_found", "response_id": response_id}
 
         # ========================================
         # OpenAI Conversations API (Standard)
@@ -854,7 +904,7 @@ class DevServer:
                     filters["type"] = type
 
                 # Apply filters
-                conversations = executor.conversation_store.list_conversations_by_metadata(filters)
+                conversations = await executor.conversation_store.list_conversations_by_metadata(filters)
 
                 return {
                     "object": "list",
@@ -965,13 +1015,19 @@ class DevServer:
 
         @app.get("/v1/conversations/{conversation_id}/items/{item_id}")
         async def retrieve_conversation_item(conversation_id: str, item_id: str) -> dict[str, Any]:
-            """Get specific conversation item - OpenAI standard."""
+            """Get specific conversation item - OpenAI standard.
+
+            Supports checkpoint items - returns full checkpoint state in metadata.full_checkpoint.
+            """
             try:
                 executor = await self._ensure_executor()
-                item = executor.conversation_store.get_item(conversation_id, item_id)
+                item = await executor.conversation_store.get_item(conversation_id, item_id)
                 if not item:
                     raise HTTPException(status_code=404, detail="Item not found")
-                result: dict[str, Any] = item.model_dump()
+                # Handle both Pydantic models and dicts
+                result: dict[str, Any] = (
+                    item.model_dump() if hasattr(item, "model_dump") else cast(dict[str, Any], item)
+                )
                 return result
             except HTTPException:
                 raise
@@ -1049,10 +1105,20 @@ class DevServer:
             from .models import ResponseCompletedEvent
 
             final_response = await executor.message_mapper.aggregate_to_response(events, request)
+
+            # The sequence number for response.completed should be the next number after all events
+            # The last event in the list should have the highest sequence number so far
+            # We need to increment from that
+            last_seq = 0
+            for event in reversed(events):
+                if hasattr(event, "sequence_number") and event.sequence_number is not None:
+                    last_seq = event.sequence_number
+                    break
+
             completed_event = ResponseCompletedEvent(
                 type="response.completed",
                 response=final_response,
-                sequence_number=len(events),
+                sequence_number=last_seq + 1,
             )
             yield f"data: {completed_event.model_dump_json()}\n\n"
 
@@ -1060,7 +1126,7 @@ class DevServer:
             yield "data: [DONE]\n\n"
 
         except Exception as e:
-            logger.error(f"Error in streaming execution: {e}")
+            logger.error(f"Error in streaming execution: {e}", exc_info=True)
             error_event = {"id": "error", "object": "error", "error": {"message": str(e), "type": "execution_error"}}
             yield f"data: {json.dumps(error_event)}\n\n"
 
@@ -1120,6 +1186,100 @@ class DevServer:
                 },
             }
             yield f"data: {json.dumps(error_event)}\n\n"
+
+    async def _stream_with_cancellation(
+        self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest, response_id: str
+    ) -> AsyncGenerator[str, None]:
+        """Stream execution with automatic cancellation on client disconnect.
+
+        This wrapper adds cancellation support to the execution stream:
+        1. Tracks the execution as an asyncio Task
+        2. Detects client disconnection via GeneratorExit
+        3. Cancels the task when client disconnects
+        4. Propagates CancelledError through the execution chain
+
+        Args:
+            executor: Agent Framework executor instance
+            request: Request to execute
+            response_id: Unique ID for this response/execution
+
+        Yields:
+            SSE-formatted event strings from the original stream
+        """
+        task = None
+
+        async def execution_wrapper() -> AsyncGenerator[str, None]:
+            """Inner wrapper to handle the actual execution."""
+            try:
+                logger.debug(f"[CANCELLATION] Starting execution for {response_id}")
+
+                async for chunk in self._stream_execution(executor, request):
+                    # Check if we're being cancelled
+                    current_task = asyncio.current_task()
+                    if current_task and current_task.cancelled():
+                        logger.info(f"[CANCELLATION] Detected cancellation, breaking stream for {response_id}")
+                        break
+                    yield chunk
+
+            except asyncio.CancelledError:
+                logger.info(f"[CANCELLATION] Execution cancelled via CancelledError for {response_id}")
+                # Emit cancellation event to client (if still connected)
+                cancelled_event = {
+                    "type": "response.cancelled",
+                    "response_id": response_id,
+                    "message": "Execution cancelled by user",
+                }
+                yield f"data: {json.dumps(cancelled_event)}\n\n"
+                raise
+            except Exception as e:
+                logger.error(f"[CANCELLATION] Error in cancellable execution for {response_id}: {e}")
+                raise
+
+        try:
+            # Get or create the current task and track it
+            task = asyncio.current_task()
+            if task:
+                self._running_tasks[response_id] = task
+                logger.debug(f"[CANCELLATION] Tracking task {task.get_name()} for response {response_id}")
+            else:
+                logger.warning(f"[CANCELLATION] No current task found to track for {response_id}")
+
+            # Stream the execution
+            async for chunk in execution_wrapper():
+                yield chunk
+
+            logger.debug(f"[CANCELLATION] Stream completed normally for {response_id}")
+
+        except GeneratorExit:
+            # Client disconnected - this is raised when the generator is closed
+            logger.info(f"[CANCELLATION] Client disconnected, initiating cancellation for {response_id}")
+
+            if task and not task.done():
+                logger.info(f"[CANCELLATION] Cancelling task for disconnected client {response_id}")
+                task.cancel()
+                # Give it a moment to cancel gracefully
+                # Note: We should NOT use asyncio.shield here as it prevents cancellation
+                try:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.debug(f"[CANCELLATION] Task cancelled successfully for {response_id}")
+                except Exception as e:
+                    logger.warning(f"[CANCELLATION] Error during task cancellation for {response_id}: {e}")
+            raise  # Re-raise GeneratorExit to properly close the generator
+
+        except asyncio.CancelledError:
+            logger.info(f"[CANCELLATION] Stream cancelled for {response_id}")
+            raise
+
+        except Exception as e:
+            logger.error(f"[CANCELLATION] Unexpected error in stream for {response_id}: {e}")
+            raise
+
+        finally:
+            # Clean up tracking
+            if response_id in self._running_tasks:
+                self._running_tasks.pop(response_id)
+                logger.debug(f"[CANCELLATION] Cleaned up task tracking for {response_id}")
 
     def _mount_ui(self, app: FastAPI) -> None:
         """Mount the UI as static files."""

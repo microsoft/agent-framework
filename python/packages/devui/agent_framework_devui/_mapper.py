@@ -29,7 +29,6 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
-    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -186,6 +185,8 @@ class MessageMapper:
             if isinstance(raw_event, AgentRunUpdateEvent):
                 # Extract the AgentRunResponseUpdate from the event's data attribute
                 if raw_event.data and isinstance(raw_event.data, AgentRunResponseUpdate):
+                    # Preserve executor_id in context for proper output routing
+                    context["current_executor_id"] = raw_event.executor_id
                     return await self._convert_agent_update(raw_event.data, context)
                 # If no data, treat as generic workflow event
                 return await self._convert_workflow_event(raw_event, context)
@@ -502,8 +503,17 @@ class MessageMapper:
             # Check if we're streaming text content
             has_text_content = any(content.__class__.__name__ == "TextContent" for content in update.contents)
 
-            # If we have text content and haven't created a message yet, create one
-            if has_text_content and "current_message_id" not in context:
+            # Check if we're in an executor context with an existing item
+            executor_id = context.get("current_executor_id")
+            executor_item_key = f"exec_item_{executor_id}" if executor_id else None
+
+            # If we have an executor item, use it for deltas instead of creating a message
+            if has_text_content and executor_item_key and executor_item_key in context:
+                # Use the executor's item ID for this agent's output
+                context["current_message_id"] = context[executor_item_key]
+                # Note: We don't create a new message item here since the executor item already exists
+            # Otherwise, create a message item if we haven't yet (for non-executor contexts)
+            elif has_text_content and "current_message_id" not in context:
                 message_id = f"msg_{uuid4().hex[:8]}"
                 context["current_message_id"] = message_id
                 context["output_index"] = context.get("output_index", -1) + 1
@@ -671,25 +681,9 @@ class MessageMapper:
                 ]
 
             if isinstance(event, AgentCompletedEvent):
-                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
-
-                response_obj = Response(
-                    id=f"resp_{execution_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                # Don't emit response.completed here - the server will emit a proper one
+                # with usage data after aggregating all events
+                return []
 
             if isinstance(event, AgentFailedEvent):
                 execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
@@ -839,39 +833,16 @@ class MessageMapper:
                         )
                     ]
 
-            # Handle WorkflowCompletedEvent - emit response.completed
+            # Handle WorkflowCompletedEvent - Don't emit response.completed here
+            # The server will emit a proper one with usage data after aggregating all events
             if event_class == "WorkflowCompletedEvent":
-                workflow_id = context.get("workflow_id", str(uuid4()))
-
-                # Import Response type for proper construction
-                from openai.types.responses import Response
-
-                # Get model name from request or use 'devui' as default
-                request_obj = context.get("request")
-                model_name = request_obj.model if request_obj and request_obj.model else "devui"
-
-                # Create a full Response object for completed state
-                response_obj = Response(
-                    id=f"resp_{workflow_id}",
-                    object="response",
-                    created_at=float(time.time()),
-                    model=model_name,
-                    output=[],  # Output items already sent via output_item.added events
-                    status="completed",
-                    parallel_tool_calls=False,
-                    tool_choice="none",
-                    tools=[],
-                )
-
-                return [
-                    ResponseCompletedEvent(
-                        type="response.completed", sequence_number=self._next_sequence(context), response=response_obj
-                    )
-                ]
+                return []
 
             if event_class == "WorkflowFailedEvent":
                 workflow_id = context.get("workflow_id", str(uuid4()))
-                error_info = getattr(event, "error", None)
+                # WorkflowFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches ExecutorFailedEvent which also uses 'details'
+                details = getattr(event, "details", None)
 
                 # Import Response and ResponseError types
                 from openai.types.responses import Response, ResponseError
@@ -880,8 +851,14 @@ class MessageMapper:
                 request_obj = context.get("request")
                 model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
-                # Create error object
-                error_message = str(error_info) if error_info else "Unknown error"
+                # Extract error message from WorkflowErrorDetails
+                if details:
+                    error_message = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        error_message = f"{error_message} (extra: {extra})"
+                else:
+                    error_message = "Unknown error"
 
                 # Create ResponseError object (code must be one of the allowed values)
                 response_error = ResponseError(
@@ -916,6 +893,10 @@ class MessageMapper:
                 context[f"exec_item_{executor_id}"] = item_id
                 context["output_index"] = context.get("output_index", -1) + 1
 
+                # Track current executor for routing Magentic agent events
+                # This allows MagenticAgentDeltaEvent to route to the executor's item
+                context["current_executor_id"] = executor_id
+
                 # Create ExecutorActionItem with proper type
                 executor_item = ExecutorActionItem(
                     type="executor_action",
@@ -939,14 +920,22 @@ class MessageMapper:
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
 
+                # Clear current executor tracking when executor completes
+                if context.get("current_executor_id") == executor_id:
+                    context.pop("current_executor_id", None)
+
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
+                # Serialize the result data to ensure it's JSON-serializable
+                # (AgentExecutorResponse contains AgentRunResponse/ChatMessage which are SerializationMixin)
+                raw_result = getattr(event, "data", None)
+                serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
                 executor_item = ExecutorActionItem(
                     type="executor_action",
                     id=item_id,
                     executor_id=executor_id,
                     status="completed",
-                    result=getattr(event, "data", None),
+                    result=serialized_result,
                 )
 
                 # Use our custom event type
@@ -962,7 +951,15 @@ class MessageMapper:
             if event_class == "ExecutorFailedEvent":
                 executor_id = getattr(event, "executor_id", "unknown")
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
-                error_info = getattr(event, "error", None)
+                # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                details = getattr(event, "details", None)
+                if details:
+                    err_msg = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        err_msg = f"{err_msg} (extra: {extra})"
+                else:
+                    err_msg = None
 
                 # Create ExecutorActionItem with failed status
                 executor_item = ExecutorActionItem(
@@ -970,7 +967,7 @@ class MessageMapper:
                     id=item_id,
                     executor_id=executor_id,
                     status="failed",
-                    error={"message": str(error_info)} if error_info else None,
+                    error={"message": err_msg} if err_msg else None,
                 )
 
                 # Use our custom event type
@@ -1090,6 +1087,30 @@ class MessageMapper:
                 text = getattr(event, "text", None)
 
                 if text:
+                    # Check if we're inside an executor - route to executor's item
+                    # This prevents duplicate timeline entries (executor + inner agent)
+                    current_executor_id = context.get("current_executor_id")
+                    executor_item_key = f"exec_item_{current_executor_id}" if current_executor_id else None
+
+                    if executor_item_key and executor_item_key in context:
+                        # Route delta to the executor's item instead of creating a new message item
+                        item_id = context[executor_item_key]
+
+                        # Emit text delta event routed to the executor's item
+                        return [
+                            ResponseTextDeltaEvent(
+                                type="response.output_text.delta",
+                                output_index=context.get("output_index", 0),
+                                content_index=0,
+                                item_id=item_id,
+                                delta=text,
+                                logprobs=[],
+                                sequence_number=self._next_sequence(context),
+                            )
+                        ]
+
+                    # Fallback: No executor context - create separate message item (original behavior)
+                    # This handles cases where MagenticAgentDeltaEvent is emitted outside an executor
                     events = []
 
                     # Track Magentic agent messages separately from regular messages
@@ -1103,7 +1124,7 @@ class MessageMapper:
                         context[magentic_key] = message_id
                         context["output_index"] = context.get("output_index", -1) + 1
 
-                        # Import required types
+                        # Import required types for creating message containers
                         from openai.types.responses import ResponseOutputMessage, ResponseOutputText
                         from openai.types.responses.response_content_part_added_event import (
                             ResponseContentPartAddedEvent,
@@ -1212,7 +1233,21 @@ class MessageMapper:
                 agent_id = getattr(event, "agent_id", "unknown_agent")
                 message = getattr(event, "message", None)
 
-                # Track Magentic agent messages
+                # Check if we're inside an executor - if so, deltas were already routed there
+                # We don't need to emit a separate message completion event
+                current_executor_id = context.get("current_executor_id")
+                executor_item_key = f"exec_item_{current_executor_id}" if current_executor_id else None
+
+                if executor_item_key and executor_item_key in context:
+                    # Deltas were routed to executor item - no separate message item to complete
+                    # The executor's output_item.done will mark completion
+                    logger.debug(
+                        f"MagenticAgentMessageEvent from {agent_id} - "
+                        f"deltas routed to executor {current_executor_id}, skipping"
+                    )
+                    return []
+
+                # Fallback: Handle case where we created a separate message item (no executor context)
                 magentic_key = f"magentic_message_{agent_id}"
 
                 # Check if we were streaming for this agent
@@ -1305,7 +1340,7 @@ class MessageMapper:
                             "trace_type": "magentic_orchestrator",
                             "orchestrator_id": orchestrator_id,
                             "kind": kind,
-                            "text": text or str(message),
+                            "text": text or "",
                             "timestamp": datetime.now().isoformat(),
                         },
                         span_id=f"magentic_orch_{uuid4().hex[:8]}",

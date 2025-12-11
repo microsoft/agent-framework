@@ -28,6 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.DurableTask.IntegrationTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.DurableTask.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureFunctions" />
   </ItemGroup>
