@@ -198,7 +198,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override string Id => this._id ?? base.Id;
+    protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
     public override string? Name => this._name ?? base.Name;

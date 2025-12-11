@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251211] - 2025-12-11
+
+### Added
+
+- **agent-framework-core**: Extend HITL support for all orchestration patterns (#2620)
+- **agent-framework-core**: Add factory pattern to concurrent orchestration builder (#2738)
+- **agent-framework-core**: Add factory pattern to sequential orchestration builder (#2710)
+- **agent-framework-azure-ai**: Capture file IDs from code interpreter in streaming responses (#2741)
+
+### Changed
+
+- **agent-framework-azurefunctions**: Change DurableAIAgent log level from warning to debug when invoked without thread (#2736)
+
+### Fixed
+
+- **agent-framework-core**: Added more complete parsing for mcp tool arguments (#2756)
+- **agent-framework-core**: Fix GroupChat ManagerSelectionResponse JSON Schema for OpenAI Structured Outputs (#2750)
+- **samples**: Standardize OpenAI API key environment variable naming (#2629)
+
 ## [1.0.0b251209] - 2025-12-09
 
 ### Added
@@ -347,7 +366,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...HEAD
+[1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
 [1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
 [1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
 [1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120

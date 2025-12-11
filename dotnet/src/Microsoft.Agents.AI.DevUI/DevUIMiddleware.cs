@@ -81,7 +81,7 @@ internal sealed partial class DevUIMiddleware
             }
 
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
-            context.Response.Headers.Location = redirectUrl;
+            context.Response.Headers.Location = redirectUrl; // CodeQL [SM04598] justification: The redirect URL is constructed from a server-configured base path (_basePath), not user input. The query string is only appended as parameters and cannot change the redirect destination since this is a relative URL.
 
             if (this._logger.IsEnabled(LogLevel.Debug))
             {
