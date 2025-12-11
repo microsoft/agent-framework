@@ -13,17 +13,17 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate, ChatMessage, ErrorContent, Role
-from pydantic import BaseModel
-
-from agent_framework_azurefunctions._durable_agent_state import (
+from agent_framework_durabletask import (
     DurableAgentState,
     DurableAgentStateData,
     DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateTextContent,
+    RunRequest,
 )
+from pydantic import BaseModel
+
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
-from agent_framework_azurefunctions._models import RunRequest
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])
 

@@ -15,8 +15,7 @@ Usage:
 """
 
 import pytest
-
-from agent_framework_azurefunctions._constants import THREAD_ID_HEADER
+from agent_framework_durabletask import THREAD_ID_HEADER
 
 from .testutils import SampleTestHelper, skip_if_azure_functions_integration_tests_disabled
 

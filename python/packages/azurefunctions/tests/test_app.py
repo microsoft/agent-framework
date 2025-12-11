@@ -11,15 +11,16 @@ import azure.durable_functions as df
 import azure.functions as func
 import pytest
 from agent_framework import AgentRunResponse, ChatMessage, ErrorContent
-
-from agent_framework_azurefunctions import AgentFunctionApp
-from agent_framework_azurefunctions._app import WAIT_FOR_RESPONSE_FIELD, WAIT_FOR_RESPONSE_HEADER
-from agent_framework_azurefunctions._constants import (
+from agent_framework_durabletask import (
     MIMETYPE_APPLICATION_JSON,
     MIMETYPE_TEXT_PLAIN,
     THREAD_ID_HEADER,
+    WAIT_FOR_RESPONSE_FIELD,
+    WAIT_FOR_RESPONSE_HEADER,
+    DurableAgentState,
 )
-from agent_framework_azurefunctions._durable_agent_state import DurableAgentState
+
+from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._entities import AgentEntity, create_agent_entity
 
 TFunc = TypeVar("TFunc", bound=Callable[..., Any])

@@ -1,10 +1,10 @@
 [project]
-name = "agent-framework-azurefunctions"
-description = "Azure Functions integration for Microsoft Agent Framework."
+name = "agent-framework-durabletask"
+description = "Durable Task integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251209"
+version = "0.0.1"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,9 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "agent-framework-durabletask",
-    "azure-functions",
-    "azure-functions-durable",
+    "durabletask>=1.1.0",
+    "durabletask-azuremanaged>=1.1.0"
 ]
 
 [dependency-groups]
@@ -53,8 +52,7 @@ filterwarnings = [
 ]
 timeout = 120
 markers = [
-    "integration: marks tests as integration tests (require running function app)",
-    "orchestration: marks tests that use orchestrations (require Azurite)",
+    "integration: marks tests as integration tests",
 ]
 
 [tool.ruff]
@@ -83,15 +81,15 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_azurefunctions"]
+targets = ["agent_framework_durabletask"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azurefunctions"
-test = "pytest --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests"
+mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_durabletask"
+test = "pytest --cov=agent_framework_durabletask --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
