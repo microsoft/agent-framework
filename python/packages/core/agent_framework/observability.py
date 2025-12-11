@@ -854,7 +854,7 @@ OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 def enable_observability(
     *,
     enable_sensitive_data: bool | None = None,
-):
+) -> None:
     """Enable observability for your application.
 
     Calling this method implies you want to enable observability in your application.
