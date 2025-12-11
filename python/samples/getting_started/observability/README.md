@@ -42,10 +42,10 @@ No additional dependencies are required to enable telemetry. The necessary packa
 
 The following environment variables are used to turn on/off observability of the Agent Framework:
 
-- ENABLE_OBSERVABILITY=true
+- ENABLE_INSTRUMENTATION=true
 - ENABLE_SENSITIVE_DATA=true
 
-The framework will emit observability data when the `ENABLE_OBSERVABILITY` environment variable is set to `true`. If both are `true` then it will also emit sensitive information.
+The framework will emit observability data when the `ENABLE_INSTRUMENTATION` environment variable is set to `true`. If both are `true` then it will also emit sensitive information.
 
 > **Note**: Sensitive information includes prompts, responses, and more, and should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
 
@@ -97,7 +97,7 @@ The `configure_otel_providers()` function automatically reads **standard OpenTel
 **Agent Framework Specific**:
 - `ENABLE_CONSOLE_EXPORTERS` - Set to `true` to enable console output for debugging
 - `ENABLE_SENSITIVE_DATA` - Set to `true` to include prompts/responses in telemetry (dev/test only)
-- `ENABLE_OBSERVABILITY` - Set to `true` to enable observability (auto-enabled when `configure_otel_providers()` is called)
+- `ENABLE_INSTRUMENTATION` - Set to `true` to enable observability (auto-enabled when `configure_otel_providers()` is called)
 
 > **Note**: These are standard OpenTelemetry environment variables. See the [OpenTelemetry spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) for more details.
 
@@ -153,7 +153,7 @@ configure_azure_monitor(
 )
 
 # Then activate Agent Framework's telemetry code paths
-# This is optional if ENABLE_OBSERVABILITY and or ENABLE_SENSITIVE_DATA are set in env vars
+# This is optional if ENABLE_INSTRUMENTATION and or ENABLE_SENSITIVE_DATA are set in env vars
 enable_instrumentation(enable_sensitive_data=False)
 ```
 
@@ -172,7 +172,7 @@ async with (
 ```
 This method, first uses the project client to get the connection string from the project, it then call `configure_azure_monitor()` under the hood, and finally it calls `enable_instrumentation()` to activate the Agent Framework telemetry code paths. The kwargs of the `configure_azure_monitor()` method are passed to `configure_azure_monitor()`.
 
-> **Important**: Calling `configure_otel_providers()` and `enable_instrumentation()` implicitly enables telemetry, even when `ENABLE_OBSERVABILITY` is set to `false` in the environment.
+> **Important**: Calling `configure_otel_providers()` and `enable_instrumentation()` implicitly enables telemetry, even when `ENABLE_INSTRUMENTATION` is set to `false` in the environment.
 
 #### Logging
 Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
@@ -211,7 +211,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
-    > **Note**: You can start with just `ENABLE_OBSERVABILITY=true` and add `OTEL_EXPORTER_OTLP_ENDPOINT` or other configuration as needed. If no exporters are configured, you can set `ENABLE_CONSOLE_EXPORTERS=true` for console output.
+    > **Note**: You can start with just `ENABLE_INSTRUMENTATION=true` and add `OTEL_EXPORTER_OTLP_ENDPOINT` or other configuration as needed. If no exporters are configured, you can set `ENABLE_CONSOLE_EXPORTERS=true` for console output.
 3. Activate your python virtual environment, and then run `python configure_otel_providers_with_env_var.py` or others.
 
 > Each sample will print the Operation/Trace ID, which can be used later for filtering logs and traces in Application Insights or Aspire Dashboard.
@@ -483,7 +483,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 Or set it as an environment variable when running your samples:
 
 ```bash
-ENABLE_OBSERVABILITY=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python configure_otel_providers_with_env_var.py
+ENABLE_INSTRUMENTATION=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python configure_otel_providers_with_env_var.py
 ```
 
 ### Viewing telemetry data

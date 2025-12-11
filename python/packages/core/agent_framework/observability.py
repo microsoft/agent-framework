@@ -571,7 +571,7 @@ class ObservabilitySettings(AFBaseSettings):
 
     Keyword Args:
         enable_instrumentation: Enable OpenTelemetry diagnostics. Default is False.
-            Can be set via environment variable ENABLE_OBSERVABILITY.
+            Can be set via environment variable ENABLE_INSTRUMENTATION.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
@@ -586,7 +586,7 @@ class ObservabilitySettings(AFBaseSettings):
             from agent_framework import ObservabilitySettings
 
             # Using environment variables
-            # Set ENABLE_OBSERVABILITY=true
+            # Set ENABLE_INSTRUMENTATION=true
             # Set ENABLE_CONSOLE_EXPORTERS=true
             settings = ObservabilitySettings()
 
@@ -861,7 +861,7 @@ def enable_instrumentation(
 
     This method does not configure exporters or providers.
     It only updates the global variables that trigger the instrumentation code.
-    If you have already set the environment variable ENABLE_OBSERVABILITY=true,
+    If you have already set the environment variable ENABLE_INSTRUMENTATION=true,
     calling this method has no effect, unless you want to enable or disable sensitive data events.
 
     Keyword Args:
@@ -936,7 +936,7 @@ def configure_otel_providers(
             from agent_framework.observability import configure_otel_providers
 
             # Using environment variables (recommended)
-            # Set ENABLE_OBSERVABILITY=true
+            # Set ENABLE_INSTRUMENTATION=true
             # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
             configure_otel_providers()
 

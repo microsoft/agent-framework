@@ -26,7 +26,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     """Fixture to remove environment variables for ObservabilitySettings."""
 
     env_vars = [
-        "ENABLE_OBSERVABILITY",
+        "ENABLE_INSTRUMENTATION",
         "ENABLE_SENSITIVE_DATA",
         "ENABLE_CONSOLE_EXPORTERS",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -45,7 +45,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
 
     for key in env_vars:
         monkeypatch.delenv(key, raising=False)  # type: ignore
-    monkeypatch.setenv("ENABLE_OBSERVABILITY", str(enable_instrumentation))  # type: ignore
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", str(enable_instrumentation))  # type: ignore
     if not enable_instrumentation:
         # we overwrite sensitive data for tests
         enable_sensitive_data = False

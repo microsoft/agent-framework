@@ -1183,7 +1183,7 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
                   <Info className="inline h-4 w-4 mr-1  " />
                   You may have to set the environment variable{" "}
                   <span className="font-mono bg-accent/10 px-1 rounded">
-                    ENABLE_OBSERVABILITY=true
+                    ENABLE_INSTRUMENTATION=true
                   </span>{" "}
                   or restart devui with the tracing flag{" "}
                   <div className="font-mono bg-accent/10 px-1 rounded">

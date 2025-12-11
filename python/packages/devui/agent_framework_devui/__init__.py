@@ -177,9 +177,9 @@ def serve(
         import os
 
         # Only set if not already configured by user
-        if not os.environ.get("ENABLE_OBSERVABILITY"):
-            os.environ["ENABLE_OBSERVABILITY"] = "true"
-            logger.info("Set ENABLE_OBSERVABILITY=true for tracing")
+        if not os.environ.get("ENABLE_INSTRUMENTATION"):
+            os.environ["ENABLE_INSTRUMENTATION"] = "true"
+            logger.info("Set ENABLE_INSTRUMENTATION=true for tracing")
 
         if not os.environ.get("ENABLE_SENSITIVE_DATA"):
             os.environ["ENABLE_SENSITIVE_DATA"] = "true"
