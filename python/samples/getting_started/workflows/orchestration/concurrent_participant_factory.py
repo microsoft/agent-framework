@@ -124,14 +124,11 @@ async def main() -> None:
     # Create a concurrent builder with participant factories and a custom aggregator
     # - register_participants([...]) accepts factory functions that return
     #   AgentProtocol (agents) or Executor instances.
-    # - with_aggregator(...) overrides the default aggregator:
-    #   • Default aggregator -> returns list[ChatMessage] (one user + one assistant per agent)
-    #   • Custom callback    -> return value becomes workflow output (string here)
-    #   • Custom Executor  -> can yield outputs via ctx.yield_output(...)
+    # - register_aggregator(...) takes a factory function that returns an Executor instance.
     concurrent_builder = (
         ConcurrentBuilder()
         .register_participants([create_researcher, create_marketer, create_legal])
-        .with_aggregator(SummarizationExecutor)
+        .register_aggregator(SummarizationExecutor)
     )
 
     # Build workflow_a

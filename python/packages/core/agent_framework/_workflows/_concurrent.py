@@ -194,6 +194,7 @@ class ConcurrentBuilder:
        or Executor factories
     - `build()` wires: dispatcher -> fan-out -> participants -> fan-in -> aggregator.
     - `with_aggregator(...)` overrides the default aggregator with an Executor or callback.
+    - `register_aggregator(...)` accepts a factory for an Executor as custom aggregator.
 
     Usage:
 
@@ -216,6 +217,22 @@ class ConcurrentBuilder:
 
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_aggregator(summarize).build()
 
+
+        # Custom aggregator via a factory
+        class MyAggregator(Executor):
+            @handler
+            async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+
+
+        workflow = (
+            ConcurrentBuilder()
+            .register_participants([create_agent1, create_agent2, create_agent3])
+            .register_aggregator(lambda: MyAggregator(id="my_aggregator"))
+            .build()
+        )
+
+
         # Enable checkpoint persistence so runs can resume
         workflow = ConcurrentBuilder().participants([agent1, agent2, agent3]).with_checkpointing(storage).build()
 
@@ -226,13 +243,8 @@ class ConcurrentBuilder:
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
         self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
-        self._aggregator: (
-            Executor
-            | Callable[[], Executor]
-            | Callable[[list[AgentExecutorResponse]], Any]
-            | Callable[[list[AgentExecutorResponse], WorkflowContext[Never, Any]], Any]
-            | None
-        ) = None
+        self._aggregator: Executor | None = None
+        self._aggregator_factory: Callable[[], Executor] | None = None
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
 
@@ -245,6 +257,9 @@ class ConcurrentBuilder:
         Accepts factories (callables) that return AgentProtocol instances (e.g., created
         by a chat client) or Executor instances. Each participant created by a factory
         is wired as a parallel branch using fan-out edges from an internal dispatcher.
+
+        Args:
+            participant_factories: Sequence of callables returning AgentProtocol or Executor instances
 
         Raises:
             ValueError: if `participant_factories` is empty or `.participants()`
@@ -295,6 +310,9 @@ class ConcurrentBuilder:
         instances. Each participant is wired as a parallel branch using fan-out edges
         from an internal dispatcher.
 
+        Args:
+            participants: Sequence of AgentProtocol or Executor instances
+
         Raises:
             ValueError: if `participants` is empty, contains duplicates, or `.register_participants()`
                        or `.participants()` were already called
@@ -339,22 +357,57 @@ class ConcurrentBuilder:
         self._participants = list(participants)
         return self
 
+    def register_aggregator(self, aggregator_factory: Callable[[], Executor]) -> "ConcurrentBuilder":
+        r"""Define a custom aggregator for this concurrent workflow.
+
+        Accepts a factory (callable) that returns an Executor instance. The executor
+        should handle `list[AgentExecutorResponse]` and yield output using `ctx.yield_output(...)`.
+
+        Args:
+            aggregator_factory: Callable that returns an Executor instance
+
+        Example:
+        .. code-block:: python
+
+            @executor(id="custom_aggregator")
+            async def custom_aggregator(results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+
+
+            wf = (
+                ConcurrentBuilder()
+                .register_participants([create_researcher, create_marketer, create_legal])
+                .register_aggregator(lambda: custom_aggregator)
+                .build()
+            )
+        """
+        if self._aggregator is not None:
+            raise ValueError(
+                "Cannot mix .with_aggregator(...) and .register_aggregator(...) in the same builder instance."
+            )
+
+        if self._aggregator_factory is not None:
+            raise ValueError("register_aggregator() has already been called on this builder instance.")
+
+        self._aggregator_factory = aggregator_factory
+        return self
+
     def with_aggregator(
         self,
         aggregator: Executor
-        | Callable[[], Executor]
         | Callable[[list[AgentExecutorResponse]], Any]
         | Callable[[list[AgentExecutorResponse], WorkflowContext[Never, Any]], Any],
     ) -> "ConcurrentBuilder":
         r"""Override the default aggregator with an executor, an executor factory, or a callback.
 
         - Executor: must handle `list[AgentExecutorResponse]` and yield output using `ctx.yield_output(...)`
-        - Executor factory: callable returning an Executor instance that handles `list[AgentExecutorResponse]`
-          and yields output using `ctx.yield_output(...)`
         - Callback: sync or async callable with one of the signatures:
           `(results: list[AgentExecutorResponse]) -> Any | None` or
           `(results: list[AgentExecutorResponse], ctx: WorkflowContext) -> Any | None`.
           If the callback returns a non-None value, it becomes the workflow's output.
+
+        Args:
+            aggregator: Executor instance, or callback function
 
         Example:
 
@@ -367,14 +420,6 @@ class ConcurrentBuilder:
 
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(CustomAggregator()).build()
-
-            # Factory-based aggregator
-            wf = (
-                ConcurrentBuilder()
-                .participants([a1, a2, a3])
-                .with_aggregator(lambda: CustomAggregator(id="custom_aggregator"))
-                .build()
-            )
 
 
             # Callback-based aggregator (string result)
@@ -392,15 +437,29 @@ class ConcurrentBuilder:
 
             wf = ConcurrentBuilder().participants([a1, a2, a3]).with_aggregator(summarize).build()
         """
-        if isinstance(aggregator, Executor) or callable(aggregator):
+        if self._aggregator_factory is not None:
+            raise ValueError(
+                "Cannot mix .with_aggregator(...) and .register_aggregator(...) in the same builder instance."
+            )
+
+        if self._aggregator is not None:
+            raise ValueError("with_aggregator() has already been called on this builder instance.")
+
+        if isinstance(aggregator, Executor):
             self._aggregator = aggregator
+        elif callable(aggregator):
+            self._aggregator = _CallbackAggregator(aggregator)
         else:
             raise TypeError("aggregator must be an Executor or a callable")
 
         return self
 
     def with_checkpointing(self, checkpoint_storage: CheckpointStorage) -> "ConcurrentBuilder":
-        """Enable checkpoint persistence using the provided storage backend."""
+        """Enable checkpoint persistence using the provided storage backend.
+
+        Args:
+            checkpoint_storage: CheckpointStorage instance for persisting workflow state
+        """
         self._checkpoint_storage = checkpoint_storage
         return self
 
@@ -454,39 +513,15 @@ class ConcurrentBuilder:
 
         # Internal nodes
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
-        if isinstance(self._aggregator, Executor):
-            # Case 1: Executor instance - use directly
-            aggregator = self._aggregator
-        elif callable(self._aggregator):
-            # Distinguish between an aggregator factory (could also be a class) and callback-based aggregator
-            if inspect.isclass(self._aggregator):
-                aggregator = self._aggregator()
-            else:
-                # Check the signature: factory has 0 params, callback has 1-2 params
-                sig = inspect.signature(self._aggregator)
-                param_count = len(sig.parameters)
-
-                # Case 2: Executor factory (no parameters) - call it to create the executor
-                # Case 3: Callback with parameters (1-2 params) - wrap in _CallbackAggregator
-                aggregator = self._aggregator() if param_count == 0 else _CallbackAggregator(self._aggregator)  # type: ignore
-
-            if not isinstance(aggregator, Executor):
-                raise TypeError(f"Aggregator factory must return an Executor; got {type(aggregator).__name__}")
-        else:
-            # Case 4: No custom aggregator provided - use the default one
-            aggregator = _AggregateAgentConversations(id="aggregator")
-
-        participants: list[Executor | AgentProtocol] = []
-        if self._participant_factories:
-            for factory in self._participant_factories:
-                p = factory()
-                if not isinstance(p, (AgentProtocol, Executor)):
-                    raise TypeError(
-                        f"Participant factory must return AgentProtocol or Executor; got {type(p).__name__}"
-                    )
-                participants.append(p)
-        else:
-            participants = self._participants
+        aggregator = (
+            self._aggregator
+            if self._aggregator is not None
+            else (
+                self._aggregator_factory()
+                if self._aggregator_factory is not None
+                else _AggregateAgentConversations(id="aggregator")
+            )
+        )
 
         builder = WorkflowBuilder()
         if self._participant_factories:
@@ -495,13 +530,14 @@ class ConcurrentBuilder:
             # break the factory pattern since the concurrent builder still creates
             # new instances per workflow build.
             factory_names: list[str] = []
-            for p in participants:
+            for factory in self._participant_factories:
                 factory_name = uuid.uuid4().hex
                 factory_names.append(factory_name)
-                if isinstance(p, Executor):
-                    builder.register_executor(lambda executor=p: executor, name=factory_name)  # type: ignore[misc]
+                instance = factory()
+                if isinstance(instance, Executor):
+                    builder.register_executor(lambda executor=instance: executor, name=factory_name)  # type: ignore[misc]
                 else:
-                    builder.register_agent(lambda agent=p: agent, name=factory_name)  # type: ignore[misc]
+                    builder.register_agent(lambda agent=instance: agent, name=factory_name)  # type: ignore[misc]
             # Register the dispatcher and the aggregator
             builder.register_executor(lambda: dispatcher, name="dispatcher")
             builder.register_executor(lambda: aggregator, name="aggregator")
@@ -522,18 +558,17 @@ class ConcurrentBuilder:
                 builder.add_fan_in_edges(factory_names, "aggregator")
         else:
             builder.set_start_executor(dispatcher)
-            builder.add_fan_out_edges(dispatcher, list(participants))
+            builder.add_fan_out_edges(dispatcher, self._participants)
 
             if self._request_info_enabled:
                 # Insert interceptor between fan-in and aggregator
                 # participants -> fan-in -> interceptor -> aggregator
                 request_info_interceptor = RequestInfoInterceptor(executor_id="request_info")
-                builder.add_fan_in_edges(list(participants), request_info_interceptor)
+                builder.add_fan_in_edges(self._participants, request_info_interceptor)
                 builder.add_edge(request_info_interceptor, aggregator)
             else:
                 # Direct fan-in to aggregator
-                builder.add_fan_in_edges(list(participants), aggregator)
-
+                builder.add_fan_in_edges(self._participants, aggregator)
         if self._checkpoint_storage is not None:
             builder = builder.with_checkpointing(self._checkpoint_storage)
 

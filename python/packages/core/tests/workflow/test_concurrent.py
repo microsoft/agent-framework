@@ -67,6 +67,41 @@ def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None
         builder.build()
 
 
+def test_concurrent_builder_rejects_mixed_participants_and_factories() -> None:
+    """Test that mixing .participants() and .register_participants() raises an error."""
+    # Case 1: participants first, then register_participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        (
+            ConcurrentBuilder()
+            .participants([_FakeAgentExec("a", "A")])
+            .register_participants([lambda: _FakeAgentExec("b", "B")])
+        )
+
+    # Case 2: register_participants first, then participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        (
+            ConcurrentBuilder()
+            .register_participants([lambda: _FakeAgentExec("a", "A")])
+            .participants([_FakeAgentExec("b", "B")])
+        )
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_participants() -> None:
+    """Test that multiple calls to .participants() raises an error."""
+    with pytest.raises(ValueError, match=r"participants\(\) has already been called"):
+        (ConcurrentBuilder().participants([_FakeAgentExec("a", "A")]).participants([_FakeAgentExec("b", "B")]))
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_register_participants() -> None:
+    """Test that multiple calls to .register_participants() raises an error."""
+    with pytest.raises(ValueError, match=r"register_participants\(\) has already been called"):
+        (
+            ConcurrentBuilder()
+            .register_participants([lambda: _FakeAgentExec("a", "A")])
+            .register_participants([lambda: _FakeAgentExec("b", "B")])
+        )
+
+
 async def test_concurrent_default_aggregator_emits_single_user_and_assistants() -> None:
     # Three synthetic agent executors
     e1 = _FakeAgentExec("agentA", "Alpha")
@@ -226,7 +261,7 @@ async def test_concurrent_with_aggregator_executor_factory() -> None:
     wf = (
         ConcurrentBuilder()
         .participants([e1, e2])
-        .with_aggregator(lambda: CustomAggregator(id="custom_aggregator"))
+        .register_aggregator(lambda: CustomAggregator(id="custom_aggregator"))
         .build()
     )
 
@@ -264,7 +299,7 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(CustomAggregator).build()
+    wf = ConcurrentBuilder().participants([e1, e2]).register_aggregator(CustomAggregator).build()
 
     completed = False
     output: str | None = None
@@ -282,14 +317,28 @@ async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> 
     assert output == "One | Two"
 
 
-def test_concurrent_with_aggregator_executor_factory_fail_with_type_mismatch() -> None:
-    """Test with_aggregator using an Executor class directly as factory (with default __init__ parameters)."""
+def test_concurrent_builder_rejects_multiple_calls_to_with_aggregator() -> None:
+    """Test that multiple calls to .with_aggregator() raises an error."""
 
-    e1 = _FakeAgentExec("agentA", "One")
-    e2 = _FakeAgentExec("agentB", "Two")
+    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
+        return str(len(results))
 
-    with pytest.raises(TypeError):
-        ConcurrentBuilder().participants([e1, e2]).with_aggregator(lambda: "Mock Aggregator").build()  # type: ignore
+    with pytest.raises(ValueError, match=r"with_aggregator\(\) has already been called"):
+        (ConcurrentBuilder().with_aggregator(summarize).with_aggregator(summarize))
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_register_aggregator() -> None:
+    """Test that multiple calls to .register_aggregator() raises an error."""
+
+    class CustomAggregator(Executor):
+        pass
+
+    with pytest.raises(ValueError, match=r"register_aggregator\(\) has already been called"):
+        (
+            ConcurrentBuilder()
+            .register_aggregator(lambda: CustomAggregator(id="agg1"))
+            .register_aggregator(lambda: CustomAggregator(id="agg2"))
+        )
 
 
 async def test_concurrent_checkpoint_resume_round_trip() -> None:
@@ -435,6 +484,52 @@ def test_concurrent_builder_rejects_mixing_participants_and_factories() -> None:
             .register_participants([lambda: _FakeAgentExec("a", "A")])
             .participants([_FakeAgentExec("b", "B")])
         )
+
+
+async def test_concurrent_builder_reusable_after_build_with_participants() -> None:
+    """Test that the builder can be reused to build multiple identical workflows with participants()."""
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    builder = ConcurrentBuilder().participants([e1, e2])
+
+    builder.build()
+
+    assert builder._participants[0] is e1  # type: ignore
+    assert builder._participants[1] is e2  # type: ignore
+    assert builder._participant_factories == []  # type: ignore
+
+
+async def test_concurrent_builder_reusable_after_build_with_factories() -> None:
+    """Test that the builder can be reused to build multiple workflows with register_participants()."""
+    call_count = 0
+
+    def create_agent_executor_a() -> Executor:
+        nonlocal call_count
+        call_count += 1
+        return _FakeAgentExec("agentA", "One")
+
+    def create_agent_executor_b() -> Executor:
+        nonlocal call_count
+        call_count += 1
+        return _FakeAgentExec("agentB", "Two")
+
+    builder = ConcurrentBuilder().register_participants([create_agent_executor_a, create_agent_executor_b])
+
+    # Build the first workflow
+    wf1 = builder.build()
+
+    assert builder._participants == []  # type: ignore
+    assert len(builder._participant_factories) == 2  # type: ignore
+    assert call_count == 2
+
+    # Build the second workflow
+    wf2 = builder.build()
+    assert call_count == 4
+
+    # Verify that the two workflows have different executor instances
+    assert wf1.executors["agentA"] is not wf2.executors["agentA"]
+    assert wf1.executors["agentB"] is not wf2.executors["agentB"]
 
 
 async def test_concurrent_with_register_participants() -> None:
