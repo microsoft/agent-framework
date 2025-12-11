@@ -18,7 +18,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Get a client to create/retrieve server side agents with
-var azureOpenAIClient = new OpenAIClient(
+var openAIClient = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName);
@@ -32,7 +32,7 @@ static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
 // Adding middleware to the chat client level and building an agent on top of it
-var originalAgent = azureOpenAIClient.AsIChatClient()
+var originalAgent = openAIClient.AsIChatClient()
     .AsBuilder()
     .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
     .BuildAIAgent(

@@ -18,9 +18,10 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
+OpenAIClientOptions clientOptions = new() { Endpoint = new Uri($"{endpoint}/openai/v1") };
 OpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
-    ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
-    : new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
+    ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), clientOptions)
+    : new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), clientOptions);
 
 // Set up an AI agent following the standard Microsoft Agent Framework pattern.
 const string JokerName = "Joker";
