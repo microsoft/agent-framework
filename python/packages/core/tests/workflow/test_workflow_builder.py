@@ -303,7 +303,7 @@ def test_register_duplicate_id_raises_error():
     builder.set_start_executor("MyExecutor1")
 
     # Registering second executor with same ID should raise ValueError
-    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been registered."):
+    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been created."):
         builder.build()
 
 
