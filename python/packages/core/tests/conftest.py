@@ -28,8 +28,19 @@ def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data
     env_vars = [
         "ENABLE_OBSERVABILITY",
         "ENABLE_SENSITIVE_DATA",
-        "OTLP_ENDPOINT",
-        "APPLICATIONINSIGHTS_CONNECTION_STRING",
+        "ENABLE_CONSOLE_EXPORTERS",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_SERVICE_VERSION",
+        "OTEL_RESOURCE_ATTRIBUTES",
     ]
 
     for key in env_vars:
@@ -51,7 +62,14 @@ def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data
 
     # recreate observability settings with values from above and no file.
     observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
-    observability_settings._configure()  # pyright: ignore[reportPrivateUsage]
+
+    # Configure providers manually without calling _configure() to avoid OTLP imports
+    if enable_observability or enable_sensitive_data:
+        from opentelemetry.sdk.trace import TracerProvider
+
+        tracer_provider = TracerProvider(resource=observability_settings._resource)
+        trace.set_tracer_provider(tracer_provider)
+
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
 
     with (

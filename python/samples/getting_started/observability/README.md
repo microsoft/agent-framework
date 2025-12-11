@@ -45,13 +45,13 @@ The following environment variables are used to turn on/off observability of the
 - ENABLE_OBSERVABILITY=true
 - ENABLE_SENSITIVE_DATA=true
 
-The framework will emit observability data when one of the above environment variables is set to true.
+The framework will emit observability data when the `ENABLE_OBSERVABILITY` environment variable is set to `true`. If both are `true` then it will also emit sensitive information.
 
 > **Note**: Sensitive information includes prompts, responses, and more, and should only be enabled in a development or test environment. It is not recommended to enable this in production environments as it may expose sensitive data.
 
 ### Configuring exporters and providers
 
-Turning on observability is just the first step, you also need to configure where to send the observability data (i.e. Console, Application Insights). By default, no exporters or providers are configured.
+Turning on observability is just the first step, you also need to configure where to send the observability data (i.e. OTLP Endpoint, Console, Application Insights). By default, no exporters or providers are configured.
 
 #### Setting up exporters and providers manually
 
@@ -76,24 +76,102 @@ setup_logging()
 
 #### Environment variables for `setup_observability()`
 
-The `setup_observability()` function will look for the following environment variables to determine how to setup the exporters and providers:
+The `setup_observability()` function automatically reads **standard OpenTelemetry environment variables** to configure exporters:
 
-- OTLP_ENDPOINT="..."
-- APPLICATIONINSIGHTS_CONNECTION_STRING="..."
+**OTLP Configuration** (for Aspire Dashboard, Jaeger, etc.):
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - Base endpoint for all signals (e.g., `http://localhost:4317`)
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` - Traces-specific endpoint (overrides base)
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` - Metrics-specific endpoint (overrides base)
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` - Logs-specific endpoint (overrides base)
+- `OTEL_EXPORTER_OTLP_PROTOCOL` - Protocol to use (`grpc` or `http`, default: `grpc`)
+- `OTEL_EXPORTER_OTLP_HEADERS` - Headers for all signals (e.g., `key1=value1,key2=value2`)
+- `OTEL_EXPORTER_OTLP_TRACES_HEADERS` - Traces-specific headers (overrides base)
+- `OTEL_EXPORTER_OTLP_METRICS_HEADERS` - Metrics-specific headers (overrides base)
+- `OTEL_EXPORTER_OTLP_LOGS_HEADERS` - Logs-specific headers (overrides base)
 
-By providing the above environment variables, the `setup_observability()` function will automatically configure the appropriate exporters and providers for you. If no environment variables are provided, the function will not setup any exporters or providers.
+**Service Identification**:
+- `OTEL_SERVICE_NAME` - Service name (default: `agent_framework`)
+- `OTEL_SERVICE_VERSION` - Service version (default: package version)
+- `OTEL_RESOURCE_ATTRIBUTES` - Additional resource attributes (e.g., `key1=value1,key2=value2`)
 
-You can also pass in a list of exporters directly to the `setup_observability()` function if you want to customize the exporters or add additional ones besides the ones configured via environment variables.
+**Agent Framework Specific**:
+- `ENABLE_CONSOLE_EXPORTERS` - Set to `true` to enable console output for debugging
+- `ENABLE_SENSITIVE_DATA` - Set to `true` to include prompts/responses in telemetry (dev/test only)
+- `ENABLE_OBSERVABILITY` - Set to `true` to enable observability (auto-enabled when `setup_observability()` is called)
+
+> **Note**: These are standard OpenTelemetry environment variables. See the [OpenTelemetry spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) for more details.
+
+#### Three patterns for configuring observability
+
+**1. Default Setup (Environment Variables Only)**
+
+The simplest approach - configure everything via environment variables:
+
+```python
+from agent_framework.observability import setup_observability
+
+# Reads OTEL_EXPORTER_OTLP_* environment variables automatically
+setup_observability()
+```
+
+This is the **recommended approach** for most use cases.
+
+**2. Custom Exporters (Programmatic Configuration)**
+
+For advanced scenarios where you need custom exporter configuration:
 
 ```python
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from agent_framework.observability import setup_observability
 
-exporter = OTLPSpanExporter(endpoint="another-otlp-endpoint")
-setup_observability(exporters=[exporter])
+# Create custom exporters with specific configuration
+exporters = [
+    OTLPSpanExporter(endpoint="http://localhost:4317", compression=Compression.Gzip),
+    OTLPLogExporter(endpoint="http://localhost:4317"),
+    OTLPMetricExporter(endpoint="http://localhost:4317"),
+]
+
+# These will be added alongside any exporters from environment variables
+setup_observability(exporters=exporters, enable_sensitive_data=True)
 ```
 
-> Using this method implicitly enables telemetry, so you do not need to set the `ENABLE_OBSERVABILITY` environment variable. You can still set `ENABLE_SENSITIVE_DATA` to control whether sensitive data is included in the telemetry, or call the `setup_observability()` function with the `enable_sensitive_data` parameter set to `True`.
+**3. Fully Custom Setup (Azure Monitor, Custom Providers)**
+
+For complete control over telemetry providers (e.g., Azure Monitor integration):
+
+```python
+from azure.monitor.opentelemetry import configure_azure_monitor
+from agent_framework.observability import create_resource, setup_observability
+
+# Configure Azure Monitor first
+configure_azure_monitor(
+    connection_string="InstrumentationKey=...",
+    resource=create_resource(),  # Uses OTEL_SERVICE_NAME, etc.
+    enable_live_metrics=True,
+)
+
+# Then activate Agent Framework's telemetry code paths
+# This is optional if ENABLE_OBSERVABILITY and or ENABLE_SENSITIVE_DATA are set in env vars
+setup_observability(enable_sensitive_data=False)
+```
+
+For Azure AI projects, use the `AzureAIClient.setup_azure_ai_observability()` method which handles this automatically:
+
+```python
+from agent_framework.azure import AzureAIClient
+from azure.ai.projects.aio import AIProjectClient
+
+async with (
+    AIProjectClient(...) as project_client,
+    AzureAIClient(project_client=project_client) as client,
+):
+    # Automatically configures Azure Monitor with connection string from project
+    await client.setup_azure_ai_observability(enable_live_metrics=True)
+```
+
+> **Important**: Calling `setup_observability()` implicitly enables telemetry, even when `ENABLE_OBSERVABILITY` is set to `false` in the environment.
 
 #### Logging
 Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
@@ -119,35 +197,72 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 | Sample | Description |
 |--------|-------------|
-| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | A simple example showing how to setup telemetry by passing in parameters to the `setup_observability()` function. This sample also uses the `setup_logging()` function to configure logging. |
-| [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | A simple example showing how to setup telemetry with the `setup_observability()` function using environment variables. |
-| [agent_observability.py](./agent_observability.py) | A simple example showing how to setup telemetry for an agentic application. |
-| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | A simple example showing how to setup telemetry for an agentic application with an Azure AI project. |
-| [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | A simple example showing how to setup telemetry for a chat client with an Azure AI project. |
-| [workflow_observability.py](./workflow_observability.py) | A simple example showing how to setup telemetry for a workflow. |
-| [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | A comprehensive example showing how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. |
-| [advanced_zero_code.py](./advanced_zero_code.py) | A comprehensive example showing how to setup telemetry using the `opentelemetry-instrument` lib without modifying any code. |
+| [setup_observability_with_env_var.py](./setup_observability_with_env_var.py) | **Recommended starting point**: Shows how to setup telemetry using standard OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_*`). |
+| [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) | Shows how to create custom exporters with specific configuration and pass them to `setup_observability()`. Useful for advanced scenarios. |
+| [agent_observability.py](./agent_observability.py) | Shows telemetry collection for an agentic application with tool calls using environment variables. |
+| [agent_observability_http_exporters.py](./agent_observability_http_exporters.py) | Shows how to use HTTP/protobuf OTLP exporters instead of the default gRPC exporters. Useful for backends like Langfuse. |
+| [workflow_observability.py](./workflow_observability.py) | Shows telemetry collection for a workflow with multiple executors and message passing. |
+| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | Shows Azure Monitor integration using `AzureAIClient.setup_azure_ai_observability()` for Azure AI projects. |
+| [azure_ai_chat_client_with_observability.py](./azure_ai_chat_client_with_observability.py) | Shows Azure Monitor integration for a chat client with an Azure AI project. |
+| [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | Advanced: Shows manual setup of exporters and providers with console output. Useful for understanding how observability works under the hood. |
+| [advanced_zero_code.py](./advanced_zero_code.py) | Advanced: Shows zero-code telemetry setup using the `opentelemetry-instrument` CLI tool. |
 
 ### Running the samples
 
 1. Open a terminal and navigate to this folder: `python/samples/getting_started/observability/`. This is necessary for the `.env` file to be read correctly.
 2. Create a `.env` file if one doesn't already exist in this folder. Please refer to the [example file](./.env.example).
-    > Note that `APPLICATIONINSIGHTS_CONNECTION_STRING` and `OTLP_ENDPOINT` are optional. If you don't configure them, everything will get outputted to the console.
-3. Activate your python virtual environment, and then run `python setup_observability_with_env_vars.py` or others.
+    > **Note**: You can start with just `ENABLE_OBSERVABILITY=true` and add `OTEL_EXPORTER_OTLP_ENDPOINT` or other configuration as needed. If no exporters are configured, you can set `ENABLE_CONSOLE_EXPORTERS=true` for console output.
+3. Activate your python virtual environment, and then run `python setup_observability_with_env_var.py` or others.
 
-> This will also print the Operation/Trace ID, which can be used later for filtering logs and traces in Application Insights or Aspire Dashboard.
+> Each sample will print the Operation/Trace ID, which can be used later for filtering logs and traces in Application Insights or Aspire Dashboard.
 
 ## Application Insights/Azure Monitor
 
-### Authentication
+### Setup with Azure AI Projects
 
-You can connect to your Application Insights instance using a connection string. You can also authenticate using Entra ID by passing a [TokenCredential](https://learn.microsoft.com/en-us/python/api/azure-core/azure.core.credentials.tokencredential?view=azure-python) to the `setup_observability()` function used in the samples above.
+For Azure AI projects, use the `AzureAIClient.setup_azure_ai_observability()` method which automatically retrieves the Application Insights connection string from your project:
 
 ```python
+from agent_framework.azure import AzureAIClient
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity.aio import DefaultAzureCredential
+
+async with (
+    DefaultAzureCredential() as credential,
+    AIProjectClient(endpoint="...", credential=credential) as project_client,
+    AzureAIClient(project_client=project_client) as client,
+):
+    # Automatically configures Azure Monitor with connection string from project
+    await client.setup_azure_ai_observability(
+        enable_sensitive_data=True,  # dev/test only
+        enable_live_metrics=True,     # passed to configure_azure_monitor()
+    )
+
+    # Now use the client for your agent operations
+    response = await client.get_response(...)
+```
+
+See [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) for a complete example.
+
+### Manual Setup with Azure Monitor
+
+For non-Azure AI projects, you can configure Azure Monitor directly:
+
+```python
+from azure.monitor.opentelemetry import configure_azure_monitor
+from agent_framework.observability import create_resource, setup_observability
 from azure.identity import DefaultAzureCredential
 
-# The credential will be for resources specified in the environment variables and the parameters passed in.
-setup_observability(..., credential=DefaultAzureCredential())
+# Configure Azure Monitor with connection string and optional Entra ID auth
+configure_azure_monitor(
+    connection_string="InstrumentationKey=...",
+    resource=create_resource(),  # Uses OTEL_SERVICE_NAME, etc.
+    credential=DefaultAzureCredential(),  # Optional: for Entra ID auth
+    enable_live_metrics=True,
+)
+
+# Activate Agent Framework's telemetry code paths
+setup_observability(enable_sensitive_data=False)
 ```
 
 It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
@@ -164,18 +279,29 @@ Running the application once will only generate one set of measurements (for eac
 
 Please refer to here on how to analyze metrics in [Azure Monitor](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/analyze-metrics).
 
-### Adding exporters
+### Custom Exporters and Advanced Configuration
 
-You can also create exporters directly and have those added to the tracer_providers, logger_providers and metrics_providers, this is useful if you want to add a different exporter on the fly, or if you want to customize the exporter. Here is an example of how to create an OTLP exporter and add it to the observability setup:
+You can create custom exporters with specific configuration and pass them to `setup_observability()`:
 
 ```python
 from grpc import Compression
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from agent_framework.observability import setup_observability
 
-exporter = OTLPSpanExporter(endpoint="your-otlp-endpoint", compression=Compression.Gzip)
-setup_observability(exporters=[exporter])
+# Create custom exporters with advanced configuration
+exporters = [
+    OTLPSpanExporter(endpoint="http://localhost:4317", compression=Compression.Gzip),
+    OTLPLogExporter(endpoint="http://localhost:4317"),
+    OTLPMetricExporter(endpoint="http://localhost:4317"),
+]
+
+# These will be added alongside any exporters from environment variables
+setup_observability(exporters=exporters)
 ```
+
+See [setup_observability_with_parameters.py](./setup_observability_with_parameters.py) for a complete example.
 
 ### Logs
 
@@ -212,6 +338,110 @@ Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-agent>
 Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 ![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
+## Migration Guide
+
+If you're updating from a previous version of the Agent Framework, here are the key changes to the observability API:
+
+### Environment Variables
+
+| Old Variable | New Variable | Notes |
+|-------------|--------------|-------|
+| `OTLP_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` | Standard OpenTelemetry env var |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | N/A | Use `AzureAIClient.setup_azure_ai_observability()` |
+| N/A | `ENABLE_CONSOLE_EXPORTERS` | New opt-in flag for console output |
+
+### OTLP Configuration
+
+**Before (Deprecated):**
+```python
+# Via parameter
+setup_observability(otlp_endpoint="http://localhost:4317")
+
+# Via environment variable
+# OTLP_ENDPOINT=http://localhost:4317
+setup_observability()
+```
+
+**After (Current):**
+```python
+# Via standard OTEL environment variable (recommended)
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+setup_observability()
+
+# Or via custom exporters
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+setup_observability(exporters=[
+    OTLPSpanExporter(endpoint="http://localhost:4317"),
+    OTLPLogExporter(endpoint="http://localhost:4317"),
+    OTLPMetricExporter(endpoint="http://localhost:4317"),
+])
+```
+
+### Azure Monitor Configuration
+
+**Before (Deprecated):**
+```python
+setup_observability(
+    applicationinsights_connection_string="InstrumentationKey=...",
+    applicationinsights_live_metrics=True,
+)
+```
+
+**After (Current):**
+```python
+# For Azure AI projects
+from agent_framework.azure import AzureAIClient
+from azure.ai.projects.aio import AIProjectClient
+
+async with (
+    AIProjectClient(...) as project_client,
+    AzureAIClient(project_client=project_client) as client,
+):
+    await client.setup_azure_ai_observability(enable_live_metrics=True)
+
+# For non-Azure AI projects
+from azure.monitor.opentelemetry import configure_azure_monitor
+from agent_framework.observability import create_resource, setup_observability
+
+configure_azure_monitor(
+    connection_string="InstrumentationKey=...",
+    resource=create_resource(),
+    enable_live_metrics=True,
+)
+setup_observability()
+```
+
+### Console Output
+
+**Before (Deprecated):**
+```python
+# Console was used as automatic fallback
+setup_observability()  # Would output to console if no exporters configured
+```
+
+**After (Current):**
+```python
+# Console exporters are now opt-in
+# ENABLE_CONSOLE_EXPORTERS=true
+setup_observability()
+
+# Or programmatically
+import os
+os.environ["ENABLE_CONSOLE_EXPORTERS"] = "true"
+setup_observability()
+```
+
+### Benefits of New API
+
+1. **Standards Compliant**: Uses standard OpenTelemetry environment variables
+2. **Simpler**: Less configuration needed, more relies on environment
+3. **Flexible**: Easy to add custom exporters alongside environment-based ones
+4. **Cleaner Separation**: Azure Monitor setup is in Azure-specific client
+5. **Better Compatibility**: Works with any OTEL-compatible tool (Jaeger, Zipkin, Prometheus, etc.)
+
 ## Aspire Dashboard
 
 The [Aspire Dashboard](https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone) is a local telemetry viewing tool that provides an excellent experience for viewing OpenTelemetry data without requiring Azure setup.
@@ -239,13 +469,13 @@ This will start the dashboard with:
 Make sure your `.env` file includes the OTLP endpoint:
 
 ```bash
-OTLP_ENDPOINT=http://localhost:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 Or set it as an environment variable when running your samples:
 
 ```bash
-ENABLE_OBSERVABILITY=true OTLP_ENDPOINT=http://localhost:4317 python 01-zero_code.py
+ENABLE_OBSERVABILITY=true OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python setup_observability_with_env_var.py
 ```
 
 ### Viewing telemetry data

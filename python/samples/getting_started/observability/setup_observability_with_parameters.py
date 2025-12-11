@@ -17,14 +17,14 @@ if TYPE_CHECKING:
     from agent_framework import ChatClientProtocol
 
 """
-This sample, show how you can configure observability of an application via the
-`setup_observability` function and inline parameters.
+This sample shows how you can configure observability with custom exporters passed directly
+to the `setup_observability()` function.
 
-When you run this sample with an OTLP endpoint or an Application Insights connection string,
-you should see traces, logs, and metrics in the configured backend.
+This approach gives you full control over exporter configuration (endpoints, headers, compression, etc.)
+and allows you to add multiple exporters programmatically.
 
-If no OTLP endpoint or Application Insights connection string is configured, the sample will
-output traces, logs, and metrics to the console.
+For standard OTLP setup, it's recommended to use environment variables (see setup_observability_with_env_var.py).
+Use this approach when you need custom exporter configuration beyond what environment variables provide.
 """
 
 # Define the scenarios that can be run to show the telemetry data collected by the SDK
@@ -100,14 +100,35 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
 
     # Setup the logging with the more complete format
     setup_logging()
-    # This will enable tracing and create the necessary tracing, logging and metrics providers
-    # based on the provided parameters.
+
+    # Create custom OTLP exporters with specific configuration
+    # Note: You need to install opentelemetry-exporter-otlp-proto-grpc or -http separately
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+        # Create exporters with custom configuration
+        # These will be added to any exporters configured via environment variables
+        custom_exporters = [
+            OTLPSpanExporter(endpoint="http://localhost:4317"),
+            OTLPMetricExporter(endpoint="http://localhost:4317"),
+            OTLPLogExporter(endpoint="http://localhost:4317"),
+        ]
+    except ImportError:
+        print(
+            "Warning: opentelemetry-exporter-otlp-proto-grpc not installed. "
+            "Install with: pip install opentelemetry-exporter-otlp-proto-grpc"
+        )
+        print("Continuing without custom exporters...\n")
+        custom_exporters = []
+
+    # Setup observability with custom exporters and sensitive data enabled
+    # The exporters parameter allows you to add custom exporters alongside
+    # those configured via environment variables (OTEL_EXPORTER_OTLP_*)
     setup_observability(
         enable_sensitive_data=True,
-        # If you have set the `OTLP_ENDPOINT` environment variable and it'd different from the one below,
-        # both endpoints will be used to create the OTLP exporter.
-        # Same applies to the Application Insights connection string.
-        otlp_endpoint=["http://localhost:4317/"],
+        exporters=custom_exporters,
     )
 
     with get_tracer().start_as_current_span("Sample Scenario's", kind=trace.SpanKind.CLIENT) as current_span:

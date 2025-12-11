@@ -41,7 +41,7 @@ async def main():
             tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",
-            id="edvan-weather-agent",
+            id="weather-agent",
         )
         thread = agent.get_new_thread()
         for question in questions:
