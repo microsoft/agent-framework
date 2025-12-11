@@ -35,7 +35,7 @@ dependencies = [
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "mcp[ws]>=1.13",
+    "mcp[ws]>=1.23",
     "packaging>=24.1",
 ]
 

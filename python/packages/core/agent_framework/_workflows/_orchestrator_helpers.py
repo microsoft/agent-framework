@@ -140,6 +140,9 @@ class ParticipantRegistry:
 
     Provides a clean interface for the common pattern of mapping participant names
     to executor IDs and tracking which are agents vs custom executors.
+
+    Tracks both entry IDs (where to send requests) and exit IDs (where responses
+    come from) to support pipeline configurations where these differ.
     """
 
     def __init__(self) -> None:
@@ -154,19 +157,26 @@ class ParticipantRegistry:
         *,
         entry_id: str,
         is_agent: bool,
+        exit_id: str | None = None,
     ) -> None:
         """Register a participant's routing information.
 
         Args:
             name: Participant name
-            entry_id: Executor ID for this participant's entry point
+            entry_id: Executor ID for this participant's entry point (where to send)
             is_agent: Whether this is an AgentExecutor (True) or custom Executor (False)
+            exit_id: Executor ID for this participant's exit point (where responses come from).
+                    If None, defaults to entry_id (single-executor pipeline).
         """
         self._participant_entry_ids[name] = entry_id
+        actual_exit_id = exit_id if exit_id is not None else entry_id
 
         if is_agent:
             self._agent_executor_ids[name] = entry_id
+            # Map both entry and exit IDs to participant name for response routing
             self._executor_id_to_participant[entry_id] = name
+            if actual_exit_id != entry_id:
+                self._executor_id_to_participant[actual_exit_id] = name
         else:
             self._non_agent_participants.add(name)
 

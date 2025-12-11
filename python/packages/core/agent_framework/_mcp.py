@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import logging
 import re
 import sys
@@ -19,9 +18,9 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, create_model
 
-from ._tools import AIFunction, HostedMCPSpecificApproval
+from ._tools import AIFunction, HostedMCPSpecificApproval, _build_pydantic_model_from_json_schema
 from ._types import (
     ChatMessage,
     Contents,
@@ -274,95 +273,26 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
     if not prompt.arguments:
         return create_model(f"{prompt.name}_input")
 
-    field_definitions: dict[str, Any] = {}
+    # Convert prompt arguments to JSON schema format
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
     for prompt_argument in prompt.arguments:
-        # For prompts, all arguments are typically required and string type
-        # unless specified otherwise in the prompt argument
-        python_type = str  # Default type for prompt arguments
-
-        # Create field definition for create_model
+        # For prompts, all arguments are typically string type unless specified otherwise
+        properties[prompt_argument.name] = {
+            "type": "string",
+            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
+        }
         if prompt_argument.required:
-            field_definitions[prompt_argument.name] = (python_type, ...)
-        else:
-            field_definitions[prompt_argument.name] = (python_type, None)
+            required.append(prompt_argument.name)
 
-    return create_model(f"{prompt.name}_input", **field_definitions)
+    schema = {"properties": properties, "required": required}
+    return _build_pydantic_model_from_json_schema(prompt.name, schema)
 
 
 def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     """Creates a Pydantic model from a tools parameters."""
-    properties = tool.inputSchema.get("properties", None)
-    required = tool.inputSchema.get("required", [])
-    definitions = tool.inputSchema.get("$defs", {})
-
-    # Check if 'properties' is missing or not a dictionary
-    if not properties:
-        return create_model(f"{tool.name}_input")
-
-    def resolve_type(prop_details: dict[str, Any]) -> type:
-        """Resolve JSON Schema type to Python type, handling $ref."""
-        # Handle $ref by resolving the reference
-        if "$ref" in prop_details:
-            ref = prop_details["$ref"]
-            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
-            if ref.startswith("#/$defs/"):
-                def_name = ref.split("/")[-1]
-                if def_name in definitions:
-                    # Resolve the reference and use its type
-                    resolved = definitions[def_name]
-                    return resolve_type(resolved)
-            # If we can't resolve the ref, default to dict for safety
-            return dict
-
-        # Map JSON Schema types to Python types
-        json_type = prop_details.get("type", "string")
-        match json_type:
-            case "integer":
-                return int
-            case "number":
-                return float
-            case "boolean":
-                return bool
-            case "array":
-                return list
-            case "object":
-                return dict
-            case _:
-                return str  # default
-
-    field_definitions: dict[str, Any] = {}
-    for prop_name, prop_details in properties.items():
-        prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
-
-        python_type = resolve_type(prop_details)
-        description = prop_details.get("description", "")
-
-        # Build field kwargs (description, array items schema, etc.)
-        field_kwargs: dict[str, Any] = {}
-        if description:
-            field_kwargs["description"] = description
-
-        # Preserve array items schema if present
-        if prop_details.get("type") == "array" and "items" in prop_details:
-            items_schema = prop_details["items"]
-            if items_schema and items_schema != {}:
-                field_kwargs["json_schema_extra"] = {"items": items_schema}
-
-        # Create field definition for create_model
-        if prop_name in required:
-            if field_kwargs:
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, ...)
-        else:
-            default_value = prop_details.get("default", None)
-            field_kwargs["default"] = default_value
-            if field_kwargs and any(k != "default" for k in field_kwargs):
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, default_value)
-
-    return create_model(f"{tool.name}_input", **field_definitions)
+    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
 
 
 def _normalize_mcp_name(name: str) -> str:

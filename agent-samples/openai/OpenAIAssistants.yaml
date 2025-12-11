@@ -11,7 +11,7 @@ model:
         topP: 0.95
     connection:
         kind: ApiKey
-        key: =Env.OPENAI_APIKEY
+        key: =Env.OPENAI_API_KEY
 outputSchema:
     properties:
         language:
