@@ -216,11 +216,11 @@
 }
 
 /* Agent Suggestions styling overrides */
-::deep .suggestions-container {
+::deep .agent-suggestions {
     margin-bottom: 12px;
 }
 
-::deep .suggestion-chip {
+::deep .agent-suggestions .suggestion-button {
     background: #f3f4f6;
     border: 1px solid #e5e7eb;
     padding: 8px 14px;
@@ -231,7 +231,12 @@
     transition: all 0.15s ease;
 }
 
-::deep .suggestion-chip:hover {
+::deep .agent-suggestions .suggestion-button:hover:not(:disabled) {
     background: #e5e7eb;
     border-color: #d1d5db;
+}
+
+::deep .agent-suggestions .suggestion-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }

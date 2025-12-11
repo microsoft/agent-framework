@@ -14,6 +14,7 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     private readonly List<ChatMessage> _pendingMessages = [];
     private readonly List<Action> _messageChangeSubscribers = [];
     private readonly List<Action> _responseUpdateSubscribers = [];
+    private readonly List<Action> _runStatusSubscribers = [];
     private readonly List<AITool> _tools = [];
     private readonly Dictionary<string, TaskCompletionSource<object>> _pendingResponses = [];
 
@@ -28,6 +29,11 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     public ChatMessage? CurrentMessage { get; private set; }
 
     public ChatResponseUpdate? CurrentUpdate { get; private set; }
+
+    /// <summary>
+    /// Gets whether the agent is currently processing a turn.
+    /// </summary>
+    public bool IsProcessing { get; private set; }
 
     public AgentBoundaryContext(AIAgent agent, AgentThread thread)
     {
@@ -102,6 +108,12 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
         this._pendingMessages.Clear();
         this._pendingMessages.AddRange(userMessages);
 
+        // Mark as processing
+        this.IsProcessing = true;
+
+        // Notify subscribers that run status changed (processing started)
+        this.TriggerRunStatusChanged();
+
         // User messages added, notify subscribers.
         this.TriggerMessageChanges();
 
@@ -159,6 +171,10 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
         this._pendingMessages.Clear();
         this.CurrentMessage = null;
         this.CurrentUpdate = null;
+        this.IsProcessing = false;
+
+        // Notify subscribers that run status changed (processing ended)
+        this.TriggerRunStatusChanged();
 
         // Notify subscribers
         this.TriggerChatResponseUpdate();
@@ -192,6 +208,20 @@ public sealed partial class AgentBoundaryContext<TState> : IAgentBoundaryContext
     {
         return new ResponseUpdateSubscription(this._responseUpdateSubscribers, onChatResponse);
     }
+
+    public RunStatusSubscription SubscribeToRunStatusChanges(Action onRunStatusChanged)
+    {
+        return new RunStatusSubscription(this._runStatusSubscribers, onRunStatusChanged);
+    }
+
+    private void TriggerRunStatusChanged()
+    {
+        // Iterate backwards to avoid issues if subscribers are removed during iteration
+        for (var i = this._runStatusSubscribers.Count - 1; i >= 0; i--)
+        {
+            this._runStatusSubscribers[i]();
+        }
+    }
 }
 
 public interface IAgentBoundaryContext
@@ -210,10 +240,22 @@ public interface IAgentBoundaryContext
 
     ChatResponseUpdate? CurrentUpdate { get; }
 
+    /// <summary>
+    /// Gets whether the agent is currently processing a turn.
+    /// </summary>
+    bool IsProcessing { get; }
+
     // Triggered any time there is a change on a message.
     MessageSubscription SubscribeToMessageChanges(Action onNewMessage);
 
     ResponseUpdateSubscription SubscribeToResponseUpdates(Action onChatResponse);
+
+    /// <summary>
+    /// Subscribes to run status changes (when processing starts or ends).
+    /// </summary>
+    /// <param name="onRunStatusChanged">The callback to invoke when run status changes.</param>
+    /// <returns>A subscription that can be disposed to unsubscribe.</returns>
+    RunStatusSubscription SubscribeToRunStatusChanges(Action onRunStatusChanged);
 
     CancellationToken CancellationToken { get; }
 
@@ -322,6 +364,47 @@ public readonly struct ResponseUpdateSubscription : IDisposable, IEquatable<Resp
     }
 
     public static bool operator !=(ResponseUpdateSubscription left, ResponseUpdateSubscription right)
+    {
+        return !(left == right);
+    }
+}
+
+public readonly struct RunStatusSubscription : IDisposable, IEquatable<RunStatusSubscription>
+{
+    private readonly List<Action> _subscribers;
+    private readonly Action _subscription;
+
+    public RunStatusSubscription(List<Action> subscribers, Action subscription)
+    {
+        this._subscribers = subscribers;
+        this._subscription = subscription;
+        this._subscribers.Add(this._subscription);
+    }
+
+    public void Dispose() => this._subscribers.Remove(this._subscription);
+
+    public override bool Equals(object? obj)
+    {
+        return obj is RunStatusSubscription subscription && this.Equals(subscription);
+    }
+
+    public bool Equals(RunStatusSubscription other)
+    {
+        return EqualityComparer<List<Action>>.Default.Equals(this._subscribers, other._subscribers) &&
+               EqualityComparer<Action>.Default.Equals(this._subscription, other._subscription);
+    }
+
+    public override int GetHashCode()
+    {
+        return HashCode.Combine(this._subscribers, this._subscription);
+    }
+
+    public static bool operator ==(RunStatusSubscription left, RunStatusSubscription right)
+    {
+        return left.Equals(right);
+    }
+
+    public static bool operator !=(RunStatusSubscription left, RunStatusSubscription right)
     {
         return !(left == right);
     }

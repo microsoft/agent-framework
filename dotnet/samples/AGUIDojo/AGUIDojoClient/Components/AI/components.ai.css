@@ -1,0 +1,309 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+/* ==========================================================================
+   AG-UI Components - Shared Styles
+   These styles provide consistent appearance for AI components across demos.
+   ========================================================================== */
+
+/* ==========================================================================
+   Agent Input Component
+   ========================================================================== */
+
+.agent-input {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    width: 100%;
+}
+
+.agent-input textarea {
+    flex: 1;
+    padding: 12px 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    resize: none;
+    min-height: 44px;
+    max-height: 200px;
+    line-height: 1.5;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.agent-input textarea:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.agent-input textarea::placeholder {
+    color: #9ca3af;
+}
+
+.agent-input textarea:disabled {
+    background-color: #f9fafb;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+.agent-input .send-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 8px;
+    background-color: #2563eb;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+    flex-shrink: 0;
+}
+
+.agent-input .send-button:hover:not(:disabled) {
+    background-color: #1d4ed8;
+}
+
+.agent-input .send-button:disabled {
+    background-color: #d1d5db;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+.agent-input .send-button svg {
+    display: block;
+}
+
+/* ==========================================================================
+   Agent Suggestions Component
+   ========================================================================== */
+
+.agent-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-start;
+    margin-bottom: 0.75rem;
+}
+
+.suggestion-button {
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 1px solid #d1d1d1;
+    border-radius: 1rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: #424242;
+    transition: all 0.2s;
+}
+
+.suggestion-button:hover:not(:disabled) {
+    background: #f0f0f0;
+    border-color: #0078d4;
+    color: #0078d4;
+}
+
+.suggestion-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Loading Indicator - Triple Dot Animation
+   ========================================================================== */
+
+.agent-loading-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.agent-loading-dots {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.agent-loading-dots span {
+    width: 6px;
+    height: 6px;
+    background-color: #2563eb;
+    border-radius: 50%;
+    animation: agent-dot-bounce 1.4s ease-in-out infinite both;
+}
+
+.agent-loading-dots span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.agent-loading-dots span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.agent-loading-dots span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+@keyframes agent-dot-bounce {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.5;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Inline loading indicator for use within messages */
+.agent-loading-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background-color: #f3f4f6;
+    border-radius: 12px;
+}
+
+.agent-loading-inline span {
+    width: 5px;
+    height: 5px;
+    background-color: #6b7280;
+    border-radius: 50%;
+    animation: agent-dot-bounce 1.4s ease-in-out infinite both;
+}
+
+.agent-loading-inline span:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.agent-loading-inline span:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.agent-loading-inline span:nth-child(3) {
+    animation-delay: 0s;
+}
+
+/* ==========================================================================
+   Processing State Overlay
+   ========================================================================== */
+
+.agent-input-container {
+    position: relative;
+}
+
+.agent-input-container.processing .agent-input textarea {
+    background-color: #f9fafb;
+}
+
+/* ==========================================================================
+   Message Styles
+   ========================================================================== */
+
+.message-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.message {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.message-user {
+    align-items: flex-end;
+}
+
+.message-assistant {
+    align-items: flex-start;
+}
+
+.message-content {
+    max-width: 80%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.message-user .message-content {
+    background-color: #2563eb;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.message-assistant .message-content {
+    background-color: #f3f4f6;
+    color: #1f2937;
+    border-bottom-left-radius: 4px;
+}
+
+/* ==========================================================================
+   Common Chat Layout Styles
+   ========================================================================== */
+
+.chat-layout {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.chat-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1a1a1a;
+}
+
+.new-chat-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: white;
+    border: 1px solid #d1d1d1;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: #424242;
+    transition: all 0.2s;
+}
+
+.new-chat-button:hover {
+    background: #f5f5f5;
+    border-color: #b3b3b3;
+}
+
+.button-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.chat-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-input-container {
+    padding: 1.5rem 2rem 2rem;
+    border-top: 1px solid #e5e5e5;
+    background: white;
+}

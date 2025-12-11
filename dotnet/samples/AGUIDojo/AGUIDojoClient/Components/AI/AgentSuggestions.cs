@@ -60,11 +60,12 @@ public readonly struct Suggestion : IEquatable<Suggestion>
     public static bool operator !=(Suggestion left, Suggestion right) => !left.Equals(right);
 }
 
-public partial class AgentSuggestions : IComponent
+public sealed partial class AgentSuggestions : IComponent, IDisposable
 {
     private RenderHandle _renderHandle;
     private AgentBoundaryContext<object?>? _context;
     private IReadOnlyList<Suggestion>? _suggestions;
+    private RunStatusSubscription? _subscription;
 
     [CascadingParameter] public AgentBoundaryContext<object?>? AgentContext { get; set; }
 
@@ -78,14 +79,34 @@ public partial class AgentSuggestions : IComponent
     public Task SetParametersAsync(ParameterView parameters)
     {
         parameters.SetParameterProperties(this);
-        this._context = this.AgentContext;
+
+        // Unsubscribe from previous context if it changed
+        if (this._context != this.AgentContext)
+        {
+            this._subscription?.Dispose();
+            this._context = this.AgentContext;
+
+            // Subscribe to run status changes
+            if (this._context != null)
+            {
+                this._subscription = this._context.SubscribeToRunStatusChanges(this.OnRunStatusChanged);
+            }
+        }
+
         this._suggestions = this.Suggestions;
         this.Render();
         return Task.CompletedTask;
     }
 
+    private void OnRunStatusChanged()
+    {
+        this.Render();
+    }
+
     private void Render()
     {
+        var isProcessing = this._context?.IsProcessing ?? false;
+
         this._renderHandle.Render(builder =>
         {
             if (this._suggestions is null || this._suggestions.Count == 0)
@@ -103,7 +124,8 @@ public partial class AgentSuggestions : IComponent
                 builder.SetKey(suggestion.Text);
                 builder.AddAttribute(3, "class", "suggestion-button");
                 builder.AddAttribute(4, "onclick", EventCallback.Factory.Create(this, () => this.SelectSuggestionAsync(suggestion)));
-                builder.AddContent(5, suggestion.Text);
+                builder.AddAttribute(5, "disabled", isProcessing);
+                builder.AddContent(6, suggestion.Text);
                 builder.CloseElement();
             }
 
@@ -113,9 +135,14 @@ public partial class AgentSuggestions : IComponent
 
     private async Task SelectSuggestionAsync(Suggestion suggestion)
     {
-        if (this._context != null)
+        if (this._context is { IsProcessing: false })
         {
             await this._context.SendAsync(suggestion.Message);
         }
+    }
+
+    public void Dispose()
+    {
+        this._subscription?.Dispose();
     }
 }
