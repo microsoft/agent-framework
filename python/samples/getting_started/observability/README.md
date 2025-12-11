@@ -157,7 +157,7 @@ configure_azure_monitor(
 setup_observability(enable_sensitive_data=False)
 ```
 
-For Azure AI projects, use the `AzureAIClient.setup_azure_ai_observability()` method which handles this automatically:
+For Azure AI projects, use the `client.setup_azure_ai_observability()` method which handles this automatically:
 
 ```python
 from agent_framework.azure import AzureAIClient
@@ -170,6 +170,7 @@ async with (
     # Automatically configures Azure Monitor with connection string from project
     await client.setup_azure_ai_observability(enable_live_metrics=True)
 ```
+This method, first uses the project client to get the connection string from the project, it then call `configure_azure_monitor()` under the hood, and finally it calls `setup_observability()` to activate the Agent Framework telemetry code paths. The kwargs of the `setup_azure_ai_observability()` method are passed to `configure_azure_monitor()`. The `setup_observability()` method is called with `disable_exporter_creation=True` to avoid creating duplicate exporters.
 
 > **Important**: Calling `setup_observability()` implicitly enables telemetry, even when `ENABLE_OBSERVABILITY` is set to `false` in the environment.
 

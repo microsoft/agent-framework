@@ -250,7 +250,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         )
 
         # Complete setup with core observability
-        setup_observability(enable_sensitive_data=enable_sensitive_data)
+        setup_observability(enable_sensitive_data=enable_sensitive_data, disable_exporter_creation=True)
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
