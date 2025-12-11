@@ -647,6 +647,9 @@ public sealed partial class ChatClientAgent : AIAgent
                 inputMessagesForChatClient.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
             }
 
+            // Add the input messages before getting context from AIContextProvider.
+            inputMessagesForChatClient.AddRange(inputMessages);
+
             // If we have an AIContextProvider, we should get context from it, and update our
             // messages and options with the additional context.
             if (typedThread.AIContextProvider is not null)
@@ -675,9 +678,6 @@ public sealed partial class ChatClientAgent : AIAgent
                     chatOptions.Instructions = string.IsNullOrWhiteSpace(chatOptions.Instructions) ? aiContext.Instructions : $"{chatOptions.Instructions}\n{aiContext.Instructions}";
                 }
             }
-
-            // Add the input messages to the end of thread messages.
-            inputMessagesForChatClient.AddRange(inputMessages);
         }
 
         // If a user provided two different thread ids, via the thread object and options, we should throw
