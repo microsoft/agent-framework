@@ -1,74 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from dataclasses import fields, is_dataclass
 from types import UnionType
 from typing import Any, TypeVar, Union, cast, get_args, get_origin
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-
-def _coerce_to_type(value: Any, target_type: type[T]) -> T | None:
-    """Best-effort conversion of value into target_type.
-
-    Args:
-        value: The value to convert (can be dict, dataclass, or object with __dict__)
-        target_type: The target type to convert to
-
-    Returns:
-        Instance of target_type if conversion succeeds, None otherwise
-    """
-    if isinstance(value, target_type):
-        return value  # type: ignore[return-value]
-
-    # Convert dataclass instances or objects with __dict__ into dict first
-    value_as_dict: dict[str, Any]
-    if not isinstance(value, dict):
-        if is_dataclass(value):
-            value_as_dict = {f.name: getattr(value, f.name) for f in fields(value)}
-        else:
-            value_dict = getattr(value, "__dict__", None)
-            if isinstance(value_dict, dict):
-                value_as_dict = cast(dict[str, Any], value_dict)
-            else:
-                return None
-    else:
-        value_as_dict = cast(dict[str, Any], value)
-
-    # Try to construct the target type from the dict
-    ctor_kwargs: dict[str, Any] = dict(value_as_dict)
-
-    if is_dataclass(target_type):
-        field_names = {f.name for f in fields(target_type)}
-        ctor_kwargs = {k: v for k, v in value_as_dict.items() if k in field_names}
-
-    try:
-        return target_type(**ctor_kwargs)  # type: ignore[call-arg,return-value]
-    except TypeError as exc:
-        logger.debug(f"_coerce_to_type could not call {target_type.__name__}(**..): {exc}")
-    except Exception as exc:  # pragma: no cover - unexpected constructor failure
-        logger.warning(
-            f"_coerce_to_type encountered unexpected error calling {target_type.__name__} constructor: {exc}"
-        )
-
-    # Fallback: try to create instance without __init__ and set attributes
-    try:
-        instance = object.__new__(target_type)
-    except Exception as exc:  # pragma: no cover - pathological type
-        logger.debug(f"_coerce_to_type could not allocate {target_type.__name__} without __init__: {exc}")
-        return None
-
-    for key, val in value_as_dict.items():
-        try:
-            setattr(instance, key, val)
-        except Exception as exc:
-            logger.debug(
-                f"_coerce_to_type could not set {target_type.__name__}.{key} during fallback assignment: {exc}"
-            )
-            continue
-    return instance  # type: ignore[return-value]
 
 
 def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
