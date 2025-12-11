@@ -25,6 +25,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_azure_ai_search.py) | Azure AI Agent with Azure AI Search Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_bing_grounding.py) | Azure AI agent with Bing Grounding search for real-time web information |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter_file_generation.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_code_interpreter_file_generation.py) | Azure AI Agent with Code Interpreter File Generation Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_existing_thread.py) | Azure AI Agent with Existing Thread Example |
 | [`getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai_agent/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |
@@ -47,6 +48,7 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py`](./getting_started/agents/azure_ai/azure_ai_with_bing_custom_search.py) | Azure AI Agent with Bing Custom Search Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_browser_automation.py`](./getting_started/agents/azure_ai/azure_ai_with_browser_automation.py) | Azure AI Agent with Browser Automation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter.py) | Azure AI Agent with Code Interpreter Example |
+| [`getting_started/agents/azure_ai/azure_ai_with_code_interpreter_file_generation.py`](./getting_started/agents/azure_ai/azure_ai_with_code_interpreter_file_generation.py) | Azure AI Agent with Code Interpreter File Generation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_existing_agent.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_agent.py) | Azure AI Agent with Existing Agent Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py`](./getting_started/agents/azure_ai/azure_ai_with_existing_conversation.py) | Azure AI Agent with Existing Conversation Example |
 | [`getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py`](./getting_started/agents/azure_ai/azure_ai_with_explicit_settings.py) | Azure AI Agent with Explicit Settings Example |

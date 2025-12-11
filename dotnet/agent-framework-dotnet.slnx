@@ -129,6 +129,7 @@
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
   </Folder>
   <Folder Name="/Samples/Purview/" />
   <Folder Name="/Samples/Purview/AgentWithPurview/">
