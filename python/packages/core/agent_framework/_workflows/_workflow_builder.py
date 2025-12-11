@@ -374,7 +374,7 @@ class WorkflowBuilder:
                 )
         """
         if name in self._executor_registry:
-            raise ValueError(f"An executor factory with the name '{name}' is already registered.")
+            raise ValueError(f"An agent factory with the name '{name}' is already registered.")
 
         def wrapped_factory() -> AgentExecutor:
             agent = factory_func()
@@ -1156,7 +1156,7 @@ class WorkflowBuilder:
         for name, exec_factory in self._executor_registry.items():
             instance = exec_factory()
             if instance.id in executor_id_to_instance:
-                raise ValueError(f"Executor with ID '{instance.id}' has already been registered.")
+                raise ValueError(f"Executor with ID '{instance.id}' has already been created.")
             executor_id_to_instance[instance.id] = instance
 
             if isinstance(self._start_executor, str) and name == self._start_executor:
@@ -1169,7 +1169,7 @@ class WorkflowBuilder:
         def _get_executor(name: str) -> Executor:
             """Helper to get executor by the registered name. Raises if not found."""
             if name not in factory_name_to_instance:
-                raise ValueError(f"Executor with factory name '{name}' has not been registered.")
+                raise ValueError(f"Factory '{name}' has not been registered.")
             return factory_name_to_instance[name]
 
         for registration in self._edge_registry:
@@ -1187,7 +1187,7 @@ class WorkflowBuilder:
                     cases_converted: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
                     for case in cases:
                         if not isinstance(case.target, str):
-                            raise ValueError("Switch case target must be a registered executor name (str) if deferred.")
+                            raise ValueError("Switch case target must be a registered factory name (str) if deferred.")
                         target_exec = _get_executor(case.target)
                         if isinstance(case, Default):
                             cases_converted.append(SwitchCaseEdgeGroupDefault(target_id=target_exec.id))

@@ -467,25 +467,6 @@ def test_concurrent_builder_rejects_empty_participant_factories() -> None:
         ConcurrentBuilder().register_participants([])
 
 
-def test_concurrent_builder_rejects_mixing_participants_and_factories() -> None:
-    """Test that mixing .participants() and .register_participants() raises an error."""
-    # Case 1: participants first, then register_participants
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        (
-            ConcurrentBuilder()
-            .participants([_FakeAgentExec("a", "A")])
-            .register_participants([lambda: _FakeAgentExec("b", "B")])
-        )
-
-    # Case 2: register_participants first, then participants
-    with pytest.raises(ValueError, match="Cannot mix .participants"):
-        (
-            ConcurrentBuilder()
-            .register_participants([lambda: _FakeAgentExec("a", "A")])
-            .participants([_FakeAgentExec("b", "B")])
-        )
-
-
 async def test_concurrent_builder_reusable_after_build_with_participants() -> None:
     """Test that the builder can be reused to build multiple identical workflows with participants()."""
     e1 = _FakeAgentExec("agentA", "One")

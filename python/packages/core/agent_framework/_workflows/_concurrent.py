@@ -369,15 +369,13 @@ class ConcurrentBuilder:
         Example:
         .. code-block:: python
 
-            @executor(id="custom_aggregator")
-            async def custom_aggregator(results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
-                await ctx.yield_output(" | ".join(r.agent_run_response.messages[-1].text for r in results))
+            class MyCustomExecutor(Executor): ...
 
 
             wf = (
                 ConcurrentBuilder()
                 .register_participants([create_researcher, create_marketer, create_legal])
-                .register_aggregator(lambda: custom_aggregator)
+                .register_aggregator(lambda: MyCustomExecutor(id="my_aggregator"))
                 .build()
             )
         """

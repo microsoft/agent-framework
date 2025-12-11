@@ -294,7 +294,7 @@ def test_register_duplicate_name_raises_error():
 
 
 def test_register_duplicate_id_raises_error():
-    """Test that registering duplicate names raises an error."""
+    """Test that registering duplicate id raises an error."""
     builder = WorkflowBuilder()
 
     # Register first executor
@@ -302,7 +302,7 @@ def test_register_duplicate_id_raises_error():
     builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor2")
     builder.set_start_executor("MyExecutor1")
 
-    # Registering second executor with same name should raise ValueError
+    # Registering second executor with same ID should raise ValueError
     with pytest.raises(ValueError, match="Executor with ID 'executor' has already been registered."):
         builder.build()
 
