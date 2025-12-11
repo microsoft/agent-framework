@@ -78,26 +78,27 @@ public sealed class AIAgentWithOpenAIExtensionsTests
 
         mockAgent
             .Protected()
-            .Setup<Task<AgentRunResponse>>("RunAsync",
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>())
+            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentRunResponse([responseMessage]));
 
         // Act
         var result = await mockAgent.Object.RunAsync(openAiMessages, mockThread.Object, options, cancellationToken);
 
         // Assert
-        mockAgent.Verify(
-            a => a.RunAsync(
-                It.Is<IEnumerable<ChatMessage>>(msgs =>
+        mockAgent.Protected()
+            .Verify("RunCoreAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
                 mockThread.Object,
                 options,
-                cancellationToken),
-            Times.Once);
+                cancellationToken
+        );
 
         Assert.NotNull(result);
         Assert.NotEmpty(result.Content);
@@ -167,11 +168,11 @@ public sealed class AIAgentWithOpenAIExtensionsTests
 
         mockAgent
             .Protected()
-            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunStreamingAsync",
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>())
+            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(responseUpdates));
 
         // Act
@@ -183,15 +184,16 @@ public sealed class AIAgentWithOpenAIExtensionsTests
         }
 
         // Assert
-        mockAgent.Verify(
-            a => a.RunStreamingAsync(
-                It.Is<IEnumerable<ChatMessage>>(msgs =>
+        mockAgent.Protected()
+            .Verify("RunCoreStreamingAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(msgs =>
                     msgs.ToList().Count == 1 &&
                     msgs.ToList()[0].Text == TestMessageText),
                 mockThread.Object,
                 options,
-                cancellationToken),
-            Times.Once);
+                cancellationToken
+            );
 
         Assert.True(updateCount > 0, "Expected at least one streaming update");
     }
