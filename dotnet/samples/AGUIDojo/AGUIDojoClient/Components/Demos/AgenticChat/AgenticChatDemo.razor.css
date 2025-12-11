@@ -55,35 +55,12 @@
 }
 
 .chat-input-container {
-    padding: 1.5rem 2rem 2rem;
+    padding: 1rem 2rem 1.5rem;
     border-top: 1px solid #e5e5e5;
     background: white;
 }
 
-::deep .agent-suggestions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: flex-start;
-    margin-bottom: 0.75rem;
-}
 
-::deep .suggestion-button {
-    padding: 0.5rem 1rem;
-    background: white;
-    border: 1px solid #d1d1d1;
-    border-radius: 1rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: #424242;
-    transition: all 0.2s;
-}
-
-::deep .suggestion-button:hover {
-    background: #f0f0f0;
-    border-color: #0078d4;
-    color: #0078d4;
-}
 
 .agentic-chat-demo {
     height: 100%;
@@ -92,6 +69,6 @@
 }
 
 .chat-container {
-    padding: 20px;
+    padding: 0 2rem 1.5rem;
     border-top: 1px solid #e0e0e0;
 }

@@ -79,15 +79,19 @@ internal sealed partial class MessageList : IComponent, IDisposable
         // Track all render keys to detect duplicates
         var allRenderKeys = new HashSet<string?>();
 
+        // Open container div for message list with flex layout
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "class", "messages-container");
+
         foreach (var message in this.MessageListContext.AgentBoundaryContext.CompletedMessages)
         {
             var renderKey = GetUniqueRenderKey(message);
 
             // Calling GetTemplate will stop template collection on the first message if it
             // was still ongoing.
-            builder.OpenComponent<ContentBlock>(0);
+            builder.OpenComponent<ContentBlock>(2);
             builder.SetKey(renderKey);
-            builder.AddComponentParameter(1, "ChildContent", this.MessageListContext.GetTemplate(message));
+            builder.AddComponentParameter(3, "ChildContent", this.MessageListContext.GetTemplate(message));
             builder.CloseComponent();
         }
 
@@ -95,11 +99,14 @@ internal sealed partial class MessageList : IComponent, IDisposable
         {
             var renderKey = GetUniqueRenderKey(message);
 
-            builder.OpenComponent<ContentBlock>(1);
+            builder.OpenComponent<ContentBlock>(4);
             builder.SetKey(renderKey);
-            builder.AddComponentParameter(1, "ChildContent", this.MessageListContext.GetTemplate(message));
+            builder.AddComponentParameter(5, "ChildContent", this.MessageListContext.GetTemplate(message));
             builder.CloseComponent();
         }
+
+        // Close container div
+        builder.CloseElement();
     }
 
     /// <summary>

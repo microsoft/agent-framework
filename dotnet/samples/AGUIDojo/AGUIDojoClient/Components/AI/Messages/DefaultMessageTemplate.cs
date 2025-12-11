@@ -23,9 +23,10 @@ internal sealed class DefaultMessageTemplate : MessageTemplateBase
         if (messageContext.ChatMessage is not null)
         {
             var getRenderContents = messageContext.RenderContents();
+            // Return a render fragment that checks visibility at render time
+            // This is important because message contents may change during streaming
             return CreateRenderMessage(
-                messageContext.ChatMessage.Role,
-                messageContext.ChatMessage.MessageId,
+                messageContext.ChatMessage,
                 getRenderContents);
         }
         else
@@ -44,29 +45,61 @@ internal sealed class DefaultMessageTemplate : MessageTemplateBase
             }
 
             return CreateRenderMessage(
-                this._buffer[0].Role,
-                this._buffer[0].MessageId,
+                this._buffer[0],
                 getRenderContents);
         }
     }
 
+    /// <summary>
+    /// Checks if a message has any visible content that should be displayed.
+    /// Messages that only contain FunctionCallContent or FunctionResultContent
+    /// are internal tool messages and should not be rendered as chat bubbles.
+    /// </summary>
+    private static bool HasVisibleContent(ChatMessage message)
+    {
+        if (message.Contents.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var content in message.Contents)
+        {
+            // TextContent is visible
+            if (content is TextContent textContent && !string.IsNullOrWhiteSpace(textContent.Text))
+            {
+                return true;
+            }
+
+            // Other content types that are not function calls/results are visible
+            if (content is not FunctionCallContent && content is not FunctionResultContent)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static RenderFragment CreateRenderMessage(
-        ChatRole role,
-        string? messageId,
+        ChatMessage message,
         RenderFragment getRenderContents)
     {
-        var roleClass = $"{role}-message";
+        var roleClass = $"{message.Role}-message";
         return builder =>
         {
+            // Check visibility at render time, not at template creation time
+            // This is important because message contents may change during streaming
+            if (!HasVisibleContent(message))
+            {
+                return; // Don't render messages without visible content
+            }
+
             builder.OpenElement(0, "div");
-            if (!string.IsNullOrEmpty(messageId))
+            if (!string.IsNullOrEmpty(message.MessageId))
             {
-                builder.AddAttribute(1, "id", messageId);
+                builder.AddAttribute(1, "id", message.MessageId);
             }
-            else
-            {
-                builder.AddAttribute(2, "class", $"chat-message {roleClass}");
-            }
+            builder.AddAttribute(2, "class", $"chat-message {roleClass}");
             builder.AddContent(3, getRenderContents);
             builder.CloseElement();
         };

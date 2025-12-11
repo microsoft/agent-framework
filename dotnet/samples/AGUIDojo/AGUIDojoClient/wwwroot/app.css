@@ -92,7 +92,6 @@ h1:focus {
     align-items: flex-end;
     gap: 12px;
     width: 100%;
-    padding: 16px;
     background-color: #fff;
 }
 
@@ -200,7 +199,6 @@ h1:focus {
 .agent-loading-indicator {
     display: flex;
     align-items: flex-start;
-    padding: 12px 16px;
 }
 
 .agent-loading-indicator .agent-loading-dots {
@@ -222,7 +220,7 @@ h1:focus {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 8px 16px;
+    margin-bottom: 12px;
 }
 
 .agent-suggestions .suggestion-button {
@@ -266,4 +264,46 @@ h1:focus {
 .chat-input-area {
     border-top: 1px solid #e5e7eb;
     background-color: #fff;
+}
+
+/* Chat message styles */
+.messages-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.chat-message {
+    display: flex;
+    flex-direction: column;
+    max-width: 80%;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    line-height: 1.5;
+}
+
+/* User messages - right aligned with blue background */
+.chat-message.user-message {
+    align-self: flex-end;
+    background-color: #2563eb;
+    color: white;
+    border-color: #2563eb;
+}
+
+/* Assistant messages - left aligned with light gray background */
+.chat-message.assistant-message {
+    align-self: flex-start;
+    background-color: #f3f4f6;
+    color: #1f2937;
+    border-color: #e5e7eb;
+}
+
+/* Tool messages - left aligned, styled similar to assistant */
+.chat-message.tool-message {
+    align-self: flex-start;
+    background-color: #fef3c7;
+    color: #92400e;
+    border-color: #fcd34d;
+    font-size: 0.875rem;
 }
