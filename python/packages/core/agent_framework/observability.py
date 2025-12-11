@@ -857,10 +857,12 @@ def enable_observability(
 ):
     """Enable observability for your application.
 
+    Calling this method implies you want to enable observability in your application.
+
     This method does not configure exporters or providers.
     It only updates the global variables that trigger the observability code paths.
-
-    Calling this method implies you want to enable observability in your application.
+    If you have already set the environment variable ENABLE_OBSERVABILITY=true,
+    calling this method has no effect, unless you want to enable or disable sensitive data events.
 
     Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
