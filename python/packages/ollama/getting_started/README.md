@@ -18,6 +18,8 @@ This folder contains examples demonstrating how to use Ollama models with the Ag
 |------|-------------|
 | [`ollama_agent_basic.py`](ollama_agent_basic.py) | Demonstrates basic Ollama agent usage with the native Ollama Chat Client. Shows both streaming and non-streaming responses with tool calling capabilities. |
 | [`ollama_agent_reasoning.py`](ollama_agent_reasoning.py) | Demonstrates Ollama agent with reasoning capabilities using the native Ollama Chat Client. Shows how to enable thinking/reasoning mode. |
+| [`ollama_chat_client.py`](ollama_chat_client.py) | Ollama Chat Client with native Ollama Chat Client |
+| [`ollama_chat_multimodal.py`](ollama_chat_multimodal.py) | Ollama Chat with multimodal native Ollama Chat Client |
 
 ## Configuration
 

@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework.ollama import OllamaChatClient
+from agent_framework_ollama import OllamaChatClient
 
 # Ensure to install Ollama and have a model running locally before running the sample
 # Not all Models support function calling, to test function calling try llama3.2

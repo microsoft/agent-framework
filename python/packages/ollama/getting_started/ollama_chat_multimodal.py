@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import base64
 
-import requests
 from agent_framework import ChatMessage, DataContent, Role, TextContent
-from agent_framework.ollama import OllamaChatClient
+
+from agent_framework_ollama import OllamaChatClient
 
 """
 Ollama Agent Multimodal Example
@@ -20,22 +19,25 @@ https://ollama.com/
 """
 
 
+def create_sample_image() -> str:
+    """Create a simple 1x1 pixel PNG image for testing."""
+    # This is a tiny red pixel in PNG format
+    png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    return f"data:image/png;base64,{png_data}"
+
+
 async def test_image() -> None:
     """Test image analysis with Ollama."""
 
     client = OllamaChatClient()
 
-    # Fetch image from httpbin
-    image_url = "https://httpbin.org/image/jpeg"
-    response = requests.get(image_url)
-    image_b64 = base64.b64encode(response.content).decode()
-    image_uri = f"data:image/jpeg;base64,{image_b64}"
+    image_uri = create_sample_image()
 
     message = ChatMessage(
         role=Role.USER,
         contents=[
             TextContent(text="What's in this image?"),
-            DataContent(uri=image_uri, media_type="image/jpeg"),
+            DataContent(uri=image_uri, media_type="image/png"),
         ],
     )
 
