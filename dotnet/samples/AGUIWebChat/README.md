@@ -67,11 +67,11 @@ The server (`Server/Program.cs`) creates a simple chat agent:
 
 ```csharp
 // Create Azure OpenAI client
-AzureOpenAIClient azureOpenAIClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential());
+OpenAIClient openAIClient = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
 
-ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
+ChatClient chatClient = openAIClient.GetChatClient(deploymentName);
 
 // Create AI agent
 ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(

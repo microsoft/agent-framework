@@ -34,13 +34,17 @@ This package provides a `ConfigureDurableAgents` extension method on the `Functi
 ```csharp
 // Create agents using the standard Microsoft Agent Framework.
 // Invocable via HTTP via http://localhost:7071/api/agents/SpamDetectionAgent/run
-AIAgent spamDetector = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+AIAgent spamDetector = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(
         instructions: "You are a spam detection assistant that identifies spam emails.",
         name: "SpamDetectionAgent");
 
-AIAgent emailAssistant = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+AIAgent emailAssistant = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(
         instructions: "You are an email assistant that helps users draft responses to emails with professionalism.",
@@ -154,7 +158,9 @@ These tools are registered with the agent using the `tools` parameter when creat
 
 ```csharp
 Tools tools = new();
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(
         instructions: "You are a content generation assistant that helps users generate content.",

@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure;
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using LongRunningTools;
 using Microsoft.Agents.AI;
@@ -11,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpenAI;
 using OpenAI.Chat;
 
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
@@ -21,9 +22,9 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
-AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
-    ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+OpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
+    ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+    : new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
 
 // Agent used by the orchestration to write content.
 const string WriterAgentName = "Writer";

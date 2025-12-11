@@ -5,12 +5,13 @@
 // Authentication to Purview is done using an InteractiveBrowserCredential.
 // Any TokenCredential with Purview API permissions can be used here.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Purview;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -24,9 +25,9 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-using IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+using IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetOpenAIResponseClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()

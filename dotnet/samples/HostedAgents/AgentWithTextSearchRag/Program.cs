@@ -4,8 +4,8 @@
 // capabilities to an AI agent. The provider runs a search against an external knowledge base
 // before each model invocation and injects the results into the model context.
 
+using System.ClientModel.Primitives;
 using Azure.AI.AgentServer.AgentFramework.Extensions;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Data;
@@ -22,9 +22,9 @@ TextSearchProviderOptions textSearchOptions = new()
     RecentMessageMemoryLimit = 6,
 };
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {

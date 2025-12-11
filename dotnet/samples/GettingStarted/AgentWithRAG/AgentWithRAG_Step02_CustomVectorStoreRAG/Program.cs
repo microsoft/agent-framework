@@ -4,12 +4,13 @@
 // While the sample is using Qdrant, it can easily be replaced with any other vector store that implements the Microsoft.Extensions.VectorData abstractions.
 // The TextSearchProvider runs a search against the vector store before each model invocation and injects the results into the model context.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.Qdrant;
+using OpenAI;
 using OpenAI.Chat;
 using Qdrant.Client;
 
@@ -19,15 +20,15 @@ var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_E
 var afOverviewUrl = "https://github.com/MicrosoftDocs/semantic-kernel-docs/blob/main/agent-framework/overview/agent-framework-overview.md";
 var afMigrationUrl = "https://raw.githubusercontent.com/MicrosoftDocs/semantic-kernel-docs/refs/heads/main/agent-framework/migration-guide/from-semantic-kernel/index.md";
 
-AzureOpenAIClient azureOpenAIClient = new(
-    new Uri(endpoint),
-    new AzureCliCredential());
+OpenAIClient openAIClient = new(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
 
 // Create a Qdrant vector store that uses the Azure OpenAI embedding model to generate embeddings.
 QdrantClient client = new("localhost");
 VectorStore vectorStore = new QdrantVectorStore(client, ownsClient: true, new()
 {
-    EmbeddingGenerator = azureOpenAIClient.GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
+    EmbeddingGenerator = openAIClient.GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()
 });
 
 // Create a collection and upsert some text into it.
@@ -66,7 +67,7 @@ TextSearchProviderOptions textSearchOptions = new()
 };
 
 // Create the AI agent with the TextSearchProvider as the AI context provider.
-AIAgent agent = azureOpenAIClient
+AIAgent agent = openAIClient
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {

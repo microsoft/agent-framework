@@ -4,12 +4,13 @@
 // corresponds to a skill of the A2A agent, and register these function tools with another AI agent so
 // it can leverage the A2A agent's skills.
 
+using System.ClientModel.Primitives;
 using System.Text.RegularExpressions;
 using A2A;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -26,9 +27,9 @@ AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
 AIAgent a2aAgent = agentCard.GetAIAgent();
 
 // Create the main agent, and provide the a2a agent skills as a function tools.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(
         instructions: "You are a helpful assistant that helps people with travel planning.",

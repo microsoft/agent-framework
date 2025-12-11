@@ -1,10 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 namespace WorkflowAsAnAgentSample;
 
@@ -32,7 +33,10 @@ public static class Program
         // Set up the Azure OpenAI client
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        var chatClient = new OpenAIClient(
+            new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+            new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+            .GetChatClient(deploymentName).AsIChatClient();
 
         // Create the workflow and turn it into an agent
         var workflow = WorkflowFactory.BuildWorkflow(chatClient);

@@ -5,14 +5,15 @@
 // generate a remote MCP endpoint for the app at /runtime/webhooks/mcp with a agent-specific
 // query tool name.
 
-using Azure;
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
+using OpenAI;
 using OpenAI.Chat;
 
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
@@ -23,9 +24,9 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // Use Azure Key Credential if provided, otherwise use Azure CLI Credential.
 string? azureOpenAiKey = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY");
-AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
-    ? new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(azureOpenAiKey))
-    : new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential());
+OpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
+    ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+    : new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
 
 // Define three AI agents we are going to use in this application.
 AIAgent agent1 = client.GetChatClient(deploymentName).CreateAIAgent("You are good at telling jokes.", "Joker");
