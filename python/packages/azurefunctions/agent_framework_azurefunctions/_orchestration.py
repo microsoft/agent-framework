@@ -256,7 +256,7 @@ class DurableAIAgent(AgentProtocol):
             # This ensures each call gets its own conversation context
             session_key = str(self.context.new_uuid())
             session_id = AgentSessionId(name=self.agent_name, key=session_key)
-            logger.warning("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
+            logger.debug("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
 
         # Create entity ID from session ID
         entity_id = session_id.to_entity_id()

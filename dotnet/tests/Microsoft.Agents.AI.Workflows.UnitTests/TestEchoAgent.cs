@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 internal class TestEchoAgent(string? id = null, string? name = null, string? prefix = null) : AIAgent
 {
-    public override string Id => id ?? base.Id;
+    protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
@@ -57,7 +57,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
 
     protected virtual IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
     {
-        return Enumerable.Empty<ChatMessage>();
+        return [];
     }
 
     public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

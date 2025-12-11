@@ -9,8 +9,4 @@ trigger:
       id: invoke_vision
       conversationId: =System.ConversationId
       agent:
-        name: TestAgent
-      input:
-        additionalInstructions: |-
-          Describe the image contained in the user request, if any;
-          otherwise, suggest that the user provide an image.
+        name: VisionAgent
