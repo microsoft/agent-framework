@@ -49,6 +49,7 @@ __all__ = [
     "OtelAttr",
     "create_metric_views",
     "create_resource",
+    "enable_observability",
     "get_meter",
     "get_tracer",
     "setup_observability",
@@ -635,7 +636,6 @@ class ObservabilitySettings(AFBaseSettings):
     def _configure(
         self,
         *,
-        disable_exporter_creation: bool = False,
         additional_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
         views: list["View"] | None = None,
     ) -> None:
@@ -646,13 +646,9 @@ class ObservabilitySettings(AFBaseSettings):
         will have no effect.
 
         Args:
-            disable_exporter_creation: If True, disables the automatic creation of exporters from environment variables.
-                Default is False.
             additional_exporters: A list of additional exporters to add to the configuration. Default is None.
             views: Optional list of OpenTelemetry views for metrics. Default is None.
         """
-        if disable_exporter_creation:
-            self._executed_setup = True
         if not self.ENABLED or self._executed_setup:
             return
 
@@ -855,10 +851,30 @@ global OBSERVABILITY_SETTINGS
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
+def enable_observability(
+    *,
+    enable_sensitive_data: bool | None = None,
+):
+    """Enable observability for your application.
+
+    This method does not configure exporters or providers.
+    It only updates the global variables that trigger the observability code paths.
+
+    Calling this method implies you want to enable observability in your application.
+
+    Args:
+        enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
+            the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+    """
+    global OBSERVABILITY_SETTINGS
+    OBSERVABILITY_SETTINGS.enable_observability = True
+    if enable_sensitive_data is not None:
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+
+
 def setup_observability(
     *,
     enable_sensitive_data: bool | None = None,
-    disable_exporter_creation: bool = False,
     exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
     views: list["View"] | None = None,
     vs_code_extension_port: int | None = None,
@@ -882,7 +898,7 @@ def setup_observability(
     - OTEL_EXPORTER_OTLP_HEADERS: Headers for all signals
     - ENABLE_CONSOLE_EXPORTERS: Enable console output for telemetry
 
-    For Azure Monitor integration, use AzureAIClient.setup_azure_ai_observability() instead.
+    For Azure Monitor integration, use AzureAIClient.setup_azure_monitor() instead.
 
     Note:
         If you have configured the providers manually, calling this method will not
@@ -900,10 +916,6 @@ def setup_observability(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
-        disable_exporter_creation: If True, skips the creation of exporters.
-            This can be useful if you want to configure exporters manually. Default is False.
-            This will override all other ways of creating exporters, including environment variables,
-            including exporters passed via the `exporters` parameter.
         exporters: A list of custom exporters for logs, metrics or spans, or any combination.
             These will be added in addition to exporters configured via environment variables.
             Default is None.
@@ -1007,7 +1019,6 @@ def setup_observability(
             OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
-        disable_exporter_creation=disable_exporter_creation,
         additional_exporters=exporters,
         views=views,
     )

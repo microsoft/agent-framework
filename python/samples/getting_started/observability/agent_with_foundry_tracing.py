@@ -8,7 +8,7 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent
-from agent_framework.observability import create_resource, get_tracer, setup_observability
+from agent_framework.observability import create_resource, enable_observability, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -65,7 +65,7 @@ async def main():
             enable_performance_counters=False,
         )
         print("Configured Azure Monitor for Application Insights.")
-        setup_observability(enable_sensitive_data=True, disable_exporter_creation=True)
+        enable_observability(enable_sensitive_data=True)
         print("Observability is set up. Starting Weather Agent...")
 
         questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]

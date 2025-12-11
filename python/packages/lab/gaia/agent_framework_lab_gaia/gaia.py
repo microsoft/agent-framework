@@ -43,7 +43,7 @@ class GAIATelemetryConfig:
 
         Note:
             For Azure Monitor integration, configure using environment variables
-            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.setup_azure_ai_observability()
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.setup_azure_monitor()
             before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing

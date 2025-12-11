@@ -5,6 +5,7 @@ import logging
 from random import randint
 from typing import Annotated
 
+from agent_framework.observability import enable_observability
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
@@ -114,6 +115,7 @@ async def main():
     setup_logging()
     setup_tracing()
     setup_metrics()
+    enable_observability()
 
     await run_chat_client()
 

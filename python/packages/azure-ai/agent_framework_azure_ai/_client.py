@@ -164,7 +164,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # Track whether we should close client connection
         self._should_close_client = should_close_client
 
-    async def setup_azure_ai_observability(
+    async def setup_azure_monitor(
         self,
         enable_sensitive_data: bool = False,
         **kwargs: Any,
@@ -203,13 +203,13 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                     AzureAIClient(project_client=project_client) as client,
                 ):
                     # Setup observability with defaults
-                    await client.setup_azure_ai_observability()
+                    await client.setup_azure_monitor()
 
                     # With live metrics enabled
-                    await client.setup_azure_ai_observability(enable_live_metrics=True)
+                    await client.setup_azure_monitor(enable_live_metrics=True)
 
                     # With sensitive data logging (dev/test only)
-                    await client.setup_azure_ai_observability(enable_sensitive_data=True)
+                    await client.setup_azure_monitor(enable_sensitive_data=True)
 
         Note:
             This method retrieves the Application Insights connection string from the
@@ -236,7 +236,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
 
-        from agent_framework.observability import create_metric_views, create_resource, setup_observability
+        from agent_framework.observability import create_metric_views, create_resource, enable_observability
 
         # Create resource if not provided in kwargs
         if "resource" not in kwargs:
@@ -250,7 +250,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         )
 
         # Complete setup with core observability
-        setup_observability(enable_sensitive_data=enable_sensitive_data, disable_exporter_creation=True)
+        enable_observability(enable_sensitive_data=enable_sensitive_data)
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""

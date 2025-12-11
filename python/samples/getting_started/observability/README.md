@@ -143,7 +143,7 @@ For complete control over telemetry providers (e.g., Azure Monitor integration):
 
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
-from agent_framework.observability import create_resource, setup_observability
+from agent_framework.observability import create_resource, enable_observability
 
 # Configure Azure Monitor first
 configure_azure_monitor(
@@ -154,10 +154,10 @@ configure_azure_monitor(
 
 # Then activate Agent Framework's telemetry code paths
 # This is optional if ENABLE_OBSERVABILITY and or ENABLE_SENSITIVE_DATA are set in env vars
-setup_observability(enable_sensitive_data=False)
+enable_observability(enable_sensitive_data=False)
 ```
 
-For Azure AI projects, use the `client.setup_azure_ai_observability()` method which handles this automatically:
+For Azure AI projects, use the `client.setup_azure_monitor()` method which handles this automatically:
 
 ```python
 from agent_framework.azure import AzureAIClient
@@ -168,11 +168,11 @@ async with (
     AzureAIClient(project_client=project_client) as client,
 ):
     # Automatically configures Azure Monitor with connection string from project
-    await client.setup_azure_ai_observability(enable_live_metrics=True)
+    await client.setup_azure_monitor(enable_live_metrics=True)
 ```
-This method, first uses the project client to get the connection string from the project, it then call `configure_azure_monitor()` under the hood, and finally it calls `setup_observability()` to activate the Agent Framework telemetry code paths. The kwargs of the `setup_azure_ai_observability()` method are passed to `configure_azure_monitor()`. The `setup_observability()` method is called with `disable_exporter_creation=True` to avoid creating duplicate exporters.
+This method, first uses the project client to get the connection string from the project, it then call `configure_azure_monitor()` under the hood, and finally it calls `enable_observability()` to activate the Agent Framework telemetry code paths. The kwargs of the `setup_azure_monitor()` method are passed to `configure_azure_monitor()`.
 
-> **Important**: Calling `setup_observability()` implicitly enables telemetry, even when `ENABLE_OBSERVABILITY` is set to `false` in the environment.
+> **Important**: Calling `setup_observability()` and `enable_observability()` implicitly enables telemetry, even when `ENABLE_OBSERVABILITY` is set to `false` in the environment.
 
 #### Logging
 Agent Framework has a built-in logging configuration that works well with telemetry. It sets the format to a standard format that includes timestamp, pathname, line number, and log level. You can use that by calling the `setup_logging()` function from the `agent_framework` module.
@@ -220,7 +220,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 
 ### Setup with Azure AI Projects
 
-For Azure AI projects, use the `AzureAIClient.setup_azure_ai_observability()` method which automatically retrieves the Application Insights connection string from your project:
+For Azure AI projects, use the `AzureAIClient.setup_azure_monitor()` method which automatically retrieves the Application Insights connection string from your project:
 
 ```python
 from agent_framework.azure import AzureAIClient
@@ -233,7 +233,7 @@ async with (
     AzureAIClient(project_client=project_client) as client,
 ):
     # Automatically configures Azure Monitor with connection string from project
-    await client.setup_azure_ai_observability(
+    await client.setup_azure_monitor(
         enable_sensitive_data=True,  # dev/test only
         enable_live_metrics=True,     # passed to configure_azure_monitor()
     )
@@ -250,7 +250,7 @@ For non-Azure AI projects, you can configure Azure Monitor directly:
 
 ```python
 from azure.monitor.opentelemetry import configure_azure_monitor
-from agent_framework.observability import create_resource, setup_observability
+from agent_framework.observability import create_resource, enable_observability
 from azure.identity import DefaultAzureCredential
 
 # Configure Azure Monitor with connection string and optional Entra ID auth
@@ -262,7 +262,7 @@ configure_azure_monitor(
 )
 
 # Activate Agent Framework's telemetry code paths
-setup_observability(enable_sensitive_data=False)
+enable_observability(enable_sensitive_data=False)
 ```
 
 It is recommended to use [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) for local development and [ManagedIdentityCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.managedidentitycredential?view=azure-python) for production environments.
@@ -347,7 +347,7 @@ If you're updating from a previous version of the Agent Framework, here are the 
 | Old Variable | New Variable | Notes |
 |-------------|--------------|-------|
 | `OTLP_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` | Standard OpenTelemetry env var |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | N/A | Use `AzureAIClient.setup_azure_ai_observability()` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | N/A | Use `AzureAIClient.setup_azure_monitor()` |
 | N/A | `ENABLE_CONSOLE_EXPORTERS` | New opt-in flag for console output |
 
 ### OTLP Configuration
@@ -404,18 +404,18 @@ async with (
     AIProjectClient(...) as project_client,
     AzureAIClient(project_client=project_client) as client,
 ):
-    await client.setup_azure_ai_observability(enable_live_metrics=True)
+    await client.setup_azure_monitor(enable_live_metrics=True)
 
 # For non-Azure AI projects
 from azure.monitor.opentelemetry import configure_azure_monitor
-from agent_framework.observability import create_resource, setup_observability
+from agent_framework.observability import create_resource, enable_observability
 
 configure_azure_monitor(
     connection_string="InstrumentationKey=...",
     resource=create_resource(),
     enable_live_metrics=True,
 )
-setup_observability()
+enable_observability()
 ```
 
 ### Console Output
