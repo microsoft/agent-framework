@@ -299,9 +299,6 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     if not properties:
         return create_model(f"{tool.name}_input")
 
-    # Counter for generating unique model names
-    model_counter = 0
-
     def resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
         """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
 
@@ -312,8 +309,6 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
         Returns:
             Python type annotation (could be int, str, list[str], or a nested Pydantic model)
         """
-        nonlocal model_counter
-
         # Handle $ref by resolving the reference
         if "$ref" in prop_details:
             ref = prop_details["$ref"]
@@ -352,11 +347,8 @@ def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
                 nested_required = prop_details.get("required", [])
 
                 if nested_properties and isinstance(nested_properties, dict):
-                    # Generate a unique name for the nested model
-                    model_counter += 1
-                    nested_model_name = (
-                        f"{parent_name}_nested_{model_counter}" if parent_name else f"NestedModel_{model_counter}"
-                    )
+                    # Create the name for the nested model
+                    nested_model_name = f"{parent_name}_nested" if parent_name else "NestedModel"
 
                     # Recursively build field definitions for the nested model
                     nested_field_definitions: dict[str, Any] = {}

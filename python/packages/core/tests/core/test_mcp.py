@@ -771,6 +771,86 @@ def test_get_input_model_deeply_nested_objects():
     assert any("start" in str(error) or "end" in str(error) for error in errors)
 
 
+def test_get_input_model_multiple_deeply_nested_objects():
+    """Test multiple levels of nested objects preserve structure.
+
+    Issue #2747: Should handle arbitrary nesting depth.
+    """
+    tool = types.Tool(
+        name="complex_query",
+        description="Complex nested query",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "object",
+                    "description": "Query parameters",
+                    "properties": {
+                        "filters": {
+                            "type": "object",
+                            "description": "Filter criteria",
+                            "properties": {
+                                "date_range": {
+                                    "type": "object",
+                                    "description": "Date range filter",
+                                    "properties": {
+                                        "start": {"type": "string", "description": "Start date"},
+                                        "end": {"type": "string", "description": "End date"},
+                                    },
+                                    "required": ["start", "end"],
+                                },
+                                "categories": {
+                                    "type": "object",
+                                    "description": "Category filters",
+                                    "properties": {
+                                        "include": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                        "exclude": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "required": ["include"],
+                                },
+                            },
+                            "required": ["date_range"],
+                        }
+                    },
+                    "required": ["filters"],
+                }
+            },
+            "required": ["query"],
+        },
+    )
+
+    model = _get_input_model_from_mcp_tool(tool)
+
+    # Create instance with deeply nested structure
+    instance = model(
+        query={
+            "filters": {
+                "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                "categories": {"include": ["tech", "science"], "exclude": ["politics"]},
+            }
+        }
+    )
+
+    # Verify deep nesting is preserved with proper types
+    assert instance.query.filters.date_range.start == "2024-01-01"
+    assert instance.query.filters.date_range.end == "2024-12-31"
+    assert instance.query.filters.categories.include == ["tech", "science"]
+    assert instance.query.filters.categories.exclude == ["politics"]
+
+    # Verify validation works at all nesting levels
+    with pytest.raises(ValidationError) as exc_info:
+        model(query={"filters": {"date_range": {}}})  # Missing required 'start' and 'end'
+
+    errors = exc_info.value.errors()
+    assert any("start" in str(error) or "end" in str(error) for error in errors)
+
+
 def test_get_input_model_ref_with_nested_structure():
     """Test that $ref resolution preserves nested structure.
 
