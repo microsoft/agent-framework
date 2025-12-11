@@ -59,7 +59,7 @@ public static class AgentContext
         {
             Thread = thread ?? parent?.Thread,
             ContextId = contextId ?? parent?.ContextId,
-            AdditionalProperties = additionalProperties ?? parent?.AdditionalProperties
+            AdditionalProperties = additionalProperties ?? parent?.AdditionalProperties?.Clone()
         };
         return new DisposableAction(() => _current.Value = parent);
     }
