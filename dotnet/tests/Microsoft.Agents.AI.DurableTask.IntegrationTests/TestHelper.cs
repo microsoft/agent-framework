@@ -125,10 +125,13 @@ internal sealed class TestHelper : IDisposable
         // Check if AZURE_OPENAI_KEY is provided for key-based authentication.
         // NOTE: This is not used for automated tests, but can be useful for local development.
         string? azureOpenAiKey = configuration["AZURE_OPENAI_KEY"];
+        OpenAIClientOptions clientOptions = new() { Endpoint = new Uri($"{azureOpenAiEndpoint}/openai/v1") };
 
         OpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
-            ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), new OpenAIClientOptions() { Endpoint = new Uri($"{azureOpenAiEndpoint}/openai/v1") })
-            : new OpenAIClient(new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"), new OpenAIClientOptions() { Endpoint = new Uri($"{azureOpenAiEndpoint}/openai/v1") });
+            ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), clientOptions)
+            : new OpenAIClient(
+                new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+                clientOptions);
 
         return client.GetChatClient(azureOpenAiDeploymentName);
     }
