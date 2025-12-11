@@ -25,7 +25,7 @@ And setup a local OpenTelemetry Collector instance to receive the traces and met
 
 Then you can run:
 ```bash
-opentelemetry-instrument \
+opentelemetry-enable_instrumentation \
     --traces_exporter otlp \
     --metrics_exporter otlp \
     --service_name agent_framework \

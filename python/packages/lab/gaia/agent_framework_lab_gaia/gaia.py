@@ -43,7 +43,7 @@ class GAIATelemetryConfig:
 
         Note:
             For Azure Monitor integration, configure using environment variables
-            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.setup_azure_monitor()
+            (OTEL_EXPORTER_OTLP_ENDPOINT, etc.) or use AzureAIClient.configure_azure_monitor()
             before creating the GAIA instance.
         """
         self.enable_tracing = enable_tracing
@@ -51,13 +51,13 @@ class GAIATelemetryConfig:
         self.trace_to_file = trace_to_file
         self.file_path = file_path or "gaia_traces.json"
 
-    def setup_observability(self) -> None:
+    def configure_otel_providers(self) -> None:
         """Set up OpenTelemetry based on configuration."""
         if not self.enable_tracing:
             return
 
         # If only file tracing is requested (no OTLP),
-        # skip the default setup_observability which adds console exporter
+        # skip the default configure_otel_providers which adds console exporter
         if self.trace_to_file and not self.otlp_endpoint:
             # Set up minimal tracing with only file export
             from opentelemetry.sdk.trace import TracerProvider
@@ -68,7 +68,7 @@ class GAIATelemetryConfig:
             self._setup_file_export()
         else:
             # Use full observability setup for OTLP
-            from agent_framework.observability import setup_observability
+            from agent_framework.observability import configure_otel_providers
 
             # Set OTLP endpoint env var if provided
             if self.otlp_endpoint:
@@ -76,7 +76,7 @@ class GAIATelemetryConfig:
 
                 os.environ.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", self.otlp_endpoint)
 
-            setup_observability(
+            configure_otel_providers(
                 enable_sensitive_data=True,  # Enable for detailed task traces
             )
 
@@ -339,7 +339,7 @@ class GAIA:
         self.telemetry_config = telemetry_config or GAIATelemetryConfig()
 
         # Set up telemetry
-        self.telemetry_config.setup_observability()
+        self.telemetry_config.configure_otel_providers()
 
         # Initialize tracer
         if self.telemetry_config.enable_tracing:

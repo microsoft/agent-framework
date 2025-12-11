@@ -8,7 +8,7 @@ from typing import Annotated
 
 import dotenv
 from agent_framework import ChatAgent
-from agent_framework.observability import create_resource, enable_observability, get_tracer
+from agent_framework.observability import create_resource, enable_instrumentation, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -55,7 +55,7 @@ async def main():
             logger.warning(
                 "No Application Insights connection string found for the Azure AI Project. "
                 "Please ensure Application Insights is configured in your Azure AI project, "
-                "or call setup_observability() manually with custom exporters."
+                "or call configure_otel_providers() manually with custom exporters."
             )
             return
         configure_azure_monitor(
@@ -65,7 +65,7 @@ async def main():
             enable_performance_counters=False,
         )
         print("Configured Azure Monitor for Application Insights.")
-        enable_observability(enable_sensitive_data=True)
+        enable_instrumentation(enable_sensitive_data=True)
         print("Observability is set up. Starting Weather Agent...")
 
         questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]

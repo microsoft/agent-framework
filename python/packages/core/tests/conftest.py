@@ -10,7 +10,7 @@ from pytest import fixture
 
 
 @fixture
-def enable_observability(request: Any) -> bool:
+def enable_instrumentation(request: Any) -> bool:
     """Fixture that returns a boolean indicating if Otel is enabled."""
     return request.param if hasattr(request, "param") else True
 
@@ -22,7 +22,7 @@ def enable_sensitive_data(request: Any) -> bool:
 
 
 @fixture
-def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
+def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_data: bool) -> Generator[SpanExporter]:
     """Fixture to remove environment variables for ObservabilitySettings."""
 
     env_vars = [
@@ -45,8 +45,8 @@ def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data
 
     for key in env_vars:
         monkeypatch.delenv(key, raising=False)  # type: ignore
-    monkeypatch.setenv("ENABLE_OBSERVABILITY", str(enable_observability))  # type: ignore
-    if not enable_observability:
+    monkeypatch.setenv("ENABLE_OBSERVABILITY", str(enable_instrumentation))  # type: ignore
+    if not enable_instrumentation:
         # we overwrite sensitive data for tests
         enable_sensitive_data = False
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", str(enable_sensitive_data))  # type: ignore
@@ -64,7 +64,7 @@ def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data
     observability_settings = observability.ObservabilitySettings(env_file_path="test.env")
 
     # Configure providers manually without calling _configure() to avoid OTLP imports
-    if enable_observability or enable_sensitive_data:
+    if enable_instrumentation or enable_sensitive_data:
         from opentelemetry.sdk.trace import TracerProvider
 
         tracer_provider = TracerProvider(resource=observability_settings._resource)
@@ -74,10 +74,10 @@ def span_exporter(monkeypatch, enable_observability: bool, enable_sensitive_data
 
     with (
         patch("agent_framework.observability.OBSERVABILITY_SETTINGS", observability_settings),
-        patch("agent_framework.observability.setup_observability"),
+        patch("agent_framework.observability.configure_otel_providers"),
     ):
         exporter = InMemorySpanExporter()
-        if enable_observability or enable_sensitive_data:
+        if enable_instrumentation or enable_sensitive_data:
             tracer_provider = trace.get_tracer_provider()
             if not hasattr(tracer_provider, "add_span_processor"):
                 raise RuntimeError("Tracer provider does not support adding span processors.")

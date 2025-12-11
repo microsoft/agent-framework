@@ -85,13 +85,13 @@ class AgentFrameworkExecutor:
         # Configure Agent Framework tracing only if ENABLE_OBSERVABILITY is set
         if os.environ.get("ENABLE_OBSERVABILITY"):
             try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
+                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Run the setup_observability
+                    # Run the configure_otel_providers
                     # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True)
+                    configure_otel_providers(enable_sensitive_data=True)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")

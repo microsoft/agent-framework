@@ -7,7 +7,7 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from agent_framework import ai_function, setup_logging
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
@@ -18,12 +18,12 @@ if TYPE_CHECKING:
 
 """
 This sample shows how you can configure observability with custom exporters passed directly
-to the `setup_observability()` function.
+to the `configure_otel_providers()` function.
 
 This approach gives you full control over exporter configuration (endpoints, headers, compression, etc.)
 and allows you to add multiple exporters programmatically.
 
-For standard OTLP setup, it's recommended to use environment variables (see setup_observability_with_env_var.py).
+For standard OTLP setup, it's recommended to use environment variables (see configure_otel_providers_with_env_var.py).
 Use this approach when you need custom exporter configuration beyond what environment variables provide.
 """
 
@@ -126,7 +126,7 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
     # Setup observability with custom exporters and sensitive data enabled
     # The exporters parameter allows you to add custom exporters alongside
     # those configured via environment variables (OTEL_EXPORTER_OTLP_*)
-    setup_observability(
+    configure_otel_providers(
         enable_sensitive_data=True,
         exporters=custom_exporters,
     )

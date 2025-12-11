@@ -47,12 +47,12 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "OBSERVABILITY_SETTINGS",
     "OtelAttr",
+    "configure_otel_providers",
     "create_metric_views",
     "create_resource",
-    "enable_observability",
+    "enable_instrumentation",
     "get_meter",
     "get_tracer",
-    "setup_observability",
     "use_agent_observability",
     "use_observability",
 ]
@@ -550,7 +550,7 @@ def create_metric_views() -> list["View"]:
     from opentelemetry.sdk.metrics.view import DropAggregation, View
 
     return [
-        # Dropping all instrument names except for those starting with "agent_framework"
+        # Dropping all enable_instrumentation names except for those starting with "agent_framework"
         View(instrument_name="agent_framework*"),
         View(instrument_name="gen_ai*"),
         View(instrument_name="*", aggregation=DropAggregation()),
@@ -570,7 +570,7 @@ class ObservabilitySettings(AFBaseSettings):
         Sensitive events should only be enabled on test and development environments.
 
     Keyword Args:
-        enable_observability: Enable OpenTelemetry diagnostics. Default is False.
+        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is False.
             Can be set via environment variable ENABLE_OBSERVABILITY.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
@@ -591,12 +591,12 @@ class ObservabilitySettings(AFBaseSettings):
             settings = ObservabilitySettings()
 
             # Or passing parameters directly
-            settings = ObservabilitySettings(enable_observability=True, enable_console_exporters=True)
+            settings = ObservabilitySettings(enable_instrumentation=True, enable_console_exporters=True)
     """
 
     env_prefix: ClassVar[str] = ""
 
-    enable_observability: bool = False
+    enable_instrumentation: bool = False
     enable_sensitive_data: bool = False
     enable_console_exporters: bool = False
     vs_code_extension_port: int | None = None
@@ -618,7 +618,7 @@ class ObservabilitySettings(AFBaseSettings):
 
         Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
         """
-        return self.enable_observability
+        return self.enable_instrumentation
 
     @property
     def SENSITIVE_DATA_ENABLED(self) -> bool:
@@ -626,7 +626,7 @@ class ObservabilitySettings(AFBaseSettings):
 
         Sensitive events are enabled if the diagnostic with sensitive events is enabled.
         """
-        return self.enable_observability and self.enable_sensitive_data
+        return self.enable_instrumentation and self.enable_sensitive_data
 
     @property
     def is_setup(self) -> bool:
@@ -851,30 +851,30 @@ global OBSERVABILITY_SETTINGS
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
-def enable_observability(
+def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
 ) -> None:
-    """Enable observability for your application.
+    """Enable instrumentation for your application.
 
     Calling this method implies you want to enable observability in your application.
 
     This method does not configure exporters or providers.
-    It only updates the global variables that trigger the observability code paths.
+    It only updates the global variables that trigger the instrumentation code.
     If you have already set the environment variable ENABLE_OBSERVABILITY=true,
     calling this method has no effect, unless you want to enable or disable sensitive data events.
 
-    Args:
+    Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
     """
     global OBSERVABILITY_SETTINGS
-    OBSERVABILITY_SETTINGS.enable_observability = True
+    OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
 
 
-def setup_observability(
+def configure_otel_providers(
     *,
     enable_sensitive_data: bool | None = None,
     exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
@@ -883,10 +883,10 @@ def setup_observability(
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
 ) -> None:
-    """Setup observability for the application with OpenTelemetry.
+    """Configure otel providers and enable instrumentation for the application with OpenTelemetry.
 
     This method creates the exporters and providers for the application based on
-    the provided values and environment variables.
+    the provided values and environment variables and enables instrumentation.
 
     Call this method once during application startup, before any telemetry is captured.
     DO NOT call this method multiple times, as it may lead to unexpected behavior.
@@ -900,16 +900,13 @@ def setup_observability(
     - OTEL_EXPORTER_OTLP_HEADERS: Headers for all signals
     - ENABLE_CONSOLE_EXPORTERS: Enable console output for telemetry
 
-    For Azure Monitor integration, use AzureAIClient.setup_azure_monitor() instead.
+    Note:
+        Since you can only setup one provider per signal type (logs, traces, metrics),
+        you can choose to use this method and take the exporter and provider that we created.
+        Alternatively, you can setup the providers yourself, or through another library
+        (e.g., Azure Monitor) and just call `enable_instrumentation()` to enable instrumentation.
 
     Note:
-        If you have configured the providers manually, calling this method will not
-        have any effect and it is a good practice to set `disable_exporter_creation=True` in that case.
-        This prevents an attempt to register additional trace, log or metric providers which would be ignored.
-
-        The reverse is also true - if you call this method first and there are exporters to be setup,
-        subsequent provider configurations will not take effect.
-
         By default, the Agent Framework emits metrics with the prefixes `agent_framework`
         and `gen_ai` (OpenTelemetry GenAI semantic conventions). You can use the `views`
         parameter to filter which metrics are collected and exported. You can also use
@@ -936,22 +933,22 @@ def setup_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import setup_observability
+            from agent_framework.observability import configure_otel_providers
 
             # Using environment variables (recommended)
             # Set ENABLE_OBSERVABILITY=true
             # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-            setup_observability()
+            configure_otel_providers()
 
             # Enable console output for debugging
             # Set ENABLE_CONSOLE_EXPORTERS=true
-            setup_observability()
+            configure_otel_providers()
 
             # With custom exporters
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 
-            setup_observability(
+            configure_otel_providers(
                 exporters=[
                     OTLPSpanExporter(endpoint="http://custom:4317"),
                     OTLPLogExporter(endpoint="http://custom:4317"),
@@ -959,19 +956,19 @@ def setup_observability(
             )
 
             # VS Code extension integration
-            setup_observability(
+            configure_otel_providers(
                 vs_code_extension_port=4317,  # Connects to AI Toolkit
             )
 
             # Enable sensitive data logging (development only)
-            setup_observability(
+            configure_otel_providers(
                 enable_sensitive_data=True,
             )
 
             # With custom metrics views
             from opentelemetry.sdk.metrics.view import View
 
-            setup_observability(
+            configure_otel_providers(
                 views=[
                     View(instrument_name="agent_framework*"),
                     View(instrument_name="gen_ai*"),
@@ -984,14 +981,12 @@ def setup_observability(
         .. code-block:: python
 
             # when azure monitor is installed
-            from agent_framework import setup_observability
+            from agent_framework.observability import enable_instrumentation
             from azure.monitor.opentelemetry import configure_azure_monitor
 
             connection_string = "InstrumentationKey=your_instrumentation_key_here;..."
             configure_azure_monitor(connection_string=connection_string)
-            setup_observability(
-                disable_exporter_creation=True,  # Prevent automatic exporter creation
-            )
+            enable_instrumentation()
 
     References:
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
@@ -1001,7 +996,7 @@ def setup_observability(
     if env_file_path:
         # Build kwargs, excluding None values
         settings_kwargs: dict[str, Any] = {
-            "enable_observability": True,
+            "enable_instrumentation": True,
             "env_file_path": env_file_path,
         }
         if env_file_encoding is not None:
@@ -1014,7 +1009,7 @@ def setup_observability(
         OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
     else:
         # Update the observability settings with the provided values
-        OBSERVABILITY_SETTINGS.enable_observability = True
+        OBSERVABILITY_SETTINGS.enable_instrumentation = True
         if enable_sensitive_data is not None:
             OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
         if vs_code_extension_port is not None:
@@ -1263,7 +1258,7 @@ def use_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_observability, setup_observability
+            from agent_framework import use_observability, configure_otel_providers
             from agent_framework import ChatClientProtocol
 
 
@@ -1282,7 +1277,7 @@ def use_observability(
 
 
             # Setup observability
-            setup_observability(otlp_endpoint="http://localhost:4317")
+            configure_otel_providers(otlp_endpoint="http://localhost:4317")
 
             # Now all calls will be traced
             client = MyCustomChatClient()
@@ -1495,7 +1490,7 @@ def use_agent_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_agent_observability, setup_observability
+            from agent_framework import use_agent_observability, configure_otel_providers
             from agent_framework._agents import AgentProtocol
 
 
@@ -1514,7 +1509,7 @@ def use_agent_observability(
 
 
             # Setup observability
-            setup_observability(otlp_endpoint="http://localhost:4317")
+            configure_otel_providers(otlp_endpoint="http://localhost:4317")
 
             # Now all agent runs will be traced
             agent = MyCustomAgent()

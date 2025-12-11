@@ -793,19 +793,19 @@ def test_create_otlp_exporters_grpc_missing_dependency():
         _create_otlp_exporters(endpoint="http://localhost:4317", protocol="grpc")
 
 
-# region Test setup_observability with views
+# region Test configure_otel_providers with views
 
 
 @pytest.mark.skipif(
     True,
     reason="Skipping OTLP exporter tests - optional dependency not installed by default",
 )
-def test_setup_observability_with_views(monkeypatch):
-    """Test setup_observability accepts views parameter."""
+def test_configure_otel_providers_with_views(monkeypatch):
+    """Test configure_otel_providers accepts views parameter."""
     from opentelemetry.sdk.metrics import View
     from opentelemetry.sdk.metrics.view import DropAggregation
 
-    from agent_framework.observability import setup_observability
+    from agent_framework.observability import configure_otel_providers
 
     # Clear all OTEL env vars
     for key in [
@@ -820,16 +820,16 @@ def test_setup_observability_with_views(monkeypatch):
     views = [View(instrument_name="*", aggregation=DropAggregation())]
 
     # Should not raise an error
-    setup_observability(views=views)
+    configure_otel_providers(views=views)
 
 
 @pytest.mark.skipif(
     True,
     reason="Skipping OTLP exporter tests - optional dependency not installed by default",
 )
-def test_setup_observability_without_views(monkeypatch):
-    """Test setup_observability works without views parameter."""
-    from agent_framework.observability import setup_observability
+def test_configure_otel_providers_without_views(monkeypatch):
+    """Test configure_otel_providers works without views parameter."""
+    from agent_framework.observability import configure_otel_providers
 
     # Clear all OTEL env vars
     for key in [
@@ -841,7 +841,7 @@ def test_setup_observability_without_views(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     # Should not raise an error with default empty views
-    setup_observability()
+    configure_otel_providers()
 
 
 # region Test console exporters opt-in

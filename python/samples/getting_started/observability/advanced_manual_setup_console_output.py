@@ -5,7 +5,7 @@ import logging
 from random import randint
 from typing import Annotated
 
-from agent_framework.observability import enable_observability
+from agent_framework.observability import enable_instrumentation
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
@@ -22,7 +22,7 @@ from pydantic import Field
 
 """
 This sample shows how to manually configure to send traces, logs, and metrics to the console,
-without using the `setup_observability` helper function.
+without using the `configure_otel_providers` helper function.
 """
 
 resource = Resource.create({SERVICE_NAME: "ManualSetup"})
@@ -115,7 +115,7 @@ async def main():
     setup_logging()
     setup_tracing()
     setup_metrics()
-    enable_observability()
+    enable_instrumentation()
 
     await run_chat_client()
 
