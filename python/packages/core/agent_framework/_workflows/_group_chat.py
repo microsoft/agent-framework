@@ -36,6 +36,7 @@ from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage
 from ._conversation_history import ensure_author, latest_user_message
 from ._executor import Executor, handler
+from ._orchestration_request_info import RequestInfoInterceptor
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, wrap_participant
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
@@ -131,7 +132,11 @@ class ManagerSelectionResponse(BaseModel):
         final_message: Optional final message string when finishing conversation (will be converted to ChatMessage)
     """
 
-    model_config = {"extra": "forbid"}
+    model_config = {
+        "extra": "forbid",
+        # OpenAI strict mode requires all properties to be in required array
+        "json_schema_extra": {"required": ["selected_participant", "instruction", "finish", "final_message"]},
+    }
 
     selected_participant: str | None = None
     instruction: str | None = None
@@ -562,14 +567,36 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         participant_name: str,
         message: ChatMessage,
         ctx: WorkflowContext[AgentExecutorRequest | _GroupChatRequestMessage, list[ChatMessage]],
+        trailing_messages: list[ChatMessage] | None = None,
     ) -> None:
-        """Common response ingestion logic shared by agent and custom participants."""
+        """Common response ingestion logic shared by agent and custom participants.
+
+        Args:
+            participant_name: Name of the participant who sent the message
+            message: The participant's response message
+            ctx: Workflow context for routing and output
+            trailing_messages: Optional list of messages to inject after the participant's
+                message (e.g., additional input from the RequestInfoInterceptor)
+        """
         if participant_name not in self._participants:
             raise ValueError(f"Received response from unknown participant '{participant_name}'.")
 
         message = ensure_author(message, participant_name)
         self._conversation.extend((message,))
         self._history.append(_GroupChatTurn(participant_name, "agent", message))
+
+        # Inject any trailing messages (e.g., human input) into the conversation
+        if trailing_messages:
+            for trailing_msg in trailing_messages:
+                self._conversation.extend((trailing_msg,))
+                # Record as user input in history
+                author = trailing_msg.author_name or "human"
+                self._history.append(_GroupChatTurn(author, "user", trailing_msg))
+                logger.debug(
+                    f"Injected human input into group chat conversation: "
+                    f"{trailing_msg.text[:50] if trailing_msg.text else '(empty)'}..."
+                )
+
         self._pending_agent = None
 
         if await self._complete_on_termination(ctx):
@@ -685,14 +712,18 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         to the selected participant. This method implements the core orchestration
         logic for agent-based managers.
 
+        Also handles any human input that was injected into the response's full_conversation
+        by the human input hook interceptor.
+
         Args:
             response: AgentExecutor response from manager agent
             ctx: Workflow context for routing and output
 
         Behavior:
+            - Extracts any human input from the response
             - Parses manager selection from response
             - If finish=True: yields final message and completes workflow
-            - If participant selected: routes request to that participant
+            - If participant selected: routes request to that participant with human input included
             - Validates selected participant exists
             - Enforces round limits if configured
 
@@ -700,6 +731,9 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
             ValueError: If manager selects invalid/unknown participant
             RuntimeError: If manager response cannot be parsed
         """
+        # Extract any human input that was injected by the human input hook
+        trailing_user_messages = self._extract_trailing_user_messages(response)
+
         selection = self._parse_manager_selection(response)
 
         if self._pending_finalization:
@@ -752,6 +786,19 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
             conversation.append(manager_message)
             self._conversation.append(manager_message)
             self._history.append(_GroupChatTurn(self._manager_name, "manager", manager_message))
+
+        # Inject any human input that was attached to the manager's response
+        # This ensures the next participant sees the human's guidance
+        if trailing_user_messages:
+            for human_msg in trailing_user_messages:
+                conversation.append(human_msg)
+                self._conversation.append(human_msg)
+                author = human_msg.author_name or "human"
+                self._history.append(_GroupChatTurn(author, "user", human_msg))
+                logger.debug(
+                    f"Injected human input after manager selection: "
+                    f"{human_msg.text[:50] if human_msg.text else '(empty)'}..."
+                )
 
         if await self._complete_on_termination(ctx):
             return
@@ -807,6 +854,41 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
                 reason="empty response",
             )
         return ensure_author(final_message, participant_name)
+
+    @staticmethod
+    def _extract_trailing_user_messages(response: AgentExecutorResponse) -> list[ChatMessage]:
+        """Extract any user messages that appear after the last assistant message.
+
+        This is used to capture human input that was injected by the human input hook
+        interceptor. The hook adds user messages to full_conversation after the agent's
+        response, so they appear at the end of the sequence.
+
+        Args:
+            response: AgentExecutor response that may contain trailing user messages
+
+        Returns:
+            List of user messages that appear after the last assistant message,
+            or empty list if none found
+        """
+        if not response.full_conversation:
+            return []
+
+        # Find index of last assistant message
+        last_assistant_idx = -1
+        for i, msg in enumerate(response.full_conversation):
+            if msg.role == Role.ASSISTANT:
+                last_assistant_idx = i
+
+        if last_assistant_idx < 0:
+            return []
+
+        # Collect any user messages after the last assistant message
+        trailing_user: list[ChatMessage] = []
+        for msg in response.full_conversation[last_assistant_idx + 1 :]:
+            if msg.role == Role.USER:
+                trailing_user.append(msg)
+
+        return trailing_user
 
     async def _handle_task_message(
         self,
@@ -979,6 +1061,9 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         Routes responses based on whether they come from the manager or a participant:
         - Manager responses: parsed for speaker selection decisions
         - Participant responses: ingested as conversation messages
+
+        Also handles any human input that was injected into the response's full_conversation
+        by the human input hook interceptor.
         """
         participant_name = self._registry.get_participant_name(response.executor_id)
         if participant_name is None:
@@ -994,7 +1079,13 @@ class GroupChatOrchestratorExecutor(BaseGroupChatOrchestrator):
         else:
             # Regular participant response
             message = self._extract_agent_message(response, participant_name)
-            await self._ingest_participant_message(participant_name, message, ctx)
+
+            # Check for human input injected by human input hook
+            # Human input appears as user messages at the end of full_conversation
+            # after the agent's assistant message
+            trailing_user_messages = self._extract_trailing_user_messages(response)
+
+            await self._ingest_participant_message(participant_name, message, ctx, trailing_user_messages)
 
 
 def _default_orchestrator_factory(wiring: _GroupChatConfig) -> Executor:
@@ -1089,13 +1180,14 @@ def assemble_group_chat_workflow(
         manager_entry = manager_pipeline[0]
         manager_exit = manager_pipeline[-1]
 
-        # Register manager with orchestrator
+        # Register manager with orchestrator (with entry and exit IDs for pipeline routing)
         register_entry = getattr(orchestrator, "register_participant_entry", None)
         if callable(register_entry):
             register_entry(
                 wiring.manager_name,
                 entry_id=manager_entry.id,
                 is_agent=not isinstance(wiring.manager_participant, Executor),
+                exit_id=manager_exit.id if manager_exit is not manager_entry else None,
             )
 
         # Wire manager edges: Orchestrator ↔ Manager
@@ -1118,10 +1210,13 @@ def assemble_group_chat_workflow(
 
         register_entry = getattr(orchestrator, "register_participant_entry", None)
         if callable(register_entry):
+            # Register both entry and exit IDs so responses can be routed correctly
+            # when interceptors are prepended to the pipeline
             register_entry(
                 name,
                 entry_id=entry_executor.id,
                 is_agent=not isinstance(spec.participant, Executor),
+                exit_id=exit_executor.id if exit_executor is not entry_executor else None,
             )
 
         workflow_builder = workflow_builder.add_edge(orchestrator, entry_executor)
@@ -1213,6 +1308,30 @@ class GroupChatBuilder:
             .build()
         )
 
+    *Pattern 3: Request info for mid-conversation feedback*
+
+    .. code-block:: python
+
+        from agent_framework import GroupChatBuilder
+
+        # Pause before all participants
+        workflow = (
+            GroupChatBuilder()
+            .set_select_speakers_func(select_next_speaker)
+            .participants([researcher, writer])
+            .with_request_info()
+            .build()
+        )
+
+        # Pause only before specific participants
+        workflow = (
+            GroupChatBuilder()
+            .set_select_speakers_func(select_next_speaker)
+            .participants([researcher, writer, editor])
+            .with_request_info(agents=[editor])  # Only pause before editor responds
+            .build()
+        )
+
     **Participant Specification:**
 
     Two ways to specify participants:
@@ -1262,6 +1381,8 @@ class GroupChatBuilder:
         self._interceptors: list[_InterceptorSpec] = []
         self._orchestrator_factory = group_chat_orchestrator(_orchestrator_factory)
         self._participant_factory = _participant_factory or _default_participant_factory
+        self._request_info_enabled: bool = False
+        self._request_info_filter: set[str] | None = None
 
     def _set_manager_function(
         self,
@@ -1338,6 +1459,12 @@ class GroupChatBuilder:
         Note:
             The manager agent's response_format must be ManagerSelectionResponse for structured output.
             Custom response formats raise ValueError instead of being overridden.
+
+            The manager can be included in :py:meth:`with_request_info` to pause before the manager
+            runs, allowing human steering of orchestration decisions. If no filter is specified,
+            the manager is included automatically. To filter explicitly::
+
+                .with_request_info(agents=[manager, writer])  # Pause before manager and writer
         """
         if self._manager is not None or self._manager_participant is not None:
             raise ValueError(
@@ -1668,6 +1795,54 @@ class GroupChatBuilder:
         self._max_rounds = max_rounds
         return self
 
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | AgentProtocol | Executor] | None = None,
+    ) -> "GroupChatBuilder":
+        """Enable request info before participants run in the workflow.
+
+        When enabled, the workflow pauses before each participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and
+        optionally inject guidance before the participant responds. The caller provides
+        input via the standard response_handler/request_info pattern.
+
+        Args:
+            agents: Optional filter - only pause before these specific agents/executors.
+                   Accepts agent names (str), agent instances, or executor instances.
+                   If None (default), pauses before every participant.
+
+        Returns:
+            self: The builder instance for fluent chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            # Pause before all participants
+            workflow = (
+                GroupChatBuilder()
+                .set_manager(manager)
+                .participants([optimist, pragmatist, creative])
+                .with_request_info()
+                .build()
+            )
+
+            # Pause only before specific participants
+            workflow = (
+                GroupChatBuilder()
+                .set_manager(manager)
+                .participants([optimist, pragmatist, creative])
+                .with_request_info(agents=[pragmatist])  # Only pause before pragmatist
+                .build()
+            )
+        """
+        from ._orchestration_request_info import resolve_request_info_filter
+
+        self._request_info_enabled = True
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
+        return self
+
     def _get_participant_metadata(self) -> dict[str, Any]:
         if self._participant_metadata is None:
             self._participant_metadata = prepare_participant_metadata(
@@ -1754,9 +1929,32 @@ class GroupChatBuilder:
             participant_executors=metadata["executors"],
         )
 
+        # Determine participant factory - wrap if request info is enabled
+        participant_factory = self._participant_factory
+        if self._request_info_enabled:
+            # Create a wrapper factory that adds request info interceptor before each participant
+            base_factory = participant_factory
+            agent_filter = self._request_info_filter
+
+            def _factory_with_request_info(
+                spec: GroupChatParticipantSpec,
+                config: _GroupChatConfig,
+            ) -> _GroupChatParticipantPipeline:
+                pipeline = list(base_factory(spec, config))
+                if pipeline:
+                    # Add interceptor executor BEFORE the participant (prepend)
+                    interceptor = RequestInfoInterceptor(
+                        executor_id=f"request_info:{spec.name}",
+                        agent_filter=agent_filter,
+                    )
+                    pipeline.insert(0, interceptor)
+                return tuple(pipeline)
+
+            participant_factory = _factory_with_request_info
+
         result = assemble_group_chat_workflow(
             wiring=wiring,
-            participant_factory=self._participant_factory,
+            participant_factory=participant_factory,
             orchestrator_factory=self._orchestrator_factory,
             interceptors=self._interceptors,
             checkpoint_storage=self._checkpoint_storage,

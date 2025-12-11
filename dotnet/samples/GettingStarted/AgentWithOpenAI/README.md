@@ -14,3 +14,4 @@ Agent Framework provides additional support to allow OpenAI developers to use th
 |[Using Reasoning Capabilities](./Agent_OpenAI_Step02_Reasoning/)|This sample demonstrates how to create an AI agent with reasoning capabilities using OpenAI's reasoning models and response types.|
 |[Creating an Agent from a ChatClient](./Agent_OpenAI_Step03_CreateFromChatClient/)|This sample demonstrates how to create an AI agent directly from an OpenAI.Chat.ChatClient instance using OpenAIChatClientAgent.|
 |[Creating an Agent from an OpenAIResponseClient](./Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/)|This sample demonstrates how to create an AI agent directly from an OpenAI.Responses.OpenAIResponseClient instance using OpenAIResponseClientAgent.|
+|[Managing Conversation State](./Agent_OpenAI_Step05_Conversation/)|This sample demonstrates how to maintain conversation state across multiple turns using the AgentThread for context continuity.|
