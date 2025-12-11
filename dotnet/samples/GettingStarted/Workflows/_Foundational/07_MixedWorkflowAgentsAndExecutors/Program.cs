@@ -303,4 +303,4 @@ internal sealed class FinalOutputExecutor() : Executor<List<ChatMessage>, string
         return ValueTask.FromResult(assistantOutput.Text ?? string.Empty);
     }
 }
-#pragma warning restore RCS116
+#pragma warning restore RCS1168
