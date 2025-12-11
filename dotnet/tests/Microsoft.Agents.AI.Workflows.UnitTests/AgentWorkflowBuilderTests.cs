@@ -419,7 +419,7 @@ public class AgentWorkflowBuilderTests
 
             await barrier.Value!.Task.ConfigureAwait(false);
 
-            await foreach (var update in base.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in base.RunCoreStreamingAsync(messages, thread, options, cancellationToken))
             {
                 await Task.Yield();
                 yield return update;
