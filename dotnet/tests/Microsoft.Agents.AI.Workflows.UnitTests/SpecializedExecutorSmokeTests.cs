@@ -19,7 +19,7 @@ public class SpecializedExecutorSmokeTests
 {
     public class TestAIAgent(List<ChatMessage>? messages = null, string? id = null, string? name = null) : AIAgent
     {
-        public override string Id => id ?? base.Id;
+        protected override string? IdCore => id;
         public override string? Name => name;
 
         public static List<ChatMessage> ToChatMessages(params string[] messages)
