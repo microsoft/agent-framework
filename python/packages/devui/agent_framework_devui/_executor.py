@@ -89,13 +89,9 @@ class AgentFrameworkExecutor:
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Get OTLP endpoint from either custom or standard env var
-                    # This handles the case where env vars are set after ObservabilitySettings was imported
-                    otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-                    # Pass the endpoint explicitly to setup_observability
+                    # Run the setup_observability
                     # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                    setup_observability(enable_sensitive_data=True)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
