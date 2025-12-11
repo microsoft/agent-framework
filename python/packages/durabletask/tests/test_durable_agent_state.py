@@ -132,7 +132,7 @@ class TestDurableAgentStateMessageCreatedAt:
         run_request = RunRequest(
             message="test message",
             correlation_id="corr-run",
-            created_at="2024-01-15T10:30:00Z",
+            created_at=datetime(2024, 1, 15, 10, 30, 0),
         )
 
         durable_message = DurableAgentStateMessage.from_run_request(run_request)
