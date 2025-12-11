@@ -75,7 +75,22 @@ public static partial class AIAgentExtensions
         {
             // If no thread was provided at creation time, try to use the current ambient thread context.
             var effectiveThread = thread ?? AgentContext.CurrentThread;
-            var response = await agent.RunAsync(query, thread: effectiveThread, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            // Propagate ambient context (ContextId, AdditionalProperties)
+            var contextId = AgentContext.ContextId;
+            var additionalProperties = AgentContext.AdditionalProperties;
+
+            AgentRunOptions? runOptions = null;
+            if (contextId is not null || additionalProperties is not null)
+            {
+                runOptions = new AgentRunOptions
+                {
+                    ContextId = contextId,
+                    AdditionalProperties = additionalProperties?.Clone()
+                };
+            }
+
+            var response = await agent.RunAsync(query, thread: effectiveThread, options: runOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
             return response.Text;
         }
 

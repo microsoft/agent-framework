@@ -44,9 +44,12 @@ public static class AIAgentExtensions
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
             var thread = await hostAgent.GetOrCreateThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
 
+            var runOptions = new AgentRunOptions { ContextId = contextId };
+
             var response = await hostAgent.RunAsync(
                 messageSendParams.ToChatMessages(),
                 thread: thread,
+                options: runOptions,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await hostAgent.SaveThreadAsync(contextId, thread, cancellationToken).ConfigureAwait(false);

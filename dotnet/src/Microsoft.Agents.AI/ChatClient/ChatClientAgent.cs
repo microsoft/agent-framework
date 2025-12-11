@@ -218,7 +218,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         IAsyncEnumerator<ChatResponseUpdate> responseUpdatesEnumerator;
 
-        using (AgentContext.SetCurrentThread(safeThread))
+        using (AgentContext.BeginScope(options?.ContextId, safeThread, options?.AdditionalProperties))
         {
             try
             {
@@ -397,7 +397,7 @@ public sealed partial class ChatClientAgent : AIAgent
         TChatClientResponse chatResponse;
         try
         {
-            using (AgentContext.SetCurrentThread(safeThread))
+            using (AgentContext.BeginScope(options?.ContextId, safeThread, options?.AdditionalProperties))
             {
                 chatResponse = await chatClientRunFunc.Invoke(chatClient, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
             }
