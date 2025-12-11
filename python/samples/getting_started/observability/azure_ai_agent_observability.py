@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
 import os
 from random import randint
 from typing import Annotated
@@ -48,7 +47,6 @@ async def main():
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.
         # This will override any existing configuration.
-        logging.basicConfig(level=logging.INFO)
         await client.setup_azure_ai_observability(enable_live_metrics=True)
 
         questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
