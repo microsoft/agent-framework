@@ -16,7 +16,7 @@ This folder contains examples demonstrating how to use Ollama models with the Ag
 
 | File | Description |
 |------|-------------|
-| [`ollama_agent_basic.py`](ollama_agent_basic.py) | Demonstrates basic Ollama agent usage with the native Ollama Chat Client. Shows both streaming and non-streaming responses with tool calling capabilities. |
+| [`ollama_with_openai_chat_client.py`](ollama_with_openai_chat_client.py) | Demonstrates how to configure OpenAI Chat Client to use local Ollama models. Shows both streaming and non-streaming responses with tool calling capabilities. |
 
 ## Configuration
 
