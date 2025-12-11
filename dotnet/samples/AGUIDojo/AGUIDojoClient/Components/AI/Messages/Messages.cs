@@ -27,6 +27,14 @@ public partial class Messages : IComponent
     {
         builder.OpenComponent<TextTemplate>(0);
         builder.CloseComponent();
+        builder.OpenComponent<FunctionCallTemplate>(1);
+        builder.CloseComponent();
+        builder.OpenComponent<FunctionResultTemplate>(2);
+        builder.CloseComponent();
+        builder.OpenComponent<ErrorTemplate>(3);
+        builder.CloseComponent();
+        builder.OpenComponent<DataContentTemplate>(4);
+        builder.CloseComponent();
     };
 
     public void Attach(RenderHandle renderHandle)

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Extensions.AI;
 
@@ -52,8 +52,10 @@ internal sealed class DefaultMessageTemplate : MessageTemplateBase
 
     /// <summary>
     /// Checks if a message has any visible content that should be displayed.
-    /// Messages that only contain FunctionCallContent or FunctionResultContent
-    /// are internal tool messages and should not be rendered as chat bubbles.
+    /// Messages that only contain FunctionResultContent are internal tool messages
+    /// and should not be rendered as chat bubbles.
+    /// FunctionCallContent is considered visible because content templates can render them
+    /// (e.g., WeatherCallTemplate renders weather tool calls as cards).
     /// </summary>
     private static bool HasVisibleContent(ChatMessage message)
     {
@@ -70,8 +72,15 @@ internal sealed class DefaultMessageTemplate : MessageTemplateBase
                 return true;
             }
 
-            // Other content types that are not function calls/results are visible
-            if (content is not FunctionCallContent && content is not FunctionResultContent)
+            // FunctionCallContent is visible - content templates can render them
+            // (e.g., WeatherCallTemplate renders weather tool calls as cards)
+            if (content is FunctionCallContent)
+            {
+                return true;
+            }
+
+            // Other content types that are not function results are visible
+            if (content is not FunctionResultContent)
             {
                 return true;
             }

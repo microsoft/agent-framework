@@ -21,6 +21,12 @@ public class TextTemplate : ContentTemplateBase
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Only match TextContent, allowing other content templates to handle
+    /// FunctionCallContent, FunctionResultContent, etc.
+    /// </summary>
+    public override bool When(ContentContext context) => context.Content is TextContent;
+
     private RenderFragment RenderText(ContentContext content) => builder =>
     {
         if (content.Content is TextContent textContent)

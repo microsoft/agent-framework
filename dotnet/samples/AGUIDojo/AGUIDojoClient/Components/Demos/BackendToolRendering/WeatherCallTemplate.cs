@@ -29,7 +29,7 @@ public class WeatherCallTemplate : ContentTemplateBase
     /// Determines if this template should handle the given content.
     /// Matches FunctionCallContent for the get_weather function.
     /// </summary>
-    public new bool When(ContentContext context)
+    public override bool When(ContentContext context)
     {
         // Only match FunctionCallContent for the get_weather function
         return context.Content is FunctionCallContent call &&

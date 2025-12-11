@@ -35,7 +35,7 @@ public class FunctionCallTemplate : ContentTemplateBase
     /// </summary>
     /// <param name="context">The content context.</param>
     /// <returns>True if this template should render the content.</returns>
-    public new bool When(ContentContext context)
+    public override bool When(ContentContext context)
     {
         if (context.Content is not FunctionCallContent call)
         {
@@ -53,32 +53,8 @@ public class FunctionCallTemplate : ContentTemplateBase
 
     private RenderFragment RenderFunctionCall(ContentContext content) => builder =>
     {
-        if (content.Content is FunctionCallContent call)
-        {
-            // Get or create the invocation context which tracks call and result
-            var invocation = this.Context.GetOrCreateInvocation(call);
-
-            builder.OpenComponent<CascadingValue<InvocationContext>>(0);
-            builder.AddComponentParameter(1, "Value", invocation);
-            builder.AddComponentParameter(2, "IsFixed", true);
-            builder.AddComponentParameter(3, "ChildContent", (RenderFragment)(innerBuilder =>
-            {
-                // Default fallback rendering - shows function name and loading/result status
-                innerBuilder.OpenElement(0, "div");
-                innerBuilder.AddAttribute(1, "class", "function-call");
-                innerBuilder.AddContent(2, $"Function: {call.Name}");
-                if (invocation.HasResult)
-                {
-                    innerBuilder.AddContent(3, " [Result available]");
-                }
-                else
-                {
-                    innerBuilder.AddContent(3, " [Loading...]");
-                }
-
-                innerBuilder.CloseElement();
-            }));
-            builder.CloseComponent();
-        }
+        // By default, function calls are not rendered visually.
+        // Custom templates (like WeatherCallTemplate) can override this
+        // behavior for specific functions by registering before this template.
     };
 }

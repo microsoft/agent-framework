@@ -283,6 +283,11 @@ h1:focus {
     line-height: 1.5;
 }
 
+/* Hide empty message bubbles (e.g., function calls with no visual template) */
+.chat-message:empty {
+    display: none;
+}
+
 /* User messages - right aligned with blue background */
 .chat-message.user-message {
     align-self: flex-end;
