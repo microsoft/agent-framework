@@ -23,6 +23,7 @@ from agent_framework import (
     WorkflowOutputEvent,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._workflows import AgentRunEvent
 from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._handoff import _clone_chat_agent  # type: ignore[reportPrivateUsage]
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
@@ -224,12 +225,12 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     # Initial run should preserve complex metadata in the triage response
     events = await _drain(workflow.run_stream("Need help with a return"))
-    agent_events = [ev for ev in events if hasattr(ev, "data") and hasattr(ev.data, "messages")]
+    agent_events = [ev for ev in events if isinstance(ev, AgentRunEvent)]
     if agent_events:
         first_agent_event = agent_events[0]
         first_agent_event_data = first_agent_event.data
-        if first_agent_event_data and hasattr(first_agent_event_data, "messages"):
-            first_agent_message = first_agent_event_data.messages[0]  # type: ignore[attr-defined]
+        if first_agent_event_data and first_agent_event_data.messages:
+            first_agent_message = first_agent_event_data.messages[0]
             assert "complex" in first_agent_message.additional_properties, "Agent event lost complex metadata"
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert requests, "Workflow should request additional user input"
@@ -286,6 +287,140 @@ async def test_tool_call_handoff_detection_with_text_hint():
 
     assert specialist.calls, "Specialist should be invoked using handoff tool call"
     assert len(specialist.calls[0]) >= 2
+
+
+async def test_autonomous_interaction_mode_yields_output_without_user_request():
+    """Ensure autonomous interaction mode yields output without requesting user input."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist])
+        .set_coordinator("triage")
+        .with_interaction_mode("autonomous", autonomous_turn_limit=1)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Package arrived broken"))
+    assert len(triage.calls) == 1
+    assert len(specialist.calls) == 1
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request additional user input"
+
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Autonomous mode should yield a workflow output"
+
+    final_conversation = outputs[-1].data
+    assert isinstance(final_conversation, list)
+    conversation_list = cast(list[ChatMessage], final_conversation)
+    assert any(
+        msg.role == Role.ASSISTANT and (msg.text or "").startswith("specialist reply") for msg in conversation_list
+    )
+
+
+async def test_autonomous_continues_without_handoff_until_termination():
+    """Autonomous mode should keep invoking the same agent when no handoff occurs."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Autonomous mode should yield output after termination condition"
+    assert len(worker.calls) == 3, "Worker should be invoked multiple times without user input"
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request user input"
+
+
+async def test_autonomous_turn_limit_stops_loop():
+    """Autonomous mode should stop when the configured turn limit is reached."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Turn limit should force a workflow output"
+    assert len(worker.calls) == 2, "Worker should stop after reaching the turn limit"
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request user input"
+
+
+async def test_autonomous_routes_back_to_coordinator_when_specialist_stops():
+    """Specialist without handoff should route back to coordinator in autonomous mode."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist")
+    specialist = _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist])
+        .set_coordinator(triage)
+        .add_handoff(triage, specialist)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_termination_condition(lambda conv: len(conv) >= 4)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Issue"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Workflow should complete without user input"
+    assert len(specialist.calls) >= 1, "Specialist should run without handoff"
+
+
+async def test_autonomous_mode_with_inline_turn_limit():
+    """Autonomous mode should respect turn limit passed via with_interaction_mode."""
+    worker = _RecordingAgent(name="worker")
+
+    workflow = (
+        HandoffBuilder(participants=[worker])
+        .set_coordinator(worker)
+        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_termination_condition(lambda conv: False)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Start"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Turn limit should force a workflow output"
+    assert len(worker.calls) == 2, "Worker should stop after reaching the inline turn limit"
+
+
+def test_autonomous_turn_limit_ignored_in_human_in_loop_mode(caplog):
+    """Verify that autonomous_turn_limit logs a warning when mode is human_in_loop."""
+    worker = _RecordingAgent(name="worker")
+
+    # Should not raise, but should log a warning
+    HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+        "human_in_loop", autonomous_turn_limit=10
+    )
+
+    assert "autonomous_turn_limit=10 was provided but interaction_mode is 'human_in_loop'; ignoring." in caplog.text
+
+
+def test_autonomous_turn_limit_must_be_positive():
+    """Verify that autonomous_turn_limit raises an error when <= 0."""
+    worker = _RecordingAgent(name="worker")
+
+    with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
+        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+            "autonomous", autonomous_turn_limit=0
+        )
+
+    with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
+        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
+            "autonomous", autonomous_turn_limit=-5
+        )
 
 
 def test_build_fails_without_coordinator():
@@ -550,6 +685,54 @@ async def test_tool_choice_preserved_from_agent_config():
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
     assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
+
+
+async def test_handoff_builder_with_request_info():
+    """Test that HandoffBuilder supports request info via with_request_info()."""
+    from agent_framework import AgentInputRequest, RequestInfoEvent
+
+    # Create test agents
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    # Build workflow with request info enabled
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
+        .with_request_info()
+        .build()
+    )
+
+    # Run workflow until it pauses for request info
+    request_event: RequestInfoEvent | None = None
+    async for event in workflow.run_stream("Hello"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentInputRequest):
+            request_event = event
+
+    # Verify request info was emitted
+    assert request_event is not None, "Request info should have been emitted"
+    assert isinstance(request_event.data, AgentInputRequest)
+
+    # Provide response and continue
+    output_events: list[WorkflowOutputEvent] = []
+    async for event in workflow.send_responses_streaming({request_event.request_id: "approved"}):
+        if isinstance(event, WorkflowOutputEvent):
+            output_events.append(event)
+
+    # Verify we got output events
+    assert len(output_events) > 0, "Should produce output events after response"
+
+
+async def test_handoff_builder_with_request_info_method_chaining():
+    """Test that with_request_info returns self for method chaining."""
+    coordinator = _RecordingAgent(name="coordinator")
+
+    builder = HandoffBuilder(participants=[coordinator])
+    result = builder.with_request_info()
+
+    assert result is builder, "with_request_info should return self for chaining"
+    assert builder._request_info_enabled is True  # type: ignore
 
 
 async def test_return_to_previous_state_serialization():

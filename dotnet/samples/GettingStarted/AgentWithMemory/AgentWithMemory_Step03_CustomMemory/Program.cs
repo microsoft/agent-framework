@@ -12,7 +12,6 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Chat;
 using SampleApp;
 
@@ -33,7 +32,7 @@ ChatClient chatClient = new AzureOpenAIClient(
 // and its storage to that user id.
 AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
 {
-    Instructions = "You are a friendly assistant. Always address the user by their name.",
+    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
     AIContextProviderFactory = ctx => new UserInfoMemory(chatClient.AsIChatClient(), ctx.SerializedState, ctx.JsonSerializerOptions)
 });
 

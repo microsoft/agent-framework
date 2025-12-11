@@ -84,6 +84,7 @@ def create_test_azure_ai_client(
     client.credential = None
     client.agent_name = agent_name
     client.agent_version = agent_version
+    client.agent_description = None
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
@@ -151,7 +152,7 @@ def test_azure_ai_client_init_auto_create_client(
         client = AzureAIClient(
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            async_credential=mock_azure_credential,
+            credential=mock_azure_credential,
             agent_name="test-agent",
         )
 
@@ -170,11 +171,11 @@ def test_azure_ai_client_init_missing_project_endpoint() -> None:
         mock_settings.return_value.model_deployment_name = "test-model"
 
         with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
-            AzureAIClient(async_credential=MagicMock())
+            AzureAIClient(credential=MagicMock())
 
 
 def test_azure_ai_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
-    """Test AzureAIClient.__init__ when async_credential is missing and no project_client provided."""
+    """Test AzureAIClient.__init__ when credential is missing and no project_client provided."""
     with pytest.raises(
         ServiceInitializationError, match="Azure credential is required when project_client is not provided"
     ):
@@ -190,7 +191,7 @@ def test_azure_ai_client_init_validation_error(mock_azure_credential: MagicMock)
         mock_settings.side_effect = ValidationError.from_exception_data("test", [])
 
         with pytest.raises(ServiceInitializationError, match="Failed to create Azure AI settings"):
-            AzureAIClient(async_credential=mock_azure_credential)
+            AzureAIClient(credential=mock_azure_credential)
 
 
 async def test_azure_ai_client_get_agent_reference_or_create_existing_version(
@@ -319,7 +320,7 @@ async def test_azure_ai_client_prepare_options_with_application_endpoint(
     client = AzureAIClient(
         project_endpoint=endpoint,
         model_deployment_name="test-model",
-        async_credential=mock_azure_credential,
+        credential=mock_azure_credential,
         agent_name="test-agent",
         agent_version="1",
     )
@@ -397,14 +398,14 @@ async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock)
     mock_project_client.get_openai_client.assert_called_once()
 
 
-def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> None:
-    """Test _update_agent_name method."""
+def test_azure_ai_client_update_agent_name_and_description(mock_project_client: MagicMock) -> None:
+    """Test _update_agent_name_and_description method."""
     client = create_test_azure_ai_client(mock_project_client)
 
     # Test updating agent name when current is None
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name("new-agent")  # type: ignore
+        client._update_agent_name_and_description("new-agent")  # type: ignore
         mock_update.assert_called_once_with("new-agent")
 
     # Test behavior when agent name is updated
@@ -412,9 +413,9 @@ def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> No
     client.agent_name = "test-agent"  # Manually set for the test
 
     # Test with None input
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name(None)  # type: ignore
+        client._update_agent_name_and_description(None)  # type: ignore
         mock_update.assert_called_once_with(None)
 
 

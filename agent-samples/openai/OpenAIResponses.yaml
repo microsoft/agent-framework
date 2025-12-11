@@ -10,7 +10,7 @@ model:
         temperature: 0.9
         topP: 0.95
     connection:
-        kind: ApiKey
+        kind: key
         apiKey: =Env.OPENAI_APIKEY
 outputSchema:
     properties:

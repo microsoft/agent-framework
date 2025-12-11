@@ -35,6 +35,10 @@ public sealed class Mem0ProviderTests : IDisposable
             .Setup(f => f.CreateLogger(typeof(Mem0Provider).FullName!))
             .Returns(this._loggerMock.Object);
 
+        this._loggerMock
+            .Setup(f => f.IsEnabled(It.IsAny<LogLevel>()))
+            .Returns(true);
+
         this._httpClient = new HttpClient(this._handler)
         {
             BaseAddress = new Uri("https://localhost/")
@@ -131,10 +135,10 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false, 2)]
-    [InlineData(true, false, 2)]
-    [InlineData(false, true, 1)]
-    [InlineData(true, true, 1)]
+    [InlineData(false, false, 4)]
+    [InlineData(true, false, 4)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
     public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
     {
         // Arrange
@@ -157,7 +161,7 @@ public sealed class Mem0ProviderTests : IDisposable
         var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
 
         var sut = new Mem0Provider(this._httpClient, storageScope, options: options, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Who am I?") });
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Who am I?")]);
 
         // Act
         await sut.InvokingAsync(invokingContext, CancellationToken.None);
@@ -166,7 +170,12 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
-            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
             Assert.Equal(enableSensitiveTelemetryData ? "user" : "<redacted>", userIdValue);
 
@@ -275,8 +284,8 @@ public sealed class Mem0ProviderTests : IDisposable
     [Theory]
     [InlineData(false, false, 0)]
     [InlineData(true, false, 0)]
-    [InlineData(false, true, 1)]
-    [InlineData(true, true, 1)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, true, 2)]
     public async Task InvokedAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogCount)
     {
         // Arrange
@@ -315,7 +324,12 @@ public sealed class Mem0ProviderTests : IDisposable
         Assert.Equal(expectedLogCount, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
-            var state = Assert.IsAssignableFrom<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2]);
+            if (logInvocation.Method.Name == nameof(ILogger.IsEnabled))
+            {
+                continue;
+            }
+
+            var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
             Assert.Equal(enableSensitiveTelemetryData ? "user" : "<redacted>", userIdValue);
         }
@@ -386,7 +400,7 @@ public sealed class Mem0ProviderTests : IDisposable
         // Arrange
         var storageScope = new Mem0ProviderScope { ApplicationId = "app" };
         var provider = new Mem0Provider(this._httpClient, storageScope, loggerFactory: this._loggerFactoryMock.Object);
-        var invokingContext = new AIContextProvider.InvokingContext(new[] { new ChatMessage(ChatRole.User, "Q?") });
+        var invokingContext = new AIContextProvider.InvokingContext([new ChatMessage(ChatRole.User, "Q?")]);
 
         // Act
         var aiContext = await provider.InvokingAsync(invokingContext, CancellationToken.None);
