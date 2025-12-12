@@ -15,11 +15,6 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
-  <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible($(TargetFramework), 'net10.0'))">
-    <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.A2A\Microsoft.Agents.AI.A2A.csproj" />
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />

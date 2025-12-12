@@ -68,6 +68,37 @@ async def test_skip_text_content_for_structured_outputs():
     assert len(events) == 0
 
 
+async def test_skip_text_content_for_empty_text():
+    """Test streaming TextContent with empty chunks."""
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update1 = AgentRunResponseUpdate(contents=[TextContent(text="Hello ")])
+    update2 = AgentRunResponseUpdate(contents=[TextContent(text="")])  # Empty chunk
+    update3 = AgentRunResponseUpdate(contents=[TextContent(text="world")])
+
+    events1 = await bridge.from_agent_run_update(update1)
+    events2 = await bridge.from_agent_run_update(update2)
+    events3 = await bridge.from_agent_run_update(update3)
+
+    # First update: START + CONTENT
+    assert len(events1) == 2
+    assert events1[0].type == "TEXT_MESSAGE_START"
+    assert events1[1].delta == "Hello "
+
+    # Second update: should skip empty chunk, no events
+    assert len(events2) == 0
+
+    # Third update: just CONTENT (same message)
+    assert len(events3) == 1
+    assert events3[0].type == "TEXT_MESSAGE_CONTENT"
+    assert events3[0].delta == "world"
+
+    # Both content events should have same message_id
+    assert events1[1].message_id == events3[0].message_id
+
+
 async def test_tool_call_with_name():
     """Test FunctionCallContent with name emits ToolCallStartEvent."""
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge

@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import os
+from datetime import datetime, timezone
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -684,6 +685,51 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
 
 
+def test_responses_client_created_at_uses_utc(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that ChatResponse from responses client uses UTC timestamp.
+
+    This is a regression test for the issue where created_at was using local time
+    but labeling it as UTC (with 'Z' suffix).
+    """
+    client = OpenAIResponsesClient()
+
+    # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
+    utc_timestamp = 1733011890
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = utc_timestamp
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "Test response"
+    mock_message_content.annotations = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+
+    mock_response.output = [mock_message_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify that created_at is correctly formatted as UTC
+    assert response.created_at is not None
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Parse the timestamp and verify it matches UTC time
+    expected_utc_time = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
+    expected_formatted = expected_utc_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert response.created_at == expected_formatted, (
+        f"Expected UTC timestamp {expected_formatted}, got {response.created_at}"
+    )
+
+
 def test_tools_to_response_tools_with_raw_image_generation() -> None:
     """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -945,6 +991,110 @@ def test_streaming_response_basic_structure() -> None:
     assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
+
+
+def test_streaming_annotation_added_with_file_path() -> None:
+    """Test streaming annotation added event with file_path type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "file_path",
+        "file_id": "file-abc123",
+        "index": 42,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-abc123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("annotation_index") == 0
+    assert content.additional_properties.get("index") == 42
+
+
+def test_streaming_annotation_added_with_file_citation() -> None:
+    """Test streaming annotation added event with file_citation type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 1
+    mock_event.annotation = {
+        "type": "file_citation",
+        "file_id": "file-xyz789",
+        "filename": "sample.txt",
+        "index": 15,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-xyz789"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("filename") == "sample.txt"
+    assert content.additional_properties.get("index") == 15
+
+
+def test_streaming_annotation_added_with_container_file_citation() -> None:
+    """Test streaming annotation added event with container_file_citation type."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 2
+    mock_event.annotation = {
+        "type": "container_file_citation",
+        "file_id": "file-container123",
+        "container_id": "container-456",
+        "filename": "data.csv",
+        "start_index": 10,
+        "end_index": 50,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-container123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("container_id") == "container-456"
+    assert content.additional_properties.get("filename") == "data.csv"
+    assert content.additional_properties.get("start_index") == 10
+    assert content.additional_properties.get("end_index") == 50
+
+
+def test_streaming_annotation_added_with_unknown_type() -> None:
+    """Test streaming annotation added event with unknown type is ignored."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "url": "https://example.com",
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    # url_citation should not produce HostedFileContent
+    assert len(response.contents) == 0
 
 
 def test_service_response_exception_includes_original_error_details() -> None:

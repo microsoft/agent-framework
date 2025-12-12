@@ -61,20 +61,18 @@ class ReverseTextExecutor(Executor):
 
 async def main() -> None:
     """Build a two step sequential workflow and run it with streaming to observe events."""
-    # Step 1: Create executor instances.
-    upper_case_executor = UpperCaseExecutor(id="upper_case_executor")
-    reverse_text_executor = ReverseTextExecutor(id="reverse_text_executor")
-
-    # Step 2: Build the workflow graph.
+    # Step 1: Build the workflow graph.
     # Order matters. We connect upper_case_executor -> reverse_text_executor and set the start.
     workflow = (
         WorkflowBuilder()
-        .add_edge(upper_case_executor, reverse_text_executor)
-        .set_start_executor(upper_case_executor)
+        .register_executor(lambda: UpperCaseExecutor(id="upper_case_executor"), name="upper_case_executor")
+        .register_executor(lambda: ReverseTextExecutor(id="reverse_text_executor"), name="reverse_text_executor")
+        .add_edge("upper_case_executor", "reverse_text_executor")
+        .set_start_executor("upper_case_executor")
         .build()
     )
 
-    # Step 3: Stream events for a single input.
+    # Step 2: Stream events for a single input.
     # The stream will include executor invoke and completion events, plus workflow outputs.
     outputs: list[str] = []
     async for event in workflow.run_stream("hello world"):

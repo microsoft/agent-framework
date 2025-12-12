@@ -36,7 +36,7 @@ async def main() -> None:
             chat_client=AzureAIClient(
                 project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
                 model_deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-                async_credential=credential,
+                credential=credential,
                 agent_name="WeatherAgent",
             ),
             instructions="You are a helpful weather agent.",

@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251120"
+version = "1.0.0b251211"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -28,14 +28,14 @@ dependencies = [
     "pydantic>=2,<3",
     "pydantic-settings>=2,<3",
     # telemetry
-    "opentelemetry-api>=1.24",
-    "opentelemetry-sdk>=1.24",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.36.0",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.39.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     # connectors and functions
     "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "mcp[ws]>=1.13",
+    "mcp[ws]>=1.23",
     "packaging>=24.1",
 ]
 

@@ -84,6 +84,29 @@
   <Folder Name="/Samples/GettingStarted/DeclarativeAgents/">
     <Project Path="samples/GettingStarted/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
   </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/">
+    <File Path="samples/GettingStarted/AGUI/README.md" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step01_GettingStarted/">
+    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step01_GettingStarted/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step02_BackendTools/">
+    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step02_BackendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step03_FrontendTools/">
+    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step03_FrontendTools/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step04_HumanInLoop/">
+    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step04_HumanInLoop/Server/Server.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/AGUI/Step05_StateManagement/">
+    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Client/Client.csproj" />
+    <Project Path="samples/GettingStarted/AGUI/Step05_StateManagement/Server/Server.csproj" />
+  </Folder>
   <Folder Name="/Samples/GettingStarted/DevUI/">
     <File Path="samples/GettingStarted/DevUI/README.md" />
     <Project Path="samples/GettingStarted/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
@@ -104,6 +127,9 @@
     <File Path="samples/GettingStarted/AgentWithOpenAI/README.md" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step01_Running/Agent_OpenAI_Step01_Running.csproj" />
     <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step02_Reasoning/Agent_OpenAI_Step02_Reasoning.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step03_CreateFromChatClient/Agent_OpenAI_Step03_CreateFromChatClient.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient/Agent_OpenAI_Step04_CreateFromOpenAIResponseClient.csproj" />
+    <Project Path="samples/GettingStarted/AgentWithOpenAI/Agent_OpenAI_Step05_Conversation/Agent_OpenAI_Step05_Conversation.csproj" />
   </Folder>
   <Folder Name="/Samples/Purview/" />
   <Folder Name="/Samples/Purview/AgentWithPurview/">
@@ -173,7 +199,7 @@
     <Project Path="samples/GettingStarted/Workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/Workflows/Declarative/Examples/">
-    <File Path="../workflow-samples/ConfirmInput.yaml" />
+    <File Path="../workflow-samples/CustomerSupport.yaml" />
     <File Path="../workflow-samples/DeepResearch.yaml" />
     <File Path="../workflow-samples/Marketing.yaml" />
     <File Path="../workflow-samples/MathChat.yaml" />

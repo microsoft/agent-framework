@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -199,7 +199,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             return response_format, prepared_text
 
         if isinstance(response_format, Mapping):
-            format_config = self._convert_response_format(response_format)
+            format_config = self._convert_response_format(cast("Mapping[str, Any]", response_format))
             if prepared_text is None:
                 prepared_text = {}
             elif "format" in prepared_text and prepared_text["format"] != format_config:
@@ -212,20 +212,21 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
     def _convert_response_format(self, response_format: Mapping[str, Any]) -> dict[str, Any]:
         """Convert Chat style response_format into Responses text format config."""
         if "format" in response_format and isinstance(response_format["format"], Mapping):
-            return dict(response_format["format"])
+            return dict(cast("Mapping[str, Any]", response_format["format"]))
 
         format_type = response_format.get("type")
         if format_type == "json_schema":
             schema_section = response_format.get("json_schema", response_format)
             if not isinstance(schema_section, Mapping):
                 raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
-            schema = schema_section.get("schema")
+            schema_section_typed = cast("Mapping[str, Any]", schema_section)
+            schema: Any = schema_section_typed.get("schema")
             if schema is None:
                 raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
-            name = (
-                schema_section.get("name")
-                or schema_section.get("title")
-                or (schema.get("title") if isinstance(schema, Mapping) else None)
+            name: str = str(
+                schema_section_typed.get("name")
+                or schema_section_typed.get("title")
+                or (cast("Mapping[str, Any]", schema).get("title") if isinstance(schema, Mapping) else None)
                 or "response"
             )
             format_config: dict[str, Any] = {
@@ -532,12 +533,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         "text": content.text,
                     },
                 }
-                if content.additional_properties is not None:
-                    if status := content.additional_properties.get("status"):
+                props: dict[str, Any] | None = getattr(content, "additional_properties", None)
+                if props:
+                    if status := props.get("status"):
                         ret["status"] = status
-                    if reasoning_text := content.additional_properties.get("reasoning_text"):
+                    if reasoning_text := props.get("reasoning_text"):
                         ret["content"] = {"type": "reasoning_text", "text": reasoning_text}
-                    if encrypted_content := content.additional_properties.get("encrypted_content"):
+                    if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
                 return ret
             case DataContent() | UriContent():
@@ -815,14 +817,16 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
-            "created_at": datetime.fromtimestamp(response.created_at).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
             "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
         }
 
-        conversation_id = self.get_conversation_id(response, chat_options.store)
+        conversation_id = self.get_conversation_id(response, chat_options.store)  # type: ignore[reportArgumentType]
 
         if conversation_id:
             args["conversation_id"] = conversation_id
@@ -909,6 +913,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
                         contents.append(TextContent(text=event_part.refusal, raw_representation=event))
+                    case _:
+                        pass
             case "response.output_text.delta":
                 contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
@@ -1030,6 +1036,60 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         raw_representation=event,
                     )
                 )
+            case "response.output_text.annotation.added":
+                # Handle streaming text annotations (file citations, file paths, etc.)
+                annotation: Any = event.annotation
+
+                def _get_ann_value(key: str) -> Any:
+                    """Extract value from annotation (dict or object)."""
+                    if isinstance(annotation, dict):
+                        return cast("dict[str, Any]", annotation).get(key)
+                    return getattr(annotation, key, None)
+
+                ann_type = _get_ann_value("type")
+                ann_file_id = _get_ann_value("file_id")
+                if ann_type == "file_path":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "index": _get_ann_value("index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                elif ann_type == "file_citation":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "filename": _get_ann_value("filename"),
+                                    "index": _get_ann_value("index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                elif ann_type == "container_file_citation":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "container_id": _get_ann_value("container_id"),
+                                    "filename": _get_ann_value("filename"),
+                                    "start_index": _get_ann_value("start_index"),
+                                    "end_index": _get_ann_value("end_index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                else:
+                    logger.debug("Unparsed annotation type in streaming: %s", ann_type)
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 

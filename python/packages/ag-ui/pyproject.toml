@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "1.0.0b251120"
+version = "1.0.0b251211"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]

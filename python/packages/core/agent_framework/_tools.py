@@ -25,7 +25,6 @@ from typing import (
 
 from opentelemetry.metrics import Histogram
 from pydantic import AnyUrl, BaseModel, Field, ValidationError, create_model
-from pydantic.fields import FieldInfo
 
 from ._logging import get_logger
 from ._serialization import SerializationMixin
@@ -628,6 +627,12 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["ai_function"] = "ai_function"
         self._forward_runtime_kwargs: bool = False
+        if self.func:
+            sig = inspect.signature(self.func)
+            for param in sig.parameters.values():
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    self._forward_runtime_kwargs = True
+                    break
 
     @property
     def declaration_only(self) -> bool:
@@ -916,6 +921,7 @@ def _create_input_model_from_func(func: Callable[..., Any], name: str) -> type[B
         )
         for pname, param in sig.parameters.items()
         if pname not in {"self", "cls"}
+        and param.kind not in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
     }
     return create_model(f"{name}_input", **fields)  # type: ignore[call-overload, no-any-return]
 
@@ -930,6 +936,151 @@ TYPE_MAPPING = {
     "object": dict,
     "null": type(None),
 }
+
+
+def _build_pydantic_model_from_json_schema(
+    model_name: str,
+    schema: Mapping[str, Any],
+) -> type[BaseModel]:
+    """Creates a Pydantic model from JSON Schema with support for $refs, nested objects, and typed arrays.
+
+    Args:
+        model_name: The name of the model to be created.
+        schema: The JSON Schema definition (should contain 'properties', 'required', '$defs', etc.).
+
+    Returns:
+        The dynamically created Pydantic model class.
+    """
+    properties = schema.get("properties")
+    required = schema.get("required", [])
+    definitions = schema.get("$defs", {})
+
+    # Check if 'properties' is missing or not a dictionary
+    if not properties:
+        return create_model(f"{model_name}_input")
+
+    def _resolve_type(prop_details: dict[str, Any], parent_name: str = "") -> type:
+        """Resolve JSON Schema type to Python type, handling $ref, nested objects, and typed arrays.
+
+        Args:
+            prop_details: The JSON Schema property details
+            parent_name: Name to use for creating nested models (for uniqueness)
+
+        Returns:
+            Python type annotation (could be int, str, list[str], or a nested Pydantic model)
+        """
+        # Handle $ref by resolving the reference
+        if "$ref" in prop_details:
+            ref = prop_details["$ref"]
+            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
+            if ref.startswith("#/$defs/"):
+                def_name = ref.split("/")[-1]
+                if def_name in definitions:
+                    # Resolve the reference and use its type
+                    resolved = definitions[def_name]
+                    return _resolve_type(resolved, def_name)
+            # If we can't resolve the ref, default to dict for safety
+            return dict
+
+        # Map JSON Schema types to Python types
+        json_type = prop_details.get("type", "string")
+        match json_type:
+            case "integer":
+                return int
+            case "number":
+                return float
+            case "boolean":
+                return bool
+            case "array":
+                # Handle typed arrays
+                items_schema = prop_details.get("items")
+                if items_schema and isinstance(items_schema, dict):
+                    # Recursively resolve the item type
+                    item_type = _resolve_type(items_schema, f"{parent_name}_item")
+                    # Return list[ItemType] instead of bare list
+                    return list[item_type]  # type: ignore
+                # If no items schema or invalid, return bare list
+                return list
+            case "object":
+                # Handle nested objects by creating a nested Pydantic model
+                nested_properties = prop_details.get("properties")
+                nested_required = prop_details.get("required", [])
+
+                if nested_properties and isinstance(nested_properties, dict):
+                    # Create the name for the nested model
+                    nested_model_name = f"{parent_name}_nested" if parent_name else "NestedModel"
+
+                    # Recursively build field definitions for the nested model
+                    nested_field_definitions: dict[str, Any] = {}
+                    for nested_prop_name, nested_prop_details in nested_properties.items():
+                        nested_prop_details = (
+                            json.loads(nested_prop_details)
+                            if isinstance(nested_prop_details, str)
+                            else nested_prop_details
+                        )
+
+                        nested_python_type = _resolve_type(
+                            nested_prop_details, f"{nested_model_name}_{nested_prop_name}"
+                        )
+                        nested_description = nested_prop_details.get("description", "")
+
+                        # Build field kwargs for nested property
+                        nested_field_kwargs: dict[str, Any] = {}
+                        if nested_description:
+                            nested_field_kwargs["description"] = nested_description
+
+                        # Create field definition
+                        if nested_prop_name in nested_required:
+                            nested_field_definitions[nested_prop_name] = (
+                                (
+                                    nested_python_type,
+                                    Field(**nested_field_kwargs),
+                                )
+                                if nested_field_kwargs
+                                else (nested_python_type, ...)
+                            )
+                        else:
+                            nested_field_kwargs["default"] = nested_prop_details.get("default", None)
+                            nested_field_definitions[nested_prop_name] = (
+                                nested_python_type,
+                                Field(**nested_field_kwargs),
+                            )
+
+                    # Create and return the nested Pydantic model
+                    return create_model(nested_model_name, **nested_field_definitions)  # type: ignore
+
+                # If no properties defined, return bare dict
+                return dict
+            case _:
+                return str  # default
+
+    field_definitions: dict[str, Any] = {}
+    for prop_name, prop_details in properties.items():
+        prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
+
+        python_type = _resolve_type(prop_details, f"{model_name}_{prop_name}")
+        description = prop_details.get("description", "")
+
+        # Build field kwargs (description, etc.)
+        field_kwargs: dict[str, Any] = {}
+        if description:
+            field_kwargs["description"] = description
+
+        # Create field definition for create_model
+        if prop_name in required:
+            if field_kwargs:
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, ...)
+        else:
+            default_value = prop_details.get("default", None)
+            field_kwargs["default"] = default_value
+            if field_kwargs and any(k != "default" for k in field_kwargs):
+                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
+            else:
+                field_definitions[prop_name] = (python_type, default_value)
+
+    return create_model(f"{model_name}_input", **field_definitions)
 
 
 def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any]) -> type[BaseModel]:
@@ -948,29 +1099,8 @@ def _create_model_from_json_schema(tool_name: str, schema_json: Mapping[str, Any
             f"JSON schema for tool '{tool_name}' must contain a 'properties' key of type dict. "
             f"Got: {schema_json.get('properties', None)}"
         )
-    # Extract field definitions with type annotations
-    field_definitions: dict[str, tuple[type, FieldInfo]] = {}
-    for field_name, field_schema in schema_json["properties"].items():
-        field_args: dict[str, Any] = {}
-        if (field_description := field_schema.get("description", None)) is not None:
-            field_args["description"] = field_description
-        if (field_default := field_schema.get("default", None)) is not None:
-            field_args["default"] = field_default
-        field_type = field_schema.get("type", None)
-        if field_type is None:
-            raise ValueError(
-                f"Missing 'type' for field '{field_name}' in JSON schema. "
-                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
-            )
-        python_type = TYPE_MAPPING.get(field_type)
-        if python_type is None:
-            raise ValueError(
-                f"Unsupported type '{field_type}' for field '{field_name}' in JSON schema. "
-                f"Got: {field_schema}, Supported types: {list(TYPE_MAPPING.keys())}"
-            )
-        field_definitions[field_name] = (python_type, Field(**field_args))
 
-    return create_model(f"{tool_name}_input", **field_definitions)  # type: ignore[call-overload, no-any-return]
+    return _build_pydantic_model_from_json_schema(tool_name, schema_json)
 
 
 @overload
@@ -1621,7 +1751,9 @@ def _handle_function_calls_response(
                             break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
-                response = await func(self, messages=prepped_messages, **kwargs)
+                # Filter out internal framework kwargs before passing to clients.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+                response = await func(self, messages=prepped_messages, **filtered_kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
                     it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -1710,7 +1842,10 @@ def _handle_function_calls_response(
 
             # Failsafe: give up on tools, ask model for plain answer
             kwargs["tool_choice"] = "none"
-            response = await func(self, messages=prepped_messages, **kwargs)
+
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            response = await func(self, messages=prepped_messages, **filtered_kwargs)
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
@@ -1797,7 +1932,9 @@ def _handle_function_calls_streaming_response(
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
-                async for update in func(self, messages=prepped_messages, **kwargs):
+                # Filter out internal framework kwargs before passing to clients.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+                async for update in func(self, messages=prepped_messages, **filtered_kwargs):
                     all_updates.append(update)
                     yield update
 
@@ -1908,7 +2045,9 @@ def _handle_function_calls_streaming_response(
 
             # Failsafe: give up on tools, ask model for plain answer
             kwargs["tool_choice"] = "none"
-            async for update in func(self, messages=prepped_messages, **kwargs):
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            async for update in func(self, messages=prepped_messages, **filtered_kwargs):
                 yield update
 
         return streaming_function_invocation_wrapper

@@ -47,7 +47,17 @@ Shows how to create an agent that can search and retrieve information from Micro
 
 **Key concepts**: Azure AI Foundry integration, MCP server usage, async patterns, resource management
 
-### 3. **Azure OpenAI Responses Agent** ([`azure_openai_responses_agent.py`](./azure_openai_responses_agent.py))
+### 3. **Inline YAML Agent** ([`inline_yaml.py`](./inline_yaml.py))
+
+Shows how to create an agent using an inline YAML string rather than a file.
+
+- Uses Azure AI Foundry v2 Client with instructions.
+
+**Requirements**: `pip install agent-framework-azure-ai --pre`
+
+**Key concepts**: Inline YAML definition.
+
+### 4. **Azure OpenAI Responses Agent** ([`azure_openai_responses_agent.py`](./azure_openai_responses_agent.py))
 
 Illustrates a basic agent using Azure OpenAI with structured responses.
 
@@ -58,7 +68,7 @@ Illustrates a basic agent using Azure OpenAI with structured responses.
 
 **Key concepts**: Azure OpenAI integration, credential management, structured outputs
 
-### 4. **OpenAI Responses Agent** ([`openai_responses_agent.py`](./openai_responses_agent.py))
+### 5. **OpenAI Responses Agent** ([`openai_responses_agent.py`](./openai_responses_agent.py))
 
 Demonstrates the simplest possible agent using OpenAI directly.
 
@@ -237,12 +247,13 @@ model:
 Each sample can be run independently. Make sure you have the required environment variables set:
 
 - For Azure samples: Ensure you're logged in via Azure CLI (`az login`)
-- For OpenAI samples: Set `OPENAI_APIKEY` environment variable
+- For OpenAI samples: Set `OPENAI_API_KEY` environment variable
 
 ```bash
 # Run a specific sample
 python get_weather_agent.py
 python microsoft_learn_agent.py
+python inline_yaml.py
 python azure_openai_responses_agent.py
 python openai_responses_agent.py
 ```

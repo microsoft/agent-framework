@@ -4,9 +4,12 @@
 
 The handoff pattern models a coordinator agent that optionally routes
 control to specialist agents before handing the conversation back to the user.
-The flow is intentionally cyclical:
+The flow is intentionally cyclical by default:
 
     user input -> coordinator -> optional specialist -> request user input -> ...
+
+An autonomous interaction mode can bypass the user input request and continue routing
+responses back to agents until a handoff occurs or termination criteria are met.
 
 Key properties:
 - The entire conversation is maintained and reused on every hop
@@ -19,7 +22,7 @@ import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from agent_framework import (
     AgentProtocol,
@@ -42,8 +45,10 @@ from ._executor import Executor, handler
 from ._group_chat import (
     _default_participant_factory,  # type: ignore[reportPrivateUsage]
     _GroupChatConfig,  # type: ignore[reportPrivateUsage]
+    _GroupChatParticipantPipeline,  # type: ignore[reportPrivateUsage]
     assemble_group_chat_workflow,
 )
+from ._orchestration_request_info import RequestInfoInterceptor
 from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, sanitize_identifier
 from ._request_info_mixin import response_handler
@@ -59,8 +64,8 @@ else:
 
 logger = logging.getLogger(__name__)
 
-
 _HANDOFF_TOOL_PATTERN = re.compile(r"(?:handoff|transfer)[_\s-]*to[_\s-]*(?P<target>[\w-]+)", re.IGNORECASE)
+_DEFAULT_AUTONOMOUS_TURN_LIMIT = 50
 
 
 def _create_handoff_tool(alias: str, description: str | None = None) -> AIFunction[Any, Any]:
@@ -291,6 +296,8 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         id: str,
         handoff_tool_targets: Mapping[str, str] | None = None,
         return_to_previous: bool = False,
+        interaction_mode: Literal["human_in_loop", "autonomous"] = "human_in_loop",
+        autonomous_turn_limit: int | None = None,
     ) -> None:
         """Create a coordinator that manages routing between specialists and the user."""
         super().__init__(id)
@@ -302,10 +309,37 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         self._handoff_tool_targets = {k.lower(): v for k, v in (handoff_tool_targets or {}).items()}
         self._return_to_previous = return_to_previous
         self._current_agent_id: str | None = None  # Track the current agent handling conversation
+        self._interaction_mode = interaction_mode
+        self._autonomous_turn_limit = autonomous_turn_limit
+        self._autonomous_turns = 0
 
     def _get_author_name(self) -> str:
         """Get the coordinator name for orchestrator-generated messages."""
         return "handoff_coordinator"
+
+    def _extract_agent_id_from_source(self, source: str | None) -> str | None:
+        """Extract the original agent ID from the source executor ID.
+
+        When a request info interceptor is in the pipeline, the source will be
+        like 'request_info:agent_name'. This method extracts the
+        actual agent ID.
+
+        Args:
+            source: The source executor ID from the workflow context
+
+        Returns:
+            The actual agent ID, or the original source if not an interceptor
+        """
+        if source is None:
+            return None
+        if source.startswith("request_info:"):
+            return source[len("request_info:") :]
+        # TODO(@moonbox3): Remove legacy prefix support in a separate PR (GA cleanup)
+        if source.startswith("human_review:"):
+            return source[len("human_review:") :]
+        if source.startswith("human_input_interceptor:"):
+            return source[len("human_input_interceptor:") :]
+        return source
 
     @handler
     async def handle_agent_response(
@@ -314,7 +348,8 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         ctx: WorkflowContext[AgentExecutorRequest | list[ChatMessage], list[ChatMessage] | _ConversationForUserInput],
     ) -> None:
         """Process an agent's response and determine whether to route, request input, or terminate."""
-        source = ctx.get_source_executor_id()
+        raw_source = ctx.get_source_executor_id()
+        source = self._extract_agent_id_from_source(raw_source)
         is_starting_agent = source == self._starting_agent_id
 
         # On first turn of a run, conversation is empty
@@ -340,6 +375,7 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         if target is not None:
             # Update current agent when handoff occurs
             self._current_agent_id = target
+            self._autonomous_turns = 0
             logger.info(f"Handoff detected: {source} -> {target}. Routing control to specialist '{target}'.")
 
             # Clean tool-related content before sending to next agent
@@ -354,24 +390,45 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
 
         # Update current agent when they respond without handoff
         self._current_agent_id = source
-        logger.info(
-            f"Agent '{source}' responded without handoff. "
-            f"Requesting user input. Return-to-previous: {self._return_to_previous}"
-        )
-
         if await self._check_termination():
             # Clean the output conversation for display
             cleaned_output = clean_conversation_for_handoff(conversation)
             await ctx.yield_output(cleaned_output)
             return
 
+        if self._interaction_mode == "autonomous":
+            self._autonomous_turns += 1
+            if self._autonomous_turn_limit is not None and self._autonomous_turns >= self._autonomous_turn_limit:
+                logger.info(
+                    f"Autonomous turn limit reached ({self._autonomous_turn_limit}). "
+                    "Yielding conversation and stopping."
+                )
+                cleaned_output = clean_conversation_for_handoff(conversation)
+                await ctx.yield_output(cleaned_output)
+                return
+
+            # In autonomous mode, agents continue iterating until they invoke a handoff tool
+            logger.info(
+                f"Agent '{source}' responded without handoff (turn {self._autonomous_turns}). "
+                "Continuing autonomous execution."
+            )
+            cleaned = clean_conversation_for_handoff(conversation)
+            request = AgentExecutorRequest(messages=cleaned, should_respond=True)
+            await ctx.send_message(request, target_id=source)
+            return
+
+        logger.info(
+            f"Agent '{source}' responded without handoff. "
+            f"Requesting user input. Return-to-previous: {self._return_to_previous}"
+        )
+
         # Clean conversation before sending to gateway for user input request
         # This removes tool messages that shouldn't be shown to users
         cleaned_for_display = clean_conversation_for_handoff(conversation)
 
         # The awaiting_agent_id is the agent that just responded and is awaiting user input
-        # This is the source of the current response
-        next_agent_id = source
+        # This is the source of the current response (fallback to starting agent if source is unknown)
+        next_agent_id = source or self._starting_agent_id
 
         message_to_gateway = _ConversationForUserInput(conversation=cleaned_for_display, next_agent_id=next_agent_id)
         await ctx.send_message(message_to_gateway, target_id=self._input_gateway_id)  # type: ignore[arg-type]
@@ -385,6 +442,9 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """Receive full conversation with new user input from gateway, update history, trim for agent."""
         # Update authoritative conversation
         self._conversation = list(message.full_conversation)
+
+        # Reset autonomous turn counter on new user input
+        self._autonomous_turns = 0
 
         # Check termination before sending to agent
         if await self._check_termination():
@@ -478,11 +538,12 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         Returns:
             Dict containing current agent if return-to-previous is enabled
         """
+        metadata: dict[str, Any] = {}
         if self._return_to_previous:
-            return {
-                "current_agent_id": self._current_agent_id,
-            }
-        return {}
+            metadata["current_agent_id"] = self._current_agent_id
+        if self._interaction_mode == "autonomous":
+            metadata["autonomous_turns"] = self._autonomous_turns
+        return metadata
 
     @override
     def _restore_pattern_metadata(self, metadata: dict[str, Any]) -> None:
@@ -495,6 +556,8 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         """
         if self._return_to_previous and "current_agent_id" in metadata:
             self._current_agent_id = metadata["current_agent_id"]
+        if self._interaction_mode == "autonomous" and "autonomous_turns" in metadata:
+            self._autonomous_turns = metadata["autonomous_turns"]
 
     def _apply_response_metadata(self, conversation: list[ChatMessage], agent_response: AgentRunResponse) -> None:
         """Merge top-level response metadata into the latest assistant message."""
@@ -604,13 +667,17 @@ class HandoffBuilder:
     r"""Fluent builder for conversational handoff workflows with coordinator and specialist agents.
 
     The handoff pattern enables a coordinator agent to route requests to specialist agents.
-    A termination condition determines when the workflow should stop requesting input and complete.
+    Interaction mode controls whether the workflow requests user input after each agent response or
+    completes autonomously once agents finish responding. A termination condition determines when
+    the workflow should stop requesting input and complete.
 
     Routing Patterns:
 
-    **Single-Tier (Default):** Only the coordinator can hand off to specialists. After any specialist
+    **Single-Tier (Default):** Only the coordinator can hand off to specialists. By default, after any specialist
     responds, control returns to the user for more input. This creates a cyclical flow:
     user -> coordinator -> [optional specialist] -> user -> coordinator -> ...
+    Use `with_interaction_mode("autonomous")` to skip requesting additional user input and yield the
+    final conversation when an agent responds without delegating.
 
     **Multi-Tier (Advanced):** Specialists can hand off to other specialists using `.add_handoff()`.
     This provides more flexibility for complex workflows but is less controllable than the single-tier
@@ -621,13 +688,16 @@ class HandoffBuilder:
 
     Key Features:
     - **Automatic handoff detection**: The coordinator invokes a handoff tool whose
-      arguments (for example ``{"handoff_to": "shipping_agent"}``) identify the specialist to receive control.
+      arguments (for example `{"handoff_to": "shipping_agent"}`) identify the specialist to receive control.
     - **Auto-generated tools**: By default the builder synthesizes `handoff_to_<agent>` tools for the coordinator,
       so you don't manually define placeholder functions.
     - **Full conversation history**: The entire conversation (including any
       `ChatMessage.additional_properties`) is preserved and passed to each agent.
     - **Termination control**: By default, terminates after 10 user messages. Override with
       `.with_termination_condition(lambda conv: ...)` for custom logic (e.g., detect "goodbye").
+    - **Interaction modes**: Choose `human_in_loop` (default) to prompt users between agent turns,
+      or `autonomous` to continue routing back to agents without prompting for user input until a
+      handoff occurs or a termination/turn limit is reached (default autonomous turn limit: 50).
     - **Checkpointing**: Optional persistence for resumable workflows.
 
     Usage (Single-Tier):
@@ -765,7 +835,7 @@ class HandoffBuilder:
             Participants must have stable names/ids because the workflow maps the
             handoff tool arguments to these identifiers. Agent names should match
             the strings emitted by the coordinator's handoff tool (e.g., a tool that
-            outputs ``{\"handoff_to\": \"billing\"}`` requires an agent named ``billing``).
+            outputs `{\"handoff_to\": \"billing\"}` requires an agent named `billing`).
         """
         self._name = name
         self._description = description
@@ -781,6 +851,10 @@ class HandoffBuilder:
         self._auto_register_handoff_tools: bool = True
         self._handoff_config: dict[str, list[str]] = {}  # Maps agent_id -> [target_agent_ids]
         self._return_to_previous: bool = False
+        self._interaction_mode: Literal["human_in_loop", "autonomous"] = "human_in_loop"
+        self._autonomous_turn_limit: int | None = _DEFAULT_AUTONOMOUS_TURN_LIMIT
+        self._request_info_enabled: bool = False
+        self._request_info_filter: set[str] | None = None
 
         if participants:
             self.participants(participants)
@@ -871,8 +945,10 @@ class HandoffBuilder:
         1. Handle the request directly and respond to the user, OR
         2. Hand off to a specialist agent by including handoff metadata in the response
 
-        After a specialist responds, the workflow automatically returns control to the user,
-        creating a cyclical flow: user -> coordinator -> [specialist] -> user -> ...
+        After a specialist responds, the workflow automatically returns control to the user
+        (default) creating a cyclical flow: user -> coordinator -> [specialist] -> user -> ...
+        Configure `with_interaction_mode("autonomous")` to continue with the responding agent
+        without requesting another user turn until a handoff occurs or a termination/turn limit is met.
 
         Args:
             agent: The agent to use as the coordinator. Can be:
@@ -899,8 +975,8 @@ class HandoffBuilder:
 
         Note:
             The coordinator determines routing by invoking a handoff tool call whose
-            arguments identify the target specialist (for example ``{\"handoff_to\": \"billing\"}``).
-            Decorate the tool with ``approval_mode="always_require"`` to ensure the workflow
+            arguments identify the target specialist (for example `{\"handoff_to\": \"billing\"}`).
+            Decorate the tool with `approval_mode="always_require"` to ensure the workflow
             intercepts the call before execution and can make the transition.
         """
         if not self._executors:
@@ -1236,6 +1312,70 @@ class HandoffBuilder:
         self._termination_condition = condition
         return self
 
+    def with_interaction_mode(
+        self,
+        interaction_mode: Literal["human_in_loop", "autonomous"] = "human_in_loop",
+        *,
+        autonomous_turn_limit: int | None = None,
+    ) -> "HandoffBuilder":
+        """Choose whether the workflow requests user input or runs autonomously after agent replies.
+
+        In autonomous mode, agents (including specialists) continue iterating on their task
+        until they explicitly invoke a handoff tool or the turn limit is reached. This allows
+        specialists to perform long-running autonomous tasks (e.g., research, coding, analysis)
+        without prematurely returning control to the coordinator or user.
+
+        Args:
+            interaction_mode: `"human_in_loop"` (default) requests user input after each agent response
+                              that does not trigger a handoff. `"autonomous"` lets agents continue
+                              working until they invoke a handoff tool or the turn limit is reached.
+
+        Keyword Args:
+            autonomous_turn_limit: Maximum number of agent responses before the workflow yields
+                                when in autonomous mode. Only applicable when interaction_mode
+                                is `"autonomous"`. Default is 50. Set to `None` to disable
+                                the limit (use with caution). Ignored with a warning if provided
+                                when interaction_mode is `"human_in_loop"`.
+
+        Returns:
+            Self for chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            workflow = (
+                HandoffBuilder(participants=[coordinator, research_agent])
+                .set_coordinator(coordinator)
+                .add_handoff(coordinator, research_agent)
+                .add_handoff(research_agent, coordinator)
+                .with_interaction_mode("autonomous", autonomous_turn_limit=20)
+                .build()
+            )
+
+            # Flow: User asks a question
+            # -> Coordinator routes to Research Agent
+            # -> Research Agent iterates (researches, analyzes, refines)
+            # -> Research Agent calls handoff_to_coordinator when done
+            # -> Coordinator provides final response
+        """
+        if interaction_mode not in ("human_in_loop", "autonomous"):
+            raise ValueError("interaction_mode must be either 'human_in_loop' or 'autonomous'")
+        self._interaction_mode = interaction_mode
+
+        if autonomous_turn_limit is not None:
+            if interaction_mode != "autonomous":
+                logger.warning(
+                    f"autonomous_turn_limit={autonomous_turn_limit} was provided but interaction_mode is "
+                    f"'{interaction_mode}'; ignoring."
+                )
+            elif autonomous_turn_limit <= 0:
+                raise ValueError("autonomous_turn_limit must be positive when provided")
+            else:
+                self._autonomous_turn_limit = autonomous_turn_limit
+
+        return self
+
     def enable_return_to_previous(self, enabled: bool = True) -> "HandoffBuilder":
         """Enable direct return to the current agent after user input, bypassing the coordinator.
 
@@ -1305,6 +1445,52 @@ class HandoffBuilder:
             they either hand off to another agent or the termination condition is met.
         """
         self._return_to_previous = enabled
+        return self
+
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | AgentProtocol | Executor] | None = None,
+    ) -> "HandoffBuilder":
+        """Enable request info before participants run in the workflow.
+
+        When enabled, the workflow pauses before each participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and
+        optionally inject guidance before the participant responds. The caller provides
+        input via the standard response_handler/request_info pattern.
+
+        Args:
+            agents: Optional filter - only pause before these specific agents/executors.
+                   Accepts agent names (str), agent instances, or executor instances.
+                   If None (default), pauses before every participant.
+
+        Returns:
+            self: The builder instance for fluent chaining.
+
+        Example:
+
+        .. code-block:: python
+
+            # Pause before all participants
+            workflow = (
+                HandoffBuilder(participants=[coordinator, refund, shipping])
+                .set_coordinator("coordinator_agent")
+                .with_request_info()
+                .build()
+            )
+
+            # Pause only before specialist agents (not coordinator)
+            workflow = (
+                HandoffBuilder(participants=[coordinator, refund, shipping])
+                .set_coordinator("coordinator_agent")
+                .with_request_info(agents=[refund, shipping])
+                .build()
+            )
+        """
+        from ._orchestration_request_info import resolve_request_info_filter
+
+        self._request_info_enabled = True
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
         return self
 
     def build(self) -> Workflow:
@@ -1437,6 +1623,8 @@ class HandoffBuilder:
                 id="handoff-coordinator",
                 handoff_tool_targets=handoff_tool_targets,
                 return_to_previous=self._return_to_previous,
+                interaction_mode=self._interaction_mode,
+                autonomous_turn_limit=self._autonomous_turn_limit,
             )
 
         wiring = _GroupChatConfig(
@@ -1449,9 +1637,33 @@ class HandoffBuilder:
             participant_executors=self._executors,
         )
 
+        # Determine participant factory - wrap with request info interceptor if enabled
+        participant_factory: Callable[[GroupChatParticipantSpec, _GroupChatConfig], _GroupChatParticipantPipeline] = (
+            _default_participant_factory
+        )
+        if self._request_info_enabled:
+            base_factory = _default_participant_factory
+            agent_filter = self._request_info_filter
+
+            def _factory_with_request_info(
+                spec: GroupChatParticipantSpec,
+                config: _GroupChatConfig,
+            ) -> _GroupChatParticipantPipeline:
+                pipeline = list(base_factory(spec, config))
+                if pipeline:
+                    # Add interceptor executor BEFORE the participant (prepend)
+                    interceptor = RequestInfoInterceptor(
+                        executor_id=f"request_info:{spec.name}",
+                        agent_filter=agent_filter,
+                    )
+                    pipeline.insert(0, interceptor)
+                return tuple(pipeline)
+
+            participant_factory = _factory_with_request_info
+
         result = assemble_group_chat_workflow(
             wiring=wiring,
-            participant_factory=_default_participant_factory,
+            participant_factory=participant_factory,
             orchestrator_factory=_handoff_orchestrator_factory,
             interceptors=(),
             checkpoint_storage=self._checkpoint_storage,
@@ -1462,7 +1674,18 @@ class HandoffBuilder:
             raise TypeError("Expected tuple from assemble_group_chat_workflow with return_builder=True")
         builder, coordinator = result
 
-        builder = builder.add_edge(input_node, starting_executor)
+        # When request_info is enabled, the input should go through the interceptor first
+        if self._request_info_enabled:
+            # Get the entry executor from the builder's registered executors
+            starting_entry_id = f"request_info:{self._starting_agent_id}"
+            starting_entry_executor = builder._executors.get(starting_entry_id)  # type: ignore
+            if starting_entry_executor:
+                builder = builder.add_edge(input_node, starting_entry_executor)
+            else:
+                # Fallback to direct connection if interceptor not found
+                builder = builder.add_edge(input_node, starting_executor)
+        else:
+            builder = builder.add_edge(input_node, starting_executor)
         builder = builder.add_edge(coordinator, user_gateway)
         builder = builder.add_edge(user_gateway, coordinator)
 
