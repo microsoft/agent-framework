@@ -33,6 +33,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         if (request.Messages.Count == 0)
         {
             logger.LogInformation("Ignoring empty request");
+            return new AgentRunResponse();
         }
 
         this.State.Data.ConversationHistory.Add(DurableAgentStateRequest.FromRunRequest(request));
