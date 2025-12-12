@@ -290,7 +290,7 @@ The Precedence column indicates the order of precedence when multiple environmen
 Example init code:
 ```python
 
-class OpenAIChatClient(ChatClient):
+class OpenAIChatClient(BaseChatClient):
     @overload
     def __init__(
         self,
@@ -364,7 +364,7 @@ class OpenAIChatClient(ChatClient):
 And for Anthropic:
 ```python
 
-class AnthropicChatClient(ChatClient):
+class AnthropicChatClient(BaseChatClient):
     @overload
     def __init__(
         self,
