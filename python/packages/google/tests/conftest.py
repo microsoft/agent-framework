@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+import os
 from typing import Any
 
 from pytest import fixture
@@ -24,6 +25,11 @@ def google_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
 
     if override_env_param_dict is None:
         override_env_param_dict = {}
+
+    # Ensure tests are deterministic regardless of the machine environment.
+    for key in list(os.environ):
+        if key.startswith("GOOGLE_AI_"):
+            monkeypatch.delenv(key, raising=False)  # type: ignore
 
     env_vars = {
         "GOOGLE_AI_API_KEY": "test-api-key-12345",
