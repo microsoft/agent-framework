@@ -9,6 +9,7 @@ This folder contains examples demonstrating how to use Ollama models with the Ag
 3. **Pull a model**: Run `ollama pull mistral` (or any other model you prefer)
    - For function calling examples, use models that support tool calling like `mistral` or `qwen2.5`
    - For reasoning examples, use models that support reasoning like `qwen2.5:8b`
+   - For Multimodality you can use models like `gemma3:4b`
 
 > **Note**: Not all models support all features. Function calling and reasoning capabilities depend on the specific model you're using.
 
