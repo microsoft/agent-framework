@@ -1064,7 +1064,10 @@ class HandoffBuilder:
             self._starting_agent_id = resolved
         elif isinstance(agent, str):
             if agent not in self._participant_factories:
-                raise ValueError(f"coordinator factory name '{agent}' is not part of the participant_factories list")
+                raise ValueError(
+                    f"coordinator factory name '{agent}' is not part of the participant_factories list. If "
+                    "you are using participant instances, call .participants(...) and pass the agent instance instead."
+                )
             self._starting_agent_id = agent
         else:
             raise TypeError(
@@ -1165,7 +1168,9 @@ class HandoffBuilder:
             - Handoff tools are automatically registered for each source agent
             - If a source agent is configured multiple times via add_handoff, targets are merged
         """
-        if isinstance(source, str) and (isinstance(targets, str) or all(isinstance(t, str) for t in targets)):
+        if isinstance(source, str) and (
+            isinstance(targets, str) or (isinstance(targets, Sequence) and all(isinstance(t, str) for t in targets))
+        ):
             # Both source and targets are factory names
             if not self._participant_factories:
                 raise ValueError("Call participant_factories(...) before add_handoff(...)")
@@ -1173,17 +1178,17 @@ class HandoffBuilder:
             if source not in self._participant_factories:
                 raise ValueError(f"Source factory name '{source}' is not in the participant_factories list")
 
-            target_list = [targets] if isinstance(targets, str) else list(targets)
+            target_list: list[str] = [targets] if isinstance(targets, str) else list(targets)  # type: ignore
             for target in target_list:
                 if target not in self._participant_factories:
                     raise ValueError(f"Target factory name '{target}' is not in the participant_factories list")
 
-            self._handoff_config[source] = target_list
+            self._handoff_config[source] = target_list  # type: ignore
             return self
 
         if isinstance(source, (AgentProtocol, Executor)) and (
-            isinstance(targets, (str, AgentProtocol, Executor))
-            or all(isinstance(t, (str, AgentProtocol, Executor)) for t in targets)
+            isinstance(targets, (AgentProtocol, Executor))
+            or all(isinstance(t, (AgentProtocol, Executor)) for t in targets)
         ):
             # Both source and targets are instances
             if not self._executors:
@@ -1195,7 +1200,9 @@ class HandoffBuilder:
                 raise ValueError(f"Source agent '{source}' is not in the participants list")
 
             # Normalize targets to list
-            target_list = [targets] if isinstance(targets, (str, AgentProtocol, Executor)) else list(targets)
+            target_list: list[AgentProtocol | Executor] = (
+                [targets] if isinstance(targets, (AgentProtocol, Executor)) else list(targets)
+            )  # type: ignore
 
             # Resolve all target IDs
             target_ids: list[str] = []
@@ -1591,9 +1598,13 @@ class HandoffBuilder:
         if self._starting_agent_id is None:
             raise ValueError("Must call set_coordinator(...) before building the workflow.")
 
-        starting_executor = self._executors[self._starting_agent_id]
+        # Resolve the participant factories now. This doesn't break the factory pattern
+        # since the Handoff builder still creates new instances per workflow build.
+        executors, aliases = self._resolve_executors()
+
+        starting_executor = executors[self._starting_agent_id]
         specialists = {
-            exec_id: executor for exec_id, executor in self._executors.items() if exec_id != self._starting_agent_id
+            exec_id: executor for exec_id, executor in executors.items() if exec_id != self._starting_agent_id
         }
 
         # Build handoff tool registry for all agents that need them
@@ -1602,7 +1613,7 @@ class HandoffBuilder:
         if self._handoff_config:
             # Use explicit handoff configuration from add_handoff() calls
             for source_exec_id, target_exec_ids in self._handoff_config.items():
-                executor = self._executors.get(source_exec_id)
+                executor = executors.get(source_exec_id)
                 if not executor:
                     raise ValueError(f"Handoff source agent '{source_exec_id}' not found in participants")
 
@@ -1610,36 +1621,37 @@ class HandoffBuilder:
                     # Build targets map for this source agent
                     targets_map: dict[str, Executor] = {}
                     for target_exec_id in target_exec_ids:
-                        target_executor = self._executors.get(target_exec_id)
+                        target_executor = executors.get(target_exec_id)
                         if not target_executor:
                             raise ValueError(f"Handoff target agent '{target_exec_id}' not found in participants")
                         targets_map[target_exec_id] = target_executor
 
                     # Register handoff tools for this agent
                     updated_executor, tool_targets = self._prepare_agent_with_handoffs(executor, targets_map)
-                    self._executors[source_exec_id] = updated_executor
+                    executors[source_exec_id] = updated_executor
                     handoff_tool_targets.update(tool_targets)
         else:
             # Default behavior: only coordinator gets handoff tools to all specialists
             if isinstance(starting_executor, AgentExecutor) and specialists:
                 starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
-                self._executors[self._starting_agent_id] = starting_executor
+                executors[self._starting_agent_id] = starting_executor
                 handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
 
-        starting_executor = self._executors[self._starting_agent_id]
+        # Re-assign after potential modifications
+        starting_executor = executors[self._starting_agent_id]
         specialists = {
-            exec_id: executor for exec_id, executor in self._executors.items() if exec_id != self._starting_agent_id
+            exec_id: executor for exec_id, executor in executors.items() if exec_id != self._starting_agent_id
         }
 
         if not specialists:
             logger.warning("Handoff workflow has no specialist agents; the coordinator will loop with the user.")
 
         descriptions = {
-            exec_id: getattr(executor, "description", None) or exec_id for exec_id, executor in self._executors.items()
+            exec_id: getattr(executor, "description", None) or exec_id for exec_id, executor in executors.items()
         }
         participant_specs = {
             exec_id: GroupChatParticipantSpec(name=exec_id, participant=executor, description=descriptions[exec_id])
-            for exec_id, executor in self._executors.items()
+            for exec_id, executor in executors.items()
         }
 
         input_node = _InputToConversation(id="input-conversation")
@@ -1650,7 +1662,7 @@ class HandoffBuilder:
         )
         builder = WorkflowBuilder(name=self._name, description=self._description).set_start_executor(input_node)
 
-        specialist_aliases = {alias: exec_id for alias, exec_id in self._aliases.items() if exec_id in specialists}
+        specialist_aliases = {alias: exec_id for alias, exec_id in aliases.items() if exec_id in specialists}
 
         def _handoff_orchestrator_factory(_: _GroupChatConfig) -> Executor:
             return _HandoffCoordinator(
@@ -1671,8 +1683,8 @@ class HandoffBuilder:
             manager_name=self._starting_agent_id,
             participants=participant_specs,
             max_rounds=None,
-            participant_aliases=self._aliases,
-            participant_executors=self._executors,
+            participant_aliases=aliases,
+            participant_executors=executors,
         )
 
         # Determine participant factory - wrap with request info interceptor if enabled
@@ -1733,6 +1745,58 @@ class HandoffBuilder:
 
     # region Internal Helper Methods
 
+    def _resolve_executors(self) -> tuple[dict[str, Executor], dict[str, str]]:
+        """Resolve participant factories into executor instances.
+
+        If executors were provided directly via participants(...), those are returned as-is.
+        If participant factories were provided via participant_factories(...), those
+        are invoked to create executor instances and aliases.
+
+        Returns:
+            Tuple of (executors map, aliases map)
+        """
+        if self._executors and self._participant_factories:
+            raise ValueError("Cannot have both executors and participant_factories configured")
+
+        if self._executors:
+            if self._aliases:
+                # Return existing executors and aliases
+                return self._executors, self._aliases
+            raise ValueError("Aliases is empty despite executors being provided")
+
+        if self._participant_factories:
+            executor_ids_to_executors: dict[str, AgentProtocol | Executor] = {}
+            factory_names_to_ids: dict[str, str] = {}
+            for factory_name, factory in self._participant_factories.items():
+                instance: Executor | AgentProtocol = factory()
+                if isinstance(instance, Executor):
+                    identifier = instance.id
+                elif isinstance(instance, AgentProtocol):
+                    identifier = instance.display_name
+                else:
+                    raise TypeError(
+                        f"Participants must be AgentProtocol or Executor instances. Got {type(instance).__name__}."
+                    )
+
+                if identifier in executor_ids_to_executors:
+                    raise ValueError(f"Duplicate participant name '{identifier}' detected")
+                executor_ids_to_executors[identifier] = instance
+                factory_names_to_ids[factory_name] = identifier
+
+            metadata = prepare_participant_metadata(
+                executor_ids_to_executors,
+                description_factory=lambda name, participant: getattr(participant, "description", None) or name,
+            )
+
+            wrapped = metadata["executors"]
+            # Executors is mapped by factory name here because handoff configs use factory names
+            executors = {factory_names_to_ids[executor.id]: executor for executor in wrapped.values()}
+            aliases = metadata["aliases"]
+
+            return executors, aliases
+
+        raise ValueError("No executors or participant_factories have been configured")
+
     def _resolve_to_id(self, candidate: str | AgentProtocol | Executor) -> str:
         """Resolve a participant reference into a concrete executor identifier."""
         if isinstance(candidate, Executor):
@@ -1772,29 +1836,6 @@ class HandoffBuilder:
             chat_options.tools = existing_tools
 
         return tool_targets
-
-    def _resolve_agent_id(self, agent_identifier: str) -> str:
-        """Resolve an agent identifier to an executor ID.
-
-        Args:
-            agent_identifier: Can be agent name, display name, or executor ID
-
-        Returns:
-            The executor ID
-
-        Raises:
-            ValueError: If the identifier cannot be resolved
-        """
-        # Check if it's already an executor ID
-        if agent_identifier in self._executors:
-            return agent_identifier
-
-        # Check if it's an alias
-        if agent_identifier in self._aliases:
-            return self._aliases[agent_identifier]
-
-        # Not found
-        raise ValueError(f"Agent identifier '{agent_identifier}' not found in participants")
 
     def _prepare_agent_with_handoffs(
         self,

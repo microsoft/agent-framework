@@ -218,7 +218,7 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == Role.USER) >= 2)
         .build()
     )
@@ -281,7 +281,7 @@ async def test_tool_call_handoff_detection_with_text_hint():
     triage = _RecordingAgent(name="triage", handoff_to="specialist", text_handoff=True)
     specialist = _RecordingAgent(name="specialist")
 
-    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator("triage").build()
+    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator(triage).build()
 
     await _drain(workflow.run_stream("Package arrived broken"))
 
@@ -296,7 +296,7 @@ async def test_autonomous_interaction_mode_yields_output_without_user_request():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .with_interaction_mode("autonomous", autonomous_turn_limit=1)
         .build()
     )
@@ -428,13 +428,13 @@ def test_build_fails_without_coordinator():
     triage = _RecordingAgent(name="triage")
     specialist = _RecordingAgent(name="specialist")
 
-    with pytest.raises(ValueError, match="coordinator must be defined before build"):
+    with pytest.raises(ValueError, match=r"Must call set_coordinator\(...\) before building the workflow."):
         HandoffBuilder(participants=[triage, specialist]).build()
 
 
 def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
-    with pytest.raises(ValueError, match="No participants provided"):
+    with pytest.raises(ValueError, match="No participants or participant_factories have been configured."):
         HandoffBuilder().build()
 
 
@@ -605,7 +605,7 @@ async def test_return_to_previous_enabled():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .enable_return_to_previous(True)
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
         .build()
@@ -638,7 +638,7 @@ def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatc
 
     workflow = (
         HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator("coordinator")
+        .set_coordinator(coordinator)
         .with_termination_condition(lambda conv: len(conv) > 0)
         .build()
     )
@@ -698,7 +698,7 @@ async def test_handoff_builder_with_request_info():
     # Build workflow with request info enabled
     workflow = (
         HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator("coordinator")
+        .set_coordinator(coordinator)
         .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
         .with_request_info()
         .build()
