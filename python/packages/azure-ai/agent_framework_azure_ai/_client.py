@@ -15,7 +15,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -49,7 +49,7 @@ TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AzureAIClient(OpenAIBaseResponsesClient):
     """Azure AI Agent client."""

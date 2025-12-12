@@ -38,7 +38,7 @@ from agent_framework import (
     UriContent,
     prepend_agent_framework_to_user_agent,
 )
-from agent_framework.observability import use_agent_observability
+from agent_framework.observability import use_agent_instrumentation
 
 __all__ = ["A2AAgent"]
 
@@ -59,7 +59,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-@use_agent_observability
+@use_agent_instrumentation
 class A2AAgent(BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 

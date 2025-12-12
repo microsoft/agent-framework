@@ -33,8 +33,8 @@ from agent_framework.observability import (
     ChatMessageListTimestampFilter,
     OtelAttr,
     get_function_span,
-    use_agent_observability,
-    use_observability,
+    use_agent_instrumentation,
+    use_instrumentation,
 )
 
 # region Test constants
@@ -157,7 +157,7 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
 
 
-# region Test use_observability decorator
+# region Test use_instrumentation decorator
 
 
 def test_decorator_with_valid_class():
@@ -175,7 +175,7 @@ def test_decorator_with_valid_class():
             return gen()
 
     # Apply the decorator
-    decorated_class = use_observability(MockChatClient)
+    decorated_class = use_instrumentation(MockChatClient)
     assert hasattr(decorated_class, OPEN_TELEMETRY_CHAT_CLIENT_MARKER)
 
 
@@ -187,7 +187,7 @@ def test_decorator_with_missing_methods():
 
     # Apply the decorator - should not raise an error
     with pytest.raises(ChatClientInitializationError):
-        use_observability(MockChatClient)
+        use_instrumentation(MockChatClient)
 
 
 def test_decorator_with_partial_methods():
@@ -200,7 +200,7 @@ def test_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(ChatClientInitializationError):
-        use_observability(MockChatClient)
+        use_instrumentation(MockChatClient)
 
 
 # region Test telemetry decorator with mock client
@@ -235,7 +235,7 @@ def mock_chat_client():
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_observability(mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test that when diagnostics are enabled, telemetry is applied."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
     span_exporter.clear()
@@ -258,8 +258,8 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test streaming telemetry through the use_observability decorator."""
-    client = use_observability(mock_chat_client)()
+    """Test streaming telemetry through the use_instrumentation decorator."""
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
@@ -282,7 +282,7 @@ async def test_chat_client_streaming_observability(
 
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     response = await client.get_response(messages=messages)
@@ -301,7 +301,7 @@ async def test_chat_client_streaming_without_model_id_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter
 ):
     """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
@@ -329,7 +329,7 @@ def test_prepend_user_agent_with_none_value():
     assert AGENT_FRAMEWORK_USER_AGENT in str(result["User-Agent"])
 
 
-# region Test use_agent_observability decorator
+# region Test use_agent_instrumentation decorator
 
 
 def test_agent_decorator_with_valid_class():
@@ -358,7 +358,7 @@ def test_agent_decorator_with_valid_class():
             return AgentThread()
 
     # Apply the decorator
-    decorated_class = use_agent_observability(MockChatClientAgent)
+    decorated_class = use_agent_instrumentation(MockChatClientAgent)
 
     assert hasattr(decorated_class, OPEN_TELEMETRY_AGENT_MARKER)
 
@@ -371,12 +371,12 @@ def test_agent_decorator_with_missing_methods():
 
     # Apply the decorator - should not raise an error
     with pytest.raises(AgentInitializationError):
-        use_agent_observability(MockAgent)
+        use_agent_instrumentation(MockAgent)
 
 
 def test_agent_decorator_with_partial_methods():
     """Test agent decorator when only one method is present."""
-    from agent_framework.observability import use_agent_observability
+    from agent_framework.observability import use_agent_instrumentation
 
     class MockAgent:
         AGENT_PROVIDER_NAME = "test_agent_system"
@@ -390,7 +390,7 @@ def test_agent_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(AgentInitializationError):
-        use_agent_observability(MockAgent)
+        use_agent_instrumentation(MockAgent)
 
 
 # region Test agent telemetry decorator with mock agent
@@ -433,7 +433,7 @@ async def test_agent_instrumentation_enabled(
 ):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
-    agent = use_agent_observability(mock_chat_agent)()
+    agent = use_agent_instrumentation(mock_chat_agent)()
 
     span_exporter.clear()
     response = await agent.run("Test message")
@@ -457,8 +457,8 @@ async def test_agent_instrumentation_enabled(
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test agent streaming telemetry through the use_agent_observability decorator."""
-    agent = use_agent_observability(mock_chat_agent)()
+    """Test agent streaming telemetry through the use_agent_instrumentation decorator."""
+    agent = use_agent_instrumentation(mock_chat_agent)()
     span_exporter.clear()
     updates = []
     async for update in agent.run_stream("Test message"):

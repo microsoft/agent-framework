@@ -53,8 +53,8 @@ __all__ = [
     "enable_instrumentation",
     "get_meter",
     "get_tracer",
-    "use_agent_observability",
-    "use_observability",
+    "use_agent_instrumentation",
+    "use_instrumentation",
 ]
 
 
@@ -1235,7 +1235,7 @@ def _trace_get_streaming_response(
     return decorator(func)
 
 
-def use_observability(
+def use_instrumentation(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
     """Class decorator that enables OpenTelemetry observability for a chat client.
@@ -1261,12 +1261,12 @@ def use_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_observability, configure_otel_providers
+            from agent_framework import use_instrumentation, configure_otel_providers
             from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
-            @use_observability
+            @use_instrumentation
             class MyCustomChatClient:
                 OTEL_PROVIDER_NAME = "my_provider"
 
@@ -1460,7 +1460,7 @@ def _trace_agent_run_stream(
     return trace_run_streaming
 
 
-def use_agent_observability(
+def use_agent_instrumentation(
     agent: type[TAgent] | None = None,
     *,
     capture_usage: bool = True,
@@ -1493,12 +1493,12 @@ def use_agent_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_agent_observability, configure_otel_providers
+            from agent_framework import use_agent_instrumentation, configure_otel_providers
             from agent_framework._agents import AgentProtocol
 
 
             # Decorate a custom agent class
-            @use_agent_observability
+            @use_agent_instrumentation
             class MyCustomAgent:
                 AGENT_PROVIDER_NAME = "my_agent_system"
 
