@@ -19,10 +19,9 @@ public sealed class A2AClientExtensionsTests
         const string TestId = "test-agent-id";
         const string TestName = "Test Agent";
         const string TestDescription = "This is a test agent description";
-        const string TestDisplayName = "Test Display Name";
 
         // Act
-        var agent = a2aClient.GetAIAgent(TestId, TestName, TestDescription, TestDisplayName);
+        var agent = a2aClient.GetAIAgent(TestId, TestName, TestDescription);
 
         // Assert
         Assert.NotNull(agent);
@@ -30,6 +29,5 @@ public sealed class A2AClientExtensionsTests
         Assert.Equal(TestId, agent.Id);
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
-        Assert.Equal(TestDisplayName, agent.DisplayName);
     }
 }

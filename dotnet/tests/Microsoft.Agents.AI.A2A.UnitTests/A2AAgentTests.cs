@@ -42,16 +42,14 @@ public sealed class A2AAgentTests : IDisposable
         const string TestId = "test-id";
         const string TestName = "test-name";
         const string TestDescription = "test-description";
-        const string TestDisplayName = "test-display-name";
 
         // Act
-        var agent = new A2AAgent(this._a2aClient, TestId, TestName, TestDescription, TestDisplayName);
+        var agent = new A2AAgent(this._a2aClient, TestId, TestName, TestDescription);
 
         // Assert
         Assert.Equal(TestId, agent.Id);
         Assert.Equal(TestName, agent.Name);
         Assert.Equal(TestDescription, agent.Description);
-        Assert.Equal(TestDisplayName, agent.DisplayName);
     }
 
     [Fact]
@@ -70,7 +68,6 @@ public sealed class A2AAgentTests : IDisposable
         Assert.NotEmpty(agent.Id);
         Assert.Null(agent.Name);
         Assert.Null(agent.Description);
-        Assert.Equal(agent.Id, agent.DisplayName);
     }
 
     [Fact]

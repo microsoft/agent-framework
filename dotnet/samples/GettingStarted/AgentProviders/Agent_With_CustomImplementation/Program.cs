@@ -45,7 +45,7 @@ namespace SampleApp
             }
 
             // Clone the input messages and turn them into response messages with upper case text.
-            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
+            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
             await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
@@ -69,7 +69,7 @@ namespace SampleApp
             }
 
             // Clone the input messages and turn them into response messages with upper case text.
-            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
+            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
             await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
@@ -79,7 +79,7 @@ namespace SampleApp
                 yield return new AgentRunResponseUpdate
                 {
                     AgentId = this.Id,
-                    AuthorName = this.DisplayName,
+                    AuthorName = message.AuthorName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,
                     ResponseId = Guid.NewGuid().ToString("N"),
@@ -88,7 +88,7 @@ namespace SampleApp
             }
         }
 
-        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string agentName) => messages.Select(x =>
+        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string? agentName) => messages.Select(x =>
             {
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();

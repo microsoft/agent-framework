@@ -125,14 +125,14 @@ public sealed class HandoffsWorkflowBuilder
             {
                 Throw.ArgumentException(
                     nameof(to),
-                    $"The provided target agent '{to.DisplayName}' has no description, name, or instructions, and no handoff description has been provided. " +
+                    $"The provided target agent '{to.Name ?? to.Id}' has no description, name, or instructions, and no handoff description has been provided. " +
                     "At least one of these is required to register a handoff so that the appropriate target agent can be chosen.");
             }
         }
 
         if (!handoffs.Add(new(to, handoffReason)))
         {
-            Throw.InvalidOperationException($"A handoff from agent '{from.DisplayName}' to agent '{to.DisplayName}' has already been registered.");
+            Throw.InvalidOperationException($"A handoff from agent '{from.Name ?? from.Id}' to agent '{to.Name ?? to.Id}' has already been registered.");
         }
 
         return this;

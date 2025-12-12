@@ -42,7 +42,6 @@ public class LoggingAgentTests
         Assert.Equal("TestAgent", agent.Name);
         Assert.Equal("This is a test agent.", agent.Description);
         Assert.Equal(innerAgent.Id, agent.Id);
-        Assert.Equal(innerAgent.DisplayName, agent.DisplayName);
     }
 
     [Fact]

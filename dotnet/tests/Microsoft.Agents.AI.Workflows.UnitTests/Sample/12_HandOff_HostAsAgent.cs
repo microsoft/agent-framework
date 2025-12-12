@@ -30,7 +30,7 @@ internal sealed class HandoffTestEchoAgent(string id, string name, string prefix
                 {
                     return [new(ChatRole.Assistant, [new FunctionCallContent(Guid.NewGuid().ToString("N"), handoff.Name)])
                     {
-                        AuthorName = this.DisplayName,
+                        AuthorName = this.Name ?? this.Id,
                         MessageId = Guid.NewGuid().ToString("N"),
                         CreatedAt = DateTime.UtcNow
                     }];

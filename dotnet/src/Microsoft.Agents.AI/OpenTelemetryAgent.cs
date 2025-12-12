@@ -114,7 +114,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         // Override information set by OpenTelemetryChatClient to make it specific to invoke_agent.
 
-        activity.DisplayName = $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.DisplayName}";
+        activity.DisplayName = string.IsNullOrWhiteSpace(this.Name)
+            ? $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Id}"
+            : $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Name}({this.Id})";
         activity.SetTag(OpenTelemetryConsts.GenAI.Operation.Name, OpenTelemetryConsts.GenAI.InvokeAgent);
 
         if (!string.IsNullOrWhiteSpace(this._providerName))
