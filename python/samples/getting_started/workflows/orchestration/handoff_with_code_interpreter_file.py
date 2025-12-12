@@ -26,9 +26,8 @@ Prerequisites:
 """
 
 import asyncio
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator
 
 from agent_framework import (
     AgentRunUpdateEvent,

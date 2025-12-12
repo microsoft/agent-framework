@@ -205,7 +205,7 @@ async def main() -> None:
             name="customer_support_handoff",
             participants=[triage, refund, order, support],
         )
-        .set_coordinator("triage_agent")
+        .set_coordinator(triage)
         .with_termination_condition(
             # Terminate after 4 user messages (initial + 3 scripted responses)
             # Count only USER role messages to avoid counting agent responses
