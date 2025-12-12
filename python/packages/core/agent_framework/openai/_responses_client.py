@@ -64,7 +64,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_observability
+from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -1127,7 +1127,7 @@ TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponse
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
     """OpenAI Responses client class."""

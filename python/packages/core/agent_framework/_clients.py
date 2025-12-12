@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, run
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
 from ._middleware import (
     ChatMiddleware,
@@ -426,6 +425,8 @@ class BaseChatClient(SerializationMixin, ABC):
             else [tools]
         )
         for tool in tools_list:  # type: ignore[reportUnknownType]
+            from ._mcp import MCPTool
+
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
                     await tool.connect()

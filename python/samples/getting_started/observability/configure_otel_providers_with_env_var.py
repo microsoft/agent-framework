@@ -7,7 +7,7 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from agent_framework import ai_function
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIResponsesClient
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 """
 This sample, show how you can configure observability of an application via the
-`setup_observability` function with environment variables.
+`configure_otel_providers` function with environment variables.
 
 When you run this sample with an OTLP endpoint or an Application Insights connection string,
 you should see traces, logs, and metrics in the configured backend.
@@ -100,7 +100,7 @@ async def main(scenario: Literal["chat_client", "chat_client_stream", "ai_functi
 
     # This will enable tracing and create the necessary tracing, logging and metrics providers
     # based on environment variables. See the .env.example file for the available configuration options.
-    setup_observability()
+    configure_otel_providers()
 
     with get_tracer().start_as_current_span("Sample Scenario's", kind=trace.SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")

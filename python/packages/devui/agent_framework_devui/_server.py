@@ -407,7 +407,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_OTEL") == "true",
+                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
