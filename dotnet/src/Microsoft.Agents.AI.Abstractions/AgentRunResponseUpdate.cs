@@ -75,7 +75,6 @@ public class AgentRunResponseUpdate
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
         this.Role = chatResponseUpdate.Role;
-        this.ContinuationToken = chatResponseUpdate.ContinuationToken;
     }
 
     /// <summary>Gets or sets the name of the author of the response update.</summary>
