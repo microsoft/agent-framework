@@ -1,7 +1,7 @@
 ---
 status: proposed
 contact: dmytrostruk
-date: 2025-12-03
+date: 2025-12-12
 deciders: dmytrostruk, markwallace-microsoft, eavanvalkenburg, giles17
 ---
 
@@ -33,6 +33,41 @@ Below is a short summary of different providers and their APIs in .NET:
 | Microsoft.Agents.AI.OpenAI | `CreateAIAgent` (based on `ChatClient`) | Creates a local instance of `ChatClientAgent`. | Yes (`create_agent` in `BaseChatClient`). |
 | Microsoft.Agents.AI.OpenAI | `CreateAIAgent` (based on `OpenAIResponseClient`) | Creates a local instance of `ChatClientAgent`. | Yes (`create_agent` in `BaseChatClient`). |
 
+Another difference between Python and .NET implementation is that in .NET `CreateAIAgent`/`GetAIAgent` methods are implemented as extension methods based on underlying SDK client, like `AIProjectClient` from Azure AI or `AssistantClient` from OpenAI:
+
+```csharp
+// Definition
+public static ChatClientAgent CreateAIAgent(
+    this AIProjectClient aiProjectClient,
+    string name,
+    string model,
+    string instructions,
+    string? description = null,
+    IList<AITool>? tools = null,
+    Func<IChatClient, IChatClient>? clientFactory = null,
+    IServiceProvider? services = null,
+    CancellationToken cancellationToken = default)
+{ }
+
+// Usage
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential()); // Initialization of underlying SDK client
+
+var newAgent = await aiProjectClient.CreateAIAgentAsync(name: AgentName, model: deploymentName, instructions: AgentInstructions, tools: [tool]); // ChatClientAgent creation from underlying SDK client
+
+// Alternative usage (same as extension method, just explicit syntax)
+var newAgent = await AzureAIProjectChatClientExtensions.CreateAIAgentAsync(
+    aiProjectClient,
+    name: AgentName,
+    model: deploymentName,
+    instructions: AgentInstructions,
+    tools: [tool]);
+```
+
+Python doesn't support extension methods. Currently `create_agent` method is defined on `BaseChatClient`, but this method only creates a local instance of `ChatAgent` and it can't create remote agents for providers that support it for a couple of reasons:
+
+- It's defined as non-async.
+- `BaseChatClient` implementation is stateful for providers like Azure AI or OpenAI Assistants. The implementation stores agent/assistant metadata like `AgentId` and `AgentName`, so currently it's not possible to create different instances of `ChatAgent` from a single `BaseChatClient` in case if the implementation is stateful.
+
 ## Decision Drivers
 
 - API should be aligned between .NET and Python.
@@ -51,17 +86,9 @@ Add missing implementations on the Python side. This should include the followin
 .NET:
 
 ```csharp
-var agent1 = new AIProjectClient(...).GetAIAgent(agentSdkInstance); // Creates a local ChatClientAgent instance
+var agent1 = new AIProjectClient(...).GetAIAgent(agentInstanceFromSdkType); // Creates a local ChatClientAgent instance from Azure.AI.Projects.OpenAI.AgentReference 
 var agent2 = new AIProjectClient(...).GetAIAgent(agentName); // Fetches agent data, creates a local ChatClientAgent instance
 var agent3 = new AIProjectClient(...).CreateAIAgent(...); // Creates a remote agent, returns a local ChatClientAgent instance
-```
-
-Python:
-
-```python
-agent1 = AIProjectClient(...).get_agent(agent_sdk_instance) # Creates a local ChatAgent instance
-agent2 = AIProjectClient(...).get_agent(agent_name) # Fetches agent data, creates a local ChatAgent instance
-agent3 = AIProjectClient(...).create_agent(...) # Creates a remote agent, returns a local ChatAgent instance
 ```
 
 ### agent-framework-core (OpenAI Assistants)
@@ -73,18 +100,135 @@ agent3 = AIProjectClient(...).create_agent(...) # Creates a remote agent, return
 .NET:
 
 ```csharp
-var agent1 = new AssistantClient(...).GetAIAgent(agentSdkInstance); // Creates a local ChatClientAgent instance
+var agent1 = new AssistantClient(...).GetAIAgent(agentInstanceFromSdkType); // Creates a local ChatClientAgent instance from OpenAI.Assistants.Assistant
 var agent2 = new AssistantClient(...).GetAIAgent(agentId); // Fetches agent data, creates a local ChatClientAgent instance
 var agent3 = new AssistantClient(...).CreateAIAgent(...); // Creates a remote agent, returns a local ChatClientAgent instance
 ```
 
-Python:
+### Possible Python implementations
+
+Methods like `create_agent` and `get_agent` should be implemented separately or defined on some stateless component that will allow to create multiple agents from the same instance/place.
+
+Possible options:
+
+#### Option 1: Module-level functions
+
+Implement free functions in the provider package that accept the underlying SDK client as the first argument (similar to .NET extension methods, but expressed in Python).
+
+Example:
 
 ```python
-agent1 = OpenAIAssistantsClient(...).get_agent(agent_sdk_instance) # Creates a local ChatAgent instance
-agent2 = OpenAIAssistantsClient(...).get_agent(agent_name) # Fetches agent data, creates a local ChatAgent instance
-agent3 = OpenAIAssistantsClient(...).create_agent(...) # Creates a remote agent, returns a local ChatAgent instance
+from agent_framework.azure import agents as azure_agents
+
+ai_project_client = AIProjectClient(...)
+
+# Creates a remote agent first, then returns a local ChatAgent wrapper
+agent = await azure_agents.create_agent(
+    ai_project_client,
+    name="",
+    instructions="",
+    tools=[tool],
+)
+
+# Gets an existing remote agent and returns a local ChatAgent wrapper
+agent = await azure_agents.get_agent(ai_project_client, agent_id=agent_id)
+
+# Wraps an SDK agent instance (no extra HTTP call)
+agent1 = azure_agents.get_agent(ai_project_client, agent_reference)
 ```
+
+Pros:
+
+- Naturally supports async `create_agent` / `get_agent`.
+- Supports multiple agents per SDK client.
+- Closest conceptual match to .NET extension methods while staying Pythonic.
+
+Cons:
+
+- Discoverability is lower (users need to know where the functions live).
+
+#### Option 2: Factory object
+
+Introduce a dedicated factory type that is constructed from the underlying SDK client, and exposes async `create_agent` / `get_agent` methods.
+
+Example:
+
+```python
+from agent_framework.azure import AgentFactory
+
+ai_project_client = AIProjectClient(...)
+factory = AgentFactory(ai_project_client)
+
+agent = await factory.create_agent(
+    name="",
+    instructions="",
+    tools=[tool],
+)
+
+agent = await factory.get_agent(agent_id=agent_id)
+agent = factory.get_agent(agent_reference=agent_reference)
+```
+
+Pros:
+
+- High discoverability and clear grouping of related behavior.
+- Keeps SDK clients unchanged and supports multiple agents per SDK client.
+
+Cons:
+
+- Adds a new public concept/type for users to learn.
+
+#### Option 3: Inheritance (SDK client subclass)
+
+Create a subclass of the underlying SDK client and add `create_agent` / `get_agent` methods.
+
+Example:
+
+```python
+class ExtendedAIProjectClient(AIProjectClient):
+    async def create_agent(self, *, name: str, model: str, instructions: str, **kwargs) -> ChatAgent:
+        ...
+
+    async def get_agent(self, *, agent_id: str | None = None, sdk_agent=None, **kwargs) -> ChatAgent:
+        ...
+
+client = ExtendedAIProjectClient(...)
+agent = await client.create_agent(name="", instructions="")
+```
+
+Pros:
+
+- Discoverable and ergonomic call sites.
+- Mirrors the .NET “methods on the client” feeling.
+
+Cons:
+
+- Many SDK clients are not designed for inheritance; SDK upgrades can break subclasses.
+- Users must opt into subclass everywhere.
+- Typing/initialization can be tricky if the SDK client has non-trivial constructors.
+
+#### Option 4: Monkey patching
+
+Attach `create_agent` / `get_agent` methods to an SDK client class (or instance) at runtime.
+
+Example:
+
+```python
+def _create_agent(self, *, name: str, model: str, instructions: str, **kwargs) -> ChatAgent:
+    ...
+
+AIProjectClient.create_agent = _create_agent  # monkey patch
+```
+
+Pros:
+
+- Produces “extension method-like” call sites without wrappers or subclasses.
+
+Cons:
+
+- Fragile across SDK updates and difficult to type-check.
+- Surprising behavior (global side effects), potential conflicts across packages.
+- Harder to support/debug, especially in larger apps and test suites.
 
 ## Decision Outcome
 
