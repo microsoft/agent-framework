@@ -20,7 +20,14 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         ? cancellationToken
         : services.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
 
-    public async Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    public Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    {
+        return this.RunAgent(request);
+    }
+
+#pragma warning disable VSTHRD200
+    public async Task<AgentRunResponse> RunAgent(RunRequest request)
+#pragma warning restore VSTHRD200
     {
         AgentSessionId sessionId = this.Context.Id;
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents =
