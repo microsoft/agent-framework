@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI;
 /// Provides a thread implementation for use with <see cref="ChatClientAgent"/>.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public class ChatClientAgentThread : AgentThread
+public sealed class ChatClientAgentThread : AgentThread
 {
     private ChatMessageStore? _messageStore;
 
