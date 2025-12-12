@@ -1,12 +1,12 @@
 [project]
 name = "agent-framework-ollama"
 description = "Ollama integration for Microsoft Agent Framework."
-authors = [{ name = "Microsoft", email = "SK-Support@microsoft.com"}]
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
 version = "0.1.0b1"
 license-files = ["LICENSE"]
-urls.homepage = "https://learn.microsoft.com/en-us/semantic-kernel/overview/"
+urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
 urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=tag%3Apython-1&expanded=true"
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
