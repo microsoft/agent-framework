@@ -11,8 +11,6 @@ public sealed class DurableAgentsOptions
     private readonly Dictionary<string, Func<IServiceProvider, AIAgent>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimeSpan?> _agentTimeToLive = new(StringComparer.OrdinalIgnoreCase);
 
-    private TimeSpan _minimumTimeToLiveSignalDelay = TimeSpan.FromMinutes(5);
-
     internal DurableAgentsOptions()
     {
     }
@@ -38,7 +36,7 @@ public sealed class DurableAgentsOptions
     /// <exception cref="ArgumentOutOfRangeException">Thrown when the value exceeds 5 minutes.</exception>
     public TimeSpan MinimumTimeToLiveSignalDelay
     {
-        get => this._minimumTimeToLiveSignalDelay;
+        get;
         set
         {
             const int MaximumDelayMinutes = 5;
@@ -50,9 +48,9 @@ public sealed class DurableAgentsOptions
                     $"The minimum time-to-live signal delay cannot exceed {MaximumDelayMinutes} minutes.");
             }
 
-            this._minimumTimeToLiveSignalDelay = value;
+            field = value;
         }
-    }
+    } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Adds an AI agent factory to the options.
