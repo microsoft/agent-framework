@@ -135,54 +135,186 @@ response2 = agent.run("And what about in Europe?", thread=restored_thread)
 ```
 
 ### Scenario 2b: Storing and restoring chat messages
-A user wants to store just the chat messages of a thread and restore them later, either in the same session or in a different session.
+A user wants to store just the chat messages of a thread and restore them later, either in the same session or in a different session. This shows conversation persistence across application restarts using a persistent chat message store.
 
 ```python
-agent = SomeAgent(chat_message_store_factory=CosmosDBChatMessageStoreFactory())
-thread = agent.get_new_thread()
-response1 = agent.run("Tell me about the history of AI.", thread=thread)
-response2 = agent.run("And what about in Europe?", thread=thread)
+from agent_framework import AgentThread
+from agent_framework.redis import RedisChatMessageStore
+
+conversation_id = "persistent_chat_001"
+
+# Phase 1: Start conversation
+store1 = RedisChatMessageStore(
+    redis_url="redis://localhost:6379",
+    thread_id=conversation_id,
+)
+thread1 = AgentThread(message_store=store1)
+
+agent = OpenAIChatClient().create_agent(
+    name="PersistentBot",
+    instructions="You are a helpful assistant. Remember our conversation history.",
+)
+
+response1 = await agent.run("Hello! I'm working on a Python project.", thread=thread1)
+response2 = await agent.run("I'm interested in neural networks.", thread=thread1)
+await store1.aclose()
+
+# Phase 2: Resume conversation (simulating app restart)
+store2 = RedisChatMessageStore(
+    redis_url="redis://localhost:6379",
+    thread_id=conversation_id,  # Same thread ID
+)
+thread2 = AgentThread(message_store=store2)
+
+# Continue conversation - agent should remember context
+response3 = await agent.run("What was I working on before?", thread=thread2)
+response4 = await agent.run("Can you suggest some libraries?", thread=thread2)
+await store2.aclose()
 ```
 
 ### Scenario 3: Context Providers
-A user wants to use context providers to add context to the conversation, and have that context be stored and restored with the thread, and this should work with any thread type.
+A user wants to use context providers to add context to the conversation, and have that context be stored and restored with the thread, and this should work with any thread type. This example shows using a ContextProviderFactory pattern in .NET to create per-thread context providers.
 
-```python
-agent = SomeAgent(context_providers=[SomeContextProvider(), AnotherContextProvider()])
-thread = agent.get_new_thread()
-response1 = agent.run("Tell me about the history of AI.", thread=thread)
-# Store thread somewhere
-stored_thread_data = agent.serialize_thread(thread)
-# Later, restore thread
-restored_thread = agent.deserialize_thread(stored_thread_data)
-response2 = agent.run("And what about in Europe?", thread=restored_thread)
+```csharp
+// Create the agent with a context provider factory
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(new ChatClientAgentOptions
+    {
+        Instructions = "You are good at telling jokes.",
+        Name = "Joker",
+        AIContextProviderFactory = (ctx) => new ChatHistoryMemoryProvider(
+            vectorStore,
+            collectionName: "chathistory",
+            vectorDimensions: 3072,
+            // Configure the scope values under which chat messages will be stored.
+            // In this case, we are using a fixed user ID and a unique thread ID for each new thread.
+            storageScope: new() { UserId = "UID1", ThreadId = new Guid().ToString() },
+            // Configure the scope which would be used to search for relevant prior messages.
+            // In this case, we are searching for any messages for the user across all threads.
+            searchScope: new() { UserId = "UID1" })
+    });
+
+// Start a new thread - the factory creates a context provider for this thread
+AgentThread thread = agent.GetNewThread();
+
+// Run the agent with the thread that stores conversation history in the vector store.
+await agent.RunAsync("I like jokes about Pirates. Tell me a joke about a pirate.", thread);
+
+// Start a second thread - gets its own context provider instance
+AgentThread thread2 = agent.GetNewThread();
+
+// Run the agent with the second thread - provider searches across all threads for the user.
+await agent.RunAsync("Tell me a joke that I might like.", thread2);
 ```
 
-Further a context provider should be able to store a few messages (regardless of thread type) as additional context to provide better outputs, such as the `messages` field of the example below.
-```python
-class SummaryContextProvider(ContextProvider):
+Further a context provider should be able to store a few messages (regardless of thread type) as additional context to provide better outputs. This example shows a context provider that maintains a rolling window of recent messages for summarization.
 
-    def __init__(self, chat_client: ChatClient, messages: list[ChatMessage] | None = None, **kwargs: Any):
-        self.messages = messages or []
-        self.chat_client = chat_client
+```csharp
+// Context provider that stores last N messages for summarization
+internal sealed class SummaryContextProvider : AIContextProvider
+{
+    private readonly IChatClient _chatClient;
+    private readonly int _maxMessages;
 
-    async def invoking(self, messages: list[ChatMessage], **kwargs: Any) -> Context:
-        context_data = copy(self.messages)
-        context_data.extend(messages)
-        context_data.append(ChatMessage(role="user", content="Summarize the previous messages in 2 sentences."))
-        response = await self.chat_client.get_response(
-            messages=context_data,
-            store=False,
-            conversation_id=None,
-        )
-        context = Context(messages=response.content)
-        return context
+    public SummaryContextProvider(IChatClient chatClient, SummaryState? state = null, int maxMessages = 10)
+    {
+        this._chatClient = chatClient;
+        this._maxMessages = maxMessages;
+        this.State = state ?? new SummaryState();
+    }
 
-    async def invoked(self, request_messages: list[ChatMessage], response_messages: list[ChatMessage], ...) -> dict:
-        self.messages.extend(request_messages)
-        self.messages.extend(response_messages)
-        # Keep only last 10 messages
-        self.messages = self.messages[-10:]
+    // Constructor for deserialization - receives serialized state
+    public SummaryContextProvider(IChatClient chatClient, JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        this._chatClient = chatClient;
+        this._maxMessages = 10;
+        this.State = serializedState.ValueKind == JsonValueKind.Object ?
+            serializedState.Deserialize<SummaryState>(jsonSerializerOptions)! :
+            new SummaryState();
+    }
+
+    public SummaryState State { get; set; }
+
+    // Called before agent invocation - provides summary of stored messages
+    public override async ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        if (this.State.RecentMessages.Count == 0)
+        {
+            return new AIContext();
+        }
+
+        // Generate summary from stored messages
+        var summaryPrompt = new List<ChatMessage>(this.State.RecentMessages)
+        {
+            new ChatMessage(ChatRole.User, "Summarize the above conversation in 2-3 sentences.")
+        };
+
+        var summaryResponse = await this._chatClient.GetResponseAsync(
+            summaryPrompt,
+            new ChatOptions(),
+            cancellationToken: cancellationToken);
+
+        return new AIContext
+        {
+            Instructions = $"Previous conversation summary: {summaryResponse.Message.Text}"
+        };
+    }
+
+    // Called after agent invocation - stores recent messages
+    public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        // Add new messages to state
+        this.State.RecentMessages.AddRange(context.RequestMessages);
+        this.State.RecentMessages.AddRange(context.ResponseMessages);
+
+        // Keep only last N messages
+        if (this.State.RecentMessages.Count > this._maxMessages)
+        {
+            var excess = this.State.RecentMessages.Count - this._maxMessages;
+            this.State.RecentMessages.RemoveRange(0, excess);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    // Serialize state for thread serialization
+    public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
+    {
+        return JsonSerializer.SerializeToElement(this.State, jsonSerializerOptions);
+    }
+}
+
+internal sealed class SummaryState
+{
+    public List<ChatMessage> RecentMessages { get; set; } = new();
+}
+
+// Usage - context provider factory creates instance per thread
+AIAgent agent = chatClient.CreateAIAgent(new ChatClientAgentOptions()
+{
+    Instructions = "You are a helpful assistant.",
+    AIContextProviderFactory = ctx => new SummaryContextProvider(
+        chatClient.AsIChatClient(),
+        ctx.SerializedState,
+        ctx.JsonSerializerOptions)
+});
+
+AgentThread thread = agent.GetNewThread();
+// After many messages, only last 10 are stored in the context provider
+for (int i = 0; i < 20; i++)
+{
+    await agent.RunAsync($"Question {i}: Tell me about AI.", thread);
+}
+
+// Serialize thread - includes context provider's recent messages
+var threadElement = thread.Serialize();
+
+// Deserialize thread - restores context provider with its stored messages
+var deserializedThread = agent.DeserializeThread(threadElement);
+await agent.RunAsync("Summarize what we discussed.", deserializedThread);
 ```
 
 **Note on context provider scoping**: Context providers can be scoped in different ways to support various use cases:
@@ -219,7 +351,7 @@ group.run("Hello everyone, let's discuss AI.")
 A user wants to combine all of the above scenarios.
 
 ```python
-agent1 = SomeAgentTypeA(context_providers=[SomeContextProvider()])
+agent1 = SomeAgentTypeA(context_provider_factories=[SomeContextProviderFactory()])
 agent2 = SomeAgentTypeB(chat_message_store_factory=CosmosDBChatMessageStoreFactory()
 thread1 = agent1.get_new_thread()
 response1 = agent1.run("Tell me about the history of AI.", thread=thread1)
@@ -255,42 +387,44 @@ for i in range(20):
 **Note on remote threads**: Chat history reduction is only applicable to `LocalThread` where the client maintains the message store. `RemoteThread` instances rely on service-side storage, which may have its own reduction mechanisms that are not controllable from the client side. This is a key distinction that motivates the separation between `LocalThread` and `RemoteThread` types.
 
 ### Scenario 8: Middleware accessing thread state
-A user wants to implement middleware that tracks or modifies thread behavior, understanding that the middleware needs to handle different thread types appropriately.
+A user wants to implement middleware that tracks or modifies thread behavior, understanding that the middleware needs to handle different thread types appropriately based on their fields.
 
 ```python
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from semantic_kernel_agent_framework import LocalThread, RemoteThread
-
 async def thread_tracking_middleware(context: AgentRunContext, next, ...):
     if context.thread:
-        # Check thread type to determine available operations
-        if isinstance(context.thread, LocalThread):
-            # LocalThread: Full access to message history
-            message_count = len(await context.thread.get_messages())
-            logger.info(f"LocalThread has {message_count} messages before execution")
-        elif isinstance(context.thread, RemoteThread):
-            # RemoteThread: Limited to metadata only
+        # Check if thread is service-managed by presence of service_thread_id
+        if context.thread.service_thread_id:
+            # Service-managed thread: Limited to metadata only
             # We do NOT fetch messages from the service
-            logger.info(f"RemoteThread {context.thread.thread_id} - message access not available")
+            logger.info(f"Service thread {context.thread.service_thread_id} - message access not available")
+        elif context.thread.chat_message_store:
+            # Local thread with message store: Full access to message history
+            message_count = len(await context.thread.get_messages())
+            logger.info(f"Local thread has {message_count} messages before execution")
+        else:
+            # Thread without message store
+            logger.info("No message store available")
 
     await next(context)
 
     if context.thread:
-        if isinstance(context.thread, LocalThread):
+        if context.thread.service_thread_id:
+            # Service-managed thread: Still only metadata available
+            logger.info(f"Service thread {context.thread.service_thread_id} - execution completed")
+        elif context.thread.chat_message_store:
             # Can inspect updated local thread state
             updated_count = len(await context.thread.get_messages())
-            logger.info(f"LocalThread now has {updated_count} messages after execution")
-        elif isinstance(context.thread, RemoteThread):
-            # RemoteThread: Still only metadata available
-            logger.info(f"RemoteThread {context.thread.thread_id} - execution completed")
+            logger.info(f"Local thread now has {updated_count} messages after execution")
 
 agent = SomeAgent(middleware=[thread_tracking_middleware])
-local_thread = agent.get_local_thread()
+
+# Local thread with message store
+local_thread = agent.get_new_thread()
 agent.run("Query with local thread", thread=local_thread)
 
-remote_thread = agent.get_remote_thread()
-agent.run("Query with remote thread", thread=remote_thread)
+# Service-managed thread (has service_thread_id)
+service_thread = agent.get_new_thread(service_thread_id="thread_abc123")
+agent.run("Query with service thread", thread=service_thread)
 ```
 
 **Important**: Middleware behavior may differ significantly between `LocalThread` and `RemoteThread`:
