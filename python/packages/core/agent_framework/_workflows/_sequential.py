@@ -273,6 +273,8 @@ class SequentialBuilder:
 
         participants: list[Executor | AgentProtocol] = []
         if self._participant_factories:
+            # Resolve the participant factories now. This doesn't break the factory pattern
+            # since the Sequential builder still creates new instances per workflow build.
             for factory in self._participant_factories:
                 p = factory()
                 participants.append(p)
