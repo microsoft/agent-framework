@@ -25,9 +25,11 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         return this.RunAgent(request);
     }
 
+#pragma warning disable IDE1006
 #pragma warning disable VSTHRD200
     public async Task<AgentRunResponse> RunAgent(RunRequest request)
 #pragma warning restore VSTHRD200
+#pragma warning restore IDE1006
     {
         AgentSessionId sessionId = this.Context.Id;
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents =
