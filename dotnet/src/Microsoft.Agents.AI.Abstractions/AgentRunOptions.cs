@@ -75,7 +75,7 @@ public class AgentRunOptions
     /// If the implementation does not support background responses, this property will be ignored.
     /// </para>
     /// </remarks>
-    public bool? AllowBackgroundResponses { get; set; }
+    public bool AllowBackgroundResponses { get; set; }
 
     /// <summary>
     /// Gets or sets additional properties associated with these options.

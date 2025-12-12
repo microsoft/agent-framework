@@ -584,7 +584,7 @@ public sealed partial class ChatClientAgent : AIAgent
         static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
         {
             // If any of the background response properties are set in the run options, we should apply both to the chat options.
-            if (agentRunOptions?.AllowBackgroundResponses is not null || agentRunOptions?.ContinuationToken is not null)
+            if (agentRunOptions?.AllowBackgroundResponses == true || agentRunOptions?.ContinuationToken is not null)
             {
                 chatOptions ??= new ChatOptions();
                 chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
