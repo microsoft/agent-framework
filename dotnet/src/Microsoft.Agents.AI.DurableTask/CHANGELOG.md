@@ -1,5 +1,9 @@
 # Release History
 
+## [Unreleased]
+
+- Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
+
 ## v1.0.0-preview.251204.1
 
 - Added orchestration ID to durable agent entity state ([#2137](https://github.com/microsoft/agent-framework/pull/2137))

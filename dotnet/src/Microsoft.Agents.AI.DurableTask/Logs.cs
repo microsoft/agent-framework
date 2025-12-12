@@ -46,4 +46,58 @@ internal static partial class Logs
         Level = LogLevel.Information,
         Message = "Found response for agent with session ID '{SessionId}' with correlation ID '{CorrelationId}'")]
     public static partial void LogDonePollingForResponse(this ILogger logger, AgentSessionId sessionId, string correlationId);
+
+    [LoggerMessage(
+        EventId = 6,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL expiration time updated to {ExpirationTime:O}")]
+    public static partial void LogTTLExpirationTimeUpdated(
+        this ILogger logger,
+        AgentSessionId sessionId,
+        DateTime expirationTime);
+
+    [LoggerMessage(
+        EventId = 7,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL deletion signal scheduled for {ScheduledTime:O}")]
+    public static partial void LogTTLDeletionScheduled(
+        this ILogger logger,
+        AgentSessionId sessionId,
+        DateTime scheduledTime);
+
+    [LoggerMessage(
+        EventId = 8,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL deletion check running. Expiration time: {ExpirationTime:O}, Current time: {CurrentTime:O}")]
+    public static partial void LogTTLDeletionCheck(
+        this ILogger logger,
+        AgentSessionId sessionId,
+        DateTime? expirationTime,
+        DateTime currentTime);
+
+    [LoggerMessage(
+        EventId = 9,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] Entity expired and deleted due to TTL. Expiration time: {ExpirationTime:O}")]
+    public static partial void LogTTLEntityExpired(
+        this ILogger logger,
+        AgentSessionId sessionId,
+        DateTime expirationTime);
+
+    [LoggerMessage(
+        EventId = 10,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL deletion signal rescheduled for {ScheduledTime:O}")]
+    public static partial void LogTTLRescheduled(
+        this ILogger logger,
+        AgentSessionId sessionId,
+        DateTime scheduledTime);
+
+    [LoggerMessage(
+        EventId = 11,
+        Level = LogLevel.Information,
+        Message = "[{SessionId}] TTL expiration time cleared (TTL disabled)")]
+    public static partial void LogTTLExpirationTimeCleared(
+        this ILogger logger,
+        AgentSessionId sessionId);
 }

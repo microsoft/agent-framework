@@ -32,6 +32,6 @@ AIAgent agent = client.GetChatClient(deploymentName).CreateAIAgent(JokerInstruct
 using IHost app = FunctionsApplication
     .CreateBuilder(args)
     .ConfigureFunctionsWebApplication()
-    .ConfigureDurableAgents(options => options.AddAIAgent(agent))
+    .ConfigureDurableAgents(options => options.AddAIAgent(agent, timeToLive: TimeSpan.FromHours(1)))
     .Build();
 app.Run();
