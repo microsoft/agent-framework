@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 import asyncio
 
 from collections.abc import Sequence
@@ -20,7 +22,7 @@ from agent_framework_bedrock import BedrockChatClient
 def get_weather(city: str) -> dict[str, str]:
     """Return a mock forecast for the requested city."""
 
-    normalized = city.strip() or "New york"
+    normalized = city.strip() or "New York"
     return {"city": normalized, "forecast": "72F and sunny"}
 
 

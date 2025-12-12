@@ -93,6 +93,31 @@ class BedrockChatClient(BaseChatClient):
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create a Bedrock chat client and load AWS credentials.
+
+        Parameters
+        ----------
+        region: str | None
+            Region to send Bedrock requests to; falls back to BEDROCK_REGION.
+        model_id: str | None
+            Default model identifier; falls back to BEDROCK_CHAT_MODEL_ID.
+        access_key: str | None
+            Optional AWS access key for manual credential injection.
+        secret_key: str | None
+            Optional AWS secret key paired with ``access_key``.
+        session_token: str | None
+            Optional AWS session token for temporary credentials.
+        client: BaseClient | None
+            Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
+        boto3_session: Boto3Session | None
+            Custom boto3 session used to build the runtime client if provided.
+        env_file_path: str | None
+            Optional .env file path used by ``BedrockSettings`` to load defaults.
+        env_file_encoding: str | None
+            Encoding for the optional .env file.
+        kwargs: Any
+            Additional arguments forwarded to ``BaseChatClient``.
+        """
         try:
             settings = BedrockSettings(
                 region=region,
@@ -485,6 +510,11 @@ class BedrockChatClient(BaseChatClient):
         return FINISH_REASON_MAP.get(reason.lower())
 
     def service_url(self) -> str:
+        """Returns the service URL for the Bedrock runtime in the configured AWS region.
+
+        Returns:
+            str: The Bedrock runtime service URL.
+        """
         return f"https://bedrock-runtime.{self.region}.amazonaws.com"
 
     def _convert_bedrock_tool_result_to_value(self, content: Any) -> Any:
