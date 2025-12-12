@@ -304,8 +304,9 @@ export function WorkflowView({
         { limit: 100 }
       );
       const checkpointItems = response.data.filter(
-        (item: any) => item.type === "checkpoint"
-      ) as CheckpointItem[];
+        (item): item is CheckpointItem =>
+          typeof item === "object" && item !== null && "type" in item && (item as { type: string }).type === "checkpoint"
+      );
       setSessionCheckpoints(checkpointItems);
     } catch (error) {
       console.error(`Failed to load checkpoints for session ${currentSession.conversation_id}:`, error);
@@ -453,9 +454,9 @@ export function WorkflowView({
             | import("@/types/openai").ResponseOutputItemAddedEvent
             | import("@/types/openai").ResponseOutputItemDoneEvent
         ).item;
-        if (item && item.type === "executor_action" && item.executor_id) {
+        if (item && item.type === "executor_action" && "executor_id" in item && item.executor_id) {
           history.push({
-            executorId: item.executor_id,
+            executorId: String(item.executor_id),
             message:
               event.type === "response.output_item.added"
                 ? "Executor started"
@@ -624,7 +625,8 @@ export function WorkflowView({
             if (
               item &&
               item.type === "message" &&
-              item.metadata?.source === "magentic" &&
+              "metadata" in item &&
+              (item.metadata as { source?: string } | undefined)?.source === "magentic" &&
               item.id
             ) {
               // Track this message ID as the current streaming target for Magentic agents
@@ -639,19 +641,21 @@ export function WorkflowView({
             if (
               item &&
               item.type === "message" &&
-              !item.metadata?.source &&
-              item.content
+              (!("metadata" in item) || !(item.metadata as { source?: string } | undefined)?.source) &&
+              "content" in item &&
+              Array.isArray(item.content)
             ) {
               // Extract text from message content
-              for (const content of item.content) {
+              for (const content of item.content as Array<{ type: string; text?: string }>) {
                 if (content.type === "output_text" && content.text) {
+                  const text = content.text; // Capture for closure
                   // Append to workflow result (support multiple yield_output calls)
                   setWorkflowResult((prev) => {
                     if (prev && prev.length > 0) {
                       // If there's existing output, add separator
-                      return prev + "\n\n" + content.text;
+                      return prev + "\n\n" + text;
                     }
-                    return content.text;
+                    return text;
                   });
 
                   // Try to parse as JSON for structured metadata
@@ -979,22 +983,23 @@ export function WorkflowView({
           }
 
           // Handle workflow output messages
-          if (item && item.type === "message" && item.content) {
+          if (item && item.type === "message" && "content" in item && Array.isArray(item.content)) {
             // Extract text from message content
-            for (const content of item.content) {
+            for (const content of item.content as Array<{ type: string; text?: string }>) {
               if (content.type === "output_text" && content.text) {
+                const text = content.text; // Capture for closure
                 // Append to workflow result (support multiple yield_output calls)
                 setWorkflowResult((prev) => {
                   if (prev && prev.length > 0) {
                     // If there's existing output, add separator
-                    return prev + "\n\n" + content.text;
+                    return prev + "\n\n" + text;
                   }
-                  return content.text;
+                  return text;
                 });
 
                 // Try to parse as JSON for structured metadata
                 try {
-                  const parsed = JSON.parse(content.text);
+                  const parsed = JSON.parse(text);
                   if (typeof parsed === "object" && parsed !== null) {
                     workflowMetadata.current = parsed;
                   }

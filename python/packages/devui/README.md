@@ -107,7 +107,7 @@ agents/
 Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
 
 ```bash
-devui ./agents --tracing framework
+devui ./agents --tracing
 ```
 
 ## OpenAI-Compatible API
@@ -196,11 +196,12 @@ Options:
   --port, -p      Port (default: 8080)
   --host          Host (default: 127.0.0.1)
   --headless      API only, no UI
-  --config        YAML config file
-  --tracing       none|framework|workflow|all
+  --no-open       Don't automatically open browser
+  --tracing       Enable OpenTelemetry tracing
   --reload        Enable auto-reload
   --mode          developer|user (default: developer)
   --auth          Enable Bearer token authentication
+  --auth-token    Custom authentication token
 ```
 
 ### UI Modes

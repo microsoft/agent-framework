@@ -570,6 +570,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               let allItems: unknown[] = [];
               let hasMore = true;
               let after: string | undefined = undefined;
+              let storedTraces: unknown[] = [];
 
               while (hasMore) {
                 const result = await apiClient.listConversationItems(
@@ -578,7 +579,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 );
                 allItems = allItems.concat(result.data);
                 hasMore = result.has_more;
-                
+
+                // Capture traces from metadata (only need from one response, they accumulate)
+                if (result.metadata?.traces && result.metadata.traces.length > 0) {
+                  storedTraces = result.metadata.traces;
+                }
+
                 // Get the last item's ID for pagination
                 if (hasMore && result.data.length > 0) {
                   const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -589,6 +595,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               // Use OpenAI ConversationItems directly (no conversion!)
               setChatItems(allItems as import("@/types/openai").ConversationItem[]);
               setIsStreaming(false);
+
+              // Restore stored traces as debug events for context inspection
+              if (storedTraces.length > 0) {
+                // Clear any previous debug events first
+                onDebugEvent("clear");
+                for (const trace of storedTraces) {
+                  // Convert stored trace back to ResponseTraceComplete event format
+                  const traceEvent: ExtendedResponseStreamEvent = {
+                    type: "response.trace.completed",
+                    data: trace as Record<string, unknown>,
+                    sequence_number: 0, // Not used for display
+                  };
+                  onDebugEvent(traceEvent);
+                }
+              }
 
               // Check for incomplete stream and resume if needed
               const state = loadStreamingState(mostRecent.id);
@@ -724,6 +745,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
 
+      // Clear debug panel for fresh conversation
+      onDebugEvent("clear");
+
       // Update localStorage cache with new conversation
       const cachedKey = `devui_convs_${selectedAgent.id}`;
       const updated = [newConversation, ...availableConversations];
@@ -736,7 +760,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         type: "conversation_creation_error",
       });
     }
-  }, [selectedAgent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
+  }, [selectedAgent, onDebugEvent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
   // Handle conversation deletion
   const handleDeleteConversation = useCallback(
@@ -843,6 +867,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         let allItems: unknown[] = [];
         let hasMore = true;
         let after: string | undefined = undefined;
+        let storedTraces: unknown[] = [];
 
         while (hasMore) {
           const result = await apiClient.listConversationItems(conversationId, {
@@ -851,7 +876,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           });
           allItems = allItems.concat(result.data);
           hasMore = result.has_more;
-          
+
+          // Capture traces from metadata (only need from one response, they accumulate)
+          if (result.metadata?.traces && result.metadata.traces.length > 0) {
+            storedTraces = result.metadata.traces;
+          }
+
           // Get the last item's ID for pagination
           if (hasMore && result.data.length > 0) {
             const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -864,6 +894,19 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         setChatItems(items);
         setIsStreaming(false);
+
+        // Restore stored traces as debug events for context inspection
+        if (storedTraces.length > 0) {
+          for (const trace of storedTraces) {
+            // Convert stored trace back to ResponseTraceComplete event format
+            const traceEvent: ExtendedResponseStreamEvent = {
+              type: "response.trace.completed",
+              data: trace as Record<string, unknown>,
+              sequence_number: 0, // Not used for display
+            };
+            onDebugEvent(traceEvent);
+          }
+        }
 
         // Calculate usage from loaded items
         useDevUIStore.setState({
@@ -1249,13 +1292,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
             // Handle function calls as separate conversation items
             if (item.type === "function_call") {
+              // Type assertion for function call - narrows from union type
+              const funcCall = item as import("@/types/openai").ResponseFunctionToolCall;
               const functionCallItem: import("@/types/openai").ConversationFunctionCall = {
-                id: item.id || `call-${Date.now()}`,
+                id: funcCall.id || `call-${Date.now()}`,
                 type: "function_call",
-                name: item.name,
-                arguments: item.arguments || "",
-                call_id: item.call_id,
-                status: (item.status === "failed" || item.status === "cancelled" ? "incomplete" : item.status) || "in_progress",
+                name: funcCall.name,
+                arguments: funcCall.arguments || "",
+                call_id: funcCall.call_id,
+                status: funcCall.status || "in_progress",
                 created_at: Math.floor(Date.now() / 1000),
               };
 

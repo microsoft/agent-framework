@@ -3,6 +3,45 @@
  * Based on OpenAI's official response types
  */
 
+// OpenAI Response Error (from response_error.py)
+export type ResponseErrorCode =
+  | "server_error"
+  | "rate_limit_exceeded"
+  | "invalid_prompt"
+  | "vector_store_timeout"
+  | "invalid_image"
+  | "invalid_image_format"
+  | "invalid_base64_image"
+  | "invalid_image_url"
+  | "image_too_large"
+  | "image_too_small"
+  | "image_parse_error"
+  | "image_content_policy_violation"
+  | "invalid_image_mode"
+  | "image_file_too_large"
+  | "unsupported_image_media_type"
+  | "empty_image_file"
+  | "failed_to_download_image"
+  | "image_file_not_found";
+
+export interface ResponseError {
+  code: ResponseErrorCode;
+  message: string;
+}
+
+// OpenAI Response Usage (from response_usage.py)
+export interface ResponseUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_tokens_details?: {
+    cached_tokens: number;
+  };
+  output_tokens_details?: {
+    reasoning_tokens: number;
+  };
+}
+
 // Core OpenAI Response Stream Event
 export interface ResponseStreamEvent {
   type: string;
@@ -28,7 +67,7 @@ export interface ResponseCreatedEvent {
     id: string;
     status: "in_progress";
     created_at: number;
-    output?: any[];
+    output?: ResponseOutputItem[];
   };
   sequence_number?: number;
 }
@@ -47,9 +86,11 @@ export interface ResponseCompletedEvent {
   response: {
     id: string;
     status?: "completed";
-    usage?: any;  // Optional usage information
+    usage?: ResponseUsage;  // Optional usage information
     model?: string;  // Optional model information
-    [key: string]: any; // Allow any additional fields
+    output?: ResponseOutputItem[];  // Output items
+    error?: ResponseError;  // Error if failed
+    metadata?: Record<string, unknown>;  // Additional metadata
   };
   sequence_number?: number;
 }
@@ -59,7 +100,7 @@ export interface ResponseFailedEvent {
   response: {
     id: string;
     status: "failed";
-    error?: any;
+    error?: ResponseError;
   };
   sequence_number?: number;
 }
@@ -157,16 +198,16 @@ export interface WorkflowItem {
   type: string;  // "executor_action", "workflow_action", "message", or any future type
   id: string;
   status?: "in_progress" | "completed" | "failed" | "cancelled";
-  [key: string]: any;  // Allow any additional fields
+  [key: string]: unknown;  // Allow any additional fields with unknown type
 }
 
 // Executor Action Item (DevUI specific)
 export interface ExecutorActionItem extends WorkflowItem {
   type: "executor_action";
   executor_id: string;
-  metadata?: Record<string, any>;
-  result?: any;
-  error?: any;
+  metadata?: Record<string, unknown>;
+  result?: unknown;
+  error?: unknown;
 }
 
 // Type guard for executor actions
@@ -364,18 +405,7 @@ export interface ResponseOutputText {
   annotations: Record<string, unknown>[];
 }
 
-export interface ResponseUsage {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  input_tokens_details: {
-    cached_tokens: number;
-  };
-  output_tokens_details: {
-    reasoning_tokens: number;
-  };
-}
-
+// Note: ResponseUsage is defined at the top of this file
 
 // Request format for Agent Framework
 // AgentFrameworkRequest moved to agent-framework.ts to avoid conflicts
@@ -404,11 +434,62 @@ export interface MessageInputTextContent {
   text: string;
 }
 
+// Annotation types for output text (from response_output_text.py)
+export interface AnnotationFileCitation {
+  type: "file_citation";
+  file_id: string;
+  filename: string;
+  index: number;
+}
+
+export interface AnnotationURLCitation {
+  type: "url_citation";
+  url: string;
+  title: string;
+  start_index: number;
+  end_index: number;
+}
+
+export interface AnnotationContainerFileCitation {
+  type: "container_file_citation";
+  container_id: string;
+  file_id: string;
+  filename: string;
+  start_index: number;
+  end_index: number;
+}
+
+export interface AnnotationFilePath {
+  type: "file_path";
+  file_id: string;
+  index: number;
+}
+
+export type OutputTextAnnotation =
+  | AnnotationFileCitation
+  | AnnotationURLCitation
+  | AnnotationContainerFileCitation
+  | AnnotationFilePath;
+
+// Logprob types for output text
+export interface LogprobTopLogprob {
+  token: string;
+  bytes: number[];
+  logprob: number;
+}
+
+export interface Logprob {
+  token: string;
+  bytes: number[];
+  logprob: number;
+  top_logprobs: LogprobTopLogprob[];
+}
+
 export interface MessageOutputTextContent {
   type: "output_text";
   text: string;
-  annotations?: any[];
-  logprobs?: any[];
+  annotations?: OutputTextAnnotation[];
+  logprobs?: Logprob[];
 }
 
 export interface MessageInputImage {
@@ -541,9 +622,218 @@ export interface Conversation {
   metadata?: Record<string, unknown>;
 }
 
-// List response
+// ============================================================================
+// OpenTelemetry Trace Attribute Keys
+// Mirrored from Python: agent_framework/observability.py ObservabilityAttributes
+// ============================================================================
+
+/**
+ * Standard attribute keys for OpenTelemetry traces.
+ * These match the Python ObservabilityAttributes enum exactly.
+ */
+export const TraceAttributes = {
+  // Request attributes
+  MODEL: "gen_ai.request.model",
+  MAX_TOKENS: "gen_ai.request.max_tokens",
+  TEMPERATURE: "gen_ai.request.temperature",
+  TOP_P: "gen_ai.request.top_p",
+  SEED: "gen_ai.request.seed",
+  FREQUENCY_PENALTY: "gen_ai.request.frequency_penalty",
+  PRESENCE_PENALTY: "gen_ai.request.presence_penalty",
+  STOP_SEQUENCES: "gen_ai.request.stop_sequences",
+
+  // Response attributes
+  FINISH_REASONS: "gen_ai.response.finish_reasons",
+  RESPONSE_ID: "gen_ai.response.id",
+
+  // Usage attributes
+  INPUT_TOKENS: "gen_ai.usage.input_tokens",
+  OUTPUT_TOKENS: "gen_ai.usage.output_tokens",
+
+  // Content attributes (messages sent/received)
+  INPUT_MESSAGES: "gen_ai.input.messages",
+  OUTPUT_MESSAGES: "gen_ai.output.messages",
+  SYSTEM_INSTRUCTIONS: "gen_ai.system_instructions",
+  OUTPUT_TYPE: "gen_ai.output.type",
+
+  // Tool attributes
+  TOOL_CALL_ID: "gen_ai.tool.call.id",
+  TOOL_NAME: "gen_ai.tool.name",
+  TOOL_TYPE: "gen_ai.tool.type",
+  TOOL_DEFINITIONS: "gen_ai.tool.definitions",
+  TOOL_ARGUMENTS: "gen_ai.tool.call.arguments",
+  TOOL_RESULT: "gen_ai.tool.call.result",
+
+  // Agent attributes
+  AGENT_ID: "gen_ai.agent.id",
+  AGENT_NAME: "gen_ai.agent.name",
+  AGENT_DESCRIPTION: "gen_ai.agent.description",
+  CONVERSATION_ID: "gen_ai.conversation.id",
+
+  // Workflow attributes
+  WORKFLOW_ID: "workflow.id",
+  WORKFLOW_NAME: "workflow.name",
+  EXECUTOR_ID: "executor.id",
+  EXECUTOR_TYPE: "executor.type",
+} as const;
+
+/**
+ * Type for trace attribute keys - ensures type safety when accessing attributes
+ */
+export type TraceAttributeKey = (typeof TraceAttributes)[keyof typeof TraceAttributes];
+
+/**
+ * Typed interface for known trace attributes.
+ * Using this instead of Record<string, unknown> provides compile-time safety.
+ */
+export interface TypedTraceAttributes {
+  // Request attributes
+  [TraceAttributes.MODEL]?: string;
+  [TraceAttributes.MAX_TOKENS]?: number;
+  [TraceAttributes.TEMPERATURE]?: number;
+  [TraceAttributes.TOP_P]?: number;
+  [TraceAttributes.SEED]?: number;
+
+  // Usage attributes
+  [TraceAttributes.INPUT_TOKENS]?: number;
+  [TraceAttributes.OUTPUT_TOKENS]?: number;
+
+  // Content attributes (JSON strings that need parsing)
+  [TraceAttributes.INPUT_MESSAGES]?: string;
+  [TraceAttributes.OUTPUT_MESSAGES]?: string;
+  [TraceAttributes.SYSTEM_INSTRUCTIONS]?: string;
+
+  // Tool attributes
+  [TraceAttributes.TOOL_NAME]?: string;
+  [TraceAttributes.TOOL_DEFINITIONS]?: string;
+  [TraceAttributes.TOOL_ARGUMENTS]?: string;
+  [TraceAttributes.TOOL_RESULT]?: string;
+
+  // Agent/workflow attributes
+  [TraceAttributes.AGENT_NAME]?: string;
+  [TraceAttributes.WORKFLOW_NAME]?: string;
+  [TraceAttributes.EXECUTOR_ID]?: string;
+
+  // Allow additional unknown attributes
+  [key: string]: unknown;
+}
+
+/**
+ * Message part types used in gen_ai.input.messages / gen_ai.output.messages
+ *
+ * Source: Python agent_framework/observability.py _to_otel_part()
+ *
+ * Python produces:
+ *   - text:               {"type": "text", "content": "..."}
+ *   - function_call:      {"type": "tool_call", "id": "...", "name": "...", "arguments": "..."}
+ *   - function_result:    {"type": "tool_call_response", "id": "...", "response": "..."}
+ */
+
+// Text content part
+// Python: {"type": "text", "content": content.text}
+export interface TraceTextPart {
+  type: "text";
+  content?: string; // Agent Framework format (from Python)
+  text?: string; // Alternative field name (OpenAI format)
+}
+
+// Tool/function call part (from assistant)
+// Python: {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
+export interface TraceToolCallPart {
+  type: "tool_call" | "function_call";
+  id?: string; // Tool call ID for correlation
+  name?: string; // Function name
+  arguments?: string; // JSON string of arguments
+}
+
+// Tool/function result part (response to tool call)
+// Python: {"type": "tool_call_response", "id": content.call_id, "response": response}
+export interface TraceToolResultPart {
+  type: "tool_call_response" | "tool_result" | "function_result";
+  id?: string; // Tool call ID for correlation
+  response?: string; // Agent Framework format (from Python)
+  result?: string; // Alternative field name (other formats)
+}
+
+// Union type for all message parts
+export type TraceMessagePart = TraceTextPart | TraceToolCallPart | TraceToolResultPart;
+
+// Helper type guard functions
+export function isTextPart(part: TraceMessagePart): part is TraceTextPart {
+  return part.type === "text";
+}
+
+export function isToolCallPart(part: TraceMessagePart): part is TraceToolCallPart {
+  return part.type === "tool_call" || part.type === "function_call";
+}
+
+export function isToolResultPart(part: TraceMessagePart): part is TraceToolResultPart {
+  return (
+    part.type === "tool_result" ||
+    part.type === "function_result" ||
+    part.type === "tool_call_response"
+  );
+}
+
+/**
+ * Message structure in gen_ai.input.messages / gen_ai.output.messages
+ * Format: [{role: "system"|"user"|"assistant"|"tool", parts: [...]}]
+ */
+export interface TraceMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  parts: TraceMessagePart[];
+}
+
+/**
+ * Helper to safely get a typed attribute value
+ */
+export function getTraceAttribute<K extends keyof TypedTraceAttributes>(
+  attributes: TypedTraceAttributes,
+  key: K
+): TypedTraceAttributes[K] {
+  return attributes[key];
+}
+
+/**
+ * Helper to parse JSON message array from trace attributes
+ */
+export function parseTraceMessages(jsonString: string | undefined): TraceMessage[] {
+  if (!jsonString) return [];
+  try {
+    return JSON.parse(jsonString) as TraceMessage[];
+  } catch {
+    return [];
+  }
+}
+
+// Stored trace span (from conversation metadata)
+export interface TraceSpan {
+  type?: string;
+  span_id: string;
+  trace_id: string;
+  parent_span_id?: string | null;
+  operation_name: string;
+  start_time: number;
+  end_time?: number;
+  duration_ms?: number;
+  attributes: TypedTraceAttributes;
+  status: string;
+  response_id?: string | null;
+  entity_id?: string;
+  events?: Array<{
+    name: string;
+    timestamp: number;
+    attributes?: Record<string, unknown>;
+  }>;
+  error?: string;
+}
+
+// List response with trace metadata (DevUI extension)
 export interface ConversationItemsListResponse {
   object: "list";
   data: ConversationItem[];
   has_more: boolean;
+  metadata?: {
+    traces?: TraceSpan[];
+  };
 }

@@ -176,6 +176,31 @@ class ConversationStore(ABC):
         """
         pass
 
+    @abstractmethod
+    def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
+        """Add a trace event to the conversation for context inspection.
+
+        Traces capture execution metadata like token usage, timing, and LLM context
+        that isn't stored in the AgentThread but is useful for debugging.
+
+        Args:
+            conversation_id: Conversation ID
+            trace_event: Trace event data (from ResponseTraceEvent.data)
+        """
+        pass
+
+    @abstractmethod
+    def get_traces(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Get all trace events for a conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            List of trace event dicts, or empty list if not found
+        """
+        pass
+
 
 class InMemoryConversationStore(ConversationStore):
     """In-memory conversation storage wrapping AgentThread.
@@ -215,6 +240,7 @@ class InMemoryConversationStore(ConversationStore):
             "metadata": metadata or {},
             "created_at": created_at,
             "items": [],
+            "traces": [],  # Trace events for context inspection (token usage, timing, etc.)
         }
 
         # Initialize item index for this conversation
@@ -407,10 +433,20 @@ class InMemoryConversationStore(ConversationStore):
                     elif content_type == "function_result":
                         # Function result - create separate ConversationItem
                         call_id = getattr(content, "call_id", None)
-                        # Output is stored in additional_properties
-                        output = ""
-                        if hasattr(content, "additional_properties"):
-                            output = content.additional_properties.get("output", "")
+                        # Output is stored in the 'result' field of FunctionResultContent
+                        result_value = getattr(content, "result", None)
+                        # Convert result to string (it could be dict, list, or other types)
+                        if result_value is None:
+                            output = ""
+                        elif isinstance(result_value, str):
+                            output = result_value
+                        else:
+                            import json
+
+                            try:
+                                output = json.dumps(result_value)
+                            except (TypeError, ValueError):
+                                output = str(result_value)
 
                         if call_id:
                             function_results.append(
@@ -555,6 +591,34 @@ class InMemoryConversationStore(ConversationStore):
         """Get AgentThread for execution - CRITICAL for agent.run_stream()."""
         conv_data = self._conversations.get(conversation_id)
         return conv_data["thread"] if conv_data else None
+
+    def add_trace(self, conversation_id: str, trace_event: dict[str, Any]) -> None:
+        """Add a trace event to the conversation for context inspection.
+
+        Traces capture execution metadata like token usage, timing, and LLM context
+        that isn't stored in the AgentThread but is useful for debugging.
+
+        Args:
+            conversation_id: Conversation ID
+            trace_event: Trace event data (from ResponseTraceEvent.data)
+        """
+        conv_data = self._conversations.get(conversation_id)
+        if conv_data:
+            traces = conv_data.get("traces", [])
+            traces.append(trace_event)
+            conv_data["traces"] = traces
+
+    def get_traces(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Get all trace events for a conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            List of trace event dicts, or empty list if not found
+        """
+        conv_data = self._conversations.get(conversation_id)
+        return conv_data.get("traces", []) if conv_data else []
 
     async def list_conversations_by_metadata(self, metadata_filter: dict[str, str]) -> list[Conversation]:
         """Filter conversations by metadata (e.g., agent_id)."""

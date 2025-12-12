@@ -7,6 +7,8 @@ import type {
 import type {
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
+  ResponseOutputItemAddedEvent,
+  ResponseOutputItemDoneEvent,
   JSONSchemaProperty,
 } from "@/types";
 import type { Workflow } from "@/types/workflow";
@@ -389,9 +391,10 @@ export function processWorkflowEvents(
   events.forEach((event) => {
     // Handle new standard OpenAI events
     if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
-      const item = (event as any).item;
-      if (item && item.type === "executor_action" && item.executor_id) {
-        const executorId = item.executor_id;
+      const outputEvent = event as ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent;
+      const item = outputEvent.item;
+      if (item && item.type === "executor_action" && "executor_id" in item) {
+        const executorId = item.executor_id as string;
         const itemId = item.id;
 
         // Track the latest item ID for this executor
@@ -492,16 +495,17 @@ export function processWorkflowEvents(
     // This prevents setting to "running" after the executor has already completed
     const hasCompletionEvent = events.some((event) => {
       if (event.type === "response.output_item.done") {
-        const item = (event as any).item;
-        return item && item.type === "executor_action" && item.executor_id === startExecutorId;
+        const outputEvent = event as ResponseOutputItemDoneEvent;
+        const item = outputEvent.item;
+        return item && item.type === "executor_action" && "executor_id" in item && item.executor_id === startExecutorId;
       }
       if (event.type === "response.workflow_event.completed" && "data" in event && event.data) {
-        const data = event.data as any;
+        const data = event.data as Record<string, unknown>;
         return data.executor_id === startExecutorId &&
                (data.event_type === "ExecutorCompletedEvent" ||
                 data.event_type === "ExecutorFailedEvent" ||
-                data.event_type?.includes("Error") ||
-                data.event_type?.includes("Failed"));
+                (typeof data.event_type === "string" && data.event_type.includes("Error")) ||
+                (typeof data.event_type === "string" && data.event_type.includes("Failed")));
       }
       return false;
     });
@@ -565,9 +569,10 @@ export function getCurrentlyExecutingExecutors(
   events.forEach((event) => {
     // Handle new standard OpenAI events
     if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
-      const item = (event as any).item;
-      if (item && item.type === "executor_action" && item.executor_id) {
-        const executorId = item.executor_id;
+      const outputEvent = event as ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent;
+      const item = outputEvent.item;
+      if (item && item.type === "executor_action" && "executor_id" in item) {
+        const executorId = item.executor_id as string;
 
         executorTimeline[executorId] = {
           lastEvent: event.type === "response.output_item.added" ? "ExecutorInvokedEvent" : "ExecutorCompletedEvent",
