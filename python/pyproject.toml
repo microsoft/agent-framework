@@ -96,6 +96,7 @@ agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
+agent-framework-ollama = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 
