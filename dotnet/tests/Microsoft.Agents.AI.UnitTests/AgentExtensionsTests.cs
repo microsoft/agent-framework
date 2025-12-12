@@ -337,7 +337,7 @@ public class AgentExtensionsTests
         public CancellationToken LastCancellationToken { get; private set; }
         public int RunAsyncCallCount { get; private set; }
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentRunResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -355,7 +355,7 @@ public class AgentExtensionsTests
             return Task.FromResult(this._responseToReturn!);
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
