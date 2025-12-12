@@ -64,7 +64,8 @@ async def main():
             resource=create_resource(),
             enable_performance_counters=False,
         )
-        print("Configured Azure Monitor for Application Insights.")
+        # This call is not necessary if you have the environment variable ENABLE_INSTRUMENTATION=true set
+        # If not or set to false, or if you want to enable or disable sensitive data collection, call this function.
         enable_instrumentation(enable_sensitive_data=True)
         print("Observability is set up. Starting Weather Agent...")
 

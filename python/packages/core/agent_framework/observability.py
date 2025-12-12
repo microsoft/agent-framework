@@ -318,6 +318,9 @@ def _create_otlp_exporters(
 
     exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
 
+    if not actual_logs_endpoint and not actual_traces_endpoint and not actual_metrics_endpoint:
+        return exporters
+
     if protocol in ("grpc", "http/protobuf"):
         # Import all gRPC exporters
         try:
