@@ -25,6 +25,7 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         return this.RunAgent(request);
     }
 
+    // IDE1006 and VSTHRD200 disabled to allow method name to match the common cross-platform entity operation name.
 #pragma warning disable IDE1006
 #pragma warning disable VSTHRD200
     public async Task<AgentRunResponse> RunAgent(RunRequest request)
