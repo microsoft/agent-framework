@@ -8,10 +8,11 @@ from typing import Any
 
 from ag_ui.encoder import EventEncoder
 from agent_framework import AgentProtocol
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
 from ._agent import AgentFrameworkAgent
+from ._types import AGUIRequest
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ def add_agent_framework_fastapi_endpoint(
     predict_state_config: dict[str, dict[str, str]] | None = None,
     allow_origins: list[str] | None = None,
     default_state: dict[str, Any] | None = None,
+    tags: list[str] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -36,6 +38,7 @@ def add_agent_framework_fastapi_endpoint(
             Format: {"state_key": {"tool": "tool_name", "tool_argument": "arg_name"}}
         allow_origins: CORS origins (not yet implemented)
         default_state: Optional initial state to seed when the client does not provide state keys
+        tags: OpenAPI tags for endpoint categorization (defaults to ["AG-UI"])
     """
     if isinstance(agent, AgentProtocol):
         wrapped_agent = AgentFrameworkAgent(
@@ -46,15 +49,15 @@ def add_agent_framework_fastapi_endpoint(
     else:
         wrapped_agent = agent
 
-    @app.post(path)
-    async def agent_endpoint(request: Request):  # type: ignore[misc]
+    @app.post(path, tags=tags or ["AG-UI"])  # type: ignore[arg-type]
+    async def agent_endpoint(request_body: AGUIRequest):  # type: ignore[misc]
         """Handle AG-UI agent requests.
 
         Note: Function is accessed via FastAPI's decorator registration,
         despite appearing unused to static analysis.
         """
         try:
-            input_data = await request.json()
+            input_data = request_body.model_dump(exclude_none=True)
             if default_state:
                 state = input_data.setdefault("state", {})
                 for key, value in default_state.items():
