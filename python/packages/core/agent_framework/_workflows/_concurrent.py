@@ -29,7 +29,8 @@ parallel workflow with:
 - a default aggregator that combines all agent conversations and completes the workflow
 
 Notes:
-- Participants should be AgentProtocol instances or Executors.
+- Participants can be provided as AgentProtocol or Executor instances via `.participants()`,
+  or as factories returning AgentProtocol or Executor via `.register_participants()`.
 - A custom aggregator can be provided as:
   - an Executor instance (it should handle list[AgentExecutorResponse],
     yield output), or
@@ -395,7 +396,7 @@ class ConcurrentBuilder:
         | Callable[[list[AgentExecutorResponse]], Any]
         | Callable[[list[AgentExecutorResponse], WorkflowContext[Never, Any]], Any],
     ) -> "ConcurrentBuilder":
-        r"""Override the default aggregator with an executor, an executor factory, or a callback.
+        r"""Override the default aggregator with an executor or a callback.
 
         - Executor: must handle `list[AgentExecutorResponse]` and yield output using `ctx.yield_output(...)`
         - Callback: sync or async callable with one of the signatures:
