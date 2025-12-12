@@ -5,19 +5,22 @@
 // function invocation (logging and result overrides), and human-in-the-loop
 // approval workflows for sensitive function calls.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 // Get Azure AI Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
 // Get a client to create/retrieve server side agents with
-var azureOpenAIClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+var openAIClient = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName);
 
 [Description("Get the weather for a given location.")]
@@ -29,7 +32,7 @@ static string GetDateTime()
     => DateTimeOffset.Now.ToString();
 
 // Adding middleware to the chat client level and building an agent on top of it
-var originalAgent = azureOpenAIClient.AsIChatClient()
+var originalAgent = openAIClient.AsIChatClient()
     .AsBuilder()
     .Use(getResponseFunc: ChatClientMiddleware, getStreamingResponseFunc: null)
     .BuildAIAgent(

@@ -6,10 +6,11 @@
 // The provider invokes the custom search function
 // before each model invocation and injects the results into the model context.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -22,9 +23,9 @@ TextSearchProviderOptions textSearchOptions = new()
     RecentMessageMemoryLimit = 6,
 };
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {

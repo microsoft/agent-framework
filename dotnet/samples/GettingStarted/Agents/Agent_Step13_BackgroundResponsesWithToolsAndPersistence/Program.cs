@@ -6,12 +6,13 @@
 
 #pragma warning disable CA1050 // Declare types in namespaces
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -19,9 +20,9 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 
 var stateStore = new Dictionary<string, JsonElement?>();
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
      .GetOpenAIResponseClient(deploymentName)
      .CreateAIAgent(
         name: "SpaceNovelWriter",

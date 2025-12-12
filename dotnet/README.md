@@ -12,14 +12,17 @@
 
 ```c#
 using System;
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
 
-var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+var agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetOpenAIResponseClient(deploymentName)
     .CreateAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 

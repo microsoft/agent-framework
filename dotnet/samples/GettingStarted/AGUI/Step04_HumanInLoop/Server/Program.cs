@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using OpenAI;
 using OpenAI.Chat;
 using ServerFunctionApproval;
 
@@ -52,9 +53,9 @@ AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(Approv
 #pragma warning restore MEAI001
 
 // Create base agent
-ChatClient openAIChatClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        new DefaultAzureCredential())
+ChatClient openAIChatClient = new OpenAIClient(
+        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName);
 
 ChatClientAgent baseAgent = openAIChatClient.AsIChatClient().CreateAIAgent(

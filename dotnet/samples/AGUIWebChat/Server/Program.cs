@@ -2,11 +2,12 @@
 
 // This sample demonstrates a basic AG-UI server hosting a chat agent for the Blazor web client.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -19,11 +20,11 @@ string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new In
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
 // Create the AI agent
-AzureOpenAIClient azureOpenAIClient = new(
-    new Uri(endpoint),
-    new DefaultAzureCredential());
+OpenAIClient openAIClient = new(
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") });
 
-ChatClient chatClient = azureOpenAIClient.GetChatClient(deploymentName);
+ChatClient chatClient = openAIClient.GetChatClient(deploymentName);
 
 ChatClientAgent agent = chatClient.AsIChatClient().CreateAIAgent(
     name: "ChatAssistant",
