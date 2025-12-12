@@ -1240,7 +1240,7 @@ class HandoffBuilder:
                 raise ValueError(f"Source agent '{source}' is not in the participants list")
 
             # Normalize targets to list
-            target_list: list[AgentProtocol | Executor] = (
+            target_list: list[AgentProtocol | Executor] = (  # type: ignore[no-redef]
                 [targets] if isinstance(targets, (AgentProtocol, Executor)) else list(targets)
             )  # type: ignore
 

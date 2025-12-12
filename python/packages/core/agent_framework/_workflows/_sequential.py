@@ -298,7 +298,6 @@ class SequentialBuilder:
                         executor_id=f"request_info:{label}",
                         agent_filter=self._request_info_filter,
                     )
-                    # TODO(@taochen): Use the factory pattern in the builder to avoid warnings
                     builder.add_edge(prior, interceptor)
                     builder.add_edge(interceptor, p)
                 else:
