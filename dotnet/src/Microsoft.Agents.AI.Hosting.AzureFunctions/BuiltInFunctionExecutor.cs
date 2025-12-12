@@ -32,7 +32,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
         }
 
         HttpRequestData? httpRequestData = null;
-        TaskEntityDispatcher? dispatcher = null;
+        string? dispatcher = null;
         DurableTaskClient? durableTaskClient = null;
         ToolInvocationContext? mcpToolInvocationContext = null;
 
@@ -43,7 +43,7 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 case HttpRequestData request:
                     httpRequestData = request;
                     break;
-                case TaskEntityDispatcher entityDispatcher:
+                case string entityDispatcher:
                     dispatcher = entityDispatcher;
                     break;
                 case DurableTaskClient client:
@@ -83,9 +83,9 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 throw new InvalidOperationException($"Task entity dispatcher binding is missing for the invocation {context.InvocationId}.");
             }
 
-            await BuiltInFunctions.InvokeAgentAsync(
-                dispatcher,
+            context.GetInvocationResult().Value = await BuiltInFunctions.InvokeAgentAsync(
                 durableTaskClient,
+                dispatcher,
                 context);
             return;
         }
