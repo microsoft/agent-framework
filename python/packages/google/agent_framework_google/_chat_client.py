@@ -128,7 +128,7 @@ class GoogleAIChatClient(BaseChatClient):
             client = GoogleAIChatClient(api_key="your_api_key", model_id="gemini-2.5-flash")
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "google"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "gcp.gemini"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
     def __init__(
         self,

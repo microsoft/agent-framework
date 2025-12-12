@@ -94,6 +94,7 @@ agent-framework-chatkit = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
+agent-framework-google = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-purview = { workspace = true }
