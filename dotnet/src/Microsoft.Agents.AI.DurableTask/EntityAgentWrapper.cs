@@ -19,7 +19,7 @@ internal sealed class EntityAgentWrapper(
     private readonly IServiceProvider? _entityScopedServices = entityScopedServices;
 
     // The ID of the agent is always the entity ID.
-    public override string Id => this._entityContext.Id.ToString();
+    protected override string? IdCore => this._entityContext.Id.ToString();
 
     public override async Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
