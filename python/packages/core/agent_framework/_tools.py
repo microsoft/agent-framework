@@ -1628,7 +1628,9 @@ def _handle_function_calls_response(
                             break
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
-                response = await func(self, messages=prepped_messages, **kwargs)
+                # Filter out internal framework kwargs before passing to clients.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+                response = await func(self, messages=prepped_messages, **filtered_kwargs)
                 # if there are function calls, we will handle them first
                 function_results = {
                     it.call_id for it in response.messages[0].contents if isinstance(it, FunctionResultContent)
@@ -1717,7 +1719,10 @@ def _handle_function_calls_response(
 
             # Failsafe: give up on tools, ask model for plain answer
             kwargs["tool_choice"] = "none"
-            response = await func(self, messages=prepped_messages, **kwargs)
+
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            response = await func(self, messages=prepped_messages, **filtered_kwargs)
             if fcc_messages:
                 for msg in reversed(fcc_messages):
                     response.messages.insert(0, msg)
@@ -1804,7 +1809,9 @@ def _handle_function_calls_streaming_response(
                     _replace_approval_contents_with_results(prepped_messages, fcc_todo, approved_function_results)
 
                 all_updates: list["ChatResponseUpdate"] = []
-                async for update in func(self, messages=prepped_messages, **kwargs):
+                # Filter out internal framework kwargs before passing to clients.
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+                async for update in func(self, messages=prepped_messages, **filtered_kwargs):
                     all_updates.append(update)
                     yield update
 
@@ -1915,7 +1922,9 @@ def _handle_function_calls_streaming_response(
 
             # Failsafe: give up on tools, ask model for plain answer
             kwargs["tool_choice"] = "none"
-            async for update in func(self, messages=prepped_messages, **kwargs):
+            # Filter out internal framework kwargs before passing to clients.
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k != "thread"}
+            async for update in func(self, messages=prepped_messages, **filtered_kwargs):
                 yield update
 
         return streaming_function_invocation_wrapper
