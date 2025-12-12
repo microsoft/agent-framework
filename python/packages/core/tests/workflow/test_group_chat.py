@@ -1082,3 +1082,106 @@ def test_set_manager_builds_with_agent_manager() -> None:
 
     assert isinstance(orchestrator, GroupChatOrchestratorExecutor)
     assert orchestrator._is_manager_agent()
+
+
+async def test_group_chat_with_request_info_filtering():
+    """Test that with_request_info(agents=[...]) only pauses before specified agents run."""
+    from agent_framework import AgentInputRequest, RequestInfoEvent
+
+    # Create agents - we want to verify only beta triggers pause
+    alpha = StubAgent("alpha", "response from alpha")
+    beta = StubAgent("beta", "response from beta")
+
+    # Manager that selects alpha first, then beta, then finishes
+    call_count = 0
+
+    async def selector(state: GroupChatStateSnapshot) -> str | None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "alpha"
+        if call_count == 2:
+            return "beta"
+        return None
+
+    workflow = (
+        GroupChatBuilder()
+        .set_select_speakers_func(selector, display_name="manager", final_message="done")
+        .participants(alpha=alpha, beta=beta)
+        .with_request_info(agents=["beta"])  # Only pause before beta runs
+        .build()
+    )
+
+    # Run until we get a request info event (should be before beta, not alpha)
+    request_events: list[RequestInfoEvent] = []
+    async for event in workflow.run_stream("test task"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentInputRequest):
+            request_events.append(event)
+            # Don't break - let stream complete naturally when paused
+
+    # Should have exactly one request event before beta
+    assert len(request_events) == 1
+    request_event = request_events[0]
+
+    # The target agent should be beta's executor ID (groupchat_agent:beta)
+    assert request_event.data.target_agent_id is not None
+    assert "beta" in request_event.data.target_agent_id
+
+    # Continue the workflow with a response
+    outputs: list[WorkflowOutputEvent] = []
+    async for event in workflow.send_responses_streaming({request_event.request_id: "continue please"}):
+        if isinstance(event, WorkflowOutputEvent):
+            outputs.append(event)
+
+    # Workflow should complete
+    assert len(outputs) == 1
+
+
+async def test_group_chat_with_request_info_no_filter_pauses_all():
+    """Test that with_request_info() without agents pauses before all participants."""
+    from agent_framework import AgentInputRequest, RequestInfoEvent
+
+    # Create agents
+    alpha = StubAgent("alpha", "response from alpha")
+
+    # Manager selects alpha then finishes
+    call_count = 0
+
+    async def selector(state: GroupChatStateSnapshot) -> str | None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "alpha"
+        return None
+
+    workflow = (
+        GroupChatBuilder()
+        .set_select_speakers_func(selector, display_name="manager", final_message="done")
+        .participants(alpha=alpha)
+        .with_request_info()  # No filter - pause for all
+        .build()
+    )
+
+    # Run until we get a request info event
+    request_events: list[RequestInfoEvent] = []
+    async for event in workflow.run_stream("test task"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentInputRequest):
+            request_events.append(event)
+            break
+
+    # Should pause before alpha
+    assert len(request_events) == 1
+    assert request_events[0].data.target_agent_id is not None
+    assert "alpha" in request_events[0].data.target_agent_id
+
+
+def test_group_chat_builder_with_request_info_returns_self():
+    """Test that with_request_info() returns self for method chaining."""
+    builder = GroupChatBuilder()
+    result = builder.with_request_info()
+    assert result is builder
+
+    # Also test with agents parameter
+    builder2 = GroupChatBuilder()
+    result2 = builder2.with_request_info(agents=["test"])
+    assert result2 is builder2

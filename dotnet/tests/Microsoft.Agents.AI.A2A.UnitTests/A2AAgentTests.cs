@@ -547,7 +547,7 @@ public sealed class A2AAgentTests : IDisposable
         var result = await this._agent.RunAsync("Test message");
 
         // Assert
-        if (taskState == TaskState.Submitted || taskState == TaskState.Working)
+        if (taskState is TaskState.Submitted or TaskState.Working)
         {
             Assert.NotNull(result.ContinuationToken);
         }

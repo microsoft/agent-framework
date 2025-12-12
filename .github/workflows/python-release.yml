@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
