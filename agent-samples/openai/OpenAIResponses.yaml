@@ -10,19 +10,19 @@ model:
         temperature: 0.9
         topP: 0.95
     connection:
-        kind: ApiKey
-        key: =Env.OPENAI_APIKEY
+        kind: key
+        apiKey: =Env.OPENAI_APIKEY
 outputSchema:
     properties:
         language:
-            type: string
+            kind: string
             required: true
             description: The language of the answer.
         answer:
-            type: string
+            kind: string
             required: true
             description: The answer text.
         type:
-            type: string
+            kind: string
             required: true
             description: The type of the response.

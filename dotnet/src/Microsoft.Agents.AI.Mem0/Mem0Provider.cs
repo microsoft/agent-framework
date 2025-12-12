@@ -153,7 +153,7 @@ public sealed class Mem0Provider : AIContextProvider
                 ? null
                 : $"{this._contextPrompt}\n{string.Join(Environment.NewLine, memories)}";
 
-            if (this._logger is not null)
+            if (this._logger?.IsEnabled(LogLevel.Information) is true)
             {
                 this._logger.LogInformation(
                     "Mem0AIContextProvider: Retrieved {Count} memories. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
@@ -162,7 +162,8 @@ public sealed class Mem0Provider : AIContextProvider
                     this._searchScope.AgentId,
                     this._searchScope.ThreadId,
                     this.SanitizeLogData(this._searchScope.UserId));
-                if (outputMessageText is not null)
+
+                if (outputMessageText is not null && this._logger.IsEnabled(LogLevel.Trace))
                 {
                     this._logger.LogTrace(
                         "Mem0AIContextProvider: Search Results\nInput:{Input}\nOutput:{MessageText}\nApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
@@ -186,13 +187,16 @@ public sealed class Mem0Provider : AIContextProvider
         }
         catch (Exception ex)
         {
-            this._logger?.LogError(
-                ex,
-                "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                this._searchScope.ApplicationId,
-                this._searchScope.AgentId,
-                this._searchScope.ThreadId,
-                this.SanitizeLogData(this._searchScope.UserId));
+            if (this._logger?.IsEnabled(LogLevel.Error) is true)
+            {
+                this._logger.LogError(
+                    ex,
+                    "Mem0AIContextProvider: Failed to search Mem0 for memories due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    this._searchScope.ApplicationId,
+                    this._searchScope.AgentId,
+                    this._searchScope.ThreadId,
+                    this.SanitizeLogData(this._searchScope.UserId));
+            }
             return new AIContext();
         }
     }
@@ -212,13 +216,16 @@ public sealed class Mem0Provider : AIContextProvider
         }
         catch (Exception ex)
         {
-            this._logger?.LogError(
-                ex,
-                "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
-                this._storageScope.ApplicationId,
-                this._storageScope.AgentId,
-                this._storageScope.ThreadId,
-                this.SanitizeLogData(this._storageScope.UserId));
+            if (this._logger?.IsEnabled(LogLevel.Error) is true)
+            {
+                this._logger.LogError(
+                    ex,
+                    "Mem0AIContextProvider: Failed to send messages to Mem0 due to error. ApplicationId: '{ApplicationId}', AgentId: '{AgentId}', ThreadId: '{ThreadId}', UserId: '{UserId}'.",
+                    this._storageScope.ApplicationId,
+                    this._storageScope.AgentId,
+                    this._storageScope.ThreadId,
+                    this.SanitizeLogData(this._storageScope.UserId));
+            }
         }
     }
 

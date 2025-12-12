@@ -27,7 +27,7 @@ Set the following environment variables:
 $env:AZURE_FOUNDRY_OPENAI_ENDPOINT="https://ai-foundry-<myresourcename>.services.ai.azure.com/openai/v1/"
 
 # Optional, defaults to using Azure CLI for authentication if not provided
-$env:AZURE_FOUNDRY_OPENAI_APIKEY="************"
+$env:AZURE_FOUNDRY_OPENAI_API_KEY="************"
 
 # Optional, defaults to Phi-4-mini-instruct
 $env:AZURE_FOUNDRY_MODEL_DEPLOYMENT="Phi-4-mini-instruct"
