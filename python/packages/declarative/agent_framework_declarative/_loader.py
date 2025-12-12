@@ -109,6 +109,53 @@ class ProviderLookupError(DeclarativeLoaderError):
 
 
 class AgentFactory:
+    """Factory for creating ChatAgent instances from declarative YAML definitions.
+
+    AgentFactory parses YAML agent definitions (PromptAgent kind) and creates
+    configured ChatAgent instances with the appropriate chat client, tools,
+    and response format.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_declarative import AgentFactory
+
+            # Create agent from YAML file
+            factory = AgentFactory()
+            agent = factory.create_agent_from_yaml_path("agent.yaml")
+
+            # Run the agent
+            async for event in agent.run_stream("Hello!"):
+                print(event)
+
+        .. code-block:: python
+
+            from agent_framework.azure import AzureOpenAIChatClient
+            from agent_framework_declarative import AgentFactory
+
+            # With pre-configured chat client
+            client = AzureOpenAIChatClient()
+            factory = AgentFactory(chat_client=client)
+            agent = factory.create_agent_from_yaml_path("agent.yaml")
+
+        .. code-block:: python
+
+            from agent_framework_declarative import AgentFactory
+
+            # From inline YAML string
+            yaml_content = '''
+            kind: Prompt
+            name: GreetingAgent
+            instructions: You are a friendly assistant.
+            model:
+              id: gpt-4o
+              provider: AzureOpenAI
+            '''
+
+            factory = AgentFactory()
+            agent = factory.create_agent_from_yaml(yaml_content)
+    """
+
     def __init__(
         self,
         *,
@@ -120,38 +167,55 @@ class AgentFactory:
         default_provider: str = "AzureAIClient",
         env_file: str | None = None,
     ) -> None:
-        """Create the agent factory, with bindings.
+        """Create the agent factory.
 
         Args:
-            chat_client: An optional ChatClientProtocol instance to use as a dependency,
-                this will be passed to the ChatAgent that get's created.
+            chat_client: An optional ChatClientProtocol instance to use as a dependency.
+                This will be passed to the ChatAgent that gets created.
                 If you need to create multiple agents with different chat clients,
                 do not pass this and instead provide the chat client in the YAML definition.
             bindings: An optional dictionary of bindings to use when creating agents.
             connections: An optional dictionary of connections to resolve ReferenceConnections.
             client_kwargs: An optional dictionary of keyword arguments to pass to chat client constructor.
             additional_mappings: An optional dictionary to extend the provider type to object mapping.
-                Should have the structure:
-
-                ..code-block:: python
-
-                    additional_mappings = {
-                        "Provider.ApiType": {
-                            "package": "package.name",
-                            "name": "ClassName",
-                            "model_id_field": "field_name_in_constructor",
-                        },
-                        ...
-                    }
-
-                Here, "Provider.ApiType" is the lookup key used when both provider and apiType are specified in the
-                model, "Provider" is also allowed.
-                Package refers to which model needs to be imported, Name is the class name of the ChatClientProtocol
-                implementation, and model_id_field is the name of the field in the constructor
-                that accepts the model.id value.
-            default_provider: The default provider used when model.provider is not specified,
-                default is "AzureAIClient".
+            default_provider: The default provider used when model.provider is not specified.
+                Defaults to "AzureAIClient".
             env_file: An optional path to a .env file to load environment variables from.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                # Minimal initialization
+                factory = AgentFactory()
+
+            .. code-block:: python
+
+                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework_declarative import AgentFactory
+
+                # With shared chat client
+                client = AzureOpenAIChatClient()
+                factory = AgentFactory(
+                    chat_client=client,
+                    env_file=".env",
+                )
+
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                # With custom provider mappings
+                factory = AgentFactory(
+                    additional_mappings={
+                        "CustomProvider.Chat": {
+                            "package": "my_package.clients",
+                            "name": "CustomChatClient",
+                            "model_id_field": "model_name",
+                        },
+                    },
+                )
         """
         self.chat_client = chat_client
         self.bindings = bindings
@@ -165,14 +229,15 @@ class AgentFactory:
         """Create a ChatAgent from a YAML file path.
 
         This method does the following things:
-        1. Loads the YAML file into a AgentSchema object using open and agent_schema_dispatch.
+
+        1. Loads the YAML file into an AgentSchema object.
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
         5. Creates and returns a ChatAgent instance with the configured properties.
 
         Args:
-            yaml_path: Path to the YAML file representation of a AgentSchema object
+            yaml_path: Path to the YAML file representation of a PromptAgent.
 
         Returns:
             The ``ChatAgent`` instance created from the YAML file.
@@ -183,6 +248,28 @@ class AgentFactory:
             ValueError: If a ReferenceConnection cannot be resolved.
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                factory = AgentFactory()
+                agent = factory.create_agent_from_yaml_path("agents/support_agent.yaml")
+
+                # Execute the agent
+                async for event in agent.run_stream("Help me with my order"):
+                    print(event)
+
+            .. code-block:: python
+
+                from pathlib import Path
+                from agent_framework_declarative import AgentFactory
+
+                # Using Path object for cross-platform compatibility
+                agent_path = Path(__file__).parent / "agents" / "writer.yaml"
+                factory = AgentFactory()
+                agent = factory.create_agent_from_yaml_path(agent_path)
         """
         if not isinstance(yaml_path, Path):
             yaml_path = Path(yaml_path)
@@ -196,14 +283,15 @@ class AgentFactory:
         """Create a ChatAgent from a YAML string.
 
         This method does the following things:
-        1. Loads the YAML string into a AgentSchema object using agent_schema_dispatch.
+
+        1. Loads the YAML string into an AgentSchema object.
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
         5. Creates and returns a ChatAgent instance with the configured properties.
 
         Args:
-            yaml_str: YAML string representation of a AgentSchema object
+            yaml_str: YAML string representation of a PromptAgent.
 
         Returns:
             The ``ChatAgent`` instance created from the YAML string.
@@ -214,6 +302,53 @@ class AgentFactory:
             ValueError: If a ReferenceConnection cannot be resolved.
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+
+                yaml_content = '''
+                kind: Prompt
+                name: TranslationAgent
+                description: Translates text between languages
+                instructions: |
+                    You are a translation assistant.
+                    Translate user input to the requested language.
+                model:
+                    id: gpt-4o
+                    provider: AzureOpenAI
+                    options:
+                        temperature: 0.3
+                '''
+
+                factory = AgentFactory()
+                agent = factory.create_agent_from_yaml(yaml_content)
+
+            .. code-block:: python
+
+                from agent_framework_declarative import AgentFactory
+                from pydantic import BaseModel
+
+                # Agent with structured output
+                yaml_content = '''
+                kind: Prompt
+                name: SentimentAnalyzer
+                instructions: Analyze the sentiment of the input text.
+                model:
+                    id: gpt-4o
+                outputSchema:
+                    type: object
+                    properties:
+                        sentiment:
+                            type: string
+                            enum: [positive, negative, neutral]
+                        confidence:
+                            type: number
+                '''
+
+                factory = AgentFactory()
+                agent = factory.create_agent_from_yaml(yaml_content)
         """
         prompt_agent = agent_schema_dispatch(yaml.safe_load(yaml_str))
         if not isinstance(prompt_agent, PromptAgent):

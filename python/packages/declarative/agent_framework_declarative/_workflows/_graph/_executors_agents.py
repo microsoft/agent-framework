@@ -1,0 +1,847 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Agent invocation executors for declarative workflows.
+
+These executors handle invoking Azure AI Foundry agents and other AI agents,
+supporting both streaming responses and human-in-loop patterns.
+
+Aligned with .NET's InvokeAzureAgentExecutor behavior including:
+- Structured input with arguments and messages
+- External loop support for human-in-loop patterns
+- Output with messages and responseObject (JSON parsing)
+- AutoSend behavior control
+"""
+
+import contextlib
+import json
+import logging
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, cast
+
+from agent_framework import ChatMessage
+from agent_framework._types import FunctionCallContent, FunctionResultContent
+from agent_framework._workflows import (
+    WorkflowContext,
+    handler,
+    response_handler,
+)
+
+from ._base import (
+    ActionComplete,
+    DeclarativeActionExecutor,
+    DeclarativeWorkflowState,
+)
+
+logger = logging.getLogger(__name__)
+
+# Keys for agent-related state
+AGENT_REGISTRY_KEY = "_agent_registry"
+TOOL_REGISTRY_KEY = "_tool_registry"
+# Key to store external loop state for resumption
+EXTERNAL_LOOP_STATE_KEY = "_external_loop_state"
+
+
+class AgentInvocationError(Exception):
+    """Raised when an agent invocation fails.
+
+    Attributes:
+        agent_name: Name of the agent that failed
+        message: Error description
+    """
+
+    def __init__(self, agent_name: str, message: str) -> None:
+        self.agent_name = agent_name
+        super().__init__(f"Agent '{agent_name}' invocation failed: {message}")
+
+
+@dataclass
+class AgentResult:
+    """Result from an agent invocation."""
+
+    success: bool
+    response: str
+    agent_name: str
+    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    tool_calls: list[FunctionCallContent] = field(default_factory=lambda: cast(list[FunctionCallContent], []))
+    error: str | None = None
+
+
+@dataclass
+class ExternalInputRequest:
+    """Request for external input during agent invocation.
+
+    Emitted when externalLoop.when condition evaluates to true,
+    signaling that the workflow should yield and wait for user input.
+
+    This is the request type used with ctx.request_info() to implement
+    the Yield/Resume pattern for human-in-loop workflows.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import run_context
+            from agent_framework_declarative import (
+                ExternalInputRequest,
+                ExternalInputResponse,
+                WorkflowFactory,
+            )
+
+            factory = WorkflowFactory()
+            workflow = factory.create_workflow_from_yaml_path("hitl_workflow.yaml")
+
+
+            async def run_with_hitl():
+                # Set up external input handler
+                async def on_request(request: ExternalInputRequest) -> ExternalInputResponse:
+                    print(f"Agent '{request.agent_name}' needs input:")
+                    print(f"  Response: {request.agent_response}")
+                    user_input = input("Your response: ")
+                    return ExternalInputResponse(user_input=user_input)
+
+                async with run_context(request_handler=on_request) as ctx:
+                    async for event in workflow.run_stream(ctx=ctx):
+                        print(event)
+    """
+
+    request_id: str
+    agent_name: str
+    agent_response: str
+    iteration: int = 0
+    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    function_calls: list[FunctionCallContent] = field(default_factory=lambda: cast(list[FunctionCallContent], []))
+
+
+@dataclass
+class ExternalInputResponse:
+    """Response to an ExternalInputRequest.
+
+    Provided by the caller to resume agent execution with new user input.
+    This is the response type expected by the response_handler.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework_declarative import ExternalInputResponse
+
+            # Basic response with user text input
+            response = ExternalInputResponse(user_input="Yes, please proceed with the order.")
+
+        .. code-block:: python
+
+            from agent_framework_declarative import ExternalInputResponse
+
+            # Response with additional message history
+            response = ExternalInputResponse(
+                user_input="Approved",
+                messages=[],  # Additional context messages if needed
+            )
+    """
+
+    user_input: str
+    messages: list[ChatMessage] = field(default_factory=lambda: cast(list[ChatMessage], []))
+    function_results: dict[str, FunctionResultContent] = field(
+        default_factory=lambda: cast(dict[str, FunctionResultContent], {})
+    )
+
+
+@dataclass
+class ExternalLoopState:
+    """State saved for external loop resumption.
+
+    Stored in shared_state to allow the response_handler to
+    continue the loop with the same configuration.
+    """
+
+    agent_name: str
+    iteration: int
+    external_loop_when: str
+    messages_var: str | None
+    response_obj_var: str | None
+    result_property: str | None
+    auto_send: bool
+    messages_path: str = "conversation.messages"
+    max_iterations: int = 100
+
+
+def _map_variable_to_path(variable: str) -> str:
+    """Map .NET-style variable names to state paths.
+
+    Args:
+        variable: Variable name like 'Local.X' or 'System.ConversationId'
+
+    Returns:
+        State path like 'turn.X' or 'system.ConversationId'
+    """
+    if variable.startswith("Local."):
+        return "turn." + variable[6:]
+    if variable.startswith("System."):
+        return "system." + variable[7:]
+    if variable.startswith("Workflow."):
+        return "workflow." + variable[9:]
+    if "." in variable:
+        return variable
+    return "turn." + variable
+
+
+class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
+    """Executor that invokes an Azure AI Foundry agent.
+
+    This executor supports both Python-style and .NET-style YAML schemas:
+
+    Python-style (simple):
+        kind: InvokeAzureAgent
+        agent: MenuAgent
+        input: =turn.userInput
+        resultProperty: turn.agentResponse
+
+    .NET-style (full featured):
+        kind: InvokeAzureAgent
+        agent:
+          name: AgentName
+        conversationId: =System.ConversationId
+        input:
+          arguments:
+            param1: =turn.value1
+            param2: literal value
+          messages: =conversation.messages
+          externalLoop:
+            when: =turn.needsMoreInput
+        output:
+          messages: Local.ResponseMessages
+          responseObject: Local.StructuredResponse
+          autoSend: true
+
+    Features:
+    - Structured input with arguments and messages
+    - External loop support for human-in-loop patterns
+    - Output with messages and responseObject (JSON parsing)
+    - AutoSend behavior control for streaming output
+    """
+
+    def __init__(
+        self,
+        action_def: dict[str, Any],
+        *,
+        id: str | None = None,
+        agents: dict[str, Any] | None = None,
+    ):
+        """Initialize the agent executor.
+
+        Args:
+            action_def: The action definition from YAML
+            id: Optional executor ID
+            agents: Registry of agent instances by name
+        """
+        super().__init__(action_def, id=id)
+        self._agents = agents or {}
+
+    def _get_agent_name(self, state: Any) -> str | None:
+        """Extract agent name from action definition.
+
+        Supports both simple string and nested object formats.
+        """
+        agent_config = self._action_def.get("agent")
+
+        if isinstance(agent_config, str):
+            return agent_config
+
+        if isinstance(agent_config, dict):
+            agent_dict = cast(dict[str, Any], agent_config)
+            name = agent_dict.get("name")
+            if name is not None and isinstance(name, str):
+                # Support dynamic agent name from expression (would need async eval)
+                return str(name)
+
+        agent_name = self._action_def.get("agentName")
+        return str(agent_name) if isinstance(agent_name, str) else None
+
+    def _get_input_config(self) -> tuple[dict[str, Any], Any, str | None, int]:
+        """Parse input configuration.
+
+        Returns:
+            Tuple of (arguments dict, messages expression, externalLoop.when expression, maxIterations)
+        """
+        input_config = self._action_def.get("input", {})
+
+        if not isinstance(input_config, dict):
+            # Simple input - treat as message directly
+            return {}, input_config, None, 100
+
+        input_dict = cast(dict[str, Any], input_config)
+        arguments: dict[str, Any] = cast(dict[str, Any], input_dict.get("arguments", {}))
+        messages: Any = input_dict.get("messages")
+
+        # Extract external loop configuration
+        external_loop_when: str | None = None
+        max_iterations: int = 100  # Default safety limit
+        external_loop = input_dict.get("externalLoop")
+        if isinstance(external_loop, dict):
+            loop_dict = cast(dict[str, Any], external_loop)
+            when_val = loop_dict.get("when")
+            external_loop_when = str(when_val) if when_val is not None else None
+            max_iter_val = loop_dict.get("maxIterations")
+            if max_iter_val is not None:
+                max_iterations = int(max_iter_val)
+
+        return arguments, messages, external_loop_when, max_iterations
+
+    def _get_output_config(self) -> tuple[str | None, str | None, str | None, bool]:
+        """Parse output configuration.
+
+        Returns:
+            Tuple of (messages var, responseObject var, resultProperty, autoSend)
+        """
+        output_config = self._action_def.get("output", {})
+
+        # Legacy Python-style
+        result_property: str | None = cast(str | None, self._action_def.get("resultProperty"))
+
+        if not isinstance(output_config, dict):
+            return None, None, result_property, True
+
+        output_dict = cast(dict[str, Any], output_config)
+        messages_var_val: Any = output_dict.get("messages")
+        messages_var: str | None = str(messages_var_val) if messages_var_val is not None else None
+        response_obj_val: Any = output_dict.get("responseObject")
+        response_obj_var: str | None = str(response_obj_val) if response_obj_val is not None else None
+        property_val: Any = output_dict.get("property")
+        property_var: str | None = str(property_val) if property_val is not None else None
+        auto_send_val: Any = output_dict.get("autoSend", True)
+        auto_send: bool = bool(auto_send_val)
+
+        return messages_var, response_obj_var, property_var or result_property, auto_send
+
+    def _get_conversation_id(self) -> str | None:
+        """Get the conversation ID expression from action definition.
+
+        Returns:
+            The conversationId expression/value, or None if not specified
+        """
+        return self._action_def.get("conversationId")
+
+    async def _get_conversation_messages_path(
+        self, state: DeclarativeWorkflowState, conversation_id_expr: str | None
+    ) -> str:
+        """Get the state path for conversation messages.
+
+        Args:
+            state: Workflow state for expression evaluation
+            conversation_id_expr: The conversationId expression from action definition
+
+        Returns:
+            State path for messages (e.g., "conversation.messages" or "system.conversations.{id}.messages")
+        """
+        if not conversation_id_expr:
+            return "conversation.messages"
+
+        # Evaluate the conversation ID expression
+        evaluated_id = await state.eval_if_expression(conversation_id_expr)
+        if not evaluated_id:
+            return "conversation.messages"
+
+        # Use conversation-specific messages path
+        return f"system.conversations.{evaluated_id}.messages"
+
+    async def _build_input_text(self, state: Any, arguments: dict[str, Any], messages_expr: Any) -> str:
+        """Build input text from arguments and messages.
+
+        Args:
+            state: Workflow state for expression evaluation
+            arguments: Input arguments to evaluate
+            messages_expr: Messages expression or direct input
+
+        Returns:
+            Input text for the agent
+        """
+        # Evaluate arguments
+        evaluated_args: dict[str, Any] = {}
+        for key, value in arguments.items():
+            evaluated_args[key] = await state.eval_if_expression(value)
+
+        # Evaluate messages/input
+        if messages_expr:
+            evaluated_input: Any = await state.eval_if_expression(messages_expr)
+            if isinstance(evaluated_input, str):
+                return evaluated_input
+            if isinstance(evaluated_input, list) and evaluated_input:
+                # Extract text from last message
+                last: Any = evaluated_input[-1]
+                if isinstance(last, str):
+                    return last
+                if isinstance(last, dict):
+                    last_dict = cast(dict[str, Any], last)
+                    content_val: Any = last_dict.get("content", last_dict.get("text", ""))
+                    return str(content_val) if content_val else ""
+                if last is not None and hasattr(last, "text"):
+                    return str(getattr(last, "text", ""))
+            if evaluated_input:
+                return str(cast(Any, evaluated_input))
+            return ""
+
+        # Fallback chain for implicit input (like .NET conversationId pattern):
+        # 1. turn.input / turn.userInput (explicit turn state)
+        # 2. system.LastMessage.Text (previous agent's response)
+        # 3. workflow.inputs (first agent gets workflow inputs)
+        input_text: str = str(await state.get("turn.input") or await state.get("turn.userInput") or "")
+        if not input_text:
+            # Try system.LastMessage.Text (used by external loop and agent chaining)
+            last_message: Any = await state.get("system.LastMessage")
+            if isinstance(last_message, dict):
+                last_msg_dict = cast(dict[str, Any], last_message)
+                text_val: Any = last_msg_dict.get("Text", "")
+                input_text = str(text_val) if text_val else ""
+        if not input_text:
+            # Fall back to workflow inputs (for first agent in chain)
+            inputs: Any = await state.get("workflow.inputs")
+            if isinstance(inputs, dict):
+                inputs_dict = cast(dict[str, Any], inputs)
+                # If single input, use its value directly
+                if len(inputs_dict) == 1:
+                    input_text = str(next(iter(inputs_dict.values())))
+                else:
+                    # Multiple inputs - format as key: value pairs
+                    input_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
+        return input_text if input_text else ""
+
+    def _get_agent(self, agent_name: str, ctx: WorkflowContext[Any, Any]) -> Any:
+        """Get agent from registry (sync helper for response handler)."""
+        return self._agents.get(agent_name) if self._agents else None
+
+    async def _invoke_agent_and_store_results(
+        self,
+        agent: Any,
+        agent_name: str,
+        input_text: str,
+        state: DeclarativeWorkflowState,
+        ctx: WorkflowContext[ActionComplete, str],
+        messages_var: str | None,
+        response_obj_var: str | None,
+        result_property: str | None,
+        auto_send: bool,
+        messages_path: str = "conversation.messages",
+    ) -> tuple[str, list[Any], list[Any]]:
+        """Invoke agent and store results in state.
+
+        Args:
+            agent: The agent instance to invoke
+            agent_name: Name of the agent for logging
+            input_text: User input text
+            state: Workflow state
+            ctx: Workflow context
+            messages_var: Output variable for messages
+            response_obj_var: Output variable for parsed response object
+            result_property: Output property for result
+            auto_send: Whether to auto-send output to context
+            messages_path: State path for conversation messages (default: "conversation.messages")
+
+        Returns:
+            Tuple of (accumulated_response, all_messages, tool_calls)
+        """
+        accumulated_response = ""
+        all_messages: list[ChatMessage] = []
+        tool_calls: list[FunctionCallContent] = []
+
+        # Add user input to conversation history first (via state.append only)
+        if input_text:
+            user_message = ChatMessage(role="user", text=input_text)
+            await state.append(messages_path, user_message)
+
+        # Get conversation history from state AFTER adding user message
+        # Note: We get a fresh copy to avoid mutation issues
+        conversation_history: list[ChatMessage] = await state.get(messages_path) or []
+
+        # Build messages list for agent (use history if available, otherwise just input)
+        messages_for_agent: list[ChatMessage] | str = conversation_history if conversation_history else input_text
+
+        # Use run() method to get properly structured messages (including tool calls and results)
+        # This is critical for multi-turn conversations where tool calls must be followed
+        # by their results in the message history
+        if hasattr(agent, "run"):
+            result: Any = await agent.run(messages_for_agent)
+            if hasattr(result, "text") and result.text:
+                accumulated_response = str(result.text)
+                if auto_send:
+                    await ctx.yield_output(str(result.text))
+            elif isinstance(result, str):
+                accumulated_response = result
+                if auto_send:
+                    await ctx.yield_output(result)
+
+            if not isinstance(result, str):
+                result_messages: Any = getattr(result, "messages", None)
+                if result_messages is not None:
+                    all_messages = list(cast(list[ChatMessage], result_messages))
+                result_tool_calls: Any = getattr(result, "tool_calls", None)
+                if result_tool_calls is not None:
+                    tool_calls = list(cast(list[FunctionCallContent], result_tool_calls))
+
+        else:
+            raise RuntimeError(f"Agent '{agent_name}' has no run or run_stream method")
+
+        # Add messages to conversation history
+        # We need to include ALL messages from the agent run (including tool calls and tool results)
+        # to maintain proper conversation state for the next agent invocation
+        if all_messages:
+            # Agent returned full message history - use it
+            for msg in all_messages:
+                await state.append(messages_path, msg)
+        elif accumulated_response:
+            # No messages returned, create a simple assistant message
+            assistant_message = ChatMessage(role="assistant", text=accumulated_response)
+            await state.append(messages_path, assistant_message)
+
+        # Store results in state - support both schema formats:
+        # - Graph mode: agent.response, agent.name
+        # - Interpreter mode: agent.text, agent.messages, agent.toolCalls
+        await state.set("agent.response", accumulated_response)
+        await state.set("agent.name", agent_name)
+        await state.set("agent.text", accumulated_response)
+        await state.set("agent.messages", all_messages if all_messages else [])
+        await state.set("agent.toolCalls", tool_calls if tool_calls else [])
+
+        # Store System.LastMessage for externalLoop.when condition evaluation
+        await state.set("system.LastMessage", {"Text": accumulated_response})
+
+        # Store in output variables (.NET style)
+        if messages_var:
+            output_path = _map_variable_to_path(messages_var)
+            await state.set(output_path, all_messages if all_messages else accumulated_response)
+
+        if response_obj_var:
+            output_path = _map_variable_to_path(response_obj_var)
+            # Try to parse as JSON for structured output
+            try:
+                parsed = json.loads(accumulated_response) if accumulated_response else None
+                await state.set(output_path, parsed)
+            except (json.JSONDecodeError, TypeError):
+                await state.set(output_path, accumulated_response)
+
+        # Store in result property (Python style)
+        if result_property:
+            await state.set(result_property, accumulated_response)
+
+        return accumulated_response, all_messages, tool_calls
+
+    @handler
+    async def handle_action(
+        self,
+        trigger: Any,
+        ctx: WorkflowContext[ActionComplete, str],
+    ) -> None:
+        """Handle the agent invocation with full .NET feature parity.
+
+        When externalLoop.when is configured and evaluates to true after agent response,
+        this method emits an ExternalInputRequest via ctx.request_info() and returns.
+        The workflow will yield, and when the caller provides a response via
+        send_responses_streaming(), the handle_external_input_response handler
+        will continue the loop.
+        """
+        state = await self._ensure_state_initialized(ctx, trigger)
+
+        # Parse configuration
+        agent_name = self._get_agent_name(state)
+        if not agent_name:
+            logger.warning("InvokeAzureAgent action missing 'agent' or 'agent.name' property")
+            await ctx.send_message(ActionComplete())
+            return
+
+        arguments, messages_expr, external_loop_when, max_iterations = self._get_input_config()
+        messages_var, response_obj_var, result_property, auto_send = self._get_output_config()
+
+        # Get conversation-specific messages path if conversationId is specified
+        conversation_id_expr = self._get_conversation_id()
+        messages_path = await self._get_conversation_messages_path(state, conversation_id_expr)
+
+        # Build input
+        input_text = await self._build_input_text(state, arguments, messages_expr)
+
+        # Get agent from registry
+        agent: Any = self._agents.get(agent_name) if self._agents else None
+        if agent is None:
+            try:
+                agent_registry: dict[str, Any] | None = await ctx.shared_state.get(AGENT_REGISTRY_KEY)
+            except KeyError:
+                agent_registry = {}
+            agent = agent_registry.get(agent_name) if agent_registry else None
+
+        if agent is None:
+            error_msg = f"Agent '{agent_name}' not found in registry"
+            logger.error(f"InvokeAzureAgent: {error_msg}")
+            await state.set("agent.error", error_msg)
+            if result_property:
+                await state.set(result_property, {"error": error_msg})
+            raise AgentInvocationError(agent_name, "not found in registry")
+
+        iteration = 0
+
+        try:
+            accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
+                agent=agent,
+                agent_name=agent_name,
+                input_text=input_text,
+                state=state,
+                ctx=ctx,
+                messages_var=messages_var,
+                response_obj_var=response_obj_var,
+                result_property=result_property,
+                auto_send=auto_send,
+                messages_path=messages_path,
+            )
+        except AgentInvocationError:
+            raise  # Re-raise our own errors
+        except Exception as e:
+            logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}': {e}")
+            await state.set("agent.error", str(e))
+            if result_property:
+                await state.set(result_property, {"error": str(e)})
+            raise AgentInvocationError(agent_name, str(e)) from e
+
+        # Check external loop condition
+        if external_loop_when:
+            should_continue = await state.eval(external_loop_when)
+            should_continue = bool(should_continue) if should_continue is not None else False
+
+            logger.debug(
+                f"InvokeAzureAgent: external loop condition '{str(external_loop_when)[:50]}' = "
+                f"{should_continue} (iteration {iteration})"
+            )
+
+            if should_continue:
+                # Save loop state for resumption
+                loop_state = ExternalLoopState(
+                    agent_name=agent_name,
+                    iteration=iteration + 1,
+                    external_loop_when=external_loop_when,
+                    messages_var=messages_var,
+                    response_obj_var=response_obj_var,
+                    result_property=result_property,
+                    auto_send=auto_send,
+                    messages_path=messages_path,
+                    max_iterations=max_iterations,
+                )
+                await ctx.shared_state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
+
+                # Emit request for external input - workflow will yield here
+                request = ExternalInputRequest(
+                    request_id=str(uuid.uuid4()),
+                    agent_name=agent_name,
+                    agent_response=accumulated_response,
+                    iteration=iteration,
+                    messages=all_messages,
+                    function_calls=tool_calls,
+                )
+                logger.info(f"InvokeAzureAgent: yielding for external input (iteration {iteration})")
+                await ctx.request_info(request, ExternalInputResponse)
+                # Return without sending ActionComplete - workflow yields
+                return
+
+        # No external loop or condition is false - complete the action
+        await ctx.send_message(ActionComplete())
+
+    @response_handler
+    async def handle_external_input_response(
+        self,
+        original_request: ExternalInputRequest,
+        response: ExternalInputResponse,
+        ctx: WorkflowContext[ActionComplete, str],
+    ) -> None:
+        """Handle response to an ExternalInputRequest and continue the loop.
+
+        This is called when the workflow resumes after yielding for external input.
+        It continues the agent invocation loop with the user's new input.
+        """
+        state = self._get_state(ctx.shared_state)
+
+        # Retrieve saved loop state
+        try:
+            loop_state: ExternalLoopState = await ctx.shared_state.get(EXTERNAL_LOOP_STATE_KEY)
+        except KeyError:
+            logger.error("InvokeAzureAgent: external loop state not found, cannot resume")
+            await ctx.send_message(ActionComplete())
+            return
+
+        agent_name = loop_state.agent_name
+        iteration = loop_state.iteration
+        external_loop_when = loop_state.external_loop_when
+        max_iterations = loop_state.max_iterations
+
+        # Get the user's new input
+        input_text = response.user_input
+
+        # Store the user input in state for condition evaluation
+        await state.set("turn.userInput", input_text)
+        await state.set("system.LastMessage", {"Text": input_text})
+
+        # Check if we should continue BEFORE invoking the agent
+        # This matches .NET behavior where the condition checks the user's input
+        should_continue = await state.eval(external_loop_when)
+        should_continue = bool(should_continue) if should_continue is not None else False
+
+        logger.debug(
+            f"InvokeAzureAgent: external loop condition '{str(external_loop_when)[:50]}' = "
+            f"{should_continue} (iteration {iteration}) for input '{input_text[:30]}...'"
+        )
+
+        if not should_continue:
+            # User input caused loop to exit - clean up and complete
+            with contextlib.suppress(KeyError):
+                await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+            await ctx.send_message(ActionComplete())
+            return
+
+        # Get agent from registry
+        agent: Any = self._agents.get(agent_name) if self._agents else None
+        if agent is None:
+            try:
+                agent_registry: dict[str, Any] | None = await ctx.shared_state.get(AGENT_REGISTRY_KEY)
+            except KeyError:
+                agent_registry = {}
+            agent = agent_registry.get(agent_name) if agent_registry else None
+
+        if agent is None:
+            logger.error(f"InvokeAzureAgent: agent '{agent_name}' not found during loop resumption")
+            raise AgentInvocationError(agent_name, "not found during loop resumption")
+
+        try:
+            accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
+                agent=agent,
+                agent_name=agent_name,
+                input_text=input_text,
+                state=state,
+                ctx=ctx,
+                messages_var=loop_state.messages_var,
+                response_obj_var=loop_state.response_obj_var,
+                result_property=loop_state.result_property,
+                auto_send=loop_state.auto_send,
+                messages_path=loop_state.messages_path,
+            )
+        except AgentInvocationError:
+            raise  # Re-raise our own errors
+        except Exception as e:
+            logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}' during loop: {e}")
+            await state.set("agent.error", str(e))
+            raise AgentInvocationError(agent_name, str(e)) from e
+
+        # Re-evaluate the condition AFTER the agent responds
+        # This is critical: the agent's response may have set NeedsTicket=true or IsResolved=true
+        should_continue = await state.eval(external_loop_when)
+        should_continue = bool(should_continue) if should_continue is not None else False
+
+        logger.debug(
+            f"InvokeAzureAgent: external loop condition after response '{str(external_loop_when)[:50]}' = "
+            f"{should_continue} (iteration {iteration})"
+        )
+
+        if not should_continue:
+            # Agent response caused loop to exit (e.g., NeedsTicket=true or IsResolved=true)
+            logger.info(
+                "InvokeAzureAgent: external loop exited due to condition=false "
+                "(sending ActionComplete to continue workflow)"
+            )
+            with contextlib.suppress(KeyError):
+                await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+            await ctx.send_message(ActionComplete())
+            return
+
+        # Continue the loop - condition still true
+        if iteration < max_iterations:
+            # Update loop state for next iteration
+            loop_state.iteration = iteration + 1
+            await ctx.shared_state.set(EXTERNAL_LOOP_STATE_KEY, loop_state)
+
+            # Emit another request for external input
+            request = ExternalInputRequest(
+                request_id=str(uuid.uuid4()),
+                agent_name=agent_name,
+                agent_response=accumulated_response,
+                iteration=iteration,
+                messages=all_messages,
+                function_calls=tool_calls,
+            )
+            logger.info(f"InvokeAzureAgent: yielding for external input (iteration {iteration})")
+            await ctx.request_info(request, ExternalInputResponse)
+            return
+
+        logger.warning(f"InvokeAzureAgent: external loop exceeded max iterations ({max_iterations})")
+
+        # Loop complete - clean up and send completion
+        with contextlib.suppress(KeyError):
+            await ctx.shared_state.delete(EXTERNAL_LOOP_STATE_KEY)
+
+        await ctx.send_message(ActionComplete())
+
+
+class InvokeToolExecutor(DeclarativeActionExecutor):
+    """Executor that invokes a registered tool/function.
+
+    Tools are simpler than agents - they take input, perform an action,
+    and return a result synchronously (or with a simple async call).
+    """
+
+    @handler
+    async def handle_action(
+        self,
+        trigger: Any,
+        ctx: WorkflowContext[ActionComplete],
+    ) -> None:
+        """Handle the tool invocation."""
+        state = await self._ensure_state_initialized(ctx, trigger)
+
+        tool_name = self._action_def.get("tool") or self._action_def.get("toolName", "")
+        input_expr = self._action_def.get("input")
+        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get("resultProperty")
+        parameters = self._action_def.get("parameters", {})
+
+        # Get tools registry
+        try:
+            tool_registry: dict[str, Any] | None = await ctx.shared_state.get(TOOL_REGISTRY_KEY)
+        except KeyError:
+            tool_registry = {}
+
+        tool: Any = tool_registry.get(tool_name) if tool_registry else None
+
+        if tool is None:
+            error_msg = f"Tool '{tool_name}' not found in registry"
+            if output_property:
+                await state.set(output_property, {"error": error_msg})
+            await ctx.send_message(ActionComplete())
+            return
+
+        # Build parameters
+        params: dict[str, Any] = {}
+        for param_name, param_expression in parameters.items():
+            params[param_name] = await state.eval_if_expression(param_expression)
+
+        # Add main input if specified
+        if input_expr:
+            params["input"] = await state.eval_if_expression(input_expr)
+
+        try:
+            # Invoke the tool
+            if callable(tool):
+                import inspect
+
+                if inspect.iscoroutinefunction(tool):
+                    result = await tool(**params)
+                else:
+                    result = tool(**params)
+
+                # Store result
+                if output_property:
+                    await state.set(output_property, result)
+
+        except Exception as e:
+            if output_property:
+                await state.set(output_property, {"error": str(e)})
+            await ctx.send_message(ActionComplete())
+            return
+
+        await ctx.send_message(ActionComplete())
+
+
+# Mapping of agent action kinds to executor classes
+AGENT_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
+    "InvokeAzureAgent": InvokeAzureAgentExecutor,
+    "InvokeTool": InvokeToolExecutor,
+}

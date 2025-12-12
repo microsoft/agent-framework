@@ -71,6 +71,11 @@ class Edge(DictConvertible):
     serialising the edge down to primitives we can reconstruct the topology of
     a workflow irrespective of the original Python process.
 
+    Edges support two types of conditions:
+    - Sync conditions: `condition(data) -> bool` - evaluated against message data only
+    - Async conditions: `async_condition(data, shared_state) -> bool` - evaluated against
+      message data AND shared state, allowing state-aware routing decisions
+
     Examples:
         .. code-block:: python
 
@@ -85,6 +90,7 @@ class Edge(DictConvertible):
     target_id: str
     condition_name: str | None
     _condition: Callable[[Any], bool] | None = field(default=None, repr=False, compare=False)
+    _async_condition: Callable[[Any, Any], Any] | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
@@ -93,6 +99,7 @@ class Edge(DictConvertible):
         condition: Callable[[Any], bool] | None = None,
         *,
         condition_name: str | None = None,
+        async_condition: Callable[[Any, Any], Any] | None = None,
     ) -> None:
         """Initialize a fully-specified edge between two workflow executors.
 
@@ -110,6 +117,10 @@ class Edge(DictConvertible):
             Optional override that pins a human-friendly name for the condition
             when the callable cannot be introspected (for example after
             deserialization).
+        async_condition:
+            Optional async predicate that receives (message_data, shared_state) and
+            returns `True` when the edge should be traversed. This is evaluated
+            instead of `condition` when present, allowing state-aware routing.
 
         Examples:
             .. code-block:: python
@@ -125,7 +136,14 @@ class Edge(DictConvertible):
         self.source_id = source_id
         self.target_id = target_id
         self._condition = condition
-        self.condition_name = _extract_function_name(condition) if condition is not None else condition_name
+        self._async_condition = async_condition
+        # Use async_condition name if provided, otherwise sync condition name
+        if async_condition is not None:
+            self.condition_name = _extract_function_name(async_condition) if condition_name is None else condition_name
+        elif condition is not None:
+            self.condition_name = _extract_function_name(condition) if condition_name is None else condition_name
+        else:
+            self.condition_name = condition_name
 
     @property
     def id(self) -> str:
@@ -144,6 +162,15 @@ class Edge(DictConvertible):
         """
         return f"{self.source_id}{self.ID_SEPARATOR}{self.target_id}"
 
+    @property
+    def has_async_condition(self) -> bool:
+        """Check if this edge has an async state-aware condition.
+
+        Returns True if the edge was configured with an async_condition that
+        requires shared state for evaluation.
+        """
+        return self._async_condition is not None
+
     def should_route(self, data: Any) -> bool:
         """Evaluate the edge predicate against an incoming payload.
 
@@ -153,6 +180,9 @@ class Edge(DictConvertible):
         this edge. Any exception raised by the callable is deliberately allowed
         to surface to the caller to avoid masking logic bugs.
 
+        Note: If the edge has an async_condition, this method returns True and
+        the actual routing decision must be made via should_route_async().
+
         Examples:
             .. code-block:: python
 
@@ -160,9 +190,30 @@ class Edge(DictConvertible):
                 assert edge.should_route({"score": 0.9}) is True
                 assert edge.should_route({"score": 0.4}) is False
         """
+        # If there's an async condition, defer to should_route_async
+        if self._async_condition is not None:
+            return True  # Let the async check handle it
         if self._condition is None:
             return True
         return self._condition(data)
+
+    async def should_route_async(self, data: Any, shared_state: Any) -> bool:
+        """Evaluate the async edge predicate against payload and shared state.
+
+        This method is used for edges with async_condition that need access to
+        shared state for routing decisions (e.g., declarative workflow conditions).
+
+        Args:
+            data: The message payload
+            shared_state: The workflow's shared state
+
+        Returns:
+            True if the edge should be traversed, False otherwise.
+        """
+        if self._async_condition is not None:
+            return bool(await self._async_condition(data, shared_state))
+        # Fall back to sync condition
+        return self.should_route(data)
 
     def to_dict(self) -> dict[str, Any]:
         """Produce a JSON-serialisable view of the edge metadata.
@@ -445,9 +496,17 @@ class SingleEdgeGroup(EdgeGroup):
         target_id: str,
         condition: Callable[[Any], bool] | None = None,
         *,
+        async_condition: Callable[[Any, Any], Any] | None = None,
         id: str | None = None,
     ) -> None:
         """Create a one-to-one edge group between two executors.
+
+        Args:
+            source_id: The source executor ID.
+            target_id: The target executor ID.
+            condition: Optional sync condition function (data) -> bool.
+            async_condition: Optional async condition function (data, shared_state) -> bool.
+            id: Optional explicit ID for the edge group.
 
         Examples:
             .. code-block:: python
@@ -455,7 +514,7 @@ class SingleEdgeGroup(EdgeGroup):
                 group = SingleEdgeGroup("ingest", "validate")
                 assert group.edges[0].source_id == "ingest"
         """
-        edge = Edge(source_id=source_id, target_id=target_id, condition=condition)
+        edge = Edge(source_id=source_id, target_id=target_id, condition=condition, async_condition=async_condition)
         super().__init__([edge], id=id, type=self.__class__.__name__)
 
 

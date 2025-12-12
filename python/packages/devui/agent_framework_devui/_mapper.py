@@ -924,6 +924,11 @@ class MessageMapper:
                 if context.get("current_executor_id") == executor_id:
                     context.pop("current_executor_id", None)
 
+                # Serialize the result data to ensure JSON compatibility
+                # This handles declarative workflow types like ActionComplete
+                raw_result = getattr(event, "data", None)
+                serialized_result = self._serialize_value(raw_result) if raw_result is not None else None
+
                 # Create ExecutorActionItem with completed status
                 # ExecutorCompletedEvent uses 'data' field, not 'result'
                 # Serialize the result data to ensure it's JSON-serializable

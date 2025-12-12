@@ -507,7 +507,9 @@ class AgentFrameworkExecutor:
                 # First run - pass DevUI's checkpoint storage to enable checkpointing
                 logger.info(f"Starting fresh workflow in session {conversation_id}")
 
+                logger.info(f"Raw request.input: {request.input!r} (type: {type(request.input).__name__})")
                 parsed_input = await self._parse_workflow_input(workflow, request.input)
+                logger.info(f"Parsed workflow input: {parsed_input!r} (type: {type(parsed_input).__name__})")
 
                 async for event in workflow.run_stream(parsed_input, checkpoint_storage=checkpoint_storage):
                     if isinstance(event, RequestInfoEvent):

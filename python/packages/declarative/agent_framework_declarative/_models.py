@@ -11,7 +11,9 @@ try:
     from powerfx import Engine
 
     engine = Engine()
-except ImportError:
+except (ImportError, RuntimeError):
+    # ImportError: powerfx package not installed
+    # RuntimeError: .NET runtime not available or misconfigured
     engine = None
 
 if sys.version_info >= (3, 11):
@@ -52,9 +54,9 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
-            logger.debug("PowerFx evaluation failed for value '%s': %s", value, exc)
+            logger.debug(f"PowerFx evaluation failed for value '{value}': {exc}")
         else:
-            logger.debug("PowerFx evaluation failed for value (first five characters shown) '%s': %s", value[:5], exc)
+            logger.debug(f"PowerFx evaluation failed for value (first five characters shown) '{value[:5]}': {exc}")
         return value
 
 
