@@ -153,6 +153,9 @@ class SequentialBuilder:
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
 
+        if self._participant_factories:
+            raise ValueError("register_participants() has already been called on this builder instance.")
+
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
@@ -169,6 +172,9 @@ class SequentialBuilder:
             raise ValueError(
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
+
+        if self._participants:
+            raise ValueError("participants() has already been called on this builder instance.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -289,6 +295,7 @@ class SequentialBuilder:
                         executor_id=f"request_info:{label}",
                         agent_filter=self._request_info_filter,
                     )
+                    # TODO(@taochen): Use the factory pattern in the builder to avoid warnings
                     builder.add_edge(prior, interceptor)
                     builder.add_edge(interceptor, p)
                 else:
