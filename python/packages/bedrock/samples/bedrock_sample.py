@@ -14,6 +14,7 @@ from agent_framework import (
     ToolMode,
     ai_function,
 )
+import logging
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -36,29 +37,28 @@ async def main() -> None:
     )
 
     response = await agent.run("Use the weather tool to check the forecast for new york.")
-    print("\nAssistant reply:", response.text or "<no text returned>")
+    logging.info("\nAssistant reply:", response.text or "<no text returned>")
     _log_response(response)
 
 
 def _log_response(response: AgentRunResponse) -> None:
-    print("\nConversation transcript:")
+    logging.info("\nConversation transcript:")
     for idx, message in enumerate(response.messages, start=1):
         tag = f"{idx}. {message.role.value if isinstance(message.role, Role) else message.role}"
         _log_contents(tag, message.contents)
 
 
 def _log_contents(tag: str, contents: Sequence[object]) -> None:
-    print(f"[{tag}] {len(contents)} content blocks")
+    logging.info(f"[{tag}] {len(contents)} content blocks")
     for idx, content in enumerate(contents, start=1):
         if isinstance(content, TextContent):
-            print(f"  {idx}. text -> {content.text}")
+            logging.info(f"  {idx}. text -> {content.text}")
         elif isinstance(content, FunctionCallContent):
-            print(f"  {idx}. tool_call ({content.name}) -> {content.arguments}")
+            logging.info(f"  {idx}. tool_call ({content.name}) -> {content.arguments}")
         elif isinstance(content, FunctionResultContent):
-            print(f"  {idx}. tool_result ({content.call_id}) -> {content.result}")
+            logging.info(f"  {idx}. tool_result ({content.call_id}) -> {content.result}")
         else:  # pragma: no cover - defensive
-            print(f"  {idx}. {content.type}")
-
+            logging.info(f"  {idx}. {content.type}")
 
 if __name__ == "__main__":
     asyncio.run(main())
