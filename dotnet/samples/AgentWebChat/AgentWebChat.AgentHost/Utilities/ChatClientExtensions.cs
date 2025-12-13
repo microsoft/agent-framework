@@ -2,6 +2,7 @@
 
 using AgentWebChat.AgentHost.Utilities;
 using Azure;
+using Microsoft.Extensions.AI;
 using OllamaSharp;
 
 namespace AgentWebChat.AgentHost.Utilities;
