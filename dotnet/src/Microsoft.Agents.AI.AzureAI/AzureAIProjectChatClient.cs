@@ -42,7 +42,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentReference agentReference, string? defaultModelId, ChatOptions? chatOptions)
         : base(Throw.IfNull(aiProjectClient)
             .GetProjectOpenAIClient()
-            .GetOpenAIResponseClient(defaultModelId ?? NoOpModel)
+            .GetResponsesClient(defaultModelId ?? NoOpModel)
             .AsIChatClient())
     {
         this._agentClient = aiProjectClient;
@@ -132,13 +132,13 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 
         agentEnabledChatOptions.RawRepresentationFactory = (client) =>
         {
-            if (originalFactory?.Invoke(this) is not ResponseCreationOptions responseCreationOptions)
+            if (originalFactory?.Invoke(this) is not CreateResponseOptions responseCreationOptions)
             {
-                responseCreationOptions = new ResponseCreationOptions();
+                responseCreationOptions = new CreateResponseOptions();
             }
 
-            ResponseCreationOptionsExtensions.set_Agent(responseCreationOptions, this._agentReference);
-            ResponseCreationOptionsExtensions.set_Model(responseCreationOptions, null);
+            responseCreationOptions.Agent = this._agentReference;
+            responseCreationOptions.Model = null;
 
             return responseCreationOptions;
         };
