@@ -29,17 +29,17 @@ public static class AgentRunResponseExtensions
     }
 
     /// <summary>
-    /// Creates or extracts a native OpenAI <see cref="OpenAIResponse"/> object from an <see cref="AgentRunResponse"/>.
+    /// Creates or extracts a native OpenAI <see cref="ResponseResult"/> object from an <see cref="AgentRunResponse"/>.
     /// </summary>
     /// <param name="response">The agent response.</param>
-    /// <returns>The OpenAI <see cref="OpenAIResponse"/> object.</returns>
+    /// <returns>The OpenAI <see cref="ResponseResult"/> object.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="response"/> is <see langword="null"/>.</exception>
-    public static OpenAIResponse AsOpenAIResponse(this AgentRunResponse response)
+    public static ResponseResult AsOpenAIResponse(this AgentRunResponse response)
     {
         Throw.IfNull(response);
 
         return
-            response.RawRepresentation as OpenAIResponse ??
-            response.AsChatResponse().AsOpenAIResponse();
+            response.RawRepresentation as ResponseResult ??
+            response.AsChatResponse().AsOpenAIResponseResult();
     }
 }

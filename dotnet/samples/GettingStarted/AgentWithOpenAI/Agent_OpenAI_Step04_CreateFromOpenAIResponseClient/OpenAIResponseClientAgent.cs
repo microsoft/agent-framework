@@ -16,13 +16,13 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// <summary>
     /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
-    /// <param name="client">Instance of <see cref="OpenAIResponseClient"/></param>
+    /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
     /// <param name="instructions">Optional instructions for the agent.</param>
     /// <param name="name">Optional name for the agent.</param>
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
-        OpenAIResponseClient client,
+        ResponsesClient client,
         string? instructions = null,
         string? name = null,
         string? description = null,
@@ -39,11 +39,11 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// <summary>
     /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
-    /// <param name="client">Instance of <see cref="OpenAIResponseClient"/></param>
+    /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
     /// <param name="options">Options to create the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
-        OpenAIResponseClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
+        ResponsesClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
         base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(), options, loggerFactory))
     {
     }
@@ -55,8 +55,8 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="OpenAIResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
-    public virtual async Task<OpenAIResponse> RunAsync(
+    /// <returns>A <see cref="ResponseResult"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    public virtual async Task<ResponseResult> RunAsync(
         IEnumerable<ResponseItem> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -74,7 +74,7 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// <param name="thread">The conversation thread to continue with this invocation. If not provided, creates a new thread. The thread will be mutated with the provided messages and agent response.</param>
     /// <param name="options">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A <see cref="OpenAIResponse"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    /// <returns>A <see cref="ResponseResult"/> containing the list of <see cref="ChatMessage"/> items.</returns>
     public virtual async IAsyncEnumerable<StreamingResponseUpdate> RunStreamingAsync(
         IEnumerable<ResponseItem> messages,
         AgentThread? thread = null,

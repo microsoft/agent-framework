@@ -25,7 +25,6 @@
     <PackageReference Include="CommunityToolkit.Aspire.OllamaSharp" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.AI.AzureAIInference" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="Microsoft.AspNetCore.OpenAPI" />
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />

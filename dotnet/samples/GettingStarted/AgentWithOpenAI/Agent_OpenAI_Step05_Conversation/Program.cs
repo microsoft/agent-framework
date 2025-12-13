@@ -21,8 +21,8 @@ string model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-min
 OpenAIClient openAIClient = new(apiKey);
 ConversationClient conversationClient = openAIClient.GetConversationClient();
 
-// Create an agent directly from the OpenAIResponseClient using OpenAIResponseClientAgent
-ChatClientAgent agent = new(openAIClient.GetOpenAIResponseClient(model).AsIChatClient(), instructions: "You are a helpful assistant.", name: "ConversationAgent");
+// Create an agent directly from the ResponsesClient using OpenAIResponseClientAgent
+ChatClientAgent agent = new(openAIClient.GetResponsesClient(model).AsIChatClient(), instructions: "You are a helpful assistant.", name: "ConversationAgent");
 
 ClientResult createConversationResult = await conversationClient.CreateConversationAsync(BinaryContent.Create(BinaryData.FromString("{}")));
 

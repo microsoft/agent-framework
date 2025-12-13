@@ -111,7 +111,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         if (inputArguments is not null)
         {
             JsonNode jsonNode = ConvertDictionaryToJson(inputArguments);
-            ResponseCreationOptions responseCreationOptions = new();
+            CreateResponseOptions responseCreationOptions = new();
 #pragma warning disable SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             responseCreationOptions.Patch.Set("$.structured_inputs"u8, BinaryData.FromString(jsonNode.ToJsonString()));
 #pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
@@ -206,7 +206,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
         AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
-        ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+        ResponseItem[] items = [responseItem.AsResponseResultItem()];
         return items.AsChatMessages().Single();
     }
 
@@ -223,7 +223,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
         {
-            ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+            ResponseItem[] items = [responseItem.AsResponseResultItem()];
             foreach (ChatMessage message in items.AsChatMessages())
             {
                 yield return message;

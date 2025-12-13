@@ -400,7 +400,7 @@ public static partial class AzureAIProjectChatClientExtensions
         };
 
         // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }
@@ -466,7 +466,7 @@ public static partial class AzureAIProjectChatClientExtensions
         };
 
         // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is ResponseCreationOptions respCreationOptions)
+        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }
