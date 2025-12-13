@@ -82,7 +82,8 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
     }
 
     [Theory]
-    [InlineData("RunAgent")]
+    [InlineData("run")]
+    [InlineData("Run")]
     [InlineData("RunAgentAsync")]
     public async Task RunAgentMethodNamesAllWorkAsync(string runAgentMethodName)
     {
