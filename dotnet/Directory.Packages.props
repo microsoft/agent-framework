@@ -61,8 +61,8 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.1.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.1.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.1.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="10.0.0-preview.1.25559.3" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.1.0-preview.1.25608.1" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
