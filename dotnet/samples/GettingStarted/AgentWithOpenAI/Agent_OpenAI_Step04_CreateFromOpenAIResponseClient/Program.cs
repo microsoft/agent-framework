@@ -9,7 +9,7 @@ using OpenAIResponseClientSample;
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-// Create an ResponsesClient directly from OpenAIClient
+// Create a ResponsesClient directly from OpenAIClient
 ResponsesClient responseClient = new OpenAIClient(apiKey).GetResponsesClient(model);
 
 // Create an agent directly from the ResponsesClient using OpenAIResponseClientAgent
