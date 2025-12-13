@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using AgentWebChat.AgentHost.Utilities;
-using Azure;
 using Microsoft.Extensions.AI;
 using OllamaSharp;
 
