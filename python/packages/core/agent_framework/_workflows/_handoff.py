@@ -1114,10 +1114,18 @@ class HandoffBuilder:
 
         tool_targets: dict[str, str] = {}
         new_tools: list[Any] = []
-        for exec_id in specialists:
+        for exec_id, executor in specialists.items():
             alias = exec_id
             sanitized = sanitize_identifier(alias)
-            tool = _create_handoff_tool(alias)
+
+            # Extract agent description from AgentExecutor if available
+            description = None
+            if isinstance(executor, AgentExecutor):
+                target_agent = getattr(executor, "_agent", None)
+                if target_agent:
+                    description = getattr(target_agent, "description", None)
+
+            tool = _create_handoff_tool(alias, description)
             if tool.name not in existing_names:
                 new_tools.append(tool)
             tool_targets[tool.name.lower()] = exec_id
