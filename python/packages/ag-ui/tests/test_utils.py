@@ -361,8 +361,9 @@ def test_serialize_content_result_model_dump_object():
             return {"type": "model", "value": 123}
 
     result = serialize_content_result([MockModel()])
-    # Single item should be the JSON string of the model dump
-    assert result == '{"type": "model", "value": 123}'
+    # Single non-string item is still serialized as JSON array
+    # Only TextContent-like items (with str text attr) get unwrapped
+    assert result == '[{"type": "model", "value": 123}]'
 
 
 def test_serialize_content_result_multiple_model_dump_objects():
@@ -376,7 +377,8 @@ def test_serialize_content_result_multiple_model_dump_objects():
             return {"value": self._value}
 
     result = serialize_content_result([MockModel(1), MockModel(2)])
-    assert result == '["{\\"value\\": 1}", "{\\"value\\": 2}"]'
+    # Multiple dict items should be serialized as JSON array without double-escaping
+    assert result == '[{"value": 1}, {"value": 2}]'
 
 
 def test_serialize_content_result_string_fallback():
@@ -415,3 +417,18 @@ def test_serialize_content_result_number():
     """Test serializing number returns string representation."""
     result = serialize_content_result(42)
     assert result == "42"
+
+
+def test_serialize_content_result_text_with_non_string_text_attr():
+    """Test that items with non-string text attribute are handled correctly."""
+
+    class BadTextContent:
+        def __init__(self):
+            self.text = 12345  # Not a string!
+
+        def __str__(self):
+            return "BadTextContent"
+
+    # Should fall back to str() since text is not a string
+    result = serialize_content_result([BadTextContent()])
+    assert result == "BadTextContent"
