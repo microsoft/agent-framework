@@ -120,14 +120,21 @@ class TestRedisChatMessageStore:
                 credential_provider=mock_credential_provider,
                 decode_responses=True,
             )
+            # Verify store instance is properly initialized
             assert store.thread_id == "test123"
+            assert store.redis_url is None  # Should be None for credential provider auth
+            assert store.key_prefix == "chat_messages"
+            assert store.max_messages is None
 
     def test_init_with_credential_provider_custom_port(self):
         """Test initialization with credential_provider and custom port."""
         mock_credential_provider = MagicMock()
 
         with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
-            RedisChatMessageStore(
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
                 credential_provider=mock_credential_provider,
                 host="myredis.redis.cache.windows.net",
                 port=6379,
@@ -145,6 +152,10 @@ class TestRedisChatMessageStore:
                 credential_provider=mock_credential_provider,
                 decode_responses=True,
             )
+            # Verify store instance is properly initialized
+            assert store.thread_id == "test123"
+            assert store.redis_url is None  # Should be None for credential provider auth
+            assert store.key_prefix == "chat_messages"
 
     def test_init_credential_provider_requires_host(self):
         """Test that credential_provider requires host parameter."""
@@ -167,6 +178,32 @@ class TestRedisChatMessageStore:
                 host="myredis.redis.cache.windows.net",
                 thread_id="test123",
             )
+
+    async def test_serialize_with_credential_provider(self):
+        """Test that serialization works correctly with credential provider authentication."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+                key_prefix="custom_prefix",
+                max_messages=100,
+            )
+
+            # Serialize the store state
+            state = await store.serialize()
+
+            # Verify serialization includes correct values
+            assert state["thread_id"] == "test123"
+            assert state["redis_url"] is None  # Should be None for credential provider auth
+            assert state["key_prefix"] == "custom_prefix"
+            assert state["max_messages"] == 100
+            assert state["type"] == "redis_store_state"
 
     def test_init_with_initial_messages(self, sample_messages):
         """Test initialization with initial messages."""

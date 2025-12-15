@@ -131,8 +131,9 @@ class RedisChatMessageStore:
         self.max_messages = max_messages
 
         # Initialize Redis client based on authentication method
-        if credential_provider is not None:
+        if credential_provider is not None and host is not None:
             # Azure AD authentication with credential provider
+            self.redis_url = None  # Not using URL-based auth
             self._redis_client = redis.Redis(
                 host=host,
                 port=port,
