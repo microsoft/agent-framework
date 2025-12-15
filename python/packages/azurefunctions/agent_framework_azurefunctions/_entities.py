@@ -384,7 +384,7 @@ def create_agent_entity(
 
             operation = context.operation_name
 
-            if operation == "run" or operation == "run_async":
+            if operation == "run" or operation == "run_agent":
                 input_data: Any = context.get_input()
 
                 request: str | dict[str, Any]

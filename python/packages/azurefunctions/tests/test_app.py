@@ -458,9 +458,11 @@ class TestAgentEntityFactory:
         # Verify result was set
         assert mock_context.set_result.called
         assert mock_context.set_state.called
+        result_call = mock_context.set_result.call_args[0][0]
+        assert "error" not in result_call
 
     def test_entity_function_handles_run_agent_operation(self) -> None:
-        """Test that the entity function handles the run operation."""
+        """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
@@ -484,6 +486,8 @@ class TestAgentEntityFactory:
         # Verify result was set
         assert mock_context.set_result.called
         assert mock_context.set_state.called
+        result_call = mock_context.set_result.call_args[0][0]
+        assert "error" not in result_call
 
     def test_entity_function_handles_reset_operation(self) -> None:
         """Test that the entity function handles the reset operation."""

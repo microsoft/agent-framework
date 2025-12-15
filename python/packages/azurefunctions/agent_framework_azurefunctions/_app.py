@@ -496,7 +496,7 @@ class AgentFunctionApp(DFAppBase):
 
             Operations:
             - run: Execute the agent with a message
-            - run_async: (Deprecated) Execute the agent with a message
+            - run_agent: (Deprecated) Execute the agent with a message
             - reset: Clear conversation history
             """
             entity_handler = create_agent_entity(agent, callback)
