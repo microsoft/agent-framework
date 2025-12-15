@@ -125,9 +125,9 @@ async def main() -> None:
         .build()
     )
 
-    initial_request = "Perform a comprehensive research on Microsoft Agent Framework."
-    print("Request:", initial_request)
-    async for event in workflow.run_stream(initial_request):
+    request = "Perform a comprehensive research on Microsoft Agent Framework."
+    print("Request:", request)
+    async for event in workflow.run_stream(request):
         _display_event(event)
 
     """

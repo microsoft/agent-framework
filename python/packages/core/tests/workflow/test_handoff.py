@@ -784,11 +784,10 @@ def test_handoff_builder_rejects_empty_participant_factories():
     """Test that HandoffBuilder rejects empty participant_factories dictionary."""
     # Empty factories are rejected immediately when calling participant_factories()
     with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
-        builder = HandoffBuilder().participant_factories({})
+        HandoffBuilder().participant_factories({})
 
     with pytest.raises(ValueError, match=r"No participants or participant_factories have been configured"):
-        builder = HandoffBuilder(participant_factories={})
-        builder.build()
+        HandoffBuilder(participant_factories={}).build()
 
 
 def test_handoff_builder_rejects_mixing_participants_and_factories():

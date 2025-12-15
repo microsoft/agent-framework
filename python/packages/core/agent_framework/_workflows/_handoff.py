@@ -1835,7 +1835,9 @@ class HandoffBuilder:
             wrapped = metadata["executors"]
             # Map executors by factory name (not executor.id) because handoff configs reference factory names
             # This allows users to configure handoffs using the factory names they provided
-            executors = {factory_names_to_ids[executor.id]: executor for executor in wrapped.values()}
+            executors = {
+                factory_name: wrapped[executor_id] for factory_name, executor_id in factory_names_to_ids.items()
+            }
             aliases = metadata["aliases"]
 
             return executors, aliases
@@ -1866,7 +1868,7 @@ class HandoffBuilder:
 
         Args:
             agent: The ChatAgent to add handoff tools to
-            specialists: Map of executor IDs to specialist executors this agent can hand off to
+            specialists: Map of executor IDs or factory names to specialist executors this agent can hand off to
 
         Returns:
             Dict mapping tool names (in various formats) to executor IDs for handoff resolution
@@ -1877,16 +1879,16 @@ class HandoffBuilder:
 
         tool_targets: dict[str, str] = {}
         new_tools: list[Any] = []
-        for exec_id in specialists:
-            alias = exec_id
+        for executor in specialists.values():
+            alias = executor.id
             sanitized = sanitize_identifier(alias)
             tool = _create_handoff_tool(alias)
             if tool.name not in existing_names:
                 new_tools.append(tool)
             # Map multiple name variations to the same executor ID for robust resolution
-            tool_targets[tool.name.lower()] = exec_id
-            tool_targets[sanitized] = exec_id
-            tool_targets[alias.lower()] = exec_id
+            tool_targets[tool.name.lower()] = executor.id
+            tool_targets[sanitized] = executor.id
+            tool_targets[alias.lower()] = executor.id
 
         if new_tools:
             chat_options.tools = existing_tools + new_tools

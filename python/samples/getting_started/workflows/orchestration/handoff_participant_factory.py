@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    AgentRunResponseUpdate,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
@@ -39,14 +39,12 @@ Key Concepts:
 """
 
 
-def create_cordinator() -> ChatAgent:
+def create_coordinator() -> ChatAgent:
     """Factory function to create a coordinator agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
-            "You are a coordinator. Route user requests to either research_agent or summary_agent. "
-            "Always call exactly one handoff tool with a short routing acknowledgement. "
-            "If unsure, default to research_agent. Never request information yourself. "
-            "After a specialist hands off back to you, provide a concise final summary and stop."
+            "You are a coordinator. You break down a user query into a research task and a summary task. "
+            "Assign the two tasks to the appropriate specialists, one after the other."
         ),
         name="coordinator",
     )
@@ -56,13 +54,12 @@ def create_researcher() -> ChatAgent:
     """Factory function to create a researcher agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
-            "You are a research specialist that explores topics thoroughly. "
+            "You are a research specialist that explores topics thoroughly on the Microsoft Learn Site."
             "When given a research task, break it down into multiple aspects and explore each one. "
-            "Continue your research across multiple responses - don't try to finish everything in one response. "
-            "After each response, think about what else needs to be explored. "
-            "When you have covered the topic comprehensively (at least 3-4 different aspects), "
-            "call the handoff tool to return to coordinator with your findings. "
-            "Keep each individual response focused on one aspect."
+            "Continue your research across multiple responses - don't try to finish everything in one "
+            "response. After each response, think about what else needs to be explored. When you have "
+            "covered the topic comprehensively (at least 3-4 different aspects), return control to the "
+            "coordinator. Keep each individual response focused on one aspect."
         ),
         name="research_agent",
     )
@@ -72,76 +69,86 @@ def create_summarizer() -> ChatAgent:
     """Factory function to create a summarizer agent instance."""
     return AzureOpenAIChatClient(credential=AzureCliCredential()).create_agent(
         instructions=(
-            "You summarize research findings. Provide a concise, well-organized summary. "
-            "When done, hand off to coordinator."
+            "You summarize research findings. Provide a concise, well-organized summary. When done, return "
+            "control to the coordinator."
         ),
         name="summary_agent",
     )
 
 
-async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
-    """Collect all events from an async stream."""
-    return [event async for event in stream]
+last_response_id: str | None = None
 
 
-def _print_conversation(events: list[WorkflowEvent]) -> None:
+def _display_event(event: WorkflowEvent) -> None:
     """Print the final conversation snapshot from workflow output events."""
-    for event in events:
-        if isinstance(event, AgentRunUpdateEvent):
-            print(event.data, flush=True, end="")
-        elif isinstance(event, WorkflowOutputEvent):
-            conversation = cast(list[ChatMessage], event.data)
-            print("\n=== Final Conversation (Autonomous with Iteration) ===")
-            for message in conversation:
-                speaker = message.author_name or message.role.value
-                text_preview = message.text[:200] + "..." if len(message.text) > 200 else message.text
-                print(f"- {speaker}: {text_preview}")
-            print(f"\nTotal messages: {len(conversation)}")
-            print("=====================================================")
+    if isinstance(event, AgentRunUpdateEvent) and event.data:
+        update: AgentRunResponseUpdate = event.data
+        if not update.text:
+            return
+        global last_response_id
+        if update.response_id != last_response_id:
+            last_response_id = update.response_id
+            print(f"\n- {update.author_name}: ", flush=True, end="")
+        print(event.data, flush=True, end="")
+    elif isinstance(event, WorkflowOutputEvent):
+        conversation = cast(list[ChatMessage], event.data)
+        print("\n=== Final Conversation (Autonomous with Iteration) ===")
+        for message in conversation:
+            speaker = message.author_name or message.role.value
+            text_preview = message.text[:200] + "..." if len(message.text) > 200 else message.text
+            print(f"- {speaker}: {text_preview}")
+        print(f"\nTotal messages: {len(conversation)}")
+        print("=====================================================")
 
 
 async def main() -> None:
-    """Run an autonomous handoff workflow with specialist iteration enabled."""
+    """Run the autonomous handoff workflow with participant factories."""
     # Build the handoff workflow using participant factories
-    workflow = (
+    workflow_builder = (
         HandoffBuilder(
-            name="autonomous_iteration_handoff",
+            name="Autonomous Handoff with Participant Factories",
             participant_factories={
-                "coordinator": create_cordinator,
-                "research_agent": create_researcher,
-                "summary_agent": create_summarizer,
+                "coordinator": create_coordinator,
+                "researcher": create_researcher,
+                "summarizer": create_summarizer,
             },
         )
         .set_coordinator("coordinator")
-        .add_handoff("coordinator", ["research_agent", "summary_agent"])
-        .add_handoff("research_agent", "coordinator")  # Research can hand back to coordinator
-        .add_handoff("summary_agent", "coordinator")
+        .add_handoff("coordinator", ["researcher", "summarizer"])
+        .add_handoff("researcher", "coordinator")  # Research can hand back to coordinator
+        .add_handoff("summarizer", "coordinator")
         .with_interaction_mode("autonomous", autonomous_turn_limit=15)
         .with_termination_condition(
             # Terminate after coordinator provides 5 assistant responses
             lambda conv: sum(1 for msg in conv if msg.author_name == "coordinator" and msg.role.value == "assistant")
             >= 5
         )
-        .build()
     )
 
-    initial_request = "Research the key benefits and challenges of renewable energy adoption."
-    print("Initial request:", initial_request)
-    print("\nExpecting multiple iterations from the research agent...\n")
+    workflow_a = workflow_builder.build()
+    print("=== Running workflow_a ===")
+    request_a = "Perform a comprehensive research on Microsoft Agent Framework."
+    print("Request:", request_a)
+    async for event in workflow_a.run_stream(request_a):
+        _display_event(event)
 
-    events = await _drain(workflow.run_stream(initial_request))
-    _print_conversation(events)
+    request_b = "How do I create an agent?"
+    print("\n\nFollow-up Request:", request_b)
+    async for event in workflow_a.run_stream(request_b):
+        _display_event(event)
+
+    workflow_b = workflow_builder.build()
+    print("=== Running workflow_b ===")
+    print("\n\nRequest:", request_b)
+    async for event in workflow_b.run_stream(request_b):
+        _display_event(event)
 
     """
     Expected behavior:
-        - Coordinator routes to research_agent.
-        - Research agent iterates multiple times, exploring different aspects of renewable energy.
-        - Each iteration adds to the conversation without returning to coordinator.
-        - After thorough research, research_agent calls handoff to coordinator.
-        - Coordinator provides final summary.
-
-    In autonomous mode, agents continue working until they invoke a handoff tool,
-    allowing the research_agent to perform 3-4+ responses before handing off.
+    - workflow_a and workflow_b maintain separate states for their participants.
+    - Each workflow processes its requests independently without interference.
+    - workflow_a will answer the follow-up request based on its own conversation history,
+      while workflow_b will provide a general answer without prior context.
     """
 
 
