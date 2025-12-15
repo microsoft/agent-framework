@@ -247,7 +247,7 @@ model:
 Each sample can be run independently. Make sure you have the required environment variables set:
 
 - For Azure samples: Ensure you're logged in via Azure CLI (`az login`)
-- For OpenAI samples: Set `OPENAI_APIKEY` environment variable
+- For OpenAI samples: Set `OPENAI_API_KEY` environment variable
 
 ```bash
 # Run a specific sample

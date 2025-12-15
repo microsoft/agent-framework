@@ -63,6 +63,8 @@ from azure.ai.agents.models import (
     McpTool,
     MessageDeltaChunk,
     MessageDeltaTextContent,
+    MessageDeltaTextFileCitationAnnotation,
+    MessageDeltaTextFilePathAnnotation,
     MessageDeltaTextUrlCitationAnnotation,
     MessageImageUrlParam,
     MessageInputContentBlock,
@@ -471,6 +473,45 @@ class AzureAIAgentClient(BaseChatClient):
 
         return url_citations
 
+    def _extract_file_path_contents(self, message_delta_chunk: MessageDeltaChunk) -> list[HostedFileContent]:
+        """Extract file references from MessageDeltaChunk annotations.
+
+        Code interpreter generates files that are referenced via file path or file citation
+        annotations in the message content. This method extracts those file IDs and returns
+        them as HostedFileContent objects.
+
+        Handles two annotation types:
+        - MessageDeltaTextFilePathAnnotation: Contains file_path.file_id
+        - MessageDeltaTextFileCitationAnnotation: Contains file_citation.file_id
+
+        Args:
+            message_delta_chunk: The message delta chunk to process
+
+        Returns:
+            List of HostedFileContent objects for any files referenced in annotations
+        """
+        file_contents: list[HostedFileContent] = []
+
+        for content in message_delta_chunk.delta.content:
+            if isinstance(content, MessageDeltaTextContent) and content.text and content.text.annotations:
+                for annotation in content.text.annotations:
+                    if isinstance(annotation, MessageDeltaTextFilePathAnnotation):
+                        # Extract file_id from the file_path annotation
+                        file_path = getattr(annotation, "file_path", None)
+                        if file_path is not None:
+                            file_id = getattr(file_path, "file_id", None)
+                            if file_id:
+                                file_contents.append(HostedFileContent(file_id=file_id))
+                    elif isinstance(annotation, MessageDeltaTextFileCitationAnnotation):
+                        # Extract file_id from the file_citation annotation
+                        file_citation = getattr(annotation, "file_citation", None)
+                        if file_citation is not None:
+                            file_id = getattr(file_citation, "file_id", None)
+                            if file_id:
+                                file_contents.append(HostedFileContent(file_id=file_id))
+
+        return file_contents
+
     def _get_real_url_from_citation_reference(
         self, citation_url: str, azure_search_tool_calls: list[dict[str, Any]]
     ) -> str:
@@ -530,6 +571,9 @@ class AzureAIAgentClient(BaseChatClient):
                         # Extract URL citations from the delta chunk
                         url_citations = self._extract_url_citations(event_data, azure_search_tool_calls)
 
+                        # Extract file path contents from code interpreter outputs
+                        file_contents = self._extract_file_path_contents(event_data)
+
                         # Create contents with citations if any exist
                         citation_content: list[Contents] = []
                         if event_data.text or url_citations:
@@ -537,6 +581,9 @@ class AzureAIAgentClient(BaseChatClient):
                             if url_citations:
                                 text_content_obj.annotations = url_citations
                             citation_content.append(text_content_obj)
+
+                        # Add file contents from file path annotations
+                        citation_content.extend(file_contents)
 
                         yield ChatResponseUpdate(
                             role=role,
