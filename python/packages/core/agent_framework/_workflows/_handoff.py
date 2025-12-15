@@ -112,6 +112,8 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         chat_message_store_factory=agent.chat_message_store_factory,
         context_providers=agent.context_provider,
         middleware=middleware,
+        # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
+        allow_multiple_tool_calls=False,
         frequency_penalty=options.frequency_penalty,
         logit_bias=dict(options.logit_bias) if options.logit_bias else None,
         max_tokens=options.max_tokens,
