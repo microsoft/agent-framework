@@ -91,7 +91,7 @@ class AgentEntity:
             return entry.is_error
         return False
 
-    async def run_async(
+    async def run_agent(
         self,
         context: df.DurableEntityContext,
         request: RunRequest | dict[str, Any] | str,

@@ -108,7 +108,7 @@ class TestAgentEntityInit:
 class TestAgentEntityRunAgent:
     """Test suite for the run_agent operation."""
 
-    async def test_run_agent_executes_agent(self) -> None:
+    async def test_run_executes_agent(self) -> None:
         """Test that run_agent executes the agent."""
         mock_agent = Mock()
         mock_response = _agent_response("Test response")
@@ -118,6 +118,33 @@ class TestAgentEntityRunAgent:
         mock_context = Mock()
 
         result = await entity.run(
+            mock_context, {"message": "Test message", "thread_id": "conv-123", "correlationId": "corr-entity-1"}
+        )
+
+        # Verify agent.run was called
+        mock_agent.run.assert_called_once()
+        _, kwargs = mock_agent.run.call_args
+        sent_messages: list[Any] = kwargs.get("messages")
+        assert len(sent_messages) == 1
+        sent_message = sent_messages[0]
+        assert isinstance(sent_message, ChatMessage)
+        assert getattr(sent_message, "text", None) == "Test message"
+        assert getattr(sent_message.role, "value", sent_message.role) == "user"
+
+        # Verify result
+        assert isinstance(result, AgentRunResponse)
+        assert result.text == "Test response"
+
+    async def test_run_agent_executes_agent(self) -> None:
+        """Test that run_agent executes the agent."""
+        mock_agent = Mock()
+        mock_response = _agent_response("Test response")
+        mock_agent.run = AsyncMock(return_value=mock_response)
+
+        entity = AgentEntity(mock_agent)
+        mock_context = Mock()
+
+        result = await entity.run_agent(
             mock_context, {"message": "Test message", "thread_id": "conv-123", "correlationId": "corr-entity-1"}
         )
 
