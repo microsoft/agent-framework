@@ -538,13 +538,7 @@ def create_resource(
     # Parse OTEL_RESOURCE_ATTRIBUTES environment variable
     # Format: key1=value1,key2=value2
     if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
-        for pair in resource_attrs_env.split(","):
-            if "=" in pair:
-                key, value = pair.split("=", 1)
-                # Don't override already set attributes
-                if key.strip() not in resource_attributes:
-                    resource_attributes[key.strip()] = value.strip()
-
+        resource_attributes.update(_parse_headers(resource_attrs_env))
     return Resource.create(resource_attributes)
 
 

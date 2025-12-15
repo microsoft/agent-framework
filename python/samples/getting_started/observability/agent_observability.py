@@ -27,8 +27,9 @@ async def get_weather(
 
 
 async def main():
-    # This will enable tracing and create the necessary tracing, logging and metrics providers
-    # based on environment variables. See the .env.example file for the available configuration options.
+    # calling `configure_otel_providers` will *enable* tracing and create the necessary tracing, logging
+    # and metrics providers based on environment variables.
+    # See the .env.example file for the available configuration options.
     configure_otel_providers()
 
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
