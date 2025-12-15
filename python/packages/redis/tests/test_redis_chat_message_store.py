@@ -93,10 +93,80 @@ class TestRedisChatMessageStore:
         assert store.max_messages == 100
 
     def test_init_with_redis_url_required(self):
-        """Test that redis_url is required for initialization."""
-        with pytest.raises(ValueError, match="redis_url is required for Redis connection"):
-            # Should raise an exception since redis_url is required
+        """Test that either redis_url or credential_provider is required."""
+        with pytest.raises(ValueError, match="Either redis_url or credential_provider must be provided"):
             RedisChatMessageStore(thread_id="test123")
+
+    def test_init_with_credential_provider(self):
+        """Test initialization with credential_provider."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            mock_redis_instance = MagicMock()
+            mock_redis_class.return_value = mock_redis_instance
+
+            store = RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+            )
+
+            # Verify Redis.Redis was called with correct parameters
+            mock_redis_class.assert_called_once_with(
+                host="myredis.redis.cache.windows.net",
+                port=6380,
+                ssl=True,
+                username=None,
+                credential_provider=mock_credential_provider,
+                decode_responses=True,
+            )
+            assert store.thread_id == "test123"
+
+    def test_init_with_credential_provider_custom_port(self):
+        """Test initialization with credential_provider and custom port."""
+        mock_credential_provider = MagicMock()
+
+        with patch("agent_framework_redis._chat_message_store.redis.Redis") as mock_redis_class:
+            RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                port=6379,
+                ssl=False,
+                username="admin",
+                thread_id="test123",
+            )
+
+            # Verify custom parameters were passed
+            mock_redis_class.assert_called_once_with(
+                host="myredis.redis.cache.windows.net",
+                port=6379,
+                ssl=False,
+                username="admin",
+                credential_provider=mock_credential_provider,
+                decode_responses=True,
+            )
+
+    def test_init_credential_provider_requires_host(self):
+        """Test that credential_provider requires host parameter."""
+        mock_credential_provider = MagicMock()
+
+        with pytest.raises(ValueError, match="host is required when using credential_provider"):
+            RedisChatMessageStore(
+                credential_provider=mock_credential_provider,
+                thread_id="test123",
+            )
+
+    def test_init_mutually_exclusive_params(self):
+        """Test that redis_url and credential_provider are mutually exclusive."""
+        mock_credential_provider = MagicMock()
+
+        with pytest.raises(ValueError, match="redis_url and credential_provider are mutually exclusive"):
+            RedisChatMessageStore(
+                redis_url="redis://localhost:6379",
+                credential_provider=mock_credential_provider,
+                host="myredis.redis.cache.windows.net",
+                thread_id="test123",
+            )
 
     def test_init_with_initial_messages(self, sample_messages):
         """Test initialization with initial messages."""
