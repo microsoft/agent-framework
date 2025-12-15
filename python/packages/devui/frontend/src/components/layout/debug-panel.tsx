@@ -4,6 +4,7 @@
  */
 
 import { useRef, useState, useMemo } from "react";
+import { useDevUIStore } from "@/stores/devuiStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -1479,7 +1480,9 @@ function TraceGroupItem({ group }: { group: TraceGroup }) {
 }
 
 function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
-  const [subTab, setSubTab] = useState<"spans" | "context">("spans");
+  // Use persisted store state instead of local useState
+  const subTab = useDevUIStore((state) => state.debugTraceSubTab);
+  const setSubTab = useDevUIStore((state) => state.setDebugTraceSubTab);
 
   // ONLY show actual trace events
   const traceEvents = events.filter(
@@ -1499,10 +1502,10 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
 
         {/* Sub-tab toggle */}
         <div className="flex-1" />
-        <div className="flex items-center bg-muted rounded-md p-1">
+        <div className="flex items-center bg-muted rounded-md p-1 min-w-0">
           <button
             onClick={() => setSubTab("spans")}
-            className={`px-3 py-1.5 text-xs rounded transition-colors ${
+            className={`px-3 py-1.5 text-xs rounded transition-colors truncate ${
               subTab === "spans"
                 ? "bg-background shadow-sm font-medium"
                 : "text-muted-foreground hover:text-foreground"
@@ -1512,55 +1515,63 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
           </button>
           <button
             onClick={() => setSubTab("context")}
-            className={`px-3 py-1.5 text-xs rounded transition-colors flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 text-xs rounded transition-colors flex items-center gap-1.5 min-w-0 ${
               subTab === "context"
                 ? "bg-background shadow-sm font-medium"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <BarChart3 className="h-3.5 w-3.5" />
-            Context Inspector
+            <BarChart3 className="h-3.5 w-3.5 flex-shrink-0" />
+            <span className="truncate">Context Inspector</span>
           </button>
         </div>
       </div>
 
       {/* Sub-tab content */}
       {subTab === "spans" ? (
-        <ScrollArea className="flex-1">
-          <div className="p-3">
-            {traceEvents.length === 0 ? (
-              <div className="text-center text-muted-foreground text-sm py-8">
-                No trace data available.
-                <br />
-                {events && events.length > 0 && (
-                  <div className="mt-3 text-xs border rounded p-2">
-                    <Info className="inline h-4 w-4 mr-1" />
-                    You may have to set the environment variable{" "}
-                    <span className="font-mono bg-accent/10 px-1 rounded">
-                      ENABLE_OTEL=true
-                    </span>{" "}
-                    or restart devui with the tracing flag{" "}
-                    <div className="font-mono bg-accent/10 px-1 rounded">
-                      devui --tracing
-                    </div>
-                    to enable tracing.
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {traceGroups.length > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {traceGroups.length} turn{traceGroups.length !== 1 ? "s" : ""}
-                  </span>
-                )}
-                {traceGroups.map((group) => (
-                  <TraceGroupItem key={group.response_id} group={group} />
-                ))}
-              </div>
-            )}
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* OTel Spans header */}
+          <div className="p-3 border-b flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              <span className="font-medium text-sm">OTel Spans</span>
+              <Badge variant="outline" className="text-xs">
+                {traceGroups.length} turn{traceGroups.length !== 1 ? "s" : ""}
+              </Badge>
+            </div>
           </div>
-        </ScrollArea>
+
+          <ScrollArea className="flex-1">
+            <div className="p-3">
+              {traceEvents.length === 0 ? (
+                <div className="text-center text-muted-foreground text-sm py-8">
+                  No trace data available.
+                  <br />
+                  {events && events.length > 0 && (
+                    <div className="mt-3 text-xs border rounded p-2">
+                      <Info className="inline h-4 w-4 mr-1" />
+                      You may have to set the environment variable{" "}
+                      <span className="font-mono bg-accent/10 px-1 rounded">
+                        ENABLE_OTEL=true
+                      </span>{" "}
+                      or restart devui with the tracing flag{" "}
+                      <div className="font-mono bg-accent/10 px-1 rounded">
+                        devui --tracing
+                      </div>
+                      to enable tracing.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {traceGroups.map((group) => (
+                    <TraceGroupItem key={group.response_id} group={group} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
       ) : (
         <ContextInspector events={events} />
       )}
@@ -1754,6 +1765,10 @@ export function DebugPanel({
   isStreaming = false,
   onMinimize,
 }: DebugPanelProps) {
+  // Use persisted store state for active tab
+  const activeTab = useDevUIStore((state) => state.debugPanelTab);
+  const setActiveTab = useDevUIStore((state) => state.setDebugPanelTab);
+
   // Compute counts once for tab badges (memoized to avoid perf hits)
   const counts = useMemo(() => {
     const processedEvents = processEventsForDisplay(events);
@@ -1766,7 +1781,7 @@ export function DebugPanel({
 
   return (
     <div className="flex-1 border-l flex flex-col min-h-0">
-      <Tabs defaultValue="events" className="flex-1 flex flex-col min-h-0">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "events" | "traces" | "tools")} className="flex-1 flex flex-col min-h-0">
         <div className="px-3 pt-3 flex items-center gap-2 flex-shrink-0">
           <TabsList className="flex-1">
             <TabsTrigger value="events" className="flex-1 gap-1.5">

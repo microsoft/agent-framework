@@ -61,6 +61,12 @@ interface DevUIState {
   isResizing: boolean;
   showToolCalls: boolean; // UI setting to show/hide tool calls in chat
 
+  // Debug Panel Preferences (persisted)
+  debugPanelTab: "events" | "traces" | "tools"; // Main debug panel tab
+  debugTraceSubTab: "spans" | "context"; // OTel Spans vs Context Inspector
+  contextInspectorViewMode: "tokens" | "composition";
+  contextInspectorCumulative: boolean;
+
   // Modal Slice
   showAboutModal: boolean;
   showGallery: boolean;
@@ -147,6 +153,12 @@ interface DevUIActions {
   setIsResizing: (resizing: boolean) => void;
   setShowToolCalls: (show: boolean) => void;
 
+  // Debug Panel Preference Actions
+  setDebugPanelTab: (tab: "events" | "traces" | "tools") => void;
+  setDebugTraceSubTab: (tab: "spans" | "context") => void;
+  setContextInspectorViewMode: (mode: "tokens" | "composition") => void;
+  setContextInspectorCumulative: (cumulative: boolean) => void;
+
   // Modal Actions
   setShowAboutModal: (show: boolean) => void;
   setShowGallery: (show: boolean) => void;
@@ -228,6 +240,12 @@ export const useDevUIStore = create<DevUIStore>()(
         debugEvents: [],
         isResizing: false,
         showToolCalls: true, // Default to showing tool calls
+
+        // Debug Panel Preferences (persisted)
+        debugPanelTab: "events", // Default to events tab
+        debugTraceSubTab: "spans", // Default to spans sub-tab
+        contextInspectorViewMode: "tokens", // Default to tokens view
+        contextInspectorCumulative: false, // Default to per-message view
 
         // Modal State
         showAboutModal: false,
@@ -399,6 +417,12 @@ export const useDevUIStore = create<DevUIStore>()(
           }),
         clearDebugEvents: () => set({ debugEvents: [] }),
         setIsResizing: (resizing) => set({ isResizing: resizing }),
+
+        // Debug Panel Preference Actions
+        setDebugPanelTab: (tab) => set({ debugPanelTab: tab }),
+        setDebugTraceSubTab: (tab) => set({ debugTraceSubTab: tab }),
+        setContextInspectorViewMode: (mode) => set({ contextInspectorViewMode: mode }),
+        setContextInspectorCumulative: (cumulative) => set({ contextInspectorCumulative: cumulative }),
 
         // ========================================
         // Modal Actions
@@ -608,6 +632,11 @@ export const useDevUIStore = create<DevUIStore>()(
           showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
+          // Debug panel tab preferences
+          debugPanelTab: state.debugPanelTab,
+          debugTraceSubTab: state.debugTraceSubTab,
+          contextInspectorViewMode: state.contextInspectorViewMode,
+          contextInspectorCumulative: state.contextInspectorCumulative,
         }),
       }
     ),
