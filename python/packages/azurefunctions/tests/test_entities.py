@@ -109,7 +109,7 @@ class TestAgentEntityRunAgent:
     """Test suite for the run_agent operation."""
 
     async def test_run_executes_agent(self) -> None:
-        """Test that run_agent executes the agent."""
+        """Test that run executes the agent."""
         mock_agent = Mock()
         mock_response = _agent_response("Test response")
         mock_agent.run = AsyncMock(return_value=mock_response)
