@@ -777,4 +777,170 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     #endregion State Delta Tests
+
+    #region Tool Call Result Tests
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithPlainStringToolResult_HandlesCorrectlyAsync()
+    {
+        // Arrange - Simulate a Handoff tool returning plain string content
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallResultEvent
+            {
+                ToolCallId = "call_1",
+                MessageId = "msg1",
+                Content = "Transferred.",
+                Role = AGUIRoles.Tool
+            },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate toolResultUpdate = updates.First(u => u.Contents.Any(c => c is FunctionResultContent));
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(toolResultUpdate.Contents[0]);
+        Assert.Equal("call_1", functionResult.CallId);
+        Assert.NotNull(functionResult.Result);
+        Assert.Equal("Transferred.", functionResult.Result.ToString());
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithJsonToolResult_HandlesCorrectlyAsync()
+    {
+        // Arrange - Tool result with valid JSON content
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallResultEvent
+            {
+                ToolCallId = "call_1",
+                MessageId = "msg1",
+                Content = "{\"status\":\"success\",\"data\":42}",
+                Role = AGUIRoles.Tool
+            },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate toolResultUpdate = updates.First(u => u.Contents.Any(c => c is FunctionResultContent));
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(toolResultUpdate.Contents[0]);
+        Assert.Equal("call_1", functionResult.CallId);
+        Assert.NotNull(functionResult.Result);
+        JsonElement jsonResult = Assert.IsType<JsonElement>(functionResult.Result);
+        Assert.Equal("success", jsonResult.GetProperty("status").GetString());
+        Assert.Equal(42, jsonResult.GetProperty("data").GetInt32());
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithEmptyToolResult_HandlesCorrectlyAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallResultEvent
+            {
+                ToolCallId = "call_1",
+                MessageId = "msg1",
+                Content = "",
+                Role = AGUIRoles.Tool
+            },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate toolResultUpdate = updates.First(u => u.Contents.Any(c => c is FunctionResultContent));
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(toolResultUpdate.Contents[0]);
+        Assert.Equal("call_1", functionResult.CallId);
+        Assert.Null(functionResult.Result);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithJsonStringToolResult_HandlesCorrectlyAsync()
+    {
+        // Arrange - Tool result with JSON-encoded string
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallResultEvent
+            {
+                ToolCallId = "call_1",
+                MessageId = "msg1",
+                Content = "\"Hello World\"",
+                Role = AGUIRoles.Tool
+            },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate toolResultUpdate = updates.First(u => u.Contents.Any(c => c is FunctionResultContent));
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(toolResultUpdate.Contents[0]);
+        Assert.Equal("call_1", functionResult.CallId);
+        Assert.NotNull(functionResult.Result);
+        JsonElement jsonResult = Assert.IsType<JsonElement>(functionResult.Result);
+        Assert.Equal("Hello World", jsonResult.GetString());
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithJsonArrayToolResult_HandlesCorrectlyAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new RunStartedEvent { ThreadId = "thread1", RunId = "run1" },
+            new ToolCallResultEvent
+            {
+                ToolCallId = "call_1",
+                MessageId = "msg1",
+                Content = "[1,2,3]",
+                Role = AGUIRoles.Tool
+            },
+            new RunFinishedEvent { ThreadId = "thread1", RunId = "run1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        ChatResponseUpdate toolResultUpdate = updates.First(u => u.Contents.Any(c => c is FunctionResultContent));
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(toolResultUpdate.Contents[0]);
+        JsonElement jsonResult = Assert.IsType<JsonElement>(functionResult.Result);
+        Assert.Equal(JsonValueKind.Array, jsonResult.ValueKind);
+        Assert.Equal(3, jsonResult.GetArrayLength());
+    }
+
+    #endregion Tool Call Result Tests
 }
