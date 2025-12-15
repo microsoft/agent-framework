@@ -46,7 +46,8 @@ class AgentEntity:
     - Handles tool execution
 
     Operations:
-    - run_agent: Execute the agent with a message
+    - run: Execute the agent with a message
+    - run_agent: (Deprecated) Execute the agent with a message
     - reset: Clear conversation history
 
     Attributes:
@@ -90,6 +91,22 @@ class AgentEntity:
             return entry.is_error
         return False
 
+    async def run_async(
+        self,
+        context: df.DurableEntityContext,
+        request: RunRequest | dict[str, Any] | str,
+    ) -> AgentRunResponse:
+        """(Deprecated) Execute the agent with a message directly in the entity.
+
+        Args:
+            context: Entity context
+            request: RunRequest object, dict, or string message (for backward compatibility)
+
+        Returns:
+            AgentRunResponse enriched with execution metadata.
+        """
+        return await self.run(context, request)
+
     async def run(
         self,
         context: df.DurableEntityContext,
@@ -124,7 +141,7 @@ class AgentEntity:
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self.state.data.conversation_history.append(state_request)
 
-        logger.debug(f"[AgentEntity.run_agent] Received Message: {state_request}")
+        logger.debug(f"[AgentEntity.run] Received Message: {state_request}")
 
         try:
             # Build messages from conversation history, excluding error responses
@@ -150,7 +167,7 @@ class AgentEntity:
             )
 
             logger.debug(
-                "[AgentEntity.run_agent] Agent invocation completed - response type: %s",
+                "[AgentEntity.run] Agent invocation completed - response type: %s",
                 type(agent_run_response).__name__,
             )
 
@@ -167,12 +184,12 @@ class AgentEntity:
             state_response = DurableAgentStateResponse.from_run_response(correlation_id, agent_run_response)
             self.state.data.conversation_history.append(state_response)
 
-            logger.debug("[AgentEntity.run_agent] AgentRunResponse stored in conversation history")
+            logger.debug("[AgentEntity.run] AgentRunResponse stored in conversation history")
 
             return agent_run_response
 
         except Exception as exc:
-            logger.exception("[AgentEntity.run_agent] Agent execution failed.")
+            logger.exception("[AgentEntity.run] Agent execution failed.")
 
             # Create error message
             error_message = ChatMessage(
@@ -367,7 +384,7 @@ def create_agent_entity(
 
             operation = context.operation_name
 
-            if operation == "run":
+            if operation == "run" or operation == "run_async":
                 input_data: Any = context.get_input()
 
                 request: str | dict[str, Any]

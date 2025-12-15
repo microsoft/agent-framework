@@ -495,7 +495,8 @@ class AgentFunctionApp(DFAppBase):
             """Durable entity that manages agent execution and conversation state.
 
             Operations:
-            - run_agent: Execute the agent with a message
+            - run: Execute the agent with a message
+            - run_async: (Deprecated) Execute the agent with a message
             - reset: Clear conversation history
             """
             entity_handler = create_agent_entity(agent, callback)

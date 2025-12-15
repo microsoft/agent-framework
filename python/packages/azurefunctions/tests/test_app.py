@@ -433,8 +433,8 @@ class TestAgentEntityFactory:
 
         assert callable(entity_function)
 
-    def test_entity_function_handles_run_agent_operation(self) -> None:
-        """Test that the entity function handles the run_agent operation."""
+    def test_entity_function_handles_run_operation(self) -> None:
+        """Test that the entity function handles the run operation."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
@@ -445,6 +445,32 @@ class TestAgentEntityFactory:
         # Mock context
         mock_context = Mock()
         mock_context.operation_name = "run"
+        mock_context.get_input.return_value = {
+            "message": "Test message",
+            "thread_id": "conv-123",
+            "correlationId": "corr-app-factory-1",
+        }
+        mock_context.get_state.return_value = None
+
+        # Execute entity function
+        entity_function(mock_context)
+
+        # Verify result was set
+        assert mock_context.set_result.called
+        assert mock_context.set_state.called
+
+    def test_entity_function_handles_run_agent_operation(self) -> None:
+        """Test that the entity function handles the run operation."""
+        mock_agent = Mock()
+        mock_agent.run = AsyncMock(
+            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+        )
+
+        entity_function = create_agent_entity(mock_agent)
+
+        # Mock context
+        mock_context = Mock()
+        mock_context.operation_name = "run_agent"
         mock_context.get_input.return_value = {
             "message": "Test message",
             "thread_id": "conv-123",
