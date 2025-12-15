@@ -285,7 +285,7 @@ class DurableAIAgent(AgentProtocol):
         logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])
 
         # Call the entity to get the underlying task
-        entity_task = self.context.call_entity(entity_id, "run_agent", run_request.to_dict())
+        entity_task = self.context.call_entity(entity_id, "run", run_request.to_dict())
 
         # Wrap it in an AgentTask that will convert the result to AgentRunResponse
         agent_task = AgentTask(

@@ -90,7 +90,7 @@ class AgentEntity:
             return entry.is_error
         return False
 
-    async def run_agent(
+    async def run(
         self,
         context: df.DurableEntityContext,
         request: RunRequest | dict[str, Any] | str,
@@ -367,7 +367,7 @@ def create_agent_entity(
 
             operation = context.operation_name
 
-            if operation == "run_agent":
+            if operation == "run":
                 input_data: Any = context.get_input()
 
                 request: str | dict[str, Any]
@@ -377,7 +377,7 @@ def create_agent_entity(
                     # Fall back to treating input as message string
                     request = "" if input_data is None else str(cast(object, input_data))
 
-                result = await entity.run_agent(context, request)
+                result = await entity.run(context, request)
                 context.set_result(result.to_dict())
 
             elif operation == "reset":
