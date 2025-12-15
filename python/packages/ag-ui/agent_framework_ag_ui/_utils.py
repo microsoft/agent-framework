@@ -177,7 +177,13 @@ def serialize_content_result(result: Any) -> str:  # noqa: ANN401
         result: The result to serialize (dict, list, or other types).
 
     Returns:
-        Serialized string representation.
+        Serialized string representation:
+        - None: returns empty string ""
+        - dict: returns JSON string
+        - empty list: returns empty string ""
+        - single TextContent-like item with str text: returns plain text string
+        - multiple items: returns JSON array
+        - other types: returns str(result)
     """
     if result is None:
         return ""
@@ -186,13 +192,17 @@ def serialize_content_result(result: Any) -> str:  # noqa: ANN401
     if isinstance(result, list):
         if not result:  # Empty list returns empty string
             return ""
-        texts: list[str] = []
+        items: list[Any] = []
         for item in result:
-            if hasattr(item, "text"):  # TextContent
-                texts.append(item.text)
+            if hasattr(item, "text") and isinstance(item.text, str):  # TextContent
+                items.append(item.text)
             elif hasattr(item, "model_dump"):
-                texts.append(json.dumps(item.model_dump(mode="json")))
+                # Keep as dict, let final json.dumps handle it
+                items.append(item.model_dump(mode="json"))
             else:
-                texts.append(str(item))
-        return texts[0] if len(texts) == 1 else json.dumps(texts)
+                items.append(str(item))
+        # Single string item returns plain text
+        if len(items) == 1 and isinstance(items[0], str):
+            return items[0]
+        return json.dumps(items)
     return str(result)
