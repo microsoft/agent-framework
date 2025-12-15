@@ -29,7 +29,7 @@ Additionally, you can configure a **minimum deletion delay** that controls how f
 
 ### Default values
 
-- **Default TTL**: 30 days
+- **Default TTL**: 14 days
 - **Minimum TTL deletion delay**: 5 minutes (maximum allowed value, subject to change in future releases)
 
 ### Configuration examples
@@ -52,7 +52,7 @@ services.ConfigureDurableAgents(
 services.ConfigureDurableAgents(
     options =>
     {
-        options.DefaultTimeToLive = TimeSpan.FromDays(30); // Global default
+        options.DefaultTimeToLive = TimeSpan.FromDays(14); // Global default
         
         // Agent with custom TTL of 1 day
         options.AddAIAgent(shortLivedAgent, timeToLive: TimeSpan.FromDays(1));
@@ -60,7 +60,7 @@ services.ConfigureDurableAgents(
         // Agent with custom TTL of 90 days
         options.AddAIAgent(longLivedAgent, timeToLive: TimeSpan.FromDays(90));
         
-        // Agent using global default (30 days)
+        // Agent using global default (14 days)
         options.AddAIAgent(defaultAgent);
     });
 
@@ -68,7 +68,7 @@ services.ConfigureDurableAgents(
 services.ConfigureDurableAgents(
     options =>
     {
-        options.DefaultTimeToLive = TimeSpan.FromDays(30);
+        options.DefaultTimeToLive = TimeSpan.FromDays(14);
         
         // Agent with no TTL (never expires)
         options.AddAIAgent(permanentAgent, timeToLive: null);

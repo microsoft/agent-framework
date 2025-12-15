@@ -20,9 +20,9 @@ public sealed class DurableAgentsOptions
     /// </summary>
     /// <remarks>
     /// If an agent entity is idle for this duration, it will be automatically deleted.
-    /// Defaults to 30 days. Set to <see langword="null"/> to disable TTL for agents without explicit TTL configuration.
+    /// Defaults to 14 days. Set to <see langword="null"/> to disable TTL for agents without explicit TTL configuration.
     /// </remarks>
-    public TimeSpan? DefaultTimeToLive { get; set; } = TimeSpan.FromDays(30);
+    public TimeSpan? DefaultTimeToLive { get; set; } = TimeSpan.FromDays(14);
 
     /// <summary>
     /// Gets or sets the minimum delay for scheduling TTL deletion signals. Defaults to 5 minutes.
