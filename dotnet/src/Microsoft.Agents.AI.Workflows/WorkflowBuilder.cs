@@ -174,6 +174,18 @@ public class WorkflowBuilder
     /// </summary>
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge(ExecutorBinding source, ExecutorBinding target)
+        => this.AddEdge<object>(source, target, null, false);
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
     /// rather than an error.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
@@ -181,6 +193,20 @@ public class WorkflowBuilder
     /// executors already exists.</exception>
     public WorkflowBuilder AddEdge(ExecutorBinding source, ExecutorBinding target, bool idempotent = false)
         => this.AddEdge<object>(source, target, null, idempotent);
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
+    /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
+    /// rather than an error.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge(ExecutorBinding source, ExecutorBinding target, string? label = null, bool idempotent = false)
+        => this.AddEdge<object>(source, target, null, label, idempotent);
 
     internal static Func<object?, bool>? CreateConditionFunc<T>(Func<T?, bool>? condition)
     {
@@ -229,6 +255,20 @@ public class WorkflowBuilder
     /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
     /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
     /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
+    /// If null, the edge is always activated when the source sends a message.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge<T>(ExecutorBinding source, ExecutorBinding target, Func<T?, bool>? condition = null)
+        => this.AddEdge(source, target, condition, label: null, false);
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
     /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
     /// rather than an error.</param>
     /// If null, the edge is always activated when the source sends a message.</param>
@@ -236,6 +276,23 @@ public class WorkflowBuilder
     /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
     /// executors already exists.</exception>
     public WorkflowBuilder AddEdge<T>(ExecutorBinding source, ExecutorBinding target, Func<T?, bool>? condition = null, bool idempotent = false)
+        => this.AddEdge(source, target, condition, label: null, idempotent);
+
+    /// <summary>
+    /// Adds a directed edge from the specified source executor to the target executor, optionally guarded by a
+    /// condition.
+    /// </summary>
+    /// <param name="source">The executor that acts as the source node of the edge. Cannot be null.</param>
+    /// <param name="target">The executor that acts as the target node of the edge. Cannot be null.</param>
+    /// <param name="condition">An optional predicate that determines whether the edge should be followed based on the input.
+    /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
+    /// <param name="idempotent">If set to <see langword="true"/>, adding the same edge multiple times will be a NoOp,
+    /// rather than an error.</param>
+    /// If null, the edge is always activated when the source sends a message.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if an unconditional edge between the specified source and target
+    /// executors already exists.</exception>
+    public WorkflowBuilder AddEdge<T>(ExecutorBinding source, ExecutorBinding target, Func<T?, bool>? condition = null, string? label = null, bool idempotent = false)
     {
         // Add an edge from source to target with an optional condition.
         // This is a low-level builder method that does not enforce any specific executor type.
@@ -256,7 +313,7 @@ public class WorkflowBuilder
                 "You cannot add another edge without a condition for the same source and target.");
         }
 
-        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, this.TakeEdgeId(), CreateConditionFunc(condition));
+        DirectEdgeData directEdge = new(this.Track(source).Id, this.Track(target).Id, this.TakeEdgeId(), CreateConditionFunc(condition), label);
 
         this.EnsureEdgesFor(source.Id).Add(new(directEdge));
 
@@ -274,6 +331,19 @@ public class WorkflowBuilder
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanOutEdge(ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
         => this.AddFanOutEdge<object>(source, targets, null);
+
+    /// <summary>
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
+    /// </summary>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <param name="label">A label for the edge. Will be used in visualization.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanOutEdge(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, string label)
+        => this.AddFanOutEdge<object>(source, targets, null, label);
 
     internal static Func<object?, int, IEnumerable<int>>? CreateTargetAssignerFunc<T>(Func<T?, int, IEnumerable<int>>? targetAssigner)
     {
@@ -305,6 +375,21 @@ public class WorkflowBuilder
     /// <param name="targetSelector">An optional function that determines how input is assigned among the target executors.
     /// If null, messages will route to all targets.</param>
     public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetSelector = null)
+        => this.AddFanOutEdge(source, targets, targetSelector, label: null);
+
+    /// <summary>
+    /// Adds a fan-out edge from the specified source executor to one or more target executors, optionally using a
+    /// custom partitioning function.
+    /// </summary>
+    /// <remarks>If a partitioner function is provided, it will be used to distribute input across the target
+    /// executors. The order of targets determines their mapping in the partitioning process.</remarks>
+    /// <param name="source">The source executor from which the fan-out edge originates. Cannot be null.</param>
+    /// <param name="targets">One or more target executors that will receive the fan-out edge. Cannot be null or empty.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    /// <param name="targetSelector">An optional function that determines how input is assigned among the target executors.
+    /// If null, messages will route to all targets.</param>
+    /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
+    public WorkflowBuilder AddFanOutEdge<T>(ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<T?, int, IEnumerable<int>>? targetSelector = null, string? label = null)
     {
         Throw.IfNull(source);
         Throw.IfNull(targets);
@@ -321,7 +406,8 @@ public class WorkflowBuilder
             this.Track(source).Id,
             sinkIds,
             this.TakeEdgeId(),
-            CreateTargetAssignerFunc(targetSelector));
+            CreateTargetAssignerFunc(targetSelector),
+            label);
 
         this.EnsureEdgesFor(source.Id).Add(new(fanOutEdge));
 
@@ -339,6 +425,20 @@ public class WorkflowBuilder
     /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
     /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
     public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target)
+        => this.AddFanInEdge(sources, target, label: null);
+
+    /// <summary>
+    /// Adds a fan-in edge to the workflow, connecting multiple source executors to a single target executor with an
+    /// optional trigger condition.
+    /// </summary>
+    /// <remarks>This method establishes a fan-in relationship, allowing the target executor to be activated
+    /// based on the completion or state of multiple sources. The trigger parameter can be used to customize activation
+    /// behavior.</remarks>
+    /// <param name="sources">One or more source executors that provide input to the target. Cannot be null or empty.</param>
+    /// <param name="target">The target executor that receives input from the specified source executors. Cannot be null.</param>
+    /// <param name="label">An optional label for the edge. Will be used in visualizations.</param>
+    /// <returns>The current instance of <see cref="WorkflowBuilder"/>.</returns>
+    public WorkflowBuilder AddFanInEdge(IEnumerable<ExecutorBinding> sources, ExecutorBinding target, string? label = null)
     {
         Throw.IfNull(target);
         Throw.IfNull(sources);
@@ -354,7 +454,8 @@ public class WorkflowBuilder
         FanInEdgeData edgeData = new(
             sourceIds,
             this.Track(target).Id,
-            this.TakeEdgeId());
+            this.TakeEdgeId(),
+            label);
 
         foreach (string sourceId in edgeData.SourceIds)
         {
@@ -380,7 +481,7 @@ public class WorkflowBuilder
         }
 
         // Make sure that all nodes are connected to the start executor (transitively)
-        HashSet<string> remainingExecutors = new(this._executorBindings.Keys);
+        HashSet<string> remainingExecutors = [.. this._executorBindings.Keys];
         Queue<string> toVisit = new([this._startExecutorId]);
 
         if (!validateOrphans)

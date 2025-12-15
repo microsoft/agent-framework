@@ -13,7 +13,6 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-from typing_extensions import Never
 
 """
 Sample: Sequential workflow mixing agents and a custom summarizer executor
@@ -42,12 +41,12 @@ class Summarizer(Executor):
     """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[Never, list[ChatMessage]]) -> None:
+    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
         users = sum(1 for m in conversation if m.role == Role.USER)
         assistants = sum(1 for m in conversation if m.role == Role.ASSISTANT)
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary -> users:{users} assistants:{assistants}")
         final_conversation = list(conversation) + [summary]
-        await ctx.yield_output(final_conversation)
+        await ctx.send_message(final_conversation)
 
 
 async def main() -> None:

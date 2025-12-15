@@ -1334,3 +1334,37 @@ async def test_streaming_two_functions_mixed_approval():
     assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
+
+
+async def test_ai_function_with_kwargs_injection():
+    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
+
+    @ai_function
+    def tool_with_kwargs(x: int, **kwargs: Any) -> str:
+        """A tool that accepts kwargs."""
+        user_id = kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    # Verify schema does not include kwargs
+    assert tool_with_kwargs.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_kwargs_input",
+        "type": "object",
+    }
+
+    # Verify direct invocation works
+    assert tool_with_kwargs(1, user_id="user1") == "x=1, user=user1"
+
+    # Verify invoke works with injected args
+    result = await tool_with_kwargs.invoke(
+        arguments=tool_with_kwargs.input_model(x=5),
+        user_id="user2",
+    )
+    assert result == "x=5, user=user2"
+
+    # Verify invoke works without injected args (uses default)
+    result_default = await tool_with_kwargs.invoke(
+        arguments=tool_with_kwargs.input_model(x=10),
+    )
+    assert result_default == "x=10, user=unknown"

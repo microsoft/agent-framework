@@ -69,9 +69,9 @@ class SessionContextContainer:
         # Log what we captured (for demonstration)
         if self.api_token or self.user_id:
             print("[Middleware] Captured runtime context:")
-            print(f"  - API Token: {'***' + self.api_token[-4:] if self.api_token else 'None'}")
-            print(f"  - User ID: {self.user_id}")
-            print(f"  - Session Metadata: {self.session_metadata}")
+            print(f"  - API Token: {'[PRESENT]' if self.api_token else '[NOT PROVIDED]'}")
+            print(f"  - User ID: {'[PRESENT]' if self.user_id else '[NOT PROVIDED]'}")
+            print(f"  - Session Metadata Keys: {list(self.session_metadata.keys())}")
 
         # Continue to tool execution
         await next(context)
@@ -98,11 +98,11 @@ async def send_email(
     tenant = runtime_context.session_metadata.get("tenant", "unknown")
 
     print("\n[send_email] Executing with runtime context:")
-    print(f"  - Token: {'***' + token[-4:] if token else 'NOT PROVIDED'}")
-    print(f"  - User ID: {user_id or 'NOT PROVIDED'}")
-    print(f"  - Tenant: {tenant}")
-    print(f"  - To: {to}")
-    print(f"  - Subject: {subject}")
+    print(f"  - Token: {'[PRESENT]' if token else '[NOT PROVIDED]'}")
+    print(f"  - User ID: {'[PRESENT]' if user_id else '[NOT PROVIDED]'}")
+    print(f"  - Tenant: {'[PRESENT]' if tenant and tenant != 'unknown' else '[NOT PROVIDED]'}")
+    print("  - Recipient count: 1")
+    print(f"  - Subject length: {len(subject)} chars")
 
     # Simulate API call with authentication
     if not token:
@@ -125,9 +125,9 @@ async def send_notification(
     user_id = runtime_context.user_id
 
     print("\n[send_notification] Executing with runtime context:")
-    print(f"  - Token: {'***' + token[-4:] if token else 'NOT PROVIDED'}")
-    print(f"  - User ID: {user_id or 'NOT PROVIDED'}")
-    print(f"  - Message: {message}")
+    print(f"  - Token: {'[PRESENT]' if token else '[NOT PROVIDED]'}")
+    print(f"  - User ID: {'[PRESENT]' if user_id else '[NOT PROVIDED]'}")
+    print(f"  - Message length: {len(message)} chars")
     print(f"  - Priority: {priority}")
 
     if not token:
@@ -339,10 +339,10 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
         tenant_id="tenant-acme",
     )
 
-    print(f"\n[Verification] EmailAgent received: {email_agent_kwargs}")
-    print(f"  - api_token: {email_agent_kwargs.get('api_token')}")
-    print(f"  - user_id: {email_agent_kwargs.get('user_id')}")
-    print(f"  - tenant_id: {email_agent_kwargs.get('tenant_id')}")
+    print(f"\n[Verification] EmailAgent received kwargs keys: {list(email_agent_kwargs.keys())}")
+    print(f"  - api_token: {'[PRESENT]' if email_agent_kwargs.get('api_token') else '[NOT PROVIDED]'}")
+    print(f"  - user_id: {'[PRESENT]' if email_agent_kwargs.get('user_id') else '[NOT PROVIDED]'}")
+    print(f"  - tenant_id: {'[PRESENT]' if email_agent_kwargs.get('tenant_id') else '[NOT PROVIDED]'}")
 
     print("\n✓ Pattern 2 complete - kwargs automatically propagate through as_tool()")
 
@@ -366,13 +366,13 @@ class AuthContextMiddleware:
         if api_token:
             # Simulate token validation
             if api_token.startswith("valid-"):
-                print(f"[AuthMiddleware] ✓ Token validated: ***{api_token[-4:]}")
+                print("[AuthMiddleware] Token validated successfully")
                 self.validated_tokens.append(api_token)
             else:
-                print(f"[AuthMiddleware] ✗ Invalid token: {api_token}")
+                print("[AuthMiddleware] Token validation failed")
                 # Could set context.terminate = True to block execution
         else:
-            print("[AuthMiddleware] ⚠ No API token provided")
+            print("[AuthMiddleware] No API token provided")
 
         await next(context)
 

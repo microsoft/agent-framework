@@ -63,8 +63,6 @@ internal sealed class Program
         // This also includes the ability to checkpoint workflow state and how to
         // resume execution.
         await this.Runner.ExecuteAsync(this.CreateWorkflow, input);
-
-        Notify("\nWORKFLOW: Done!\n");
     }
 
     /// <summary>

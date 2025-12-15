@@ -121,7 +121,7 @@ public sealed partial class ChatClientAgent : AIAgent
     public IChatClient ChatClient { get; }
 
     /// <inheritdoc/>
-    public override string Id => this._agentOptions?.Id ?? base.Id;
+    protected override string? IdCore => this._agentOptions?.Id;
 
     /// <inheritdoc/>
     public override string? Name => this._agentOptions?.Name;

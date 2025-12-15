@@ -17,7 +17,7 @@ to synthesize a concise, consolidated summary from the experts' outputs.
 The workflow completes when all participants become idle.
 
 Demonstrates:
-- ConcurrentBuilder().participants([...]).with_custom_aggregator(callback)
+- ConcurrentBuilder().participants([...]).with_aggregator(callback)
 - Fan-out to agents and fan-in at an aggregator
 - Aggregation implemented via an LLM call (chat_client.get_response)
 - Workflow output yielded with the synthesized summary string

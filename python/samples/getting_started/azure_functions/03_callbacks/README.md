@@ -19,8 +19,9 @@ an HTTP API that can be polled by a web client or dashboard.
 
 Complete the shared environment setup steps in `../README.md`, including creating a virtual environment, installing dependencies, and configuring Azure OpenAI credentials and storage settings.
 
-> **Note:** The sample stores callback events in memory for simplicity. For production scenarios you
-> should persist events to Application Insights, Azure Storage, Cosmos DB, or another durable store.
+> **Note:** This is a streaming example that currently uses a local in-memory store for simplicity.
+> For distributed environments, consider using Redis, Service Bus, or another pub/sub mechanism for
+> callback coordination.
 
 ## Running the Sample
 

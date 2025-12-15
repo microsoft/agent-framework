@@ -47,7 +47,9 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         self._max_rounds: int | None = None
         self._termination_condition: Callable[[list[ChatMessage]], bool | Awaitable[bool]] | None = None
 
-    def register_participant_entry(self, name: str, *, entry_id: str, is_agent: bool) -> None:
+    def register_participant_entry(
+        self, name: str, *, entry_id: str, is_agent: bool, exit_id: str | None = None
+    ) -> None:
         """Record routing details for a participant's entry executor.
 
         This method provides a unified interface for registering participants
@@ -57,8 +59,10 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             name: Participant name (used for selection and tracking)
             entry_id: Executor ID for this participant's entry point
             is_agent: Whether this is an AgentExecutor (True) or custom Executor (False)
+            exit_id: Executor ID for this participant's exit point (where responses come from).
+                    If None, defaults to entry_id.
         """
-        self._registry.register(name, entry_id=entry_id, is_agent=is_agent)
+        self._registry.register(name, entry_id=entry_id, is_agent=is_agent, exit_id=exit_id)
 
     # Conversation state management (shared across all patterns)
 

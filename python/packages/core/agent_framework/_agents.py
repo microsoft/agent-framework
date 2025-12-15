@@ -878,6 +878,9 @@ class ChatAgent(BaseAgent):
             user=user,
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
+
+        # Ensure thread is forwarded in kwargs for tool invocation
+        kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response = await self.chat_client.get_response(
@@ -895,7 +898,12 @@ class ChatAgent(BaseAgent):
 
         # Only notify the thread of new messages if the chatResponse was successful
         # to avoid inconsistent messages state in the thread.
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages)
+        await self._notify_thread_of_new_messages(
+            thread,
+            input_messages,
+            response.messages,
+            **{k: v for k, v in kwargs.items() if k != "thread"},
+        )
         return AgentRunResponse(
             messages=response.messages,
             response_id=response.response_id,
@@ -1017,6 +1025,8 @@ class ChatAgent(BaseAgent):
             additional_properties=merged_additional_options,  # type: ignore[arg-type]
         )
 
+        # Ensure thread is forwarded in kwargs for tool invocation
+        kwargs["thread"] = thread
         # Filter chat_options from kwargs to prevent duplicate keyword argument
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "chat_options"}
         response_updates: list[ChatResponseUpdate] = []
@@ -1043,7 +1053,13 @@ class ChatAgent(BaseAgent):
 
         response = ChatResponse.from_chat_response_updates(response_updates, output_format_type=co.response_format)
         await self._update_thread_with_type_and_conversation_id(thread, response.conversation_id)
-        await self._notify_thread_of_new_messages(thread, input_messages, response.messages, **kwargs)
+
+        await self._notify_thread_of_new_messages(
+            thread,
+            input_messages,
+            response.messages,
+            **{k: v for k, v in kwargs.items() if k != "thread"},
+        )
 
     @override
     def get_new_thread(
@@ -1268,22 +1284,24 @@ class ChatAgent(BaseAgent):
             thread_messages.extend(await thread.message_store.list_messages() or [])
         context: Context | None = None
         if self.context_provider:
-            async with self.context_provider:
-                context = await self.context_provider.invoking(input_messages or [], **kwargs)
-                if context:
-                    if context.messages:
-                        thread_messages.extend(context.messages)
-                    if context.tools:
-                        if chat_options.tools is not None:
-                            chat_options.tools.extend(context.tools)
-                        else:
-                            chat_options.tools = list(context.tools)
-                    if context.instructions:
-                        chat_options.instructions = (
-                            context.instructions
-                            if not chat_options.instructions
-                            else f"{chat_options.instructions}\n{context.instructions}"
-                        )
+            # Note: We don't use 'async with' here because the context provider's lifecycle
+            # should be managed by the user (via async with) or persist across multiple invocations.
+            # Using async with here would close resources (like retrieval clients) after each query.
+            context = await self.context_provider.invoking(input_messages or [], **kwargs)
+            if context:
+                if context.messages:
+                    thread_messages.extend(context.messages)
+                if context.tools:
+                    if chat_options.tools is not None:
+                        chat_options.tools.extend(context.tools)
+                    else:
+                        chat_options.tools = list(context.tools)
+                if context.instructions:
+                    chat_options.instructions = (
+                        context.instructions
+                        if not chat_options.instructions
+                        else f"{chat_options.instructions}\n{context.instructions}"
+                    )
         thread_messages.extend(input_messages or [])
         if (
             thread.service_thread_id

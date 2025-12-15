@@ -421,7 +421,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class MultiResponseAgent : AIAgent
     {
-        public override string Id => "multi-response-agent";
+        protected override string? IdCore => "multi-response-agent";
 
         public override string? Description => "Agent that produces multiple text chunks";
 
@@ -510,7 +510,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override string Id => "test-agent";
+        protected override string? IdCore => "test-agent";
 
         public override string? Description => "Test agent";
 

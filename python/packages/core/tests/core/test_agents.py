@@ -21,9 +21,11 @@ from agent_framework import (
     ChatResponse,
     Context,
     ContextProvider,
+    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
     TextContent,
+    ai_function,
 )
 from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import AgentExecutionException
@@ -595,3 +597,38 @@ async def test_chat_agent_with_local_mcp_tools(chat_client: ChatClientProtocol) 
         # Test async context manager with MCP tools
         async with agent:
             pass
+
+
+async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> None:
+    """Verify tool execution receives 'thread' inside **kwargs when function is called by client."""
+
+    captured: dict[str, Any] = {}
+
+    @ai_function(name="echo_thread_info")
+    def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
+        thread = kwargs.get("thread")
+        captured["has_thread"] = thread is not None
+        captured["has_message_store"] = thread.message_store is not None if isinstance(thread, AgentThread) else False
+        return f"echo: {text}"
+
+    # Make the base client emit a function call for our tool
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    agent = ChatAgent(
+        chat_client=chat_client_base, tools=[echo_thread_info], chat_message_store_factory=ChatMessageStore
+    )
+    thread = agent.get_new_thread()
+
+    result = await agent.run("hello", thread=thread)
+
+    assert result.text == "done"
+    assert captured.get("has_thread") is True
+    assert captured.get("has_message_store") is True

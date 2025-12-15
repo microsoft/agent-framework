@@ -85,6 +85,7 @@ from ._magentic import (
     MagenticStallInterventionRequest,
     StandardMagenticManager,
 )
+from ._orchestration_request_info import AgentInputRequest, AgentResponseReviewRequest, RequestInfoInterceptor
 from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
@@ -122,6 +123,8 @@ __all__ = [
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
+    "AgentInputRequest",
+    "AgentResponseReviewRequest",
     "AgentRunEvent",
     "AgentRunUpdateEvent",
     "Case",
@@ -164,6 +167,7 @@ __all__ = [
     "Message",
     "OrchestrationState",
     "RequestInfoEvent",
+    "RequestInfoInterceptor",
     "Runner",
     "RunnerContext",
     "SequentialBuilder",

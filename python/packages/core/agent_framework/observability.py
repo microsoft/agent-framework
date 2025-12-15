@@ -521,9 +521,9 @@ class ObservabilitySettings(AFBaseSettings):
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
                 should_add_console_exporter = False
         if should_add_console_exporter:
-            from opentelemetry.sdk._logs.export import ConsoleLogExporter
+            from opentelemetry.sdk._logs.export import ConsoleLogRecordExporter
 
-            logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+            logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter()))
 
         # Attach a handler with the provider to the root logger
         logger = logging.getLogger()

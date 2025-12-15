@@ -5,11 +5,11 @@ using OpenAI.Chat;
 
 namespace Microsoft.Agents.AI.OpenAI;
 
-internal sealed class AsyncStreamingUpdateCollectionResult : AsyncCollectionResult<StreamingChatCompletionUpdate>
+internal sealed class AsyncStreamingChatCompletionUpdateCollectionResult : AsyncCollectionResult<StreamingChatCompletionUpdate>
 {
     private readonly IAsyncEnumerable<AgentRunResponseUpdate> _updates;
 
-    internal AsyncStreamingUpdateCollectionResult(IAsyncEnumerable<AgentRunResponseUpdate> updates)
+    internal AsyncStreamingChatCompletionUpdateCollectionResult(IAsyncEnumerable<AgentRunResponseUpdate> updates)
     {
         this._updates = updates;
     }

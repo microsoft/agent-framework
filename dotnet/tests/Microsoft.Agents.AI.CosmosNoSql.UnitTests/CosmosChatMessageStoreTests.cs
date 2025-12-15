@@ -8,7 +8,6 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
 using Xunit;
@@ -81,7 +80,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
                 throughput: 400);
 
             // Create container for hierarchical partitioning tests with hierarchical partition key
-            var hierarchicalContainerProperties = new ContainerProperties(HierarchicalTestContainerId, new List<string> { "/tenantId", "/userId", "/sessionId" });
+            var hierarchicalContainerProperties = new ContainerProperties(HierarchicalTestContainerId, ["/tenantId", "/userId", "/sessionId"]);
             await databaseResponse.Database.CreateContainerIfNotExistsAsync(
                 hierarchicalContainerProperties,
                 throughput: 400);
@@ -247,7 +246,7 @@ public sealed class CosmosChatMessageStoreTests : IAsyncLifetime, IDisposable
                     PartitionKey = new PartitionKey(conversationId)
                 });
 
-            List<dynamic> rawResults = new();
+            List<dynamic> rawResults = [];
             while (rawIterator.HasMoreResults)
             {
                 var rawResponse = await rawIterator.ReadNextAsync();

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251211] - 2025-12-11
+
+### Added
+
+- **agent-framework-core**: Extend HITL support for all orchestration patterns (#2620)
+- **agent-framework-core**: Add factory pattern to concurrent orchestration builder (#2738)
+- **agent-framework-core**: Add factory pattern to sequential orchestration builder (#2710)
+- **agent-framework-azure-ai**: Capture file IDs from code interpreter in streaming responses (#2741)
+
+### Changed
+
+- **agent-framework-azurefunctions**: Change DurableAIAgent log level from warning to debug when invoked without thread (#2736)
+
+### Fixed
+
+- **agent-framework-core**: Added more complete parsing for mcp tool arguments (#2756)
+- **agent-framework-core**: Fix GroupChat ManagerSelectionResponse JSON Schema for OpenAI Structured Outputs (#2750)
+- **samples**: Standardize OpenAI API key environment variable naming (#2629)
+
+## [1.0.0b251209] - 2025-12-09
+
+### Added
+
+- **agent-framework-core**: Support an autonomous handoff flow (#2497)
+- **agent-framework-core**: WorkflowBuilder registry (#2486)
+- **agent-framework-a2a**: Add configurable timeout support to A2AAgent (#2432)
+- **samples**: Added Azure OpenAI Responses File Search sample + Integration test update (#2645)
+- **samples**: Update fan in fan out sample to show concurrency (#2705)
+
+### Changed
+
+- **agent-framework-azure-ai**: [BREAKING] Renamed `async_credential` to `credential` (#2648)
+- **samples**: Improve sample logging (#2692)
+- **samples**: azureai image gen sample update (#2709)
+
+### Fixed
+
+- **agent-framework-core**: Fix DurableState schema serializations (#2670)
+- **agent-framework-core**: Fix context provider lifecycle agentic mode (#2650)
+- **agent-framework-devui**: Fix WorkflowFailedEvent error extraction (#2706)
+- **agent-framework-devui**: Fix DevUI fails when uploading Pdf file (#2675)
+- **agent-framework-devui**: Fix message serialization issue (#2674)
+- **observability**: Display system prompt in langfuse (#2653)
+
 ## [1.0.0b251204] - 2025-12-04
 
 ### Added
@@ -322,7 +366,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...HEAD
+[1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
+[1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
 [1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
 [1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
 [1.0.0b251117]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251114...python-1.0.0b251117

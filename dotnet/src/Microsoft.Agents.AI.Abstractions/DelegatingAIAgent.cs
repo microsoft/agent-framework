@@ -54,7 +54,7 @@ public class DelegatingAIAgent : AIAgent
     protected AIAgent InnerAgent { get; }
 
     /// <inheritdoc />
-    public override string Id => this.InnerAgent.Id;
+    protected override string? IdCore => this.InnerAgent.Id;
 
     /// <inheritdoc />
     public override string? Name => this.InnerAgent.Name;

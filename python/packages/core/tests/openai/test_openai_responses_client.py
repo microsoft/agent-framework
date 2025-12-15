@@ -993,6 +993,110 @@ def test_streaming_response_basic_structure() -> None:
     assert response.raw_representation is mock_event
 
 
+def test_streaming_annotation_added_with_file_path() -> None:
+    """Test streaming annotation added event with file_path type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "file_path",
+        "file_id": "file-abc123",
+        "index": 42,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-abc123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("annotation_index") == 0
+    assert content.additional_properties.get("index") == 42
+
+
+def test_streaming_annotation_added_with_file_citation() -> None:
+    """Test streaming annotation added event with file_citation type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 1
+    mock_event.annotation = {
+        "type": "file_citation",
+        "file_id": "file-xyz789",
+        "filename": "sample.txt",
+        "index": 15,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-xyz789"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("filename") == "sample.txt"
+    assert content.additional_properties.get("index") == 15
+
+
+def test_streaming_annotation_added_with_container_file_citation() -> None:
+    """Test streaming annotation added event with container_file_citation type."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 2
+    mock_event.annotation = {
+        "type": "container_file_citation",
+        "file_id": "file-container123",
+        "container_id": "container-456",
+        "filename": "data.csv",
+        "start_index": 10,
+        "end_index": 50,
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-container123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("container_id") == "container-456"
+    assert content.additional_properties.get("filename") == "data.csv"
+    assert content.additional_properties.get("start_index") == 10
+    assert content.additional_properties.get("end_index") == 50
+
+
+def test_streaming_annotation_added_with_unknown_type() -> None:
+    """Test streaming annotation added event with unknown type is ignored."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "url": "https://example.com",
+    }
+
+    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+
+    # url_citation should not produce HostedFileContent
+    assert len(response.contents) == 0
+
+
 def test_service_response_exception_includes_original_error_details() -> None:
     """Test that ServiceResponseException messages include original error details in the new format."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")

@@ -20,7 +20,7 @@ internal sealed class TestAgentProvider(IConfiguration configuration) : AgentPro
             await aiProjectClient.CreateAgentAsync(
                 agentName: "TestAgent",
                 agentDefinition: this.DefineMenuAgent(),
-                agentDescription: "Provides information about the restaurant menu");
+                agentDescription: "Basic agent");
     }
 
     private PromptAgentDefinition DefineMenuAgent() =>

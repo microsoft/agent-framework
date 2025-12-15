@@ -6,7 +6,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
-using OpenAI;
+using OpenAI.Chat;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 

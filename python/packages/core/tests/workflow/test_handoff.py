@@ -687,6 +687,54 @@ async def test_tool_choice_preserved_from_agent_config():
     assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
 
 
+async def test_handoff_builder_with_request_info():
+    """Test that HandoffBuilder supports request info via with_request_info()."""
+    from agent_framework import AgentInputRequest, RequestInfoEvent
+
+    # Create test agents
+    coordinator = _RecordingAgent(name="coordinator")
+    specialist = _RecordingAgent(name="specialist")
+
+    # Build workflow with request info enabled
+    workflow = (
+        HandoffBuilder(participants=[coordinator, specialist])
+        .set_coordinator("coordinator")
+        .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
+        .with_request_info()
+        .build()
+    )
+
+    # Run workflow until it pauses for request info
+    request_event: RequestInfoEvent | None = None
+    async for event in workflow.run_stream("Hello"):
+        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentInputRequest):
+            request_event = event
+
+    # Verify request info was emitted
+    assert request_event is not None, "Request info should have been emitted"
+    assert isinstance(request_event.data, AgentInputRequest)
+
+    # Provide response and continue
+    output_events: list[WorkflowOutputEvent] = []
+    async for event in workflow.send_responses_streaming({request_event.request_id: "approved"}):
+        if isinstance(event, WorkflowOutputEvent):
+            output_events.append(event)
+
+    # Verify we got output events
+    assert len(output_events) > 0, "Should produce output events after response"
+
+
+async def test_handoff_builder_with_request_info_method_chaining():
+    """Test that with_request_info returns self for method chaining."""
+    coordinator = _RecordingAgent(name="coordinator")
+
+    builder = HandoffBuilder(participants=[coordinator])
+    result = builder.with_request_info()
+
+    assert result is builder, "with_request_info should return self for chaining"
+    assert builder._request_info_enabled is True  # type: ignore
+
+
 async def test_return_to_previous_state_serialization():
     """Test that return_to_previous state is properly serialized/deserialized for checkpointing."""
     from agent_framework._workflows._handoff import _HandoffCoordinator  # type: ignore[reportPrivateUsage]

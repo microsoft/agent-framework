@@ -174,6 +174,7 @@ internal sealed class WorkflowRunner
                     Console.WriteLine("\nACTIVITY:");
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine(activityEvent.Message.Trim());
+                    Console.ResetColor();
                     break;
 
                 case AgentRunUpdateEvent streamEvent:
@@ -189,6 +190,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"\n{agentName.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{messageId}]");
+                            Console.ResetColor();
                         }
                     }
 
@@ -204,6 +206,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.FunctionName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.CallId}]");
+                            Console.ResetColor();
                             break;
 
                         case McpToolCallItem actionUpdate:
@@ -211,6 +214,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.ToolName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.Id}]");
+                            Console.ResetColor();
                             break;
                     }
 
@@ -238,6 +242,7 @@ internal sealed class WorkflowRunner
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
+                            Console.ResetColor();
                         }
                     }
                     finally

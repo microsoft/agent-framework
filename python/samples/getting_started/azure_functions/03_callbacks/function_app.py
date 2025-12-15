@@ -27,7 +27,9 @@ from azure.identity import AzureCliCredential
 logger = logging.getLogger(__name__)
 
 
-# 1. Maintain an in-memory store for callback events keyed by thread ID (replace with durable storage in production).
+# 1. Maintain an in-memory store for callback events keyed by thread ID.
+# NOTE: This is a streaming example using a local console logger. For distributed environments,
+# consider using Redis or Service Bus for callback coordination across multiple instances.
 CallbackStore = DefaultDict[str, list[dict[str, Any]]]
 callback_events: CallbackStore = defaultdict(list)
 

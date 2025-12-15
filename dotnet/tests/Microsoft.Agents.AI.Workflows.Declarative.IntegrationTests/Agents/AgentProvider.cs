@@ -16,6 +16,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
         public const string Marketing = "MARKETING";
         public const string MathChat = "MATHCHAT";
         public const string InputArguments = "INPUTARGUMENTS";
+        public const string Vision = "VISION";
     }
 
     public static class Settings
@@ -33,6 +34,7 @@ internal abstract class AgentProvider(IConfiguration configuration)
             Names.Marketing => new MarketingAgentProvider(configuration),
             Names.MathChat => new MathChatAgentProvider(configuration),
             Names.InputArguments => new PoemAgentProvider(configuration),
+            Names.Vision => new VisionAgentProvider(configuration),
             _ => new TestAgentProvider(configuration),
         };
 
