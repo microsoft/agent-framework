@@ -832,7 +832,7 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
     assert fa.function_call.name == "do_stream_action"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
 async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     """End-to-end mocked test:

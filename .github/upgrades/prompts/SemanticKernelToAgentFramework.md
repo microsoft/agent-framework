@@ -839,7 +839,7 @@ var agentOptions = new ChatClientAgentRunOptions(new ChatOptions
 {
     MaxOutputTokens = 8000,
     // Breaking glass to access provider-specific options
-    RawRepresentationFactory = (_) => new OpenAI.Responses.ResponseCreationOptions()
+    RawRepresentationFactory = (_) => new OpenAI.Responses.CreateResponseOptions()
     {
         ReasoningOptions = new()
         {
