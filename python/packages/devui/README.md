@@ -102,6 +102,26 @@ agents/
 └── .env                 # Optional: shared environment variables
 ```
 
+### Importing from External Modules
+
+If your agents import tools or utilities from sibling directories (e.g., `from tools.helpers import my_tool`), you must set `PYTHONPATH` to include the parent directory:
+
+```bash
+# Project structure:
+# backend/
+# ├── agents/
+# │   └── my_agent/
+# │       └── agent.py    # contains: from tools.helpers import my_tool
+# └── tools/
+#     └── helpers.py
+
+# Run from project root with PYTHONPATH
+cd backend
+PYTHONPATH=. devui ./agents --port 8080
+```
+
+Without `PYTHONPATH`, Python cannot find modules in sibling directories and DevUI will report an import error.
+
 ## Viewing Telemetry (Otel Traces) in DevUI
 
 Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
