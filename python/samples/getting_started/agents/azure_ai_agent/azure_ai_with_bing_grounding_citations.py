@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import ChatAgent, CitationAnnotation, HostedWebSearchTool
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
 
 """
