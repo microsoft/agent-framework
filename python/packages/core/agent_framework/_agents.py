@@ -34,7 +34,7 @@ from ._types import (
     ToolMode,
 )
 from .exceptions import AgentExecutionException, AgentInitializationError
-from .observability import use_agent_observability
+from .observability import use_agent_instrumentation
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -516,8 +516,8 @@ class BaseAgent(SerializationMixin):
 
 
 @use_agent_middleware
-@use_agent_observability
-class ChatAgent(BaseAgent):
+@use_agent_instrumentation(capture_usage=False)  # type: ignore[arg-type,misc]
+class ChatAgent(BaseAgent):  # type: ignore[misc]
     """A Chat Client Agent.
 
     This is the primary agent implementation that uses a chat client to interact
@@ -583,7 +583,7 @@ class ChatAgent(BaseAgent):
                 print(update.text, end="")
     """
 
-    AGENT_SYSTEM_NAME: ClassVar[str] = "microsoft.agent_framework"
+    AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
 
     def __init__(
         self,

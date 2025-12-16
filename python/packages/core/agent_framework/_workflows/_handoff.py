@@ -135,19 +135,57 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
 
 @dataclass
 class HandoffUserInputRequest:
-    """Request message emitted when the workflow needs fresh user input."""
+    """Request message emitted when the workflow needs fresh user input.
+
+    Note: The conversation field is intentionally excluded from checkpoint serialization
+    to prevent duplication. The conversation is preserved in the coordinator's state
+    and will be reconstructed on restore. See issue #2667.
+    """
 
     conversation: list[ChatMessage]
     awaiting_agent_id: str
     prompt: str
     source_executor_id: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dict, excluding conversation to prevent checkpoint duplication.
+
+        The conversation is already preserved in the workflow coordinator's state.
+        Including it here would cause duplicate messages when restoring from checkpoint.
+        """
+        return {
+            "awaiting_agent_id": self.awaiting_agent_id,
+            "prompt": self.prompt,
+            "source_executor_id": self.source_executor_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "HandoffUserInputRequest":
+        """Deserialize from dict, initializing conversation as empty.
+
+        The conversation will be reconstructed from the coordinator's state on restore.
+        """
+        return cls(
+            conversation=[],
+            awaiting_agent_id=data["awaiting_agent_id"],
+            prompt=data["prompt"],
+            source_executor_id=data["source_executor_id"],
+        )
+
 
 @dataclass
 class _ConversationWithUserInput:
-    """Internal message carrying full conversation + new user messages from gateway to coordinator."""
+    """Internal message carrying full conversation + new user messages from gateway to coordinator.
+
+    Attributes:
+        full_conversation: The conversation messages to process.
+        is_post_restore: If True, indicates this message was created after a checkpoint restore.
+            The coordinator should append these messages to its existing conversation rather
+            than replacing it. This prevents duplicate messages (see issue #2667).
+    """
 
     full_conversation: list[ChatMessage] = field(default_factory=lambda: [])  # type: ignore[misc]
+    is_post_restore: bool = False
 
 
 @dataclass
@@ -441,13 +479,25 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
         message: _ConversationWithUserInput,
         ctx: WorkflowContext[AgentExecutorRequest, list[ChatMessage]],
     ) -> None:
-        """Receive full conversation with new user input from gateway, update history, and route to agent.
+        """Receive user input from gateway, update history, and route to agent.
 
-        The conversation is cleaned (tool messages removed) before sending to the target agent,
-        but the coordinator maintains the full conversation history internally for state management.
+        The message.full_conversation may contain:
+        - Full conversation history + new user messages (normal flow)
+        - Only new user messages (post-checkpoint-restore flow, see issue #2667)
+
+        The gateway sets message.is_post_restore=True when resuming after a checkpoint
+        restore. In that case, we append the new messages to the existing conversation
+        rather than replacing it.
         """
-        # Update authoritative conversation
-        self._conversation = list(message.full_conversation)
+        incoming = message.full_conversation
+
+        if message.is_post_restore and self._conversation:
+            # Post-restore: append new user messages to existing conversation
+            # The coordinator already has its conversation restored from checkpoint
+            self._conversation.extend(incoming)
+        else:
+            # Normal flow: replace with full conversation
+            self._conversation = list(incoming) if incoming else self._conversation
 
         # Reset autonomous turn counter on new user input
         self._autonomous_turns = 0
@@ -626,15 +676,24 @@ class _UserInputGateway(Executor):
         response: object,
         ctx: WorkflowContext[_ConversationWithUserInput],
     ) -> None:
-        """Convert user input responses back into chat messages and resume the workflow."""
-        # Reconstruct full conversation with new user input
-        conversation = list(original_request.conversation)
-        user_messages = _as_user_messages(response)
-        conversation.extend(user_messages)
+        """Convert user input responses back into chat messages and resume the workflow.
 
-        # Send full conversation back to coordinator (not cleaned yet)
-        # Coordinator will update its authoritative history, clean for display, and route to appropriate agent
-        message = _ConversationWithUserInput(full_conversation=conversation)
+        After checkpoint restore, original_request.conversation will be empty (not serialized
+        to prevent duplication - see issue #2667). In this case, we send only the new user
+        messages and let the coordinator append them to its already-restored conversation.
+        """
+        user_messages = _as_user_messages(response)
+
+        if original_request.conversation:
+            # Normal flow: have conversation history from the original request
+            conversation = list(original_request.conversation)
+            conversation.extend(user_messages)
+            message = _ConversationWithUserInput(full_conversation=conversation, is_post_restore=False)
+        else:
+            # Post-restore flow: conversation was not serialized, send only new user messages
+            # The coordinator will append these to its already-restored conversation
+            message = _ConversationWithUserInput(full_conversation=user_messages, is_post_restore=True)
+
         await ctx.send_message(message, target_id="handoff-coordinator")
 
 
@@ -1640,51 +1699,11 @@ class HandoffBuilder:
         if self._starting_agent_id is None:
             raise ValueError("Must call set_coordinator(...) before building the workflow.")
 
-        # Resolve the participant factories now. This doesn't break the factory pattern
-        # since the Handoff builder still creates new instances per workflow build.
-        executors, aliases = self._resolve_executors()
+        # Resolve executors, aliases, and handoff tool targets
+        # This will instantiate participants if using factories, and validate handoff config
+        start_executor_id, executors, aliases, handoff_tool_targets = self._resolve_executors_and_handoffs()
 
-        starting_executor = executors[self._starting_agent_id]
-        specialists = {
-            exec_id: executor for exec_id, executor in executors.items() if exec_id != self._starting_agent_id
-        }
-
-        # Build handoff tool registry for all agents that need them
-        handoff_tool_targets: dict[str, str] = {}
-        # Determine which agents should have handoff tools
-        if self._handoff_config:
-            # Use explicit handoff configuration from add_handoff() calls
-            for source_exec_id, target_exec_ids in self._handoff_config.items():
-                executor = executors.get(source_exec_id)
-                if not executor:
-                    raise ValueError(f"Handoff source agent '{source_exec_id}' not found in participants")
-
-                if isinstance(executor, AgentExecutor):
-                    # Build targets map for this source agent
-                    targets_map: dict[str, Executor] = {}
-                    for target_exec_id in target_exec_ids:
-                        target_executor = executors.get(target_exec_id)
-                        if not target_executor:
-                            raise ValueError(f"Handoff target agent '{target_exec_id}' not found in participants")
-                        targets_map[target_exec_id] = target_executor
-
-                    # Register handoff tools for this agent
-                    updated_executor, tool_targets = self._prepare_agent_with_handoffs(executor, targets_map)
-                    executors[source_exec_id] = updated_executor
-                    handoff_tool_targets.update(tool_targets)
-        else:
-            # Default behavior: only coordinator gets handoff tools to all specialists
-            if isinstance(starting_executor, AgentExecutor) and specialists:
-                starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
-                executors[self._starting_agent_id] = starting_executor
-                handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
-
-        # Re-assign after potential modifications
-        starting_executor = executors[self._starting_agent_id]
-        specialists = {
-            exec_id: executor for exec_id, executor in executors.items() if exec_id != self._starting_agent_id
-        }
-
+        specialists = {exec_id: executor for exec_id, executor in executors.items() if exec_id != start_executor_id}
         if not specialists:
             logger.warning("Handoff workflow has no specialist agents; the coordinator will loop with the user.")
 
@@ -1698,17 +1717,19 @@ class HandoffBuilder:
 
         input_node = _InputToConversation(id="input-conversation")
         user_gateway = _UserInputGateway(
-            starting_agent_id=starting_executor.id,
+            starting_agent_id=start_executor_id,
             prompt=self._request_prompt,
             id="handoff-user-input",
         )
         builder = WorkflowBuilder(name=self._name, description=self._description).set_start_executor(input_node)
 
-        specialist_aliases = {alias: exec_id for alias, exec_id in aliases.items() if exec_id in specialists}
+        specialist_aliases = {
+            alias: specialists[exec_id].id for alias, exec_id in aliases.items() if exec_id in specialists
+        }
 
         def _handoff_orchestrator_factory(_: _GroupChatConfig) -> Executor:
             return _HandoffCoordinator(
-                starting_agent_id=starting_executor.id,
+                starting_agent_id=start_executor_id,
                 specialist_ids=specialist_aliases,
                 input_gateway_id=user_gateway.id,
                 termination_condition=self._termination_condition,
@@ -1775,9 +1796,9 @@ class HandoffBuilder:
                 builder = builder.add_edge(input_node, starting_entry_executor)
             else:
                 # Fallback to direct connection if interceptor not found
-                builder = builder.add_edge(input_node, starting_executor)
+                builder = builder.add_edge(input_node, executors[start_executor_id])
         else:
-            builder = builder.add_edge(input_node, starting_executor)
+            builder = builder.add_edge(input_node, executors[start_executor_id])
         builder = builder.add_edge(coordinator, user_gateway)
         builder = builder.add_edge(user_gateway, coordinator)
 
@@ -1844,6 +1865,90 @@ class HandoffBuilder:
 
         raise ValueError("No executors or participant_factories have been configured")
 
+    def _resolve_handoffs(self, executors: Mapping[str, Executor]) -> tuple[dict[str, Executor], dict[str, str]]:
+        """Handoffs may be specified using factory names or instances; resolve to executor IDs.
+
+        Args:
+            executors: Map of executor IDs or factory names to Executor instances
+
+        Returns:
+            Tuple of (updated executors map, handoff configuration map)
+            The updated executors map may have modified agents with handoff tools added
+            and maps executor IDs to Executor instances.
+            The handoff configuration map maps executor IDs to lists of target executor IDs.
+        """
+        handoff_tool_targets: dict[str, str] = {}
+        updated_executors = {executor.id: executor for executor in executors.values()}
+        # Determine which agents should have handoff tools
+        if self._handoff_config:
+            # Use explicit handoff configuration from add_handoff() calls
+            for source_id, target_ids in self._handoff_config.items():
+                executor = executors.get(source_id)
+                if not executor:
+                    raise ValueError(
+                        f"Handoff source agent '{source_id}' not found. "
+                        "Please make sure source has been added as either a participant or participant_factory."
+                    )
+
+                if isinstance(executor, AgentExecutor):
+                    # Build targets map for this source agent
+                    targets_map: dict[str, Executor] = {}
+                    for target_id in target_ids:
+                        target_executor = executors.get(target_id)
+                        if not target_executor:
+                            raise ValueError(
+                                f"Handoff target agent '{target_id}' not found. "
+                                "Please make sure target has been added as either a participant or participant_factory."
+                            )
+                        targets_map[target_executor.id] = target_executor
+
+                    # Register handoff tools for this agent
+                    updated_executor, tool_targets = self._prepare_agent_with_handoffs(executor, targets_map)
+                    updated_executors[updated_executor.id] = updated_executor
+                    handoff_tool_targets.update(tool_targets)
+        else:
+            if self._starting_agent_id is None or self._starting_agent_id not in executors:
+                raise RuntimeError("Failed to resolve default handoff configuration due to missing starting agent.")
+
+            # Default behavior: only coordinator gets handoff tools to all specialists
+            starting_executor = executors[self._starting_agent_id]
+            specialists = {
+                executor.id: executor for executor in executors.values() if executor.id != starting_executor.id
+            }
+
+            if isinstance(starting_executor, AgentExecutor) and specialists:
+                starting_executor, tool_targets = self._prepare_agent_with_handoffs(starting_executor, specialists)
+                updated_executors[starting_executor.id] = starting_executor
+                handoff_tool_targets.update(tool_targets)  # Update references after potential agent modifications
+
+        return updated_executors, handoff_tool_targets
+
+    def _resolve_executors_and_handoffs(self) -> tuple[str, dict[str, Executor], dict[str, str], dict[str, str]]:
+        """Resolve participant factories into executor instances and handoff configurations.
+
+        If executors were provided directly via participants(...), those are returned as-is.
+        If participant factories were provided via participant_factories(...), those
+        are invoked to create executor instances and aliases.
+
+        Returns:
+            Tuple of (executors map, aliases map, handoff configuration map)
+        """
+        # Resolve the participant factories now. This doesn't break the factory pattern
+        # since the Handoff builder still creates new instances per workflow build.
+        executors, aliases = self._resolve_executors()
+        # `self._starting_agent_id` is either a factory name or executor ID at this point,
+        # resolve to executor ID
+        if self._starting_agent_id in executors:
+            start_executor_id = executors[self._starting_agent_id].id
+        else:
+            raise RuntimeError("Failed to resolve starting agent ID during build.")
+
+        # Resolve handoffs
+        # This will update the `executors` dict to a map of executor IDs to executors
+        updated_executors, handoff_tool_targets = self._resolve_handoffs(executors)
+
+        return start_executor_id, updated_executors, aliases, handoff_tool_targets
+
     def _resolve_to_id(self, candidate: str | AgentProtocol | Executor) -> str:
         """Resolve a participant reference into a concrete executor identifier."""
         if isinstance(candidate, Executor):
@@ -1882,7 +1987,7 @@ class HandoffBuilder:
         for executor in specialists.values():
             alias = executor.id
             sanitized = sanitize_identifier(alias)
-            tool = _create_handoff_tool(alias)
+            tool = _create_handoff_tool(alias, executor.description if isinstance(executor, AgentExecutor) else None)
             if tool.name not in existing_names:
                 new_tools.append(tool)
             # Map multiple name variations to the same executor ID for robust resolution
