@@ -1816,13 +1816,14 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
     """Prepare the values of the function call results."""
     if isinstance(content, Contents):
         # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+        # Use default=str to handle datetime and other non-JSON-serializable objects
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
-    # fallback
-    return json.dumps(dumpable)
+    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
+    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants

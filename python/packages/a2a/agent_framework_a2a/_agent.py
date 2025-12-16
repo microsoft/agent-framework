@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterable, Sequence
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -38,6 +38,7 @@ from agent_framework import (
     UriContent,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework.observability import use_agent_instrumentation
 
 __all__ = ["A2AAgent"]
 
@@ -58,6 +59,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
+@use_agent_instrumentation
 class A2AAgent(BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
@@ -68,6 +70,8 @@ class A2AAgent(BaseAgent):
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
     """
+
+    AGENT_PROVIDER_NAME: Final[str] = "A2A"
 
     def __init__(
         self,

@@ -3,6 +3,7 @@
 from typing import Any, cast
 
 import pytest
+from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -50,6 +51,55 @@ def test_concurrent_builder_rejects_duplicate_executors() -> None:
     b = _FakeAgentExec("dup", "B")  # same executor id
     with pytest.raises(ValueError):
         ConcurrentBuilder().participants([a, b])
+
+
+def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None:
+    """Test that duplicate executor IDs from factories are detected at build time."""
+
+    def create_dup1() -> Executor:
+        return _FakeAgentExec("dup", "A")
+
+    def create_dup2() -> Executor:
+        return _FakeAgentExec("dup", "B")  # same executor id
+
+    builder = ConcurrentBuilder().register_participants([create_dup1, create_dup2])
+    with pytest.raises(ValueError, match="Duplicate executor ID 'dup' detected in workflow."):
+        builder.build()
+
+
+def test_concurrent_builder_rejects_mixed_participants_and_factories() -> None:
+    """Test that mixing .participants() and .register_participants() raises an error."""
+    # Case 1: participants first, then register_participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        (
+            ConcurrentBuilder()
+            .participants([_FakeAgentExec("a", "A")])
+            .register_participants([lambda: _FakeAgentExec("b", "B")])
+        )
+
+    # Case 2: register_participants first, then participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        (
+            ConcurrentBuilder()
+            .register_participants([lambda: _FakeAgentExec("a", "A")])
+            .participants([_FakeAgentExec("b", "B")])
+        )
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_participants() -> None:
+    """Test that multiple calls to .participants() raises an error."""
+    with pytest.raises(ValueError, match=r"participants\(\) has already been called"):
+        (ConcurrentBuilder().participants([_FakeAgentExec("a", "A")]).participants([_FakeAgentExec("b", "B")]))
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_register_participants() -> None:
+    """Test that multiple calls to .register_participants() raises an error."""
+    with pytest.raises(ValueError, match=r"register_participants\(\) has already been called"):
+        (
+            ConcurrentBuilder()
+            .register_participants([lambda: _FakeAgentExec("a", "A")])
+            .register_participants([lambda: _FakeAgentExec("b", "B")])
+        )
 
 
 async def test_concurrent_default_aggregator_emits_single_user_and_assistants() -> None:
@@ -157,6 +207,138 @@ def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
     assert "summarize" in wf.executors
     aggregator = wf.executors["summarize"]
     assert aggregator.id == "summarize"
+
+
+async def test_concurrent_with_aggregator_executor_instance() -> None:
+    """Test with_aggregator using an Executor instance (not factory)."""
+
+    class CustomAggregator(Executor):
+        @handler
+        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+            texts: list[str] = []
+            for r in results:
+                msgs: list[ChatMessage] = r.agent_run_response.messages
+                texts.append(msgs[-1].text if msgs else "")
+            await ctx.yield_output(" & ".join(sorted(texts)))
+
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    aggregator_instance = CustomAggregator(id="instance_aggregator")
+    wf = ConcurrentBuilder().participants([e1, e2]).with_aggregator(aggregator_instance).build()
+
+    completed = False
+    output: str | None = None
+    async for ev in wf.run_stream("prompt: instance test"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(str, ev.data)
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    assert isinstance(output, str)
+    assert output == "One & Two"
+
+
+async def test_concurrent_with_aggregator_executor_factory() -> None:
+    """Test with_aggregator using an Executor factory."""
+
+    class CustomAggregator(Executor):
+        @handler
+        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+            texts: list[str] = []
+            for r in results:
+                msgs: list[ChatMessage] = r.agent_run_response.messages
+                texts.append(msgs[-1].text if msgs else "")
+            await ctx.yield_output(" | ".join(sorted(texts)))
+
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    wf = (
+        ConcurrentBuilder()
+        .participants([e1, e2])
+        .register_aggregator(lambda: CustomAggregator(id="custom_aggregator"))
+        .build()
+    )
+
+    completed = False
+    output: str | None = None
+    async for ev in wf.run_stream("prompt: factory test"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(str, ev.data)
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    assert isinstance(output, str)
+    assert output == "One | Two"
+
+
+async def test_concurrent_with_aggregator_executor_factory_with_default_id() -> None:
+    """Test with_aggregator using an Executor class directly as factory (with default __init__ parameters)."""
+
+    class CustomAggregator(Executor):
+        def __init__(self, id: str = "default_aggregator") -> None:
+            super().__init__(id)
+
+        @handler
+        async def aggregate(self, results: list[AgentExecutorResponse], ctx: WorkflowContext[Never, str]) -> None:
+            texts: list[str] = []
+            for r in results:
+                msgs: list[ChatMessage] = r.agent_run_response.messages
+                texts.append(msgs[-1].text if msgs else "")
+            await ctx.yield_output(" | ".join(sorted(texts)))
+
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    wf = ConcurrentBuilder().participants([e1, e2]).register_aggregator(CustomAggregator).build()
+
+    completed = False
+    output: str | None = None
+    async for ev in wf.run_stream("prompt: factory test"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(str, ev.data)
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    assert isinstance(output, str)
+    assert output == "One | Two"
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_with_aggregator() -> None:
+    """Test that multiple calls to .with_aggregator() raises an error."""
+
+    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
+        return str(len(results))
+
+    with pytest.raises(ValueError, match=r"with_aggregator\(\) has already been called"):
+        (ConcurrentBuilder().with_aggregator(summarize).with_aggregator(summarize))
+
+
+def test_concurrent_builder_rejects_multiple_calls_to_register_aggregator() -> None:
+    """Test that multiple calls to .register_aggregator() raises an error."""
+
+    class CustomAggregator(Executor):
+        pass
+
+    with pytest.raises(ValueError, match=r"register_aggregator\(\) has already been called"):
+        (
+            ConcurrentBuilder()
+            .register_aggregator(lambda: CustomAggregator(id="agg1"))
+            .register_aggregator(lambda: CustomAggregator(id="agg2"))
+        )
 
 
 async def test_concurrent_checkpoint_resume_round_trip() -> None:
@@ -278,3 +460,92 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
 
         assert len(runtime_checkpoints) > 0, "Runtime storage should have checkpoints"
         assert len(buildtime_checkpoints) == 0, "Build-time storage should have no checkpoints when overridden"
+
+
+def test_concurrent_builder_rejects_empty_participant_factories() -> None:
+    with pytest.raises(ValueError):
+        ConcurrentBuilder().register_participants([])
+
+
+async def test_concurrent_builder_reusable_after_build_with_participants() -> None:
+    """Test that the builder can be reused to build multiple identical workflows with participants()."""
+    e1 = _FakeAgentExec("agentA", "One")
+    e2 = _FakeAgentExec("agentB", "Two")
+
+    builder = ConcurrentBuilder().participants([e1, e2])
+
+    builder.build()
+
+    assert builder._participants[0] is e1  # type: ignore
+    assert builder._participants[1] is e2  # type: ignore
+    assert builder._participant_factories == []  # type: ignore
+
+
+async def test_concurrent_builder_reusable_after_build_with_factories() -> None:
+    """Test that the builder can be reused to build multiple workflows with register_participants()."""
+    call_count = 0
+
+    def create_agent_executor_a() -> Executor:
+        nonlocal call_count
+        call_count += 1
+        return _FakeAgentExec("agentA", "One")
+
+    def create_agent_executor_b() -> Executor:
+        nonlocal call_count
+        call_count += 1
+        return _FakeAgentExec("agentB", "Two")
+
+    builder = ConcurrentBuilder().register_participants([create_agent_executor_a, create_agent_executor_b])
+
+    # Build the first workflow
+    wf1 = builder.build()
+
+    assert builder._participants == []  # type: ignore
+    assert len(builder._participant_factories) == 2  # type: ignore
+    assert call_count == 2
+
+    # Build the second workflow
+    wf2 = builder.build()
+    assert call_count == 4
+
+    # Verify that the two workflows have different executor instances
+    assert wf1.executors["agentA"] is not wf2.executors["agentA"]
+    assert wf1.executors["agentB"] is not wf2.executors["agentB"]
+
+
+async def test_concurrent_with_register_participants() -> None:
+    """Test workflow creation using register_participants with factories."""
+
+    def create_agent1() -> Executor:
+        return _FakeAgentExec("agentA", "Alpha")
+
+    def create_agent2() -> Executor:
+        return _FakeAgentExec("agentB", "Beta")
+
+    def create_agent3() -> Executor:
+        return _FakeAgentExec("agentC", "Gamma")
+
+    wf = ConcurrentBuilder().register_participants([create_agent1, create_agent2, create_agent3]).build()
+
+    completed = False
+    output: list[ChatMessage] | None = None
+    async for ev in wf.run_stream("test prompt"):
+        if isinstance(ev, WorkflowStatusEvent) and ev.state == WorkflowRunState.IDLE:
+            completed = True
+        elif isinstance(ev, WorkflowOutputEvent):
+            output = cast(list[ChatMessage], ev.data)
+        if completed and output is not None:
+            break
+
+    assert completed
+    assert output is not None
+    messages: list[ChatMessage] = output
+
+    # Expect one user message + one assistant message per participant
+    assert len(messages) == 1 + 3
+    assert messages[0].role == Role.USER
+    assert "test prompt" in messages[0].text
+
+    assistant_texts = {m.text for m in messages[1:]}
+    assert assistant_texts == {"Alpha", "Beta", "Gamma"}
+    assert all(m.role == Role.ASSISTANT for m in messages[1:])

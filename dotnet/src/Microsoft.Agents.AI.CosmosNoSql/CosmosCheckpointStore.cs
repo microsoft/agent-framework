@@ -217,9 +217,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         }
     }
 
-    /// <summary>
-    /// Represents a checkpoint document stored in Cosmos DB.
-    /// </summary>
+    /// <summary>Represents a checkpoint document stored in Cosmos DB.</summary>
     internal sealed class CosmosCheckpointDocument
     {
         [JsonProperty("id")]

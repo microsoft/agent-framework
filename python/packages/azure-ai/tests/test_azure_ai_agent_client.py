@@ -24,6 +24,7 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
+    HostedFileContent,
     HostedFileSearchTool,
     HostedMCPTool,
     HostedVectorStoreContent,
@@ -42,6 +43,8 @@ from azure.ai.agents.models import (
     FileInfo,
     MessageDeltaChunk,
     MessageDeltaTextContent,
+    MessageDeltaTextFileCitationAnnotation,
+    MessageDeltaTextFilePathAnnotation,
     MessageDeltaTextUrlCitationAnnotation,
     RequiredFunctionToolCall,
     RequiredMcpToolCall,
@@ -1360,6 +1363,108 @@ def test_azure_ai_chat_client_extract_url_citations_with_citations(mock_agents_c
     assert len(citation.annotated_regions) == 1
     assert citation.annotated_regions[0].start_index == 10
     assert citation.annotated_regions[0].end_index == 20
+
+
+def test_azure_ai_chat_client_extract_file_path_contents_with_file_path_annotation(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _extract_file_path_contents with MessageDeltaChunk containing file path annotation."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    # Create mock file_path annotation
+    mock_file_path = MagicMock()
+    mock_file_path.file_id = "assistant-test-file-123"
+
+    mock_annotation = MagicMock(spec=MessageDeltaTextFilePathAnnotation)
+    mock_annotation.file_path = mock_file_path
+
+    # Create mock text content with annotations
+    mock_text = MagicMock()
+    mock_text.annotations = [mock_annotation]
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+
+    # Verify results
+    assert len(file_contents) == 1
+    assert isinstance(file_contents[0], HostedFileContent)
+    assert file_contents[0].file_id == "assistant-test-file-123"
+
+
+def test_azure_ai_chat_client_extract_file_path_contents_with_file_citation_annotation(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _extract_file_path_contents with MessageDeltaChunk containing file citation annotation."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    # Create mock file_citation annotation
+    mock_file_citation = MagicMock()
+    mock_file_citation.file_id = "cfile_test-citation-456"
+
+    mock_annotation = MagicMock(spec=MessageDeltaTextFileCitationAnnotation)
+    mock_annotation.file_citation = mock_file_citation
+
+    # Create mock text content with annotations
+    mock_text = MagicMock()
+    mock_text.annotations = [mock_annotation]
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+
+    # Verify results
+    assert len(file_contents) == 1
+    assert isinstance(file_contents[0], HostedFileContent)
+    assert file_contents[0].file_id == "cfile_test-citation-456"
+
+
+def test_azure_ai_chat_client_extract_file_path_contents_empty_annotations(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _extract_file_path_contents with no annotations returns empty list."""
+    chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    # Create mock text content with no annotations
+    mock_text = MagicMock()
+    mock_text.annotations = []
+
+    mock_text_content = MagicMock(spec=MessageDeltaTextContent)
+    mock_text_content.text = mock_text
+
+    # Create mock delta
+    mock_delta = MagicMock()
+    mock_delta.content = [mock_text_content]
+
+    # Create mock MessageDeltaChunk
+    mock_chunk = MagicMock(spec=MessageDeltaChunk)
+    mock_chunk.delta = mock_delta
+
+    # Call the method
+    file_contents = chat_client._extract_file_path_contents(mock_chunk)
+
+    # Verify results
+    assert len(file_contents) == 0
 
 
 def get_weather(

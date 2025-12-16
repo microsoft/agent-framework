@@ -43,7 +43,10 @@ internal sealed class BackgroundJobRunner
                     }
                     catch (Exception e) when (e is not OperationCanceledException and not SystemException)
                     {
-                        this._logger.LogError(e, "Error running background job {BackgroundJobError}.", e.Message);
+                        if (this._logger.IsEnabled(LogLevel.Error))
+                        {
+                            this._logger.LogError(e, "Error running background job {BackgroundJobError}.", e.Message);
+                        }
                     }
                 }
             });

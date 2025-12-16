@@ -12,7 +12,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI;
+using OpenAI.Responses;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5";
@@ -22,7 +22,7 @@ var stateStore = new Dictionary<string, JsonElement?>();
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new AzureCliCredential())
-     .GetOpenAIResponseClient(deploymentName)
+     .GetResponsesClient(deploymentName)
      .CreateAIAgent(
         name: "SpaceNovelWriter",
         instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +
