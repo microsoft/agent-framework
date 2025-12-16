@@ -38,7 +38,7 @@ from agent_framework.exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
@@ -60,7 +60,7 @@ logger = get_logger("agent_framework.ollama")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OllamaChatClient(BaseChatClient):
     """Ollama Chat completion class."""
