@@ -685,8 +685,16 @@ class MCPTool:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
+        # Filter out framework kwargs that cannot be serialized by the MCP SDK.
+        # These are internal objects passed through the function invocation pipeline
+        # that should not be forwarded to external MCP servers.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
+        }
         try:
-            return _mcp_call_tool_result_to_ai_contents(await self.session.call_tool(tool_name, arguments=kwargs))
+            return _mcp_call_tool_result_to_ai_contents(
+                await self.session.call_tool(tool_name, arguments=filtered_kwargs)
+            )
         except McpError as mcp_exc:
             raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
