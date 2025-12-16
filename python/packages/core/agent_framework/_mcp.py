@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import base64
 import logging
 import re
 import sys
@@ -152,7 +153,7 @@ def _mcp_type_to_ai_content(
             case types.ImageContent() | types.AudioContent():
                 return_types.append(
                     DataContent(
-                        uri=mcp_type.data,
+                        data=base64.b64decode(mcp_type.data),
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )
