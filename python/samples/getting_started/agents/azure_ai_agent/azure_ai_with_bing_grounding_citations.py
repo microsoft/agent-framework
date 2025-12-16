@@ -48,7 +48,7 @@ async def main() -> None:
             tools=bing_search_tool,
         ) as agent,
     ):
-        # 4. Demonstrate agent capabilities with web search
+        # 3. Demonstrate agent capabilities with web search
         print("=== Azure AI Agent with Bing Grounding Search ===\n")
 
         user_input = "What is the most popular programming language?"
