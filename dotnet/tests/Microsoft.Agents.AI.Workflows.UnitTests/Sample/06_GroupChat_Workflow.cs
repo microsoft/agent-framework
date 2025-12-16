@@ -57,7 +57,7 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     public const string Greeting = "Hello World!";
     public const string DefaultId = nameof(HelloAgent);
 
-    public override string Id => id;
+    protected override string? IdCore => id;
     public override string? Name => id;
 
     public override AgentThread GetNewThread()
