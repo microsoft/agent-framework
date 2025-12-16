@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { HilTimelineItem } from "./hil-timeline-item";
 import { RunWorkflowButton } from "./run-workflow-button";
+import { ChatMessageInput } from "@/components/ui/chat-message-input";
+import { isChatMessageSchema } from "@/utils/workflow-utils";
 import {
   Loader2,
   CheckCircle,
@@ -21,6 +23,7 @@ import {
   Square,
 } from "lucide-react";
 import type { ExtendedResponseStreamEvent, JSONSchemaProperty } from "@/types";
+import type { ResponseInputContent } from "@/types/agent-framework";
 import type { ExecutorState } from "./executor-node";
 import { truncateText } from "@/utils/workflow-utils";
 
@@ -631,16 +634,35 @@ export function ExecutionTimeline({
       {/* Bottom Control Bar - Sticky (hidden when HIL is active) */}
       {(onRun || onCancel) && pendingHilRequests.length === 0 && (
         <div className="border-t p-3 bg-background flex-shrink-0">
-          <RunWorkflowButton
-            inputSchema={inputSchema}
-            onRun={onRun || (() => {})}
-            onCancel={onCancel}
-            isSubmitting={workflowState === "running"}
-            isCancelling={isCancelling}
-            workflowState={workflowState}
-            checkpoints={checkpoints}
-            showCheckpoints={false}
-          />
+          {inputSchema && isChatMessageSchema(inputSchema) ? (
+            <ChatMessageInput
+              onSubmit={async (content: ResponseInputContent[]) => {
+                // Wrap in OpenAI message format (same as run-workflow-button modal)
+                const openaiInput = [
+                  { type: "message", role: "user", content },
+                ];
+                onRun?.(openaiInput as unknown as Record<string, unknown>);
+              }}
+              isSubmitting={workflowState === "running"}
+              isStreaming={workflowState === "running"}
+              onCancel={onCancel}
+              isCancelling={isCancelling}
+              placeholder="Message workflow..."
+              showFileUpload={true}
+              entityName="workflow"
+            />
+          ) : (
+            <RunWorkflowButton
+              inputSchema={inputSchema}
+              onRun={onRun || (() => {})}
+              onCancel={onCancel}
+              isSubmitting={workflowState === "running"}
+              isCancelling={isCancelling}
+              workflowState={workflowState}
+              checkpoints={checkpoints}
+              showCheckpoints={false}
+            />
+          )}
         </div>
       )}
 

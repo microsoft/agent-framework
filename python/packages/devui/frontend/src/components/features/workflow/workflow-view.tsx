@@ -110,6 +110,7 @@ export function WorkflowView({
   const removeSession = useDevUIStore((state) => state.removeSession);
   const addToast = useDevUIStore((state) => state.addToast);
   const runtime = useDevUIStore((state) => state.runtime);
+  const streamingEnabled = useDevUIStore((state) => state.streamingEnabled);
 
   // View options state
   const [viewOptions, setViewOptions] = useState(() => {
@@ -824,6 +825,99 @@ export function WorkflowView({
     ]
   );
 
+  // Handle non-streaming workflow data sending
+  const handleSendWorkflowDataSync = useCallback(
+    async (inputData: Record<string, unknown>, checkpointId?: string) => {
+      if (!selectedWorkflow || selectedWorkflow.type !== "workflow") return;
+
+      setIsStreaming(false); // Not actually streaming
+      setWasCancelled(false);
+      setOpenAIEvents([]);
+      setWorkflowResult("");
+      itemOutputs.current = {};
+      currentStreamingItemId.current = null;
+      workflowMetadata.current = null;
+      setPendingHilRequests([]);
+      setHilResponses({});
+      onDebugEvent("clear");
+
+      try {
+        const response = await apiClient.runWorkflowSync(selectedWorkflow.id, {
+          input_data: inputData,
+          conversation_id: currentSession?.conversation_id || undefined,
+          checkpoint_id: checkpointId,
+        });
+
+        // Extract workflow result from response output
+        if (response.output) {
+          for (const outputItem of response.output) {
+            if (outputItem.type === "message" && "content" in outputItem && Array.isArray(outputItem.content)) {
+              for (const content of outputItem.content as Array<{ type: string; text?: string }>) {
+                if (content.type === "output_text" && content.text) {
+                  setWorkflowResult((prev) => {
+                    if (prev && prev.length > 0) {
+                      return prev + "\n\n" + content.text;
+                    }
+                    return content.text || "";
+                  });
+
+                  // Try to parse as JSON for structured metadata
+                  try {
+                    const parsed = JSON.parse(content.text || "");
+                    if (typeof parsed === "object" && parsed !== null) {
+                      workflowMetadata.current = parsed;
+                    }
+                  } catch {
+                    // Not JSON, keep as text
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Create a synthetic completion event for the timeline
+        const completedEvent = {
+          type: "response.completed",
+          response: response,
+          sequence_number: 0,
+        } as ExtendedResponseStreamEvent;
+        setOpenAIEvents([completedEvent]);
+        onDebugEvent(completedEvent);
+
+        // Refetch checkpoints after completion
+        await loadCheckpoints();
+      } catch (error) {
+        console.error("Workflow execution error:", error);
+
+        // Create a synthetic error event for the timeline
+        const errorMessage = error instanceof Error ? error.message : "Workflow execution failed";
+        const errorEvent: ExtendedResponseStreamEvent = {
+          type: "response.failed",
+          response: {
+            error: { message: errorMessage },
+          },
+          sequence_number: 0,
+        } as ExtendedResponseStreamEvent;
+        setOpenAIEvents([errorEvent]);
+        onDebugEvent(errorEvent);
+      }
+    },
+    [selectedWorkflow, currentSession, onDebugEvent, loadCheckpoints]
+  );
+
+  // Wrapper to choose between streaming and non-streaming
+  const handleWorkflowRun = useCallback(
+    async (inputData: Record<string, unknown>, checkpointId?: string) => {
+      if (streamingEnabled) {
+        await handleSendWorkflowData(inputData, checkpointId);
+      } else {
+        await handleSendWorkflowDataSync(inputData, checkpointId);
+      }
+    },
+    [streamingEnabled, handleSendWorkflowData, handleSendWorkflowDataSync]
+  );
+
   // Check if all HIL responses are valid
   const areAllHilResponsesValid = useCallback(() => {
     // Check each pending request has a valid response
@@ -1301,7 +1395,7 @@ export function WorkflowView({
               {timelineMinimized && (
                 <RunWorkflowButton
                   inputSchema={workflowInfo.input_schema}
-                  onRun={handleSendWorkflowData}
+                  onRun={handleWorkflowRun}
                   onCancel={handleCancel}
                   isSubmitting={isStreaming}
                   isCancelling={isCancelling}
@@ -1486,7 +1580,7 @@ export function WorkflowView({
                     inputSchema={workflowInfo?.input_schema}
                     onRun={(data, checkpointId) => {
                       // Use the form data from timeline
-                      handleSendWorkflowData(data, checkpointId);
+                      handleWorkflowRun(data, checkpointId);
                     }}
                     onCancel={handleCancel}
                     isCancelling={isCancelling}

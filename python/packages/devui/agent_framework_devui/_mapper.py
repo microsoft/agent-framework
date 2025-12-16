@@ -898,11 +898,29 @@ class MessageMapper:
                         if not text:
                             # Fallback to string representation
                             text = str(output_data)
+                    elif isinstance(output_data, list):
+                        # Handle list of ChatMessage objects (from Magentic yield_output([final_answer]))
+                        text_parts = []
+                        for item in output_data:
+                            if hasattr(item, "__class__") and item.__class__.__name__ == "ChatMessage":
+                                item_text = getattr(item, "text", None)
+                                if item_text:
+                                    text_parts.append(item_text)
+                                else:
+                                    text_parts.append(str(item))
+                            elif isinstance(item, str):
+                                text_parts.append(item)
+                            else:
+                                try:
+                                    text_parts.append(json.dumps(item, indent=2))
+                                except (TypeError, ValueError):
+                                    text_parts.append(str(item))
+                        text = "\n".join(text_parts) if text_parts else str(output_data)
                     elif isinstance(output_data, str):
                         # String output
                         text = output_data
                     else:
-                        # Object/dict/list → JSON string
+                        # Object/dict → JSON string
                         try:
                             text = json.dumps(output_data, indent=2)
                         except (TypeError, ValueError):
