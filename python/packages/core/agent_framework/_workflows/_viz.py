@@ -30,8 +30,8 @@ class WorkflowViz:
         """Export the workflow as a DOT format digraph string.
 
         Args:
-            include_internal_executors: Whether to include internal executors in the visualization.
-                                        (Default: False)
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             A string representation of the workflow in DOT format.
@@ -72,8 +72,8 @@ class WorkflowViz:
         Args:
             format: The output format. Supported formats: 'svg', 'png', 'pdf', 'dot'.
             filename: Optional filename to save the output. If None, creates a temporary file.
-            include_internal_executors: Whether to include internal executors in the visualization.
-                                        (Default: False)
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             The path to the saved file.
@@ -139,45 +139,51 @@ class WorkflowViz:
                 "brew install graphviz on macOS, or download from https://graphviz.org/download/ for other platforms."
             ) from e
 
-    def save_svg(self, filename: str) -> str:
+    def save_svg(self, filename: str, include_internal_executors: bool = False) -> str:
         """Convenience method to save as SVG.
 
         Args:
             filename: The filename to save the SVG file.
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             The path to the saved SVG file.
         """
-        return self.export(format="svg", filename=filename)
+        return self.export(format="svg", filename=filename, include_internal_executors=include_internal_executors)
 
-    def save_png(self, filename: str) -> str:
+    def save_png(self, filename: str, include_internal_executors: bool = False) -> str:
         """Convenience method to save as PNG.
 
         Args:
             filename: The filename to save the PNG file.
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             The path to the saved PNG file.
         """
-        return self.export(format="png", filename=filename)
+        return self.export(format="png", filename=filename, include_internal_executors=include_internal_executors)
 
-    def save_pdf(self, filename: str) -> str:
+    def save_pdf(self, filename: str, include_internal_executors: bool = False) -> str:
         """Convenience method to save as PDF.
 
         Args:
             filename: The filename to save the PDF file.
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             The path to the saved PDF file.
         """
-        return self.export(format="pdf", filename=filename)
+        return self.export(format="pdf", filename=filename, include_internal_executors=include_internal_executors)
 
     def to_mermaid(self, include_internal_executors: bool = False) -> str:
         """Export the workflow as a Mermaid flowchart string.
 
         Args:
-            include_internal_executors: Whether to include internal executors in the visualization.
-                                        (Default: False)
+            include_internal_executors (bool): Whether to include internal executors in the visualization.
+                                               Default is False.
 
         Returns:
             A string representation of the workflow in Mermaid flowchart syntax.
