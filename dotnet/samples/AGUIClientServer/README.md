@@ -1,3 +1,14 @@
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agent UI (AG-UI) client and server
+urlFragment: ag-ui-client-server
+---
+
 # AG-UI Client and Server Sample
 
 This sample demonstrates how to use the AG-UI (Agent UI) protocol to enable communication between a client application and a remote agent server. The AG-UI protocol provides a standardized way for clients to interact with AI agents.
@@ -45,6 +56,7 @@ Before running the client, you can test the server using the included `.http` fi
 3. Observe the server-sent events stream in the response
 
 Sample request:
+
 ```http
 POST http://localhost:5100/
 Content-Type: application/json
@@ -127,6 +139,7 @@ app.MapAGUI("/", agent);
 ```
 
 This automatically handles:
+
 - HTTP POST requests with message payloads
 - Converting agent responses to AG-UI event streams
 - Server-sent events (SSE) formatting
@@ -161,9 +174,9 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages
         Console.WriteLine($"[Run Started - Thread: {update.ConversationId}, Run: {update.ResponseId}]");
         isFirstUpdate = false;
     }
-    
+
     currentUpdate = update;
-    
+
     foreach (AIContent content in update.Contents)
     {
         switch (content)
@@ -188,6 +201,7 @@ if (currentUpdate != null)
 ```
 
 The `RunStreamingAsync` method:
+
 1. Sends messages to the server via HTTP POST
 2. Receives server-sent events (SSE) stream
 3. Parses events into `AgentRunResponseUpdate` objects
@@ -201,7 +215,7 @@ The `RunStreamingAsync` method:
   - `ResponseId`: The unique run identifier
   - `ConversationId`: The thread/conversation identifier
   - `Contents`: Collection of content items (TextContent, ErrorContent, etc.)
-- **Run Lifecycle**: 
+- **Run Lifecycle**:
   - The **first** `AgentRunResponseUpdate` in a run indicates the run has started
   - Subsequent updates contain streaming content as the agent processes
   - The **last** `AgentRunResponseUpdate` in a run indicates the run has finished

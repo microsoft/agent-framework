@@ -1,9 +1,21 @@
-# What this sample demonstrates
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agent with hosted MCP server
+urlFragment: agent-with-hosted-mcp-server
+---
+
+# Agent with hosted MCP server
 
 This sample demonstrates how to use a Hosted Model Context Protocol (MCP) server with an AI agent.
 The agent connects to the Microsoft Learn MCP server to search documentation and answer questions using official Microsoft content.
 
 Key features:
+
 - Configuring MCP tools with automatic approval (no user confirmation required)
 - Filtering available tools from an MCP server
 - Using Azure OpenAI Responses with MCP tools
