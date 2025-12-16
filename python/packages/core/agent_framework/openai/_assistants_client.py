@@ -40,7 +40,7 @@ from .._types import (
     prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
-from ..observability import use_observability
+from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 11):
@@ -53,7 +53,7 @@ __all__ = ["OpenAIAssistantsClient"]
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""

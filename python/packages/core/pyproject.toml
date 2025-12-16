@@ -30,7 +30,6 @@ dependencies = [
     # telemetry
     "opentelemetry-api>=1.39.0",
     "opentelemetry-sdk>=1.39.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.39.0",
     "opentelemetry-semantic-conventions-ai>=0.4.13",
     # connectors and functions
     "openai>=1.99.0",

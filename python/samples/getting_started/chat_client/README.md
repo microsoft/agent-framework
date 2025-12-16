@@ -32,3 +32,9 @@ Depending on which client you're using, set the appropriate environment variable
 - `OPENAI_API_KEY`: Your OpenAI API key
 - `OPENAI_CHAT_MODEL_ID`: The OpenAI model to use for chat clients (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
 - `OPENAI_RESPONSES_MODEL_ID`: The OpenAI model to use for responses clients (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
+
+**For Ollama client:**
+- `OLLAMA_HOST`: Your Ollama server URL (defaults to `http://localhost:11434` if not set)
+- `OLLAMA_CHAT_MODEL_ID`: The Ollama model to use for chat (e.g., `llama3.2`, `llama2`, `codellama`)
+
+> **Note**: For Ollama, ensure you have Ollama installed and running locally with at least one model downloaded. Visit [https://ollama.com/](https://ollama.com/) for installation instructions.

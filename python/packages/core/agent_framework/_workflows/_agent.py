@@ -13,12 +13,15 @@ from agent_framework import (
     AgentRunResponseUpdate,
     AgentThread,
     BaseAgent,
+    BaseContent,
     ChatMessage,
+    Contents,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
+    TextContent,
     UsageDetails,
 )
 
@@ -28,6 +31,7 @@ from ._events import (
     AgentRunUpdateEvent,
     RequestInfoEvent,
     WorkflowEvent,
+    WorkflowOutputEvent,
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_type_compatible
@@ -280,9 +284,8 @@ class WorkflowAgent(BaseAgent):
     ) -> AgentRunResponseUpdate | None:
         """Convert a workflow event to an AgentRunResponseUpdate.
 
-        Only AgentRunUpdateEvent and RequestInfoEvent are processed.
-        Other workflow events are ignored as they are workflow-internal and should
-        have corresponding AgentRunUpdateEvent emissions if relevant to agent consumers.
+        AgentRunUpdateEvent, RequestInfoEvent, and WorkflowOutputEvent are processed.
+        Other workflow events are ignored as they are workflow-internal.
         """
         match event:
             case AgentRunUpdateEvent(data=update):
@@ -290,6 +293,42 @@ class WorkflowAgent(BaseAgent):
                 if update:
                     return update
                 return None
+
+            case WorkflowOutputEvent(data=data, source_executor_id=source_executor_id):
+                # Convert workflow output to an agent response update.
+                # Handle different data types appropriately.
+                if isinstance(data, AgentRunResponseUpdate):
+                    # Already an update, pass through
+                    return data
+                if isinstance(data, ChatMessage):
+                    # Convert ChatMessage to update
+                    return AgentRunResponseUpdate(
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or source_executor_id,
+                        response_id=response_id,
+                        message_id=str(uuid.uuid4()),
+                        created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        raw_representation=data,
+                    )
+                # Determine contents based on data type
+                if isinstance(data, BaseContent):
+                    # Already a content type (TextContent, ImageContent, etc.)
+                    contents: list[Contents] = [cast(Contents, data)]
+                elif isinstance(data, str):
+                    contents = [TextContent(text=data)]
+                else:
+                    # Fallback: convert to string representation
+                    contents = [TextContent(text=str(data))]
+                return AgentRunResponseUpdate(
+                    contents=contents,
+                    role=Role.ASSISTANT,
+                    author_name=source_executor_id,
+                    response_id=response_id,
+                    message_id=str(uuid.uuid4()),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    raw_representation=data,
+                )
 
             case RequestInfoEvent(request_id=request_id):
                 # Store the pending request for later correlation

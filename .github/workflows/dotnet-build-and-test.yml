@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload coverage report artifact
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
