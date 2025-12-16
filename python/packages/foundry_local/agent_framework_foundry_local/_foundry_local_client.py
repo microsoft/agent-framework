@@ -18,7 +18,7 @@ __all__ = [
 class FoundryLocalSettings(AFBaseSettings):
     """Foundry local model settings.
 
-    The settings are first loaded from environment variables with the prefix 'FOUNDRY_'.
+    The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.
     If the environment variables are not found, the settings can be loaded from a .env file
     with the encoding 'utf-8'. If the settings are not found in the .env file, the settings
     are ignored; however, validation will fail alerting that the settings are missing.

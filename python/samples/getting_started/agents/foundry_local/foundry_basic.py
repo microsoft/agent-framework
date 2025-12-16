@@ -7,7 +7,7 @@ from typing import Annotated
 from agent_framework_foundry_local import FoundryLocalChatClient
 
 """
-This samples demonstrates basic usage of FoundryLocalChatClient.
+This sample demonstrates basic usage of the FoundryLocalChatClient.
 Shows both streaming and non-streaming responses with function tools.
 
 Running this sample the first time will be slow, as the model needs to be
@@ -40,7 +40,7 @@ async def non_streaming_example(client: FoundryLocalChatClient) -> None:
         instructions="You are a helpful agent.",
         tools=get_weather,
     )
-    query = "Whats the weather like in Seattle?"
+    query = "What's the weather like in Seattle?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Agent: {result}\n")
@@ -55,7 +55,7 @@ async def streaming_example(client: FoundryLocalChatClient) -> None:
         instructions="You are a helpful agent.",
         tools=get_weather,
     )
-    query = "Whats the weather like in Amsterdam?"
+    query = "What's the weather like in Amsterdam?"
     print(f"User: {query}")
     print("Agent: ", end="", flush=True)
     async for chunk in agent.run_stream(query):
