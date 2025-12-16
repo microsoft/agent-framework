@@ -35,7 +35,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import (
     BetaContentBlock,
@@ -110,7 +110,7 @@ TAnthropicClient = TypeVar("TAnthropicClient", bound="AnthropicClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AnthropicClient(BaseChatClient):
     """Anthropic Chat client."""
