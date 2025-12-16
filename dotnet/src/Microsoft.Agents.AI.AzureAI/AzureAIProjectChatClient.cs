@@ -23,11 +23,6 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     private readonly AgentRecord? _agentRecord;
     private readonly ChatOptions? _chatOptions;
     private readonly AgentReference _agentReference;
-    /// <summary>
-    /// The usage of a no-op model is a necessary change to avoid OpenAIClients to throw exceptions when
-    /// used with Azure AI Agents as the model used is now defined at the agent creation time.
-    /// </summary>
-    private const string NoOpModel = "no-op";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AzureAIProjectChatClient"/> class.
@@ -42,7 +37,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentReference agentReference, string? defaultModelId, ChatOptions? chatOptions)
         : base(Throw.IfNull(aiProjectClient)
             .GetProjectOpenAIClient()
-            .GetOpenAIResponseClient(defaultModelId ?? NoOpModel)
+            .GetProjectResponsesClientForAgent(agentReference)
             .AsIChatClient())
     {
         this._agentClient = aiProjectClient;
@@ -132,13 +127,15 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 
         agentEnabledChatOptions.RawRepresentationFactory = (client) =>
         {
-            if (originalFactory?.Invoke(this) is not ResponseCreationOptions responseCreationOptions)
+            if (originalFactory?.Invoke(this) is not CreateResponseOptions responseCreationOptions)
             {
-                responseCreationOptions = new ResponseCreationOptions();
+                responseCreationOptions = new CreateResponseOptions();
             }
 
-            ResponseCreationOptionsExtensions.set_Agent(responseCreationOptions, this._agentReference);
-            ResponseCreationOptionsExtensions.set_Model(responseCreationOptions, null);
+            responseCreationOptions.Agent = this._agentReference;
+#pragma warning disable SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+            responseCreationOptions.Patch.Remove("$.model"u8);
+#pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
             return responseCreationOptions;
         };
