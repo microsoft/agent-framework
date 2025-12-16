@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "mem0ai>=0.1.117",
+    "mem0ai>=1.0.0",
 ]
 
 [tool.uv]
