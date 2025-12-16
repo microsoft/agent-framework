@@ -487,7 +487,7 @@ services:
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=\${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
       # Optional: Enable tracing
-      - ENABLE_OTEL=\${ENABLE_OTEL:-false}
+      - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-false}
     ports:
       - "8080:8080"
     restart: unless-stopped
