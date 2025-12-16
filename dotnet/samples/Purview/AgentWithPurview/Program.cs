@@ -28,7 +28,7 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
 using IChatClient client = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
-    .GetOpenAIResponseClient(deploymentName)
+    .GetResponsesClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))

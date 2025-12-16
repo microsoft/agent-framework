@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import ChatAgent
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import configure_otel_providers, get_tracer
 from agent_framework.openai import OpenAIChatClient
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -27,9 +27,10 @@ async def get_weather(
 
 
 async def main():
-    # This will enable tracing and create the necessary tracing, logging and metrics providers
-    # based on environment variables. See the .env.example file for the available configuration options.
-    setup_observability()
+    # calling `configure_otel_providers` will *enable* tracing and create the necessary tracing, logging
+    # and metrics providers based on environment variables.
+    # See the .env.example file for the available configuration options.
+    configure_otel_providers()
 
     questions = ["What's the weather in Amsterdam?", "and in Paris, and which is better?", "Why is the sky blue?"]
 
@@ -41,10 +42,11 @@ async def main():
             tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",
+            id="weather-agent",
         )
         thread = agent.get_new_thread()
         for question in questions:
-            print(f"User: {question}")
+            print(f"\nUser: {question}")
             print(f"{agent.display_name}: ", end="")
             async for update in agent.run_stream(
                 question,

@@ -23,7 +23,7 @@ var stateStore = new Dictionary<string, JsonElement?>();
 AIAgent agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
-     .GetOpenAIResponseClient(deploymentName)
+     .GetResponsesClient(deploymentName)
      .CreateAIAgent(
         name: "SpaceNovelWriter",
         instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +

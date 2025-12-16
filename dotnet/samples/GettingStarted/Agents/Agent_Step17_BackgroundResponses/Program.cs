@@ -14,7 +14,7 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 AIAgent agent = new OpenAIClient(
     new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
     new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
-     .GetOpenAIResponseClient(deploymentName)
+     .GetResponsesClient(deploymentName)
      .CreateAIAgent();
 
 // Enable background responses (only supported by OpenAI Responses at this time).

@@ -43,7 +43,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceResponseException
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import (
     Agent,
@@ -107,7 +107,7 @@ TAzureAIAgentClient = TypeVar("TAzureAIAgentClient", bound="AzureAIAgentClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AzureAIAgentClient(BaseChatClient):
     """Azure AI Agent Chat client."""
