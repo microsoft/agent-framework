@@ -25,12 +25,12 @@ internal static class BuiltInFunctions
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static Task<string> InvokeAgentAsync(
         [DurableClient] DurableTaskClient client,
-        string dispatcher,
+        string encodedEntityRequest,
         FunctionContext functionContext)
     {
         // This should never be null except if the function trigger is misconfigured.
         ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(dispatcher);
+        ArgumentNullException.ThrowIfNull(encodedEntityRequest);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         // Create a combined service provider that includes both the existing services
@@ -40,7 +40,7 @@ internal static class BuiltInFunctions
         // This method is the entry point for the agent entity.
         // It will be invoked by the Azure Functions runtime when the entity is called.
         AgentEntity entity = new(combinedServiceProvider, functionContext.CancellationToken);
-        return GrpcEntityRunner.LoadAndRunAsync(dispatcher, entity, combinedServiceProvider);
+        return GrpcEntityRunner.LoadAndRunAsync(encodedEntityRequest, entity, combinedServiceProvider);
     }
 
     public static async Task<HttpResponseData> RunAgentHttpAsync(
