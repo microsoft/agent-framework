@@ -55,9 +55,9 @@ public sealed class OpenAIResponseClientExtensionsTests
     }
 
     /// <summary>
-    /// Creates a test OpenAIResponseClient implementation for testing.
+    /// Creates a test ResponsesClient implementation for testing.
     /// </summary>
-    private sealed class TestOpenAIResponseClient : OpenAIResponseClient
+    private sealed class TestOpenAIResponseClient : ResponsesClient
     {
         public TestOpenAIResponseClient()
         {
@@ -147,7 +147,7 @@ public sealed class OpenAIResponseClientExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((OpenAIResponseClient)null!).CreateAIAgent());
+            ((ResponsesClient)null!).CreateAIAgent());
 
         Assert.Equal("client", exception.ParamName);
     }
