@@ -342,8 +342,7 @@ function processEventsForDisplay(
         } else {
           // Shouldn't happen if output_item.added was emitted first
           console.warn(
-            `Received argument delta for unknown call with item_id: ${
-              "item_id" in event ? event.item_id : "unknown"
+            `Received argument delta for unknown call with item_id: ${"item_id" in event ? event.item_id : "unknown"
             }`
           );
         }
@@ -437,17 +436,15 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
             ? data.arguments.slice(0, 30)
             : JSON.stringify(data.arguments).slice(0, 30)
           : "";
-        return `Calling ${functionName}(${argsStr}${
-          argsStr.length >= 30 ? "..." : ""
-        })`;
+        return `Calling ${functionName}(${argsStr}${argsStr.length >= 30 ? "..." : ""
+          })`;
       }
       return "Function call";
 
     case "response.function_call_arguments.delta":
       if ("delta" in event && event.delta) {
-        return `Function arg delta: ${event.delta.slice(0, 30)}${
-          event.delta.length > 30 ? "..." : ""
-        }`;
+        return `Function arg delta: ${event.delta.slice(0, 30)}${event.delta.length > 30 ? "..." : ""
+          }`;
       }
       return "Function arguments...";
 
@@ -455,9 +452,8 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
       const resultEvent =
         event as import("@/types").ResponseFunctionResultComplete;
       const truncated = resultEvent.output.slice(0, 40);
-      return `Function result: ${truncated}${
-        truncated.length >= 40 ? "..." : ""
-      }`;
+      return `Function result: ${truncated}${truncated.length >= 40 ? "..." : ""
+        }`;
     }
 
     case "response.output_item.added": {
@@ -616,9 +612,8 @@ function EventItem({ event }: EventItemProps) {
 
       <div className="text-sm">
         <div
-          className={`flex items-center gap-2 ${
-            hasExpandableContent ? "cursor-pointer" : ""
-          }`}
+          className={`flex items-center gap-2 ${hasExpandableContent ? "cursor-pointer" : ""
+            }`}
           onClick={() => hasExpandableContent && setIsExpanded(!isExpanded)}
         >
           {hasExpandableContent && (
@@ -778,11 +773,10 @@ function EventExpandedContent({
                 Status:
               </span>
               <span
-                className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                  resultEvent.status === "completed"
+                className={`ml-2 px-2 py-1 rounded text-xs font-medium ${resultEvent.status === "completed"
                     ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                     : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                }`}
+                  }`}
               >
                 {resultEvent.status}
               </span>
@@ -823,11 +817,10 @@ function EventExpandedContent({
                   Status:
                 </span>
                 <span
-                  className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                    result.status === "completed"
+                  className={`ml-2 px-2 py-1 rounded text-xs font-medium ${result.status === "completed"
                       ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                       : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                  }`}
+                    }`}
                 >
                   {result.status}
                 </span>
@@ -957,11 +950,10 @@ function EventExpandedContent({
                     Status:
                   </span>
                   <span
-                    className={`ml-2 px-2 py-1 rounded text-xs font-medium ${
-                      data.status === "StatusCode.UNSET" || data.status === "OK"
+                    className={`ml-2 px-2 py-1 rounded text-xs font-medium ${data.status === "StatusCode.UNSET" || data.status === "OK"
                         ? "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200"
                         : "bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200"
-                    }`}
+                      }`}
                   >
                     {data.status || "unknown"}
                   </span>

@@ -249,7 +249,7 @@ services:
       - AZURE_OPENAI_ENDPOINT=\${AZURE_OPENAI_ENDPOINT}
       - AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=\${AZURE_OPENAI_CHAT_DEPLOYMENT_NAME}
       # Optional: Enable tracing
-      - ENABLE_OTEL=\${ENABLE_OTEL:-false}
+      - ENABLE_INSTRUMENTATION=\${ENABLE_INSTRUMENTATION:-false}
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -282,11 +282,10 @@ openai>=1.0.0
         <div className="flex border-b px-6">
           <button
             onClick={() => setActiveTab("docker")}
-            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-              activeTab === "docker"
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === "docker"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-foreground"
-            }`}
+              }`}
           >
             <Container className="h-4 w-4 mr-2 inline" />
             Docker
@@ -297,11 +296,10 @@ openai>=1.0.0
           {deploymentSupported && (
             <button
               onClick={() => setActiveTab("azure")}
-              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                activeTab === "azure"
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === "azure"
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
+                }`}
             >
               <Cloud className="h-4 w-4 mr-2 inline" />
               Azure
@@ -536,8 +534,8 @@ openai>=1.0.0
                       <div className="mt-2 p-2 bg-blue-100 dark:bg-blue-900 rounded text-xs">
                         <p className="mb-1">Run these commands once per subscription:</p>
                         <code className="block font-mono">
-                          az provider register -n Microsoft.App --wait<br/>
-                          az provider register -n Microsoft.ContainerRegistry --wait<br/>
+                          az provider register -n Microsoft.App --wait<br />
+                          az provider register -n Microsoft.ContainerRegistry --wait<br />
                           az provider register -n Microsoft.OperationalInsights --wait
                         </code>
                       </div>
@@ -564,9 +562,8 @@ openai>=1.0.0
                               <label className="text-sm font-medium">App Name</label>
                               <input
                                 type="text"
-                                className={`w-full mt-1 px-3 py-2 border rounded-md text-sm ${
-                                  appNameError ? "border-red-500" : ""
-                                }`}
+                                className={`w-full mt-1 px-3 py-2 border rounded-md text-sm ${appNameError ? "border-red-500" : ""
+                                  }`}
                                 placeholder="my-agent-app"
                                 value={appName}
                                 onChange={(e) => {
@@ -732,73 +729,73 @@ openai>=1.0.0
                       <div className="space-y-3">
                         <h4 className="font-medium text-sm">Deployment Steps</h4>
 
-                    <div className="space-y-3">
-                      {/* Step 1 */}
-                      <div className="border-l-2 border-primary pl-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                            1
-                          </div>
-                          <h5 className="font-medium text-sm">
-                            Create Azure Container Registry
-                          </h5>
-                        </div>
-                        <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
-                          {`# Create resource group
+                        <div className="space-y-3">
+                          {/* Step 1 */}
+                          <div className="border-l-2 border-primary pl-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                                1
+                              </div>
+                              <h5 className="font-medium text-sm">
+                                Create Azure Container Registry
+                              </h5>
+                            </div>
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
+                              {`# Create resource group
 az group create --name myResourceGroup --location eastus
 
 # Create container registry
 az acr create --resource-group myResourceGroup \\
   --name myregistry --sku Basic`}
-                        </pre>
-                      </div>
-
-                      {/* Step 2 */}
-                      <div className="border-l-2 border-primary pl-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                            2
+                            </pre>
                           </div>
-                          <h5 className="font-medium text-sm">
-                            Build and Push Docker Image
-                          </h5>
-                        </div>
-                        <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
-                          {`# Build and push in one command
+
+                          {/* Step 2 */}
+                          <div className="border-l-2 border-primary pl-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                                2
+                              </div>
+                              <h5 className="font-medium text-sm">
+                                Build and Push Docker Image
+                              </h5>
+                            </div>
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
+                              {`# Build and push in one command
 az acr build --registry myregistry \\
   --image ${agentName.toLowerCase()}-agent:latest .`}
-                        </pre>
-                      </div>
-
-                      {/* Step 3 */}
-                      <div className="border-l-2 border-primary pl-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                            3
+                            </pre>
                           </div>
-                          <h5 className="font-medium text-sm">
-                            Create Container Apps Environment
-                          </h5>
-                        </div>
-                        <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
-                          {`az containerapp env create --name myEnvironment \\
+
+                          {/* Step 3 */}
+                          <div className="border-l-2 border-primary pl-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                                3
+                              </div>
+                              <h5 className="font-medium text-sm">
+                                Create Container Apps Environment
+                              </h5>
+                            </div>
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
+                              {`az containerapp env create --name myEnvironment \\
   --resource-group myResourceGroup \\
   --location eastus`}
-                        </pre>
-                      </div>
-
-                      {/* Step 4 */}
-                      <div className="border-l-2 border-primary pl-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                            4
+                            </pre>
                           </div>
-                          <h5 className="font-medium text-sm">
-                            Deploy Container App
-                          </h5>
-                        </div>
-                        <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
-                          {`az containerapp create --name ${agentName.toLowerCase()}-app \\
+
+                          {/* Step 4 */}
+                          <div className="border-l-2 border-primary pl-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                                4
+                              </div>
+                              <h5 className="font-medium text-sm">
+                                Deploy Container App
+                              </h5>
+                            </div>
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
+                              {`az containerapp create --name ${agentName.toLowerCase()}-app \\
   --resource-group myResourceGroup \\
   --environment myEnvironment \\
   --image myregistry.azurecr.io/${agentName.toLowerCase()}-agent:latest \\
@@ -806,51 +803,51 @@ az acr build --registry myregistry \\
   --ingress 'external' \\
   --registry-server myregistry.azurecr.io \\
   --env-vars OPENAI_API_KEY=secretref:openai-key OPENAI_CHAT_MODEL_ID=gpt-4o-mini`}
-                        </pre>
-                      </div>
-
-                      {/* Step 5 */}
-                      <div className="border-l-2 border-primary pl-3">
-                        <div className="flex items-center gap-2 mb-1">
-                          <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                            5
+                            </pre>
                           </div>
-                          <h5 className="font-medium text-sm">
-                            Get Application URL
-                          </h5>
-                        </div>
-                        <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
-                          {`az containerapp show --name ${agentName.toLowerCase()}-app \\
+
+                          {/* Step 5 */}
+                          <div className="border-l-2 border-primary pl-3">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                                5
+                              </div>
+                              <h5 className="font-medium text-sm">
+                                Get Application URL
+                              </h5>
+                            </div>
+                            <pre className="bg-muted p-2 rounded text-xs overflow-x-auto border mt-2">
+                              {`az containerapp show --name ${agentName.toLowerCase()}-app \\
   --resource-group myResourceGroup \\
   --query properties.configuration.ingress.fqdn`}
-                        </pre>
+                            </pre>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* Learn More */}
-                  <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-md p-3">
-                    <h4 className="text-sm font-semibold mb-2">Learn More</h4>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Explore Azure Container Apps documentation for advanced
-                      features like scaling, monitoring, and CI/CD integration.
-                    </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full"
-                      asChild
-                    >
-                      <a
-                        href="https://learn.microsoft.com/azure/container-apps/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <ExternalLink className="h-3 w-3 mr-1" />
-                        View Azure Container Apps Documentation
-                      </a>
-                    </Button>
-                  </div>
+                      {/* Learn More */}
+                      <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+                        <h4 className="text-sm font-semibold mb-2">Learn More</h4>
+                        <p className="text-xs text-muted-foreground mb-3">
+                          Explore Azure Container Apps documentation for advanced
+                          features like scaling, monitoring, and CI/CD integration.
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          asChild
+                        >
+                          <a
+                            href="https://learn.microsoft.com/azure/container-apps/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ExternalLink className="h-3 w-3 mr-1" />
+                            View Azure Container Apps Documentation
+                          </a>
+                        </Button>
+                      </div>
                     </>
                   )}
                 </div>
