@@ -132,7 +132,11 @@ class ManagerSelectionResponse(BaseModel):
         final_message: Optional final message string when finishing conversation (will be converted to ChatMessage)
     """
 
-    model_config = {"extra": "forbid"}
+    model_config = {
+        "extra": "forbid",
+        # OpenAI strict mode requires all properties to be in required array
+        "json_schema_extra": {"required": ["selected_participant", "instruction", "finish", "final_message"]},
+    }
 
     selected_participant: str | None = None
     instruction: str | None = None

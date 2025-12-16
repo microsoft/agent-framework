@@ -293,6 +293,20 @@ def test_register_duplicate_name_raises_error():
         builder.register_executor(lambda: MockExecutor(id="executor_2"), name="MyExecutor")
 
 
+def test_register_duplicate_id_raises_error():
+    """Test that registering duplicate id raises an error."""
+    builder = WorkflowBuilder()
+
+    # Register first executor
+    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor1")
+    builder.register_executor(lambda: MockExecutor(id="executor"), name="MyExecutor2")
+    builder.set_start_executor("MyExecutor1")
+
+    # Registering second executor with same ID should raise ValueError
+    with pytest.raises(ValueError, match="Executor with ID 'executor' has already been created."):
+        builder.build()
+
+
 def test_register_agent_basic():
     """Test basic agent registration with lazy initialization."""
     builder = WorkflowBuilder()
@@ -483,7 +497,13 @@ def test_mixing_eager_and_lazy_initialization_error():
     builder.register_executor(lambda: MockExecutor(id="Lazy"), name="Lazy")
 
     # Mixing eager and lazy should raise an error during add_edge
-    with pytest.raises(ValueError, match="Both source and target must be either names"):
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Both source and target must be either registered factory names \(str\) "
+            r"or Executor/AgentProtocol instances\."
+        ),
+    ):
         builder.add_edge(eager_executor, "Lazy")
 
 
