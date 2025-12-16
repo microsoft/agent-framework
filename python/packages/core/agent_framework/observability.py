@@ -3,15 +3,19 @@
 import contextlib
 import json
 import logging
+import os
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping
 from enum import Enum
 from functools import wraps
 from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, TypeVar
 
+from dotenv import load_dotenv
 from opentelemetry import metrics, trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.semconv.attributes import service_attributes
 from opentelemetry.semconv_ai import GenAISystem, Meters, SpanAttributes
-from pydantic import BaseModel, PrivateAttr
+from pydantic import PrivateAttr
 
 from . import __version__ as version_info
 from ._logging import get_logger
@@ -19,10 +23,9 @@ from ._pydantic import AFBaseSettings
 from .exceptions import AgentInitializationError, ChatClientInitializationError
 
 if TYPE_CHECKING:  # pragma: no cover
-    from azure.core.credentials import TokenCredential
     from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
-    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.metrics.view import View
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -44,11 +47,14 @@ if TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "OBSERVABILITY_SETTINGS",
     "OtelAttr",
+    "configure_otel_providers",
+    "create_metric_views",
+    "create_resource",
+    "enable_instrumentation",
     "get_meter",
     "get_tracer",
-    "setup_observability",
-    "use_agent_observability",
-    "use_observability",
+    "use_agent_instrumentation",
+    "use_instrumentation",
 ]
 
 
@@ -259,89 +265,293 @@ FINISH_REASON_MAP = {
 # region Telemetry utils
 
 
-def _get_otlp_exporters(endpoints: list[str]) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
-    """Create standard OTLP Exporters for the supplied endpoints."""
-    from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-
-    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
-
-    for endpoint in endpoints:
-        exporters.append(OTLPLogExporter(endpoint=endpoint))
-        exporters.append(OTLPSpanExporter(endpoint=endpoint))
-        exporters.append(OTLPMetricExporter(endpoint=endpoint))
-    return exporters
+# Parse headers helper
+def _parse_headers(header_str: str) -> dict[str, str]:
+    """Parse header string like 'key1=value1,key2=value2' into dict."""
+    headers: dict[str, str] = {}
+    if not header_str:
+        return headers
+    for pair in header_str.split(","):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            headers[key.strip()] = value.strip()
+    return headers
 
 
-def _get_azure_monitor_exporters(
-    connection_strings: list[str],
-    credential: "TokenCredential | None" = None,
+def _create_otlp_exporters(
+    endpoint: str | None = None,
+    protocol: str = "grpc",
+    headers: dict[str, str] | None = None,
+    traces_endpoint: str | None = None,
+    traces_headers: dict[str, str] | None = None,
+    metrics_endpoint: str | None = None,
+    metrics_headers: dict[str, str] | None = None,
+    logs_endpoint: str | None = None,
+    logs_headers: dict[str, str] | None = None,
 ) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
-    """Create Azure Monitor Exporters, based on the connection strings and optionally the credential."""
-    try:
-        from azure.monitor.opentelemetry.exporter import (
-            AzureMonitorLogExporter,
-            AzureMonitorMetricExporter,
-            AzureMonitorTraceExporter,
-        )
-    except ImportError as e:
-        raise ImportError(
-            "azure-monitor-opentelemetry-exporter is required for Azure Monitor exporters. "
-            "Install it with: pip install azure-monitor-opentelemetry-exporter>=1.0.0b41"
-        ) from e
-
-    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
-    for conn_string in connection_strings:
-        exporters.append(AzureMonitorLogExporter(connection_string=conn_string, credential=credential))
-        exporters.append(AzureMonitorTraceExporter(connection_string=conn_string, credential=credential))
-        exporters.append(AzureMonitorMetricExporter(connection_string=conn_string, credential=credential))
-    return exporters
-
-
-def get_exporters(
-    otlp_endpoints: list[str] | None = None,
-    connection_strings: list[str] | None = None,
-    credential: "TokenCredential | None" = None,
-) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
-    """Add additional exporters to the existing configuration.
-
-    If you supply exporters, those will be added to the relevant providers directly.
-    If you supply endpoints or connection strings, new exporters will be created and added.
-    OTLP_endpoints will be used to create a `OTLPLogExporter`, `OTLPMetricExporter` and `OTLPSpanExporter`
-    Connection_strings will be used to create AzureMonitorExporters.
-
-    If a endpoint or connection string is already configured, through the environment variables, it will be skipped.
-    If you call this method twice with the same additional endpoint or connection string, it will be added twice.
+    """Create OTLP exporters for a given endpoint and protocol.
 
     Args:
-        otlp_endpoints: A list of OpenTelemetry Protocol (OTLP) endpoints. Default is None.
-        connection_strings: A list of Azure Monitor connection strings. Default is None.
-        credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
+        endpoint: The OTLP endpoint URL (used for all exporters if individual endpoints not specified).
+        protocol: The protocol to use ("grpc" or "http"). Default is "grpc".
+        headers: Optional headers to include in requests (used for all exporters if individual headers not specified).
+        traces_endpoint: Optional specific endpoint for traces. Overrides endpoint parameter.
+        traces_headers: Optional specific headers for traces. Overrides headers parameter.
+        metrics_endpoint: Optional specific endpoint for metrics. Overrides endpoint parameter.
+        metrics_headers: Optional specific headers for metrics. Overrides headers parameter.
+        logs_endpoint: Optional specific endpoint for logs. Overrides endpoint parameter.
+        logs_headers: Optional specific headers for logs. Overrides headers parameter.
+
+    Returns:
+        List containing OTLPLogExporter, OTLPSpanExporter, and OTLPMetricExporter.
+
+    Raises:
+        ImportError: If the required OTLP exporter package is not installed.
     """
-    new_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
-    if otlp_endpoints:
-        new_exporters.extend(_get_otlp_exporters(endpoints=otlp_endpoints))
+    # Determine actual endpoints and headers to use
+    actual_traces_endpoint = traces_endpoint or endpoint
+    actual_metrics_endpoint = metrics_endpoint or endpoint
+    actual_logs_endpoint = logs_endpoint or endpoint
+    actual_traces_headers = traces_headers or headers
+    actual_metrics_headers = metrics_headers or headers
+    actual_logs_headers = logs_headers or headers
 
-    if connection_strings:
-        new_exporters.extend(
-            _get_azure_monitor_exporters(
-                connection_strings=connection_strings,
-                credential=credential,
+    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
+
+    if not actual_logs_endpoint and not actual_traces_endpoint and not actual_metrics_endpoint:
+        return exporters
+
+    if protocol in ("grpc", "http/protobuf"):
+        # Import all gRPC exporters
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter as GRPCMetricExporter,
             )
-        )
-    return new_exporters
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCSpanExporter
+        except ImportError as exc:
+            raise ImportError(
+                "opentelemetry-exporter-otlp-proto-grpc is required for OTLP gRPC exporters. "
+                "Install it with: pip install opentelemetry-exporter-otlp-proto-grpc"
+            ) from exc
+
+        if actual_logs_endpoint:
+            exporters.append(
+                GRPCLogExporter(
+                    endpoint=actual_logs_endpoint,
+                    headers=actual_logs_headers if actual_logs_headers else None,
+                )
+            )
+        if actual_traces_endpoint:
+            exporters.append(
+                GRPCSpanExporter(
+                    endpoint=actual_traces_endpoint,
+                    headers=actual_traces_headers if actual_traces_headers else None,
+                )
+            )
+        if actual_metrics_endpoint:
+            exporters.append(
+                GRPCMetricExporter(
+                    endpoint=actual_metrics_endpoint,
+                    headers=actual_metrics_headers if actual_metrics_headers else None,
+                )
+            )
+
+    elif protocol == "http":
+        # Import all HTTP exporters
+        try:
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HTTPLogExporter
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                OTLPMetricExporter as HTTPMetricExporter,
+            )
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HTTPSpanExporter
+        except ImportError as exc:
+            raise ImportError(
+                "opentelemetry-exporter-otlp-proto-http is required for OTLP HTTP exporters. "
+                "Install it with: pip install opentelemetry-exporter-otlp-proto-http"
+            ) from exc
+
+        if actual_logs_endpoint:
+            exporters.append(
+                HTTPLogExporter(
+                    endpoint=actual_logs_endpoint,
+                    headers=actual_logs_headers if actual_logs_headers else None,
+                )
+            )
+        if actual_traces_endpoint:
+            exporters.append(
+                HTTPSpanExporter(
+                    endpoint=actual_traces_endpoint,
+                    headers=actual_traces_headers if actual_traces_headers else None,
+                )
+            )
+        if actual_metrics_endpoint:
+            exporters.append(
+                HTTPMetricExporter(
+                    endpoint=actual_metrics_endpoint,
+                    headers=actual_metrics_headers if actual_metrics_headers else None,
+                )
+            )
+
+    return exporters
 
 
-def _create_resource() -> "Resource":
-    import os
+def _get_exporters_from_env(
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> list["LogRecordExporter | SpanExporter | MetricExporter"]:
+    """Parse OpenTelemetry environment variables and create exporters.
 
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.semconv.attributes import service_attributes
+    This function reads standard OpenTelemetry environment variables to configure
+    OTLP exporters for traces, logs, and metrics.
 
-    service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
+    The following environment variables are supported:
+    - OTEL_EXPORTER_OTLP_ENDPOINT: Base endpoint for all signals
+    - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Endpoint specifically for traces
+    - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: Endpoint specifically for metrics
+    - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: Endpoint specifically for logs
+    - OTEL_EXPORTER_OTLP_PROTOCOL: Protocol to use (grpc, http/protobuf)
+    - OTEL_EXPORTER_OTLP_HEADERS: Headers for all signals
+    - OTEL_EXPORTER_OTLP_TRACES_HEADERS: Headers specifically for traces
+    - OTEL_EXPORTER_OTLP_METRICS_HEADERS: Headers specifically for metrics
+    - OTEL_EXPORTER_OTLP_LOGS_HEADERS: Headers specifically for logs
 
-    return Resource.create({service_attributes.SERVICE_NAME: service_name})
+    Args:
+        env_file_path: Path to a .env file to load environment variables from.
+            Default is None, which loads from '.env' if present.
+        env_file_encoding: Encoding to use when reading the .env file.
+            Default is None, which uses the system default encoding.
+
+    Returns:
+        List of configured exporters (empty if no relevant env vars are set).
+
+    References:
+        - https://opentelemetry.io/docs/languages/sdk-configuration/general/
+        - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
+    """
+    # Load environment variables from .env file if present
+    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+
+    # Get base endpoint
+    base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+    # Get signal-specific endpoints (these override base endpoint)
+    traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or base_endpoint
+    metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or base_endpoint
+    logs_endpoint = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT") or base_endpoint
+
+    # Get protocol (default is grpc)
+    protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+
+    # Get base headers
+    base_headers_str = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+    base_headers = _parse_headers(base_headers_str)
+
+    # Get signal-specific headers (these merge with base headers)
+    traces_headers_str = os.getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "")
+    metrics_headers_str = os.getenv("OTEL_EXPORTER_OTLP_METRICS_HEADERS", "")
+    logs_headers_str = os.getenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "")
+
+    traces_headers = {**base_headers, **_parse_headers(traces_headers_str)}
+    metrics_headers = {**base_headers, **_parse_headers(metrics_headers_str)}
+    logs_headers = {**base_headers, **_parse_headers(logs_headers_str)}
+
+    # Create exporters using helper function
+    return _create_otlp_exporters(
+        protocol=protocol,
+        traces_endpoint=traces_endpoint,
+        traces_headers=traces_headers if traces_headers else None,
+        metrics_endpoint=metrics_endpoint,
+        metrics_headers=metrics_headers if metrics_headers else None,
+        logs_endpoint=logs_endpoint,
+        logs_headers=logs_headers if logs_headers else None,
+    )
+
+
+def create_resource(
+    service_name: str | None = None,
+    service_version: str | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+    **attributes: Any,
+) -> "Resource":
+    """Create an OpenTelemetry Resource from environment variables and parameters.
+
+    This function reads standard OpenTelemetry environment variables to configure
+    the resource, which identifies your service in telemetry backends.
+
+    The following environment variables are read:
+    - OTEL_SERVICE_NAME: The name of the service (defaults to "agent_framework")
+    - OTEL_SERVICE_VERSION: The version of the service (defaults to package version)
+    - OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes as key=value pairs
+
+    Args:
+        service_name: Override the service name. If not provided, reads from
+            OTEL_SERVICE_NAME environment variable or defaults to "agent_framework".
+        service_version: Override the service version. If not provided, reads from
+            OTEL_SERVICE_VERSION environment variable or defaults to the package version.
+        env_file_path: Path to a .env file to load environment variables from.
+            Default is None, which loads from '.env' if present.
+        env_file_encoding: Encoding to use when reading the .env file.
+            Default is None, which uses the system default encoding.
+        **attributes: Additional resource attributes to include. These will be merged
+            with attributes from OTEL_RESOURCE_ATTRIBUTES environment variable.
+
+    Returns:
+        A configured OpenTelemetry Resource instance.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.observability import create_resource
+
+            # Use defaults from environment variables
+            resource = create_resource()
+
+            # Override service name
+            resource = create_resource(service_name="my_service")
+
+            # Add custom attributes
+            resource = create_resource(
+                service_name="my_service", service_version="1.0.0", deployment_environment="production"
+            )
+
+            # Load from custom .env file
+            resource = create_resource(env_file_path="config/.env")
+    """
+    # Load environment variables from .env file if present
+    load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
+
+    # Start with provided attributes
+    resource_attributes: dict[str, Any] = dict(attributes)
+
+    # Set service name
+    if service_name is None:
+        service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
+    resource_attributes[service_attributes.SERVICE_NAME] = service_name
+
+    # Set service version
+    if service_version is None:
+        service_version = os.getenv("OTEL_SERVICE_VERSION", version_info)
+    resource_attributes[service_attributes.SERVICE_VERSION] = service_version
+
+    # Parse OTEL_RESOURCE_ATTRIBUTES environment variable
+    # Format: key1=value1,key2=value2
+    if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
+        resource_attributes.update(_parse_headers(resource_attrs_env))
+    return Resource.create(resource_attributes)
+
+
+def create_metric_views() -> list["View"]:
+    """Create the default OpenTelemetry metric views for Agent Framework."""
+    from opentelemetry.sdk.metrics.view import DropAggregation, View
+
+    return [
+        # Dropping all enable_instrumentation names except for those starting with "agent_framework"
+        View(instrument_name="agent_framework*"),
+        View(instrument_name="gen_ai*"),
+        View(instrument_name="*", aggregation=DropAggregation()),
+    ]
 
 
 class ObservabilitySettings(AFBaseSettings):
@@ -357,14 +567,12 @@ class ObservabilitySettings(AFBaseSettings):
         Sensitive events should only be enabled on test and development environments.
 
     Keyword Args:
-        enable_otel: Enable OpenTelemetry diagnostics. Default is False.
-            Can be set via environment variable ENABLE_OTEL.
+        enable_instrumentation: Enable OpenTelemetry diagnostics. Default is False.
+            Can be set via environment variable ENABLE_INSTRUMENTATION.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Default is False.
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
-        applicationinsights_connection_string: The Azure Monitor connection string. Default is None.
-            Can be set via environment variable APPLICATIONINSIGHTS_CONNECTION_STRING.
-        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Default is None.
-            Can be set via environment variable OTLP_ENDPOINT.
+        enable_console_exporters: Enable console exporters for traces, logs, and metrics.
+            Default is False. Can be set via environment variable ENABLE_CONSOLE_EXPORTERS.
         vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
@@ -375,25 +583,31 @@ class ObservabilitySettings(AFBaseSettings):
             from agent_framework import ObservabilitySettings
 
             # Using environment variables
-            # Set ENABLE_OTEL=true
-            # Set APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
+            # Set ENABLE_INSTRUMENTATION=true
+            # Set ENABLE_CONSOLE_EXPORTERS=true
             settings = ObservabilitySettings()
 
             # Or passing parameters directly
-            settings = ObservabilitySettings(
-                enable_otel=True, applicationinsights_connection_string="InstrumentationKey=..."
-            )
+            settings = ObservabilitySettings(enable_instrumentation=True, enable_console_exporters=True)
     """
 
     env_prefix: ClassVar[str] = ""
 
-    enable_otel: bool = False
+    enable_instrumentation: bool = False
     enable_sensitive_data: bool = False
-    applicationinsights_connection_string: str | list[str] | None = None
-    otlp_endpoint: str | list[str] | None = None
+    enable_console_exporters: bool = False
     vs_code_extension_port: int | None = None
-    _resource: "Resource" = PrivateAttr(default_factory=_create_resource)
+    _resource: "Resource" = PrivateAttr()
     _executed_setup: bool = PrivateAttr(default=False)
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the settings and create the resource."""
+        super().__init__(**kwargs)
+        # Create resource with env file settings
+        self._resource = create_resource(
+            env_file_path=self.env_file_path,
+            env_file_encoding=self.env_file_encoding,
+        )
 
     @property
     def ENABLED(self) -> bool:
@@ -401,7 +615,7 @@ class ObservabilitySettings(AFBaseSettings):
 
         Model diagnostics are enabled if either diagnostic is enabled or diagnostic with sensitive events is enabled.
         """
-        return self.enable_otel or self.enable_sensitive_data
+        return self.enable_instrumentation
 
     @property
     def SENSITIVE_DATA_ENABLED(self) -> bool:
@@ -409,27 +623,18 @@ class ObservabilitySettings(AFBaseSettings):
 
         Sensitive events are enabled if the diagnostic with sensitive events is enabled.
         """
-        return self.enable_sensitive_data
+        return self.enable_instrumentation and self.enable_sensitive_data
 
     @property
     def is_setup(self) -> bool:
         """Check if the setup has been executed."""
         return self._executed_setup
 
-    @property
-    def resource(self) -> "Resource":
-        """Get the resource."""
-        return self._resource
-
-    @resource.setter
-    def resource(self, value: "Resource") -> None:
-        """Set the resource."""
-        self._resource = value
-
     def _configure(
         self,
-        credential: "TokenCredential | None" = None,
+        *,
         additional_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
+        views: list["View"] | None = None,
     ) -> None:
         """Configure application-wide observability based on the settings.
 
@@ -438,120 +643,102 @@ class ObservabilitySettings(AFBaseSettings):
         will have no effect.
 
         Args:
-            credential: The credential to use for Azure Monitor Entra ID authentication. Default is None.
             additional_exporters: A list of additional exporters to add to the configuration. Default is None.
+            views: Optional list of OpenTelemetry views for metrics. Default is None.
         """
         if not self.ENABLED or self._executed_setup:
             return
 
-        exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = additional_exporters or []
-        if self.otlp_endpoint:
-            exporters.extend(
-                _get_otlp_exporters(
-                    self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint]
-                )
+        exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = []
+
+        # 1. Add exporters from standard OTEL environment variables
+        exporters.extend(
+            _get_exporters_from_env(
+                env_file_path=self.env_file_path,
+                env_file_encoding=self.env_file_encoding,
             )
-        if self.applicationinsights_connection_string:
-            exporters.extend(
-                _get_azure_monitor_exporters(
-                    connection_strings=(
-                        self.applicationinsights_connection_string
-                        if isinstance(self.applicationinsights_connection_string, list)
-                        else [self.applicationinsights_connection_string]
-                    ),
-                    credential=credential,
-                )
-            )
-        self._configure_providers(exporters)
-        self._executed_setup = True
-
-    def check_endpoint_already_configured(self, otlp_endpoint: str) -> bool:
-        """Check if the endpoint is already configured.
-
-        Returns:
-            True if the endpoint is already configured, False otherwise.
-        """
-        if not self.otlp_endpoint:
-            return False
-        return otlp_endpoint in (self.otlp_endpoint if isinstance(self.otlp_endpoint, list) else [self.otlp_endpoint])
-
-    def check_connection_string_already_configured(self, connection_string: str) -> bool:
-        """Check if the connection string is already configured.
-
-        Returns:
-            True if the connection string is already configured, False otherwise.
-        """
-        if not self.applicationinsights_connection_string:
-            return False
-        return connection_string in (
-            self.applicationinsights_connection_string
-            if isinstance(self.applicationinsights_connection_string, list)
-            else [self.applicationinsights_connection_string]
         )
 
-    def _configure_providers(self, exporters: list["LogRecordExporter | MetricExporter | SpanExporter"]) -> None:
-        """Configure tracing, logging, events and metrics with the provided exporters."""
+        # 2. Add passed-in exporters
+        if additional_exporters:
+            exporters.extend(additional_exporters)
+
+        # 3. Add console exporters if explicitly enabled
+        if self.enable_console_exporters:
+            from opentelemetry.sdk._logs.export import ConsoleLogRecordExporter
+            from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
+            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+            exporters.extend([ConsoleSpanExporter(), ConsoleLogRecordExporter(), ConsoleMetricExporter()])
+
+        # 4. Add VS Code extension exporters if port is specified
+        if self.vs_code_extension_port:
+            endpoint = f"http://localhost:{self.vs_code_extension_port}"
+            exporters.extend(_create_otlp_exporters(endpoint=endpoint, protocol="grpc"))
+
+        # 5. Configure providers
+        self._configure_providers(exporters, views=views)
+        self._executed_setup = True
+
+    def _configure_providers(
+        self,
+        exporters: list["LogRecordExporter | MetricExporter | SpanExporter"],
+        views: list["View"] | None = None,
+    ) -> None:
+        """Configure tracing, logging, events and metrics with the provided exporters.
+
+        Args:
+            exporters: A list of exporters for logs, metrics and/or spans.
+            views: Optional list of OpenTelemetry views for metrics. Default is empty list.
+        """
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
         from opentelemetry.sdk.metrics import MeterProvider
         from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
-        from opentelemetry.sdk.metrics.view import DropAggregation, View
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
-        # Tracing
-        tracer_provider = TracerProvider(resource=self.resource)
-        trace.set_tracer_provider(tracer_provider)
-        should_add_console_exporter = True
-        for exporter in exporters:
-            if isinstance(exporter, SpanExporter):
-                tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-                should_add_console_exporter = False
-        if should_add_console_exporter:
-            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+        span_exporters: list[SpanExporter] = []
+        log_exporters: list[LogRecordExporter] = []
+        metric_exporters: list[MetricExporter] = []
+        for exp in exporters:
+            if isinstance(exp, SpanExporter):
+                span_exporters.append(exp)
+            if isinstance(exp, LogRecordExporter):
+                log_exporters.append(exp)
+            if isinstance(exp, MetricExporter):
+                metric_exporters.append(exp)
 
-            tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        # Tracing
+        if span_exporters:
+            tracer_provider = TracerProvider(resource=self._resource)
+            trace.set_tracer_provider(tracer_provider)
+            for exporter in span_exporters:
+                tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 
         # Logging
-        logger_provider = LoggerProvider(resource=self.resource)
-        should_add_console_exporter = True
-        for exporter in exporters:
-            if isinstance(exporter, LogRecordExporter):
-                logger_provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
-                should_add_console_exporter = False
-        if should_add_console_exporter:
-            from opentelemetry.sdk._logs.export import ConsoleLogRecordExporter
-
-            logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter()))
-
-        # Attach a handler with the provider to the root logger
-        logger = logging.getLogger()
-        handler = LoggingHandler(logger_provider=logger_provider)
-        logger.addHandler(handler)
-        set_logger_provider(logger_provider)
+        if log_exporters:
+            logger_provider = LoggerProvider(resource=self._resource)
+            for log_exporter in log_exporters:
+                logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+            # Attach a handler with the provider to the root logger
+            logger = logging.getLogger()
+            handler = LoggingHandler(logger_provider=logger_provider)
+            logger.addHandler(handler)
+            set_logger_provider(logger_provider)
 
         # metrics
-        metric_readers = [
-            PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
-            for exporter in exporters
-            if isinstance(exporter, MetricExporter)
-        ]
-        if not metric_readers:
-            from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
-
-            metric_readers = [PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=5000)]
-        meter_provider = MeterProvider(
-            metric_readers=metric_readers,
-            resource=self.resource,
-            views=[
-                # Dropping all instrument names except for those starting with "agent_framework"
-                View(instrument_name="*", aggregation=DropAggregation()),
-                View(instrument_name="agent_framework*"),
-                View(instrument_name="gen_ai*"),
-            ],
-        )
-        metrics.set_meter_provider(meter_provider)
+        if metric_exporters:
+            meter_provider = MeterProvider(
+                metric_readers=[
+                    PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
+                    for exporter in metric_exporters
+                ],
+                resource=self._resource,
+                views=views or [],
+            )
+            metrics.set_meter_provider(meter_provider)
 
 
 def get_tracer(
@@ -661,125 +848,174 @@ global OBSERVABILITY_SETTINGS
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
-def setup_observability(
+def enable_instrumentation(
+    *,
     enable_sensitive_data: bool | None = None,
-    otlp_endpoint: str | list[str] | None = None,
-    applicationinsights_connection_string: str | list[str] | None = None,
-    credential: "TokenCredential | None" = None,
-    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
-    vs_code_extension_port: int | None = None,
 ) -> None:
-    """Setup observability for the application with OpenTelemetry.
+    """Enable instrumentation for your application.
+
+    Calling this method implies you want to enable observability in your application.
+
+    This method does not configure exporters or providers.
+    It only updates the global variables that trigger the instrumentation code.
+    If you have already set the environment variable ENABLE_INSTRUMENTATION=true,
+    calling this method has no effect, unless you want to enable or disable sensitive data events.
+
+    Keyword Args:
+        enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
+            the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+    """
+    global OBSERVABILITY_SETTINGS
+    OBSERVABILITY_SETTINGS.enable_instrumentation = True
+    if enable_sensitive_data is not None:
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+
+
+def configure_otel_providers(
+    *,
+    enable_sensitive_data: bool | None = None,
+    exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] | None = None,
+    views: list["View"] | None = None,
+    vs_code_extension_port: int | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> None:
+    """Configure otel providers and enable instrumentation for the application with OpenTelemetry.
 
     This method creates the exporters and providers for the application based on
-    the provided values and environment variables.
+    the provided values and environment variables and enables instrumentation.
 
     Call this method once during application startup, before any telemetry is captured.
     DO NOT call this method multiple times, as it may lead to unexpected behavior.
 
-    Note:
-        If you have configured the providers manually, calling this method will not
-        have any effect. The reverse is also true - if you call this method first,
-        subsequent provider configurations will not take effect.
+    The function automatically reads standard OpenTelemetry environment variables:
+    - OTEL_EXPORTER_OTLP_ENDPOINT: Base OTLP endpoint for all signals
+    - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: OTLP endpoint for traces
+    - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: OTLP endpoint for metrics
+    - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: OTLP endpoint for logs
+    - OTEL_EXPORTER_OTLP_PROTOCOL: Protocol (grpc/http)
+    - OTEL_EXPORTER_OTLP_HEADERS: Headers for all signals
+    - ENABLE_CONSOLE_EXPORTERS: Enable console output for telemetry
 
-    Args:
+    Note:
+        Since you can only setup one provider per signal type (logs, traces, metrics),
+        you can choose to use this method and take the exporter and provider that we created.
+        Alternatively, you can setup the providers yourself, or through another library
+        (e.g., Azure Monitor) and just call `enable_instrumentation()` to enable instrumentation.
+
+    Note:
+        By default, the Agent Framework emits metrics with the prefixes `agent_framework`
+        and `gen_ai` (OpenTelemetry GenAI semantic conventions). You can use the `views`
+        parameter to filter which metrics are collected and exported. You can also use
+        the `create_metric_views()` helper function to get default views.
+
+    Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
-            the environment variable if set. Default is None.
-        otlp_endpoint: The OpenTelemetry Protocol (OTLP) endpoint. Will be used
-            to create OTLPLogExporter, OTLPMetricExporter and OTLPSpanExporter.
+            the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        exporters: A list of custom exporters for logs, metrics or spans, or any combination.
+            These will be added in addition to exporters configured via environment variables.
             Default is None.
-        applicationinsights_connection_string: The Azure Monitor connection string.
-            Will be used to create AzureMonitorExporters. Default is None.
-        credential: The credential to use for Azure Monitor Entra ID authentication.
-            Default is None.
-        exporters: A list of exporters for logs, metrics or spans, or any combination.
-            These will be added directly, allowing complete customization. Default is None.
-        vs_code_extension_port: The port the AI Toolkit or AzureAI Foundry VS Code
+        views: Optional list of OpenTelemetry views for metrics configuration.
+            Views allow filtering and customizing which metrics are collected.
+            Default is None (empty list).
+        vs_code_extension_port: The port the AI Toolkit or Azure AI Foundry VS Code
             extensions are listening on. When set, additional OTEL exporters will be
-            created with endpoint `http://localhost:{vs_code_extension_port}` unless
-            already configured. Overrides the environment variable if set. Default is None.
+            created with endpoint `http://localhost:{vs_code_extension_port}`.
+            Overrides the environment variable VS_CODE_EXTENSION_PORT if set. Default is None.
+        env_file_path: An optional path to a .env file to load environment variables from.
+            Default is None.
+        env_file_encoding: The encoding to use when loading the .env file. Default is None
+            which uses the system default encoding.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework import setup_observability
+            from agent_framework.observability import configure_otel_providers
 
-            # With environment variables
-            # Set ENABLE_OTEL=true, OTLP_ENDPOINT=http://localhost:4317
-            setup_observability()
+            # Using environment variables (recommended)
+            # Set ENABLE_INSTRUMENTATION=true
+            # Set OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+            configure_otel_providers()
 
-            # With parameters (no environment variables)
-            setup_observability(
-                enable_sensitive_data=True,
-                otlp_endpoint="http://localhost:4317",
-            )
-
-            # With Azure Monitor
-            setup_observability(
-                applicationinsights_connection_string="InstrumentationKey=...",
-            )
+            # Enable console output for debugging
+            # Set ENABLE_CONSOLE_EXPORTERS=true
+            configure_otel_providers()
 
             # With custom exporters
-            from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 
-            setup_observability(
-                exporters=[ConsoleSpanExporter()],
-            )
-
-            # Mixed: combine environment variables and parameters
-            # Environment: OTLP_ENDPOINT=http://localhost:7431
-            # Code adds additional endpoint
-            setup_observability(
-                enable_sensitive_data=True,
-                otlp_endpoint="http://localhost:4317",  # Both endpoints will be used
+            configure_otel_providers(
+                exporters=[
+                    OTLPSpanExporter(endpoint="http://custom:4317"),
+                    OTLPLogExporter(endpoint="http://custom:4317"),
+                ],
             )
 
             # VS Code extension integration
-            setup_observability(
+            configure_otel_providers(
                 vs_code_extension_port=4317,  # Connects to AI Toolkit
             )
+
+            # Enable sensitive data logging (development only)
+            configure_otel_providers(
+                enable_sensitive_data=True,
+            )
+
+            # With custom metrics views
+            from opentelemetry.sdk.metrics.view import View
+
+            configure_otel_providers(
+                views=[
+                    View(instrument_name="agent_framework*"),
+                    View(instrument_name="gen_ai*"),
+                ],
+            )
+
+        This example shows how to first setup your providers,
+        and then ensure Agent Framework emits traces, logs and metrics
+
+        .. code-block:: python
+
+            # when azure monitor is installed
+            from agent_framework.observability import enable_instrumentation
+            from azure.monitor.opentelemetry import configure_azure_monitor
+
+            connection_string = "InstrumentationKey=your_instrumentation_key_here;..."
+            configure_azure_monitor(connection_string=connection_string)
+            enable_instrumentation()
+
+    References:
+        - https://opentelemetry.io/docs/languages/sdk-configuration/general/
+        - https://opentelemetry.io/docs/languages/sdk-configuration/otlp-exporter/
     """
     global OBSERVABILITY_SETTINGS
-    # Update the observability settings with the provided values
-    OBSERVABILITY_SETTINGS.enable_otel = True
-    if enable_sensitive_data is not None:
-        OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-    if vs_code_extension_port is not None:
-        OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
+    if env_file_path:
+        # Build kwargs, excluding None values
+        settings_kwargs: dict[str, Any] = {
+            "enable_instrumentation": True,
+            "env_file_path": env_file_path,
+        }
+        if env_file_encoding is not None:
+            settings_kwargs["env_file_encoding"] = env_file_encoding
+        if enable_sensitive_data is not None:
+            settings_kwargs["enable_sensitive_data"] = enable_sensitive_data
+        if vs_code_extension_port is not None:
+            settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
 
-    # Create exporters, after checking if they are already configured through the env.
-    new_exporters: list["LogRecordExporter | SpanExporter | MetricExporter"] = exporters or []
-    if otlp_endpoint:
-        if isinstance(otlp_endpoint, str):
-            otlp_endpoint = [otlp_endpoint]
-        new_exporters.extend(
-            _get_otlp_exporters(
-                endpoints=[
-                    endpoint
-                    for endpoint in otlp_endpoint
-                    if not OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint)
-                ]
-            )
-        )
-    if applicationinsights_connection_string:
-        if isinstance(applicationinsights_connection_string, str):
-            applicationinsights_connection_string = [applicationinsights_connection_string]
-        new_exporters.extend(
-            _get_azure_monitor_exporters(
-                connection_strings=[
-                    conn_str
-                    for conn_str in applicationinsights_connection_string
-                    if not OBSERVABILITY_SETTINGS.check_connection_string_already_configured(conn_str)
-                ],
-                credential=credential,
-            )
-        )
-    if OBSERVABILITY_SETTINGS.vs_code_extension_port:
-        endpoint = f"http://localhost:{OBSERVABILITY_SETTINGS.vs_code_extension_port}"
-        if not OBSERVABILITY_SETTINGS.check_endpoint_already_configured(endpoint):
-            new_exporters.extend(_get_otlp_exporters(endpoints=[endpoint]))
+        OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
+    else:
+        # Update the observability settings with the provided values
+        OBSERVABILITY_SETTINGS.enable_instrumentation = True
+        if enable_sensitive_data is not None:
+            OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+        if vs_code_extension_port is not None:
+            OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
 
-    OBSERVABILITY_SETTINGS._configure(credential=credential, additional_exporters=new_exporters)  # pyright: ignore[reportPrivateUsage]
+    OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
+        additional_exporters=exporters,
+        views=views,
+    )
 
 
 # region Chat Client Telemetry
@@ -993,7 +1229,7 @@ def _trace_get_streaming_response(
     return decorator(func)
 
 
-def use_observability(
+def use_instrumentation(
     chat_client: type[TChatClient],
 ) -> type[TChatClient]:
     """Class decorator that enables OpenTelemetry observability for a chat client.
@@ -1019,12 +1255,12 @@ def use_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_observability, setup_observability
+            from agent_framework import use_instrumentation, configure_otel_providers
             from agent_framework import ChatClientProtocol
 
 
             # Decorate a custom chat client class
-            @use_observability
+            @use_instrumentation
             class MyCustomChatClient:
                 OTEL_PROVIDER_NAME = "my_provider"
 
@@ -1038,7 +1274,7 @@ def use_observability(
 
 
             # Setup observability
-            setup_observability(otlp_endpoint="http://localhost:4317")
+            configure_otel_providers(otlp_endpoint="http://localhost:4317")
 
             # Now all calls will be traced
             client = MyCustomChatClient()
@@ -1082,12 +1318,14 @@ def use_observability(
 def _trace_agent_run(
     run_func: Callable[..., Awaitable["AgentRunResponse"]],
     provider_name: str,
+    capture_usage: bool = True,
 ) -> Callable[..., Awaitable["AgentRunResponse"]]:
     """Decorator to trace chat completion activities.
 
     Args:
         run_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
+        capture_usage: Whether to capture token usage as a span attribute.
     """
 
     @wraps(run_func)
@@ -1128,7 +1366,7 @@ def _trace_agent_run(
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 raise
             else:
-                attributes = _get_response_attributes(attributes, response)
+                attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
@@ -1145,12 +1383,14 @@ def _trace_agent_run(
 def _trace_agent_run_stream(
     run_streaming_func: Callable[..., AsyncIterable["AgentRunResponseUpdate"]],
     provider_name: str,
+    capture_usage: bool,
 ) -> Callable[..., AsyncIterable["AgentRunResponseUpdate"]]:
     """Decorator to trace streaming agent run activities.
 
     Args:
         run_streaming_func: The function to trace.
         provider_name: The system name used for Open Telemetry.
+        capture_usage: Whether to capture token usage as a span attribute.
     """
 
     @wraps(run_streaming_func)
@@ -1201,7 +1441,7 @@ def _trace_agent_run_stream(
                 raise
             else:
                 response = AgentRunResponse.from_agent_run_response_updates(all_updates)
-                attributes = _get_response_attributes(attributes, response)
+                attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
                 _capture_response(span=span, attributes=attributes)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     _capture_messages(
@@ -1214,9 +1454,11 @@ def _trace_agent_run_stream(
     return trace_run_streaming
 
 
-def use_agent_observability(
-    agent: type[TAgent],
-) -> type[TAgent]:
+def use_agent_instrumentation(
+    agent: type[TAgent] | None = None,
+    *,
+    capture_usage: bool = True,
+) -> type[TAgent] | Callable[[type[TAgent]], type[TAgent]]:
     """Class decorator that enables OpenTelemetry observability for an agent.
 
     This decorator automatically traces agent run requests, captures events,
@@ -1224,11 +1466,16 @@ def use_agent_observability(
 
     Note:
         This decorator must be applied to the agent class itself, not an instance.
-        The agent class should have a class variable AGENT_SYSTEM_NAME to set the
+        The agent class should have a class variable AGENT_PROVIDER_NAME to set the
         proper system name for telemetry.
 
     Args:
         agent: The agent class to enable observability for.
+
+    Keyword Args:
+        capture_usage: Whether to capture token usage as a span attribute.
+            Defaults to True, set to False when the agent has underlying traces
+            that already capture token usage to avoid double counting.
 
     Returns:
         The decorated agent class with observability enabled.
@@ -1240,14 +1487,14 @@ def use_agent_observability(
     Examples:
         .. code-block:: python
 
-            from agent_framework import use_agent_observability, setup_observability
+            from agent_framework import use_agent_instrumentation, configure_otel_providers
             from agent_framework._agents import AgentProtocol
 
 
             # Decorate a custom agent class
-            @use_agent_observability
+            @use_agent_instrumentation
             class MyCustomAgent:
-                AGENT_SYSTEM_NAME = "my_agent_system"
+                AGENT_PROVIDER_NAME = "my_agent_system"
 
                 async def run(self, messages=None, *, thread=None, **kwargs):
                     # Your implementation
@@ -1259,23 +1506,31 @@ def use_agent_observability(
 
 
             # Setup observability
-            setup_observability(otlp_endpoint="http://localhost:4317")
+            configure_otel_providers(otlp_endpoint="http://localhost:4317")
 
             # Now all agent runs will be traced
             agent = MyCustomAgent()
             response = await agent.run("Perform a task")
     """
-    provider_name = str(getattr(agent, "AGENT_SYSTEM_NAME", "Unknown"))
-    try:
-        agent.run = _trace_agent_run(agent.run, provider_name)  # type: ignore
-    except AttributeError as exc:
-        raise AgentInitializationError(f"The agent {agent.__name__} does not have a run method.", exc) from exc
-    try:
-        agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name)  # type: ignore
-    except AttributeError as exc:
-        raise AgentInitializationError(f"The agent {agent.__name__} does not have a run_stream method.", exc) from exc
-    setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
-    return agent
+
+    def decorator(agent: type[TAgent]) -> type[TAgent]:
+        provider_name = str(getattr(agent, "AGENT_PROVIDER_NAME", "Unknown"))
+        try:
+            agent.run = _trace_agent_run(agent.run, provider_name, capture_usage=capture_usage)  # type: ignore
+        except AttributeError as exc:
+            raise AgentInitializationError(f"The agent {agent.__name__} does not have a run method.", exc) from exc
+        try:
+            agent.run_stream = _trace_agent_run_stream(agent.run_stream, provider_name, capture_usage=capture_usage)  # type: ignore
+        except AttributeError as exc:
+            raise AgentInitializationError(
+                f"The agent {agent.__name__} does not have a run_stream method.", exc
+            ) from exc
+        setattr(agent, OPEN_TELEMETRY_AGENT_MARKER, True)
+        return agent
+
+    if agent is None:
+        return decorator
+    return decorator(agent)
 
 
 # region Otel Helpers
@@ -1458,26 +1713,32 @@ def _to_otel_part(content: "Contents") -> dict[str, Any] | None:
     match content.type:
         case "text":
             return {"type": "text", "content": content.text}
+        case "text_reasoning":
+            return {"type": "reasoning", "content": content.text}
+        case "uri":
+            return {
+                "type": "uri",
+                "uri": content.uri,
+                "mime_type": content.media_type,
+                "modality": content.media_type.split("/")[0] if content.media_type else None,
+            }
+        case "data":
+            return {
+                "type": "blob",
+                "content": content.get_data_bytes_as_str(),
+                "mime_type": content.media_type,
+                "modality": content.media_type.split("/")[0] if content.media_type else None,
+            }
         case "function_call":
             return {"type": "tool_call", "id": content.call_id, "name": content.name, "arguments": content.arguments}
         case "function_result":
-            response: Any | None = None
-            if content.result:
-                if isinstance(content.result, list):
-                    res: list[Any] = []
-                    for item in content.result:  # type: ignore
-                        from ._types import BaseContent
+            from ._types import prepare_function_call_results
 
-                        if isinstance(item, BaseContent):
-                            res.append(_to_otel_part(item))  # type: ignore
-                        elif isinstance(item, BaseModel):
-                            res.append(item.model_dump(exclude_none=True))
-                        else:
-                            res.append(json.dumps(item, default=str))
-                    response = json.dumps(res, default=str)
-                else:
-                    response = json.dumps(content.result, default=str)
-            return {"type": "tool_call_response", "id": content.call_id, "response": response}
+            return {
+                "type": "tool_call_response",
+                "id": content.call_id,
+                "response": prepare_function_call_results(content),
+            }
         case _:
             # GenericPart in otel output messages json spec.
             # just required type, and arbitrary other fields.
@@ -1489,6 +1750,8 @@ def _get_response_attributes(
     attributes: dict[str, Any],
     response: "ChatResponse | AgentRunResponse",
     duration: float | None = None,
+    *,
+    capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
     if response.response_id:
@@ -1502,7 +1765,7 @@ def _get_response_attributes(
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason.value])
     if model_id := getattr(response, "model_id", None):
         attributes[SpanAttributes.LLM_RESPONSE_MODEL] = model_id
-    if usage := response.usage_details:
+    if capture_usage and (usage := response.usage_details):
         if usage.input_token_count:
             attributes[OtelAttr.INPUT_TOKENS] = usage.input_token_count
         if usage.output_token_count:

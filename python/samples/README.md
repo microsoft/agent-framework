@@ -102,6 +102,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | File | Description |
 |------|-------------|
 | [`getting_started/agents/ollama/ollama_with_openai_chat_client.py`](./getting_started/agents/ollama/ollama_with_openai_chat_client.py) | Ollama with OpenAI Chat Client Example |
+| [`packages/ollama/getting_started/ollama_agent_basic.py`](../packages/ollama/getting_started/ollama_agent_basic.py) | (Experimental) Ollama Agent with native Ollama Chat Client |
+| [`packages/ollama/getting_started/ollama_agent_reasoning.py`](../packages/ollama/getting_started/ollama_agent_reasoning.py) | (Experimental) Ollama Reasoning Agent with native Ollama Chat Client |
 
 ### OpenAI
 
@@ -147,6 +149,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/chat_client/openai_assistants_client.py`](./getting_started/chat_client/openai_assistants_client.py) | OpenAI Assistants Client Direct Usage Example |
 | [`getting_started/chat_client/openai_chat_client.py`](./getting_started/chat_client/openai_chat_client.py) | OpenAI Chat Client Direct Usage Example |
 | [`getting_started/chat_client/openai_responses_client.py`](./getting_started/chat_client/openai_responses_client.py) | OpenAI Responses Client Direct Usage Example |
+| [`packages/ollama/getting_started/ollama_chat_client.py`](../packages/ollama/getting_started/ollama_chat_client.py) | (Experimental) Ollama Chat Client with native Ollama Chat Client |
+
 
 ## Context Providers
 
@@ -221,6 +225,8 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/multimodal_input/azure_chat_multimodal.py`](./getting_started/multimodal_input/azure_chat_multimodal.py) | Azure OpenAI Chat with multimodal (image) input example |
 | [`getting_started/multimodal_input/azure_responses_multimodal.py`](./getting_started/multimodal_input/azure_responses_multimodal.py) | Azure OpenAI Responses with multimodal (image) input example |
 | [`getting_started/multimodal_input/openai_chat_multimodal.py`](./getting_started/multimodal_input/openai_chat_multimodal.py) | OpenAI Chat with multimodal (image) input example |
+| [`packages/ollama/getting_started/ollama_chat_multimodal.py`](../packages/ollama/getting_started/ollama_chat_multimodal.py) | (Experimental) Ollama Chat  with multimodal native Ollama Chat Client |
+
 
 ## Azure Functions
 
@@ -241,10 +247,10 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 | [`getting_started/observability/advanced_manual_setup_console_output.py`](./getting_started/observability/advanced_manual_setup_console_output.py) | Advanced manual observability setup with console output |
 | [`getting_started/observability/advanced_zero_code.py`](./getting_started/observability/advanced_zero_code.py) | Zero-code observability setup example |
 | [`getting_started/observability/agent_observability.py`](./getting_started/observability/agent_observability.py) | Agent observability example |
+| [`getting_started/observability/agent_with_foundry_tracing.py`](./getting_started/observability/agent_with_foundry_tracing.py) | Any chat client setup with Azure Foundry Observability |
 | [`getting_started/observability/azure_ai_agent_observability.py`](./getting_started/observability/azure_ai_agent_observability.py) | Azure AI agent observability example |
-| [`getting_started/observability/azure_ai_chat_client_with_observability.py`](./getting_started/observability/azure_ai_chat_client_with_observability.py) | Azure AI chat client with observability example |
-| [`getting_started/observability/setup_observability_with_env_var.py`](./getting_started/observability/setup_observability_with_env_var.py) | Setup observability using environment variables |
-| [`getting_started/observability/setup_observability_with_parameters.py`](./getting_started/observability/setup_observability_with_parameters.py) | Setup observability using parameters |
+| [`getting_started/observability/configure_otel_providers_with_env_var.py`](./getting_started/observability/configure_otel_providers_with_env_var.py) | Setup observability using environment variables |
+| [`getting_started/observability/configure_otel_providers_with_parameters.py`](./getting_started/observability/configure_otel_providers_with_parameters.py) | Setup observability using parameters |
 | [`getting_started/observability/workflow_observability.py`](./getting_started/observability/workflow_observability.py) | Workflow observability example |
 
 ## Threads
