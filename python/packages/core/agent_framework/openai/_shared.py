@@ -63,7 +63,7 @@ def _check_openai_version_for_callable_api_key() -> None:
             raise ServiceInitializationError(
                 f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
                 f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
-                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=0.1.118 "
+                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=1.0.0 "
                 f"to allow newer OpenAI versions."
             )
     except ServiceInitializationError:
