@@ -17,7 +17,7 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.440" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.5" />
