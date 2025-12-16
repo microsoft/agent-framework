@@ -60,6 +60,7 @@ interface DevUIState {
   debugEvents: ExtendedResponseStreamEvent[];
   isResizing: boolean;
   showToolCalls: boolean; // UI setting to show/hide tool calls in chat
+  streamingEnabled: boolean; // Whether to use streaming mode for responses
 
   // Debug Panel Preferences (persisted)
   debugPanelTab: "events" | "traces" | "tools"; // Main debug panel tab
@@ -152,6 +153,7 @@ interface DevUIActions {
   clearDebugEvents: () => void;
   setIsResizing: (resizing: boolean) => void;
   setShowToolCalls: (show: boolean) => void;
+  setStreamingEnabled: (enabled: boolean) => void;
 
   // Debug Panel Preference Actions
   setDebugPanelTab: (tab: "events" | "traces" | "tools") => void;
@@ -240,6 +242,7 @@ export const useDevUIStore = create<DevUIStore>()(
         debugEvents: [],
         isResizing: false,
         showToolCalls: true, // Default to showing tool calls
+        streamingEnabled: true, // Default to streaming mode (recommended)
 
         // Debug Panel Preferences (persisted)
         debugPanelTab: "events", // Default to events tab
@@ -389,6 +392,7 @@ export const useDevUIStore = create<DevUIStore>()(
         setDebugPanelMinimized: (minimized) => set({ debugPanelMinimized: minimized }),
         setDebugPanelWidth: (width) => set({ debugPanelWidth: width }),
         setShowToolCalls: (show) => set({ showToolCalls: show }),
+        setStreamingEnabled: (enabled) => set({ streamingEnabled: enabled }),
         addDebugEvent: (event) =>
           set((state) => {
             // Generate unique timestamp for each event
@@ -630,6 +634,7 @@ export const useDevUIStore = create<DevUIStore>()(
           debugPanelMinimized: state.debugPanelMinimized,
           debugPanelWidth: state.debugPanelWidth,
           showToolCalls: state.showToolCalls, // Persist tool calls visibility preference
+          streamingEnabled: state.streamingEnabled, // Persist streaming mode preference
           oaiMode: state.oaiMode, // Persist OpenAI proxy mode settings
           azureDeploymentEnabled: state.azureDeploymentEnabled, // Persist Azure deployment preference
           // Debug panel tab preferences
