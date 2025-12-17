@@ -438,7 +438,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
             self.agent_description = description
 
     @staticmethod
-    def _prepare_mcp_tool(tool: HostedMCPTool) -> MCPTool:  # type: ignore[reportIncompatibleMethodOverride]
+    def _prepare_mcp_tool(tool: HostedMCPTool) -> MCPTool:  # type: ignore[override]
         """Get MCP tool from HostedMCPTool."""
         mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
