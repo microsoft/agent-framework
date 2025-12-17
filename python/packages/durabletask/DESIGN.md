@@ -40,8 +40,7 @@ packages/durabletask/
 
 ### 2. State Management (`_durable_agent_state.py`)
 
-*   **Goal**: Maintain 100% schema compatibility with `agent-framework-azurefunctions`.
-*   **Implementation**: Direct port of `packages/azurefunctions/agent_framework_azurefunctions/_durable_agent_state.py`.
+**Important**: This will be the state maintained in the durable entities for both `durabletask` and `azurefunctions` package. 
 
 ### 3. The Agent Entity (`_entities.py`)
 
@@ -118,12 +117,12 @@ class DurableAIAgentClient(GetDurableAgentMixin):
         pass
 ```
 
-### 7. The Orchestrator Wrapper (`_orchestrator.py`)
+### 7. The Orchestration Context Wrapper (`_orchestration_context.py`)
 
-The `DurableAIAgentOrchestrator` is for use *inside* orchestrations.
+The `DurableAIAgentOrchestrationContext` is for use *inside* orchestrations to get access to agents that were registered in the workers.
 
 ```python
-class DurableAIAgentOrchestrator(GetDurableAgentMixin):
+class DurableAIAgentOrchestrationContext(GetDurableAgentMixin):
     def __init__(self, context: OrchestrationContext):
         self._context = context
 

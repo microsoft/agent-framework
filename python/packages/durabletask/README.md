@@ -14,21 +14,18 @@ The durable task integration lets you host Microsoft Agent Framework agents usin
 
 ### Basic Usage Example
 
-See the durable task integration sample in the repository to learn how to:
-
 ```python
 from durabletask import TaskHubGrpcWorker
 from agent_framework_durabletask import AgentWorker
 
-# Wrap the durabletask worker
-durable_worker = TaskHubGrpcWorker(host_address="localhost:4001")
-worker = AgentWorker(durable_worker)
-
-# Register your agent
-worker.add_agent(agent)
+# Create the worker
+with DurableTaskSchedulerWorker(...) as worker:
+    
+    # Register the agent worker wrapper
+    agent_worker = DurableAIAgentWorker(worker)
+    
+    # Register the agent
+    agent_worker.add_agent(my_agent)
 ```
-
-- Register agents with `AgentWorker`
-- Run agents using `AgentClient` or `AgentOrchestrator`
 
 For more details, review the Python [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) and the samples directory.
