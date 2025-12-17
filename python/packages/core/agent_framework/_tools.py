@@ -1779,11 +1779,6 @@ def _handle_function_calls_response(
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
 
-            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
-            tools = _extract_tools(kwargs)
-            if tools and kwargs.get("tool_choice") is None:
-                kwargs["tool_choice"] = "auto"
-
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
                 if fcc_todo:
