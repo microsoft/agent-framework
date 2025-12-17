@@ -7,15 +7,15 @@ using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
 
-var apiKey = Environment.GetEnvironmentVariable("OPENAI_APIKEY") ?? throw new InvalidOperationException("OPENAI_APIKEY is not set.");
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-5";
 
 var client = new OpenAIClient(apiKey)
-        .GetOpenAIResponseClient(model)
+        .GetResponsesClient(model)
         .AsIChatClient().AsBuilder()
         .ConfigureOptions(o =>
         {
-            o.RawRepresentationFactory = _ => new ResponseCreationOptions()
+            o.RawRepresentationFactory = _ => new CreateResponseOptions()
             {
                 ReasoningOptions = new()
                 {

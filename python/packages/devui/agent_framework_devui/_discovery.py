@@ -182,13 +182,28 @@ class EntityDiscovery:
                 f"{entity_id}.workflow",
             ]
 
+            # Track import errors to provide meaningful feedback
+            import_errors: list[tuple[str, Exception]] = []
+
             for pattern in import_patterns:
-                module = self._load_module_from_pattern(pattern)
+                module, error = self._load_module_from_pattern(pattern)
+                if error:
+                    import_errors.append((pattern, error))
                 if module:
                     # Find entity in module - pass entity_id so registration uses correct ID
                     entity_obj = await self._find_entity_in_module(module, entity_id, str(dir_path))
                     if entity_obj:
                         return entity_obj
+
+            # If we have import errors, raise the most informative one
+            if import_errors:
+                # Prefer errors from the main module pattern (entity_id) or agent submodule
+                for pattern, error in import_errors:
+                    if pattern == entity_id or pattern.endswith(".agent"):
+                        raise ValueError(f"Failed to load entity '{entity_id}': {error}") from error
+                # Fall back to first error
+                pattern, error = import_errors[0]
+                raise ValueError(f"Failed to load entity '{entity_id}': {error}") from error
 
             raise ValueError(f"No valid entity found in {dir_path}")
         # File-based entity
@@ -632,31 +647,32 @@ class EntityDiscovery:
             return True
         return False
 
-    def _load_module_from_pattern(self, pattern: str) -> Any | None:
+    def _load_module_from_pattern(self, pattern: str) -> tuple[Any | None, Exception | None]:
         """Load module using import pattern.
 
         Args:
             pattern: Import pattern to try
 
         Returns:
-            Loaded module or None if failed
+            Tuple of (loaded module or None, error or None)
         """
         try:
             # Check if module exists first
             spec = importlib.util.find_spec(pattern)
             if spec is None:
-                return None
+                return None, None
 
             module = importlib.import_module(pattern)
             logger.debug(f"Successfully imported {pattern}")
-            return module
+            return module, None
 
         except ModuleNotFoundError:
             logger.debug(f"Import pattern {pattern} not found")
-            return None
+            return None, None
         except Exception as e:
+            # Capture the actual error for better error messages
             logger.warning(f"Error importing {pattern}: {e}")
-            return None
+            return None, e
 
     def _load_module_from_file(self, file_path: Path, module_name: str) -> Any | None:
         """Load module directly from file path.

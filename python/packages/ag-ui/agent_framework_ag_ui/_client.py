@@ -23,7 +23,7 @@ from agent_framework import (
 from agent_framework._middleware import use_chat_middleware
 from agent_framework._tools import use_function_invocation
 from agent_framework._types import BaseContent, Contents
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
@@ -89,7 +89,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 
 @_apply_server_function_call_unwrap
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AGUIChatClient(BaseChatClient):
     """Chat client for communicating with AG-UI compliant servers.

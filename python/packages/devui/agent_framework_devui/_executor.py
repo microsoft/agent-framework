@@ -82,27 +82,23 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_OTEL is set
-        if os.environ.get("ENABLE_OTEL"):
+        # Configure Agent Framework tracing only if ENABLE_INSTRUMENTATION is set
+        if os.environ.get("ENABLE_INSTRUMENTATION"):
             try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
+                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Get OTLP endpoint from either custom or standard env var
-                    # This handles the case where env vars are set after ObservabilitySettings was imported
-                    otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-                    # Pass the endpoint explicitly to setup_observability
+                    # Run the configure_otel_providers
                     # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                    configure_otel_providers(enable_sensitive_data=True)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("ENABLE_OTEL not set, skipping observability setup")
+            logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -642,12 +638,26 @@ class AgentFrameworkExecutor:
                                             media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
+                                    # Include filename in additional_properties for OpenAI/Azure file handling
+                                    additional_props = {"filename": filename} if filename else None
                                     if file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
-                                        contents.append(DataContent(uri=data_uri, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=data_uri,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
                                     elif file_url:
-                                        contents.append(DataContent(uri=file_url, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=file_url,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)

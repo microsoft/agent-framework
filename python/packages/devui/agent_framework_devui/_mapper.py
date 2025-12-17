@@ -840,7 +840,9 @@ class MessageMapper:
 
             if event_class == "WorkflowFailedEvent":
                 workflow_id = context.get("workflow_id", str(uuid4()))
-                error_info = getattr(event, "error", None)
+                # WorkflowFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
+                # This matches ExecutorFailedEvent which also uses 'details'
+                details = getattr(event, "details", None)
 
                 # Import Response and ResponseError types
                 from openai.types.responses import Response, ResponseError
@@ -849,8 +851,14 @@ class MessageMapper:
                 request_obj = context.get("request")
                 model_name = request_obj.model if request_obj and request_obj.model else "devui"
 
-                # Create error object
-                error_message = str(error_info) if error_info else "Unknown error"
+                # Extract error message from WorkflowErrorDetails
+                if details:
+                    error_message = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        error_message = f"{error_message} (extra: {extra})"
+                else:
+                    error_message = "Unknown error"
 
                 # Create ResponseError object (code must be one of the allowed values)
                 response_error = ResponseError(
@@ -945,7 +953,13 @@ class MessageMapper:
                 item_id = context.get(f"exec_item_{executor_id}", f"exec_{executor_id}_unknown")
                 # ExecutorFailedEvent uses 'details' field (WorkflowErrorDetails), not 'error'
                 details = getattr(event, "details", None)
-                err_msg: str | None = str(getattr(details, "message", details)) if details else None
+                if details:
+                    err_msg = getattr(details, "message", None) or str(details)
+                    extra = getattr(details, "extra", None)
+                    if extra:
+                        err_msg = f"{err_msg} (extra: {extra})"
+                else:
+                    err_msg = None
 
                 # Create ExecutorActionItem with failed status
                 executor_item = ExecutorActionItem(

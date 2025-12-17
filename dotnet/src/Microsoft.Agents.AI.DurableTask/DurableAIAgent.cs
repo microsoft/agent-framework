@@ -98,14 +98,16 @@ public sealed class DurableAIAgent : AIAgent
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
 
-        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
-        request.OrchestrationId = this._context.InstanceId;
+        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames)
+        {
+            OrchestrationId = this._context.InstanceId
+        };
 
         try
         {
             return await this._context.Entities.CallEntityAsync<AgentRunResponse>(
                 durableThread.SessionId,
-                nameof(AgentEntity.RunAgentAsync),
+                nameof(AgentEntity.Run),
                 request);
         }
         catch (EntityOperationFailedException e) when (e.FailureDetails.ErrorType == "EntityTaskNotFound")

@@ -407,7 +407,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_OTEL") == "true",
+                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
@@ -537,9 +537,14 @@ class DevServer:
             except HTTPException:
                 raise
             except ValueError as e:
-                # ValueError from load_entity indicates entity not found or invalid
+                # ValueError from load_entity - could be "not found" or "failed to load"
+                error_str = str(e)
                 error_msg = self._format_error(e, "Entity loading")
-                raise HTTPException(status_code=404, detail=error_msg) from e
+                # Use 404 for "not found", 422 for load failures (entity exists but can't load)
+                if "not found" in error_str.lower() and "failed to load" not in error_str.lower():
+                    raise HTTPException(status_code=404, detail=error_msg) from e
+                # Entity exists but failed to load (e.g., missing env vars, import errors)
+                raise HTTPException(status_code=422, detail=error_msg) from e
             except Exception as e:
                 error_msg = self._format_error(e, "Entity info retrieval")
                 raise HTTPException(status_code=500, detail=error_msg) from e

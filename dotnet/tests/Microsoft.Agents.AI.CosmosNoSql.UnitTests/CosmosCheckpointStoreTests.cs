@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Azure.Cosmos;
-using Xunit;
 
 namespace Microsoft.Agents.AI.CosmosNoSql.UnitTests;
 
@@ -58,6 +57,9 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
     public async Task InitializeAsync()
     {
+        // Fail fast if emulator is not available
+        this.SkipIfEmulatorNotAvailable();
+
         // Check environment variable to determine if we should preserve containers
         // Set COSMOS_PRESERVE_CONTAINERS=true to keep containers and data for inspection
         this._preserveContainer = string.Equals(Environment.GetEnvironmentVariable("COSMOS_PRESERVE_CONTAINERS"), "true", StringComparison.OrdinalIgnoreCase);
@@ -77,7 +79,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
 
             this._emulatorAvailable = true;
         }
-        catch (Exception ex) when (!(ex is OutOfMemoryException || ex is StackOverflowException || ex is AccessViolationException))
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
             // Emulator not available, tests will be skipped
             this._emulatorAvailable = false;
