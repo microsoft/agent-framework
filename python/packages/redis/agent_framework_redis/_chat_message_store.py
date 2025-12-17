@@ -9,6 +9,7 @@ from uuid import uuid4
 import redis.asyncio as redis
 from agent_framework import ChatMessage
 from agent_framework._serialization import SerializationMixin
+from redis.credentials import CredentialProvider
 
 
 class RedisStoreState(SerializationMixin):
@@ -55,7 +56,7 @@ class RedisChatMessageStore:
     def __init__(
         self,
         redis_url: str | None = None,
-        credential_provider: Any | None = None,
+        credential_provider: CredentialProvider | None = None,
         host: str | None = None,
         port: int = 6380,
         ssl: bool = True,
@@ -74,8 +75,8 @@ class RedisChatMessageStore:
         Args:
             redis_url: Redis connection URL (e.g., "redis://localhost:6379").
                       Used for traditional authentication. Mutually exclusive with credential_provider.
-            credential_provider: Credential provider for Azure AD authentication.
-                                Requires host parameter. Mutually exclusive with redis_url.
+            credential_provider: Redis credential provider (redis.credentials.CredentialProvider) for
+                                Azure AD authentication. Requires host parameter. Mutually exclusive with redis_url.
             host: Redis host name (e.g., "myredis.redis.cache.windows.net").
                  Required when using credential_provider.
             port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
