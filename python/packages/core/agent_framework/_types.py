@@ -1049,11 +1049,8 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            if isinstance(data, bytes):
-                base64_data = base64.b64encode(data).decode("utf-8")
-            else:
-                # Assume data is already a base64-encoded string
-                base64_data = data
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
             uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
