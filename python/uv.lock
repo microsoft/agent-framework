@@ -535,7 +535,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "0.1.0b1"
+version = "1.0.0b251216"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
