@@ -162,6 +162,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             exclude={
                 "type",
                 "instructions",  # included as system message
+                "allow_multiple_tool_calls",  # handled separately
             }
         )
 
@@ -174,6 +175,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if web_search_options:
                 options_dict["web_search_options"] = web_search_options
             options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
+        if chat_options.allow_multiple_tool_calls is not None:
+            options_dict["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
         if not options_dict.get("tools", None):
             options_dict.pop("tools", None)
             options_dict.pop("parallel_tool_calls", None)

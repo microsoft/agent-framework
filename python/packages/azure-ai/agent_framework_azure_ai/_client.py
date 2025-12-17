@@ -335,6 +335,10 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
+            if "temperature" in run_options:
+                args["temperature"] = run_options["temperature"]
+            if "top_p" in run_options:
+                args["top_p"] = run_options["top_p"]
 
             if "response_format" in run_options:
                 response_format = run_options["response_format"]
@@ -413,7 +417,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         # Remove properties that are not supported on request level
         # but were configured on agent level
-        exclude = ["model", "tools", "response_format"]
+        exclude = ["model", "tools", "response_format", "temperature", "top_p"]
 
         for property in exclude:
             run_options.pop(property, None)
