@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    AgentRunResponseUpdate,
     AgentRunUpdateEvent,
     ChatAgent,
     ChatMessage,
     HandoffBuilder,
+    HostedWebSearchTool,
     WorkflowEvent,
     WorkflowOutputEvent,
 )
@@ -44,31 +45,29 @@ def create_agents(
     """Create coordinator and specialists for autonomous iteration."""
     coordinator = chat_client.create_agent(
         instructions=(
-            "You are a coordinator. Route user requests to either research_agent or summary_agent. "
-            "Always call exactly one handoff tool with a short routing acknowledgement. "
-            "If unsure, default to research_agent. Never request information yourself. "
-            "After a specialist hands off back to you, provide a concise final summary and stop."
+            "You are a coordinator. You break down a user query into a research task and a summary task. "
+            "Assign the two tasks to the appropriate specialists, one after the other."
         ),
         name="coordinator",
     )
 
     research_agent = chat_client.create_agent(
         instructions=(
-            "You are a research specialist that explores topics thoroughly. "
+            "You are a research specialist that explores topics thoroughly on the Microsoft Learn Site."
             "When given a research task, break it down into multiple aspects and explore each one. "
-            "Continue your research across multiple responses - don't try to finish everything in one response. "
-            "After each response, think about what else needs to be explored. "
-            "When you have covered the topic comprehensively (at least 3-4 different aspects), "
-            "call the handoff tool to return to coordinator with your findings. "
-            "Keep each individual response focused on one aspect."
+            "Continue your research across multiple responses - don't try to finish everything in one "
+            "response. After each response, think about what else needs to be explored. When you have "
+            "covered the topic comprehensively (at least 3-4 different aspects), return control to the "
+            "coordinator. Keep each individual response focused on one aspect."
         ),
         name="research_agent",
+        tools=[HostedWebSearchTool()],
     )
 
     summary_agent = chat_client.create_agent(
         instructions=(
-            "You summarize research findings. Provide a concise, well-organized summary. "
-            "When done, hand off to coordinator."
+            "You summarize research findings. Provide a concise, well-organized summary. When done, return "
+            "control to the coordinator."
         ),
         name="summary_agent",
     )
@@ -76,25 +75,29 @@ def create_agents(
     return coordinator, research_agent, summary_agent
 
 
-async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
-    """Collect all events from an async stream."""
-    return [event async for event in stream]
+last_response_id: str | None = None
 
 
-def _print_conversation(events: list[WorkflowEvent]) -> None:
+def _display_event(event: WorkflowEvent) -> None:
     """Print the final conversation snapshot from workflow output events."""
-    for event in events:
-        if isinstance(event, AgentRunUpdateEvent):
-            print(event.data, flush=True, end="")
-        elif isinstance(event, WorkflowOutputEvent):
-            conversation = cast(list[ChatMessage], event.data)
-            print("\n=== Final Conversation (Autonomous with Iteration) ===")
-            for message in conversation:
-                speaker = message.author_name or message.role.value
-                text_preview = message.text[:200] + "..." if len(message.text) > 200 else message.text
-                print(f"- {speaker}: {text_preview}")
-            print(f"\nTotal messages: {len(conversation)}")
-            print("=====================================================")
+    if isinstance(event, AgentRunUpdateEvent) and event.data:
+        update: AgentRunResponseUpdate = event.data
+        if not update.text:
+            return
+        global last_response_id
+        if update.response_id != last_response_id:
+            last_response_id = update.response_id
+            print(f"\n- {update.author_name}: ", flush=True, end="")
+        print(event.data, flush=True, end="")
+    elif isinstance(event, WorkflowOutputEvent):
+        conversation = cast(list[ChatMessage], event.data)
+        print("\n=== Final Conversation (Autonomous with Iteration) ===")
+        for message in conversation:
+            speaker = message.author_name or message.role.value
+            text_preview = message.text[:200] + "..." if len(message.text) > 200 else message.text
+            print(f"- {speaker}: {text_preview}")
+        print(f"\nTotal messages: {len(conversation)}")
+        print("=====================================================")
 
 
 async def main() -> None:
@@ -122,12 +125,10 @@ async def main() -> None:
         .build()
     )
 
-    initial_request = "Research the key benefits and challenges of renewable energy adoption."
-    print("Initial request:", initial_request)
-    print("\nExpecting multiple iterations from the research agent...\n")
-
-    events = await _drain(workflow.run_stream(initial_request))
-    _print_conversation(events)
+    request = "Perform a comprehensive research on Microsoft Agent Framework."
+    print("Request:", request)
+    async for event in workflow.run_stream(request):
+        _display_event(event)
 
     """
     Expected behavior:

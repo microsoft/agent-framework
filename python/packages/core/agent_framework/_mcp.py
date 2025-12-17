@@ -152,7 +152,7 @@ def _mcp_type_to_ai_content(
             case types.ImageContent() | types.AudioContent():
                 return_types.append(
                     DataContent(
-                        uri=mcp_type.data,
+                        data=mcp_type.data,
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )

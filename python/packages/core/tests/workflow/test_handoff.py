@@ -223,7 +223,7 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == Role.USER) >= 2)
         .build()
     )
@@ -286,7 +286,7 @@ async def test_tool_call_handoff_detection_with_text_hint():
     triage = _RecordingAgent(name="triage", handoff_to="specialist", text_handoff=True)
     specialist = _RecordingAgent(name="specialist")
 
-    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator("triage").build()
+    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator(triage).build()
 
     await _drain(workflow.run_stream("Package arrived broken"))
 
@@ -301,7 +301,7 @@ async def test_autonomous_interaction_mode_yields_output_without_user_request():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .with_interaction_mode("autonomous", autonomous_turn_limit=1)
         .build()
     )
@@ -433,13 +433,13 @@ def test_build_fails_without_coordinator():
     triage = _RecordingAgent(name="triage")
     specialist = _RecordingAgent(name="specialist")
 
-    with pytest.raises(ValueError, match="coordinator must be defined before build"):
+    with pytest.raises(ValueError, match=r"Must call set_coordinator\(...\) before building the workflow."):
         HandoffBuilder(participants=[triage, specialist]).build()
 
 
 def test_build_fails_without_participants():
     """Verify that build() raises ValueError when no participants are provided."""
-    with pytest.raises(ValueError, match="No participants provided"):
+    with pytest.raises(ValueError, match="No participants or participant_factories have been configured."):
         HandoffBuilder().build()
 
 
@@ -610,7 +610,7 @@ async def test_return_to_previous_enabled():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator("triage")
+        .set_coordinator(triage)
         .enable_return_to_previous(True)
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
         .build()
@@ -643,7 +643,7 @@ def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatc
 
     workflow = (
         HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator("coordinator")
+        .set_coordinator(coordinator)
         .with_termination_condition(lambda conv: len(conv) > 0)
         .build()
     )
@@ -703,7 +703,7 @@ async def test_handoff_builder_with_request_info():
     # Build workflow with request info enabled
     workflow = (
         HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator("coordinator")
+        .set_coordinator(coordinator)
         .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
         .with_request_info()
         .build()
@@ -780,6 +780,497 @@ async def test_return_to_previous_state_serialization():
 
     # Verify current_agent_id was restored
     assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]
+
+
+# region Participant Factory Tests
+
+
+def test_handoff_builder_rejects_empty_participant_factories():
+    """Test that HandoffBuilder rejects empty participant_factories dictionary."""
+    # Empty factories are rejected immediately when calling participant_factories()
+    with pytest.raises(ValueError, match=r"participant_factories cannot be empty"):
+        HandoffBuilder().participant_factories({})
+
+    with pytest.raises(ValueError, match=r"No participants or participant_factories have been configured"):
+        HandoffBuilder(participant_factories={}).build()
+
+
+def test_handoff_builder_rejects_mixing_participants_and_factories():
+    """Test that mixing participants and participant_factories in __init__ raises an error."""
+    triage = _RecordingAgent(name="triage")
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder(participants=[triage], participant_factories={"triage": lambda: triage})
+
+
+def test_handoff_builder_rejects_mixing_participants_and_participant_factories_methods():
+    """Test that mixing .participants() and .participant_factories() raises an error."""
+    triage = _RecordingAgent(name="triage")
+
+    # Case 1: participants first, then participant_factories
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder(participants=[triage]).participant_factories({
+            "specialist": lambda: _RecordingAgent(name="specialist")
+        })
+
+    # Case 2: participant_factories first, then participants
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder(participant_factories={"triage": lambda: triage}).participants([
+            _RecordingAgent(name="specialist")
+        ])
+
+    # Case 3: participants(), then participant_factories()
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder().participants([triage]).participant_factories({
+            "specialist": lambda: _RecordingAgent(name="specialist")
+        })
+
+    # Case 4: participant_factories(), then participants()
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder().participant_factories({"triage": lambda: triage}).participants([
+            _RecordingAgent(name="specialist")
+        ])
+
+    # Case 5: mix during initialization
+    with pytest.raises(ValueError, match="Cannot mix .participants"):
+        HandoffBuilder(
+            participants=[triage], participant_factories={"specialist": lambda: _RecordingAgent(name="specialist")}
+        )
+
+
+def test_handoff_builder_rejects_multiple_calls_to_participant_factories():
+    """Test that multiple calls to .participant_factories() raises an error."""
+    with pytest.raises(ValueError, match=r"participant_factories\(\) has already been called"):
+        (
+            HandoffBuilder()
+            .participant_factories({"agent1": lambda: _RecordingAgent(name="agent1")})
+            .participant_factories({"agent2": lambda: _RecordingAgent(name="agent2")})
+        )
+
+
+def test_handoff_builder_rejects_multiple_calls_to_participants():
+    """Test that multiple calls to .participants() raises an error."""
+    with pytest.raises(ValueError, match="participants have already been assigned"):
+        (HandoffBuilder().participants([_RecordingAgent(name="agent1")]).participants([_RecordingAgent(name="agent2")]))
+
+
+def test_handoff_builder_rejects_duplicate_factories():
+    """Test that multiple calls to participant_factories are rejected."""
+    factories = {
+        "triage": lambda: _RecordingAgent(name="triage"),
+        "specialist": lambda: _RecordingAgent(name="specialist"),
+    }
+
+    # Multiple calls to participant_factories should fail
+    builder = HandoffBuilder(participant_factories=factories)
+    with pytest.raises(ValueError, match=r"participant_factories\(\) has already been called"):
+        builder.participant_factories({"triage": lambda: _RecordingAgent(name="triage2")})
+
+
+def test_handoff_builder_rejects_instance_coordinator_with_factories():
+    """Test that using an agent instance for set_coordinator when using factories raises an error."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    # Create an agent instance
+    coordinator_instance = _RecordingAgent(name="coordinator")
+
+    with pytest.raises(ValueError, match=r"Call participants\(\.\.\.\) before coordinator\(\.\.\.\)"):
+        (
+            HandoffBuilder(
+                participant_factories={"triage": create_triage, "specialist": create_specialist}
+            ).set_coordinator(coordinator_instance)  # Instance, not factory name
+        )
+
+
+def test_handoff_builder_rejects_factory_name_coordinator_with_instances():
+    """Test that using a factory name for set_coordinator when using instances raises an error."""
+    triage = _RecordingAgent(name="triage")
+    specialist = _RecordingAgent(name="specialist")
+
+    with pytest.raises(
+        ValueError, match="coordinator factory name 'triage' is not part of the participant_factories list"
+    ):
+        (
+            HandoffBuilder(participants=[triage, specialist]).set_coordinator(
+                "triage"
+            )  # String factory name, not instance
+        )
+
+
+def test_handoff_builder_rejects_mixed_types_in_add_handoff_source():
+    """Test that add_handoff rejects factory name source with instance-based participants."""
+    triage = _RecordingAgent(name="triage")
+    specialist = _RecordingAgent(name="specialist")
+
+    with pytest.raises(TypeError, match="Cannot mix factory names \\(str\\) and AgentProtocol/Executor instances"):
+        (
+            HandoffBuilder(participants=[triage, specialist])
+            .set_coordinator(triage)
+            .add_handoff("triage", specialist)  # String source with instance participants
+        )
+
+
+def test_handoff_builder_accepts_all_factory_names_in_add_handoff():
+    """Test that add_handoff accepts all factory names when using participant_factories."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    def create_specialist_a() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_a")
+
+    def create_specialist_b() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_b")
+
+    # This should work - all strings with participant_factories
+    builder = (
+        HandoffBuilder(
+            participant_factories={
+                "triage": create_triage,
+                "specialist_a": create_specialist_a,
+                "specialist_b": create_specialist_b,
+            }
+        )
+        .set_coordinator("triage")
+        .add_handoff("triage", ["specialist_a", "specialist_b"])
+    )
+
+    workflow = builder.build()
+    assert "triage" in workflow.executors
+    assert "specialist_a" in workflow.executors
+    assert "specialist_b" in workflow.executors
+
+
+def test_handoff_builder_accepts_all_instances_in_add_handoff():
+    """Test that add_handoff accepts all instances when using participants."""
+    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
+    specialist_a = _RecordingAgent(name="specialist_a")
+    specialist_b = _RecordingAgent(name="specialist_b")
+
+    # This should work - all instances with participants
+    builder = (
+        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
+        .set_coordinator(triage)
+        .add_handoff(triage, [specialist_a, specialist_b])
+    )
+
+    workflow = builder.build()
+    assert "triage" in workflow.executors
+    assert "specialist_a" in workflow.executors
+    assert "specialist_b" in workflow.executors
+
+
+async def test_handoff_with_participant_factories():
+    """Test workflow creation using participant_factories."""
+    call_count = 0
+
+    def create_triage() -> _RecordingAgent:
+        nonlocal call_count
+        call_count += 1
+        return _RecordingAgent(name="triage", handoff_to="specialist")
+
+    def create_specialist() -> _RecordingAgent:
+        nonlocal call_count
+        call_count += 1
+        return _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        .set_coordinator("triage")
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
+        .build()
+    )
+
+    # Factories should be called during build
+    assert call_count == 2
+
+    events = await _drain(workflow.run_stream("Need help"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Follow-up message
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "More details"}))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs
+
+
+async def test_handoff_participant_factories_reusable_builder():
+    """Test that the builder can be reused to build multiple workflows with factories."""
+    call_count = 0
+
+    def create_triage() -> _RecordingAgent:
+        nonlocal call_count
+        call_count += 1
+        return _RecordingAgent(name="triage", handoff_to="specialist")
+
+    def create_specialist() -> _RecordingAgent:
+        nonlocal call_count
+        call_count += 1
+        return _RecordingAgent(name="specialist")
+
+    builder = HandoffBuilder(
+        participant_factories={"triage": create_triage, "specialist": create_specialist}
+    ).set_coordinator("triage")
+
+    # Build first workflow
+    wf1 = builder.build()
+    assert call_count == 2
+
+    # Build second workflow
+    wf2 = builder.build()
+    assert call_count == 4
+
+    # Verify that the two workflows have different agent instances
+    assert wf1.executors["triage"] is not wf2.executors["triage"]
+    assert wf1.executors["specialist"] is not wf2.executors["specialist"]
+
+
+async def test_handoff_with_participant_factories_and_add_handoff():
+    """Test that .add_handoff() works correctly with participant_factories."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage", handoff_to="specialist_a")
+
+    def create_specialist_a() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
+
+    def create_specialist_b() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_b")
+
+    workflow = (
+        HandoffBuilder(
+            participant_factories={
+                "triage": create_triage,
+                "specialist_a": create_specialist_a,
+                "specialist_b": create_specialist_b,
+            }
+        )
+        .set_coordinator("triage")
+        .add_handoff("triage", ["specialist_a", "specialist_b"])
+        .add_handoff("specialist_a", "specialist_b")
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
+        .build()
+    )
+
+    # Start conversation - triage hands off to specialist_a
+    events = await _drain(workflow.run_stream("Initial request"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Verify specialist_a executor exists and was called
+    assert "specialist_a" in workflow.executors
+
+    # Second user message - specialist_a hands off to specialist_b
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need escalation"}))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Verify specialist_b executor exists
+    assert "specialist_b" in workflow.executors
+
+
+async def test_handoff_participant_factories_with_checkpointing():
+    """Test checkpointing with participant_factories."""
+    from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+
+    storage = InMemoryCheckpointStorage()
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage", handoff_to="specialist")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        .set_coordinator("triage")
+        .with_checkpointing(storage)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
+        .build()
+    )
+
+    # Run workflow and capture output
+    events = await _drain(workflow.run_stream("checkpoint test"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "follow up"}))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Should have workflow output after termination condition is met"
+
+    # List checkpoints - just verify they were created
+    checkpoints = await storage.list_checkpoints()
+    assert checkpoints, "Checkpoints should be created during workflow execution"
+
+
+def test_handoff_set_coordinator_with_factory_name():
+    """Test that set_coordinator accepts factory name as string."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    builder = HandoffBuilder(
+        participant_factories={"triage": create_triage, "specialist": create_specialist}
+    ).set_coordinator("triage")
+
+    workflow = builder.build()
+    assert "triage" in workflow.executors
+
+
+def test_handoff_add_handoff_with_factory_names():
+    """Test that add_handoff accepts factory names as strings."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage", handoff_to="specialist_a")
+
+    def create_specialist_a() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_a")
+
+    def create_specialist_b() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_b")
+
+    builder = (
+        HandoffBuilder(
+            participant_factories={
+                "triage": create_triage,
+                "specialist_a": create_specialist_a,
+                "specialist_b": create_specialist_b,
+            }
+        )
+        .set_coordinator("triage")
+        .add_handoff("triage", ["specialist_a", "specialist_b"])
+    )
+
+    workflow = builder.build()
+    assert "triage" in workflow.executors
+    assert "specialist_a" in workflow.executors
+    assert "specialist_b" in workflow.executors
+
+
+async def test_handoff_participant_factories_autonomous_mode():
+    """Test autonomous mode with participant_factories."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage", handoff_to="specialist")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    workflow = (
+        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        .set_coordinator("triage")
+        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .build()
+    )
+
+    events = await _drain(workflow.run_stream("Issue"))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs, "Autonomous mode should yield output"
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert not requests, "Autonomous mode should not request user input"
+
+
+async def test_handoff_participant_factories_with_request_info():
+    """Test that .with_request_info() works with participant_factories."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    builder = (
+        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+        .set_coordinator("triage")
+        .with_request_info(agents=["triage"])
+    )
+
+    workflow = builder.build()
+    assert "triage" in workflow.executors
+
+
+def test_handoff_participant_factories_invalid_coordinator_name():
+    """Test that set_coordinator raises error for non-existent factory name."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    with pytest.raises(
+        ValueError, match="coordinator factory name 'nonexistent' is not part of the participant_factories list"
+    ):
+        (HandoffBuilder(participant_factories={"triage": create_triage}).set_coordinator("nonexistent").build())
+
+
+def test_handoff_participant_factories_invalid_handoff_target():
+    """Test that add_handoff raises error for non-existent target factory name."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage")
+
+    def create_specialist() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist")
+
+    with pytest.raises(ValueError, match="Target factory name 'nonexistent' is not in the participant_factories list"):
+        (
+            HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
+            .set_coordinator("triage")
+            .add_handoff("triage", "nonexistent")
+            .build()
+        )
+
+
+async def test_handoff_participant_factories_enable_return_to_previous():
+    """Test return_to_previous works with participant_factories."""
+
+    def create_triage() -> _RecordingAgent:
+        return _RecordingAgent(name="triage", handoff_to="specialist_a")
+
+    def create_specialist_a() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
+
+    def create_specialist_b() -> _RecordingAgent:
+        return _RecordingAgent(name="specialist_b")
+
+    workflow = (
+        HandoffBuilder(
+            participant_factories={
+                "triage": create_triage,
+                "specialist_a": create_specialist_a,
+                "specialist_b": create_specialist_b,
+            }
+        )
+        .set_coordinator("triage")
+        .add_handoff("triage", ["specialist_a", "specialist_b"])
+        .add_handoff("specialist_a", "specialist_b")
+        .enable_return_to_previous(True)
+        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
+        .build()
+    )
+
+    # Start conversation - triage hands off to specialist_a
+    events = await _drain(workflow.run_stream("Initial request"))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Second user message - specialist_a hands off to specialist_b
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need escalation"}))
+    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+    assert requests
+
+    # Third user message - should route back to specialist_b (return to previous)
+    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up"}))
+    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
+    assert outputs or [ev for ev in events if isinstance(ev, RequestInfoEvent)]
+
+
+# endregion Participant Factory Tests
 
 
 async def test_handoff_user_input_request_checkpoint_excludes_conversation():
