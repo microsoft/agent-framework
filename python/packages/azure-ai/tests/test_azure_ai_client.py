@@ -477,6 +477,30 @@ async def test_azure_ai_client_agent_creation_with_instructions(
     assert call_args[1]["definition"].instructions == "Message instructions. Option instructions. "
 
 
+async def test_azure_ai_client_agent_creation_with_additional_args(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with additional arguments."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    # Mock agent creation response
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model", "temperature": 0.9, "top_p": 0.8}
+    messages_instructions = "Message instructions. "
+
+    await client._get_agent_reference_or_create(run_options, messages_instructions)  # type: ignore
+
+    # Verify agent was created with provided arguments
+    call_args = mock_project_client.agents.create_version.call_args
+    definition = call_args[1]["definition"]
+    assert definition.temperature == 0.9
+    assert definition.top_p == 0.8
+
+
 async def test_azure_ai_client_agent_creation_with_tools(
     mock_project_client: MagicMock,
 ) -> None:

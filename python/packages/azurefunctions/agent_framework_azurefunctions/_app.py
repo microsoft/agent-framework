@@ -416,7 +416,7 @@ class AgentFunctionApp(DFAppBase):
                     request_response_format,
                 )
                 logger.debug("Signalling entity %s with request: %s", entity_instance_id, run_request)
-                await client.signal_entity(entity_instance_id, "run_agent", run_request)
+                await client.signal_entity(entity_instance_id, "run", run_request)
 
                 logger.debug(f"[HTTP Trigger] Signal sent to entity {session_id}")
 
@@ -497,7 +497,8 @@ class AgentFunctionApp(DFAppBase):
             """Durable entity that manages agent execution and conversation state.
 
             Operations:
-            - run_agent: Execute the agent with a message
+            - run: Execute the agent with a message
+            - run_agent: (Deprecated) Execute the agent with a message
             - reset: Clear conversation history
             """
             entity_handler = create_agent_entity(agent, callback)
@@ -639,7 +640,7 @@ class AgentFunctionApp(DFAppBase):
         logger.info("[MCP Tool] Invoking agent '%s' with query: %s", agent_name, query_preview)
 
         # Signal entity to run agent
-        await client.signal_entity(entity_instance_id, "run_agent", run_request)
+        await client.signal_entity(entity_instance_id, "run", run_request)
 
         # Poll for response (similar to HTTP handler)
         try:

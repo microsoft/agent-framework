@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **agent-framework-azurefunctions**: Durable Agents: platforms should use consistent entity method names (#2234)
+
+## [1.0.0b251216] - 2025-12-16
+
+### Added
+
+- **agent-framework-ollama**: Ollama connector for Agent Framework (#1104)
+- **agent-framework-core**: Added custom args and thread object to `ai_function` kwargs (#2769)
+- **agent-framework-core**: Enable checkpointing for `WorkflowAgent` (#2774)
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Observability updates (#2782)
+- **agent-framework-core**: Use agent description in `HandoffBuilder` auto-generated tools (#2714)
+- **agent-framework-core**: Remove warnings from workflow builder when not using factories (#2808)
+
+### Fixed
+
+- **agent-framework-core**: Fix `WorkflowAgent` to include thread conversation history (#2774)
+- **agent-framework-core**: Fix context duplication in handoff workflows when restoring from checkpoint (#2867)
+- **agent-framework-core**: Fix middleware terminate flag to exit function calling loop immediately (#2868)
+- **agent-framework-core**: Fix `WorkflowAgent` to emit `yield_output` as agent response (#2866)
+- **agent-framework-core**: Filter framework kwargs from MCP tool invocations (#2870)
+
+## [1.0.0b251211] - 2025-12-11
+
+### Added
+
+- **agent-framework-core**: Extend HITL support for all orchestration patterns (#2620)
+- **agent-framework-core**: Add factory pattern to concurrent orchestration builder (#2738)
+- **agent-framework-core**: Add factory pattern to sequential orchestration builder (#2710)
+- **agent-framework-azure-ai**: Capture file IDs from code interpreter in streaming responses (#2741)
+
+### Changed
+
+- **agent-framework-azurefunctions**: Change DurableAIAgent log level from warning to debug when invoked without thread (#2736)
+
+### Fixed
+
+- **agent-framework-core**: Added more complete parsing for mcp tool arguments (#2756)
+- **agent-framework-core**: Fix GroupChat ManagerSelectionResponse JSON Schema for OpenAI Structured Outputs (#2750)
+- **samples**: Standardize OpenAI API key environment variable naming (#2629)
+
 ## [1.0.0b251209] - 2025-12-09
 
 ### Added
@@ -347,7 +392,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...HEAD
+[1.0.0b251216]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...python-1.0.0b251216
+[1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
 [1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
 [1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
 [1.0.0b251120]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251117...python-1.0.0b251120
