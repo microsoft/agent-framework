@@ -75,7 +75,8 @@ def test_mcp_call_tool_result_to_ai_contents():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", uri="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data="xyz", mimeType="image/png"),
         ]
     )
     ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
