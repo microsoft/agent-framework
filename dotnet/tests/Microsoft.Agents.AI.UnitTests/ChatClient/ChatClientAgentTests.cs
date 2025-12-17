@@ -2131,6 +2131,147 @@ public partial class ChatClientAgentTests
 
     #endregion
 
+    #region Array Response Format Wrapping Tests
+
+    /// <summary>
+    /// Verify that array types in ChatResponseFormat.ForJsonSchema are automatically wrapped
+    /// to comply with OpenAI's requirement that root schema must be an object.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncAutomaticallyWrapsArrayResponseFormatInChatOptionsAsync()
+    {
+        // Arrange
+        JsonSerializerOptions jsonSerializerOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+#if NET
+            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+#endif
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, opts, ct) => capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        // Create agent with array response format
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new()
+            {
+                Instructions = "test instructions",
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<Movie[]>(jsonSerializerOptions)
+            }
+        });
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.ResponseFormat);
+
+        // Verify the response format is a JSON schema format
+        var jsonFormat = Assert.IsType<ChatResponseFormatJson>(capturedChatOptions.ResponseFormat);
+        Assert.NotNull(jsonFormat.Schema);
+
+        // Verify the schema has been wrapped: root type should be "object", not "array"
+        JsonElement schemaElement = jsonFormat.Schema.Value;
+        Assert.True(schemaElement.TryGetProperty("type", out JsonElement typeElement));
+        Assert.Equal("object", typeElement.GetString());
+
+        // Verify the wrapped schema has a "data" property containing the array
+        Assert.True(schemaElement.TryGetProperty("properties", out JsonElement propertiesElement));
+        Assert.True(propertiesElement.TryGetProperty("data", out JsonElement dataElement));
+        Assert.True(dataElement.TryGetProperty("type", out JsonElement dataTypeElement));
+        Assert.Equal("array", dataTypeElement.GetString());
+
+        // Verify the "data" property is required
+        Assert.True(schemaElement.TryGetProperty("required", out JsonElement requiredElement));
+        Assert.Equal(JsonValueKind.Array, requiredElement.ValueKind);
+        bool hasDataRequired = false;
+        foreach (JsonElement req in requiredElement.EnumerateArray())
+        {
+            if (req.GetString() == "data")
+            {
+                hasDataRequired = true;
+                break;
+            }
+        }
+        Assert.True(hasDataRequired, "The 'data' property should be in the required array");
+    }
+
+    /// <summary>
+    /// Verify that non-array response formats are not modified by the wrapping logic.
+    /// </summary>
+    [Fact]
+    public async Task RunAsyncDoesNotWrapNonArrayResponseFormatInChatOptionsAsync()
+    {
+        // Arrange
+        JsonSerializerOptions jsonSerializerOptions = new()
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+#if NET
+            TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+#endif
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, opts, ct) => capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        // Create agent with object (non-array) response format
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new()
+            {
+                Instructions = "test instructions",
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<Movie>(jsonSerializerOptions)
+            }
+        });
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.ResponseFormat);
+
+        // Verify the response format is a JSON schema format
+        var jsonFormat = Assert.IsType<ChatResponseFormatJson>(capturedChatOptions.ResponseFormat);
+        Assert.NotNull(jsonFormat.Schema);
+
+        // Verify the schema has NOT been wrapped: root type should still be "object"
+        JsonElement schemaElement = jsonFormat.Schema.Value;
+        Assert.True(schemaElement.TryGetProperty("type", out JsonElement typeElement));
+        Assert.Equal("object", typeElement.GetString());
+
+        // Verify this is NOT a wrapped schema - it should have Movie properties, not a "data" wrapper
+        Assert.True(schemaElement.TryGetProperty("properties", out JsonElement propertiesElement));
+        // Should have "title" and "year" properties directly, not wrapped in "data"
+        Assert.True(propertiesElement.TryGetProperty("title", out _) || propertiesElement.TryGetProperty("Title", out _));
+        Assert.False(propertiesElement.TryGetProperty("data", out _), "Object schemas should not be wrapped with a 'data' property");
+    }
+
+    #endregion
+
     private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> values)
     {
         await Task.Yield();
@@ -2138,6 +2279,13 @@ public partial class ChatClientAgentTests
         {
             yield return update;
         }
+    }
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Used for JSON serialization in ChatResponseFormat.ForJsonSchema<T>")]
+    private sealed class Movie
+    {
+        public string Title { get; set; } = string.Empty;
+        public int Year { get; set; }
     }
 
     private sealed class Animal

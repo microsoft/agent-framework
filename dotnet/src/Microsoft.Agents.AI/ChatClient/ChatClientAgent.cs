@@ -474,16 +474,19 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
-        // If no agent chat options were provided, return the request chat options as is.
+        // If no agent chat options were provided, wrap array response formats if needed and return
         if (this._agentOptions?.ChatOptions is null)
         {
+            WrapArrayResponseFormatIfNeeded(requestChatOptions);
             return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
 
-        // If no request chat options were provided, use the agent's chat options clone.
+        // If no request chat options were provided, use the agent's chat options clone and wrap if needed
         if (requestChatOptions is null)
         {
-            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
+            ChatOptions? agentChatOptions = this._agentOptions?.ChatOptions.Clone();
+            WrapArrayResponseFormatIfNeeded(agentChatOptions);
+            return ApplyBackgroundResponsesProperties(agentChatOptions, runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -579,6 +582,9 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
+        // Wrap array response formats automatically
+        WrapArrayResponseFormatIfNeeded(requestChatOptions);
+
         return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
 
         static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
@@ -592,6 +598,19 @@ public sealed partial class ChatClientAgent : AIAgent
             }
 
             return chatOptions;
+        }
+    }
+
+    /// <summary>
+    /// Wraps array response formats in a container object with a 'data' property to comply with OpenAI's
+    /// requirement that the root JSON schema must be an object, not an array.
+    /// </summary>
+    /// <param name="chatOptions">The chat options to check and potentially modify.</param>
+    private static void WrapArrayResponseFormatIfNeeded(ChatOptions? chatOptions)
+    {
+        if (chatOptions?.ResponseFormat is not null)
+        {
+            chatOptions.ResponseFormat = ChatResponseFormatArrayWrapper.WrapArrayTypeIfNeeded(chatOptions.ResponseFormat);
         }
     }
 
