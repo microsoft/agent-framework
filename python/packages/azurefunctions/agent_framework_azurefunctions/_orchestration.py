@@ -17,11 +17,12 @@ from agent_framework import (
     ChatMessage,
     get_logger,
 )
+from agent_framework_durabletask import RunRequest
 from azure.durable_functions.models import TaskBase
 from azure.durable_functions.models.Task import CompoundTask, TaskState
 from pydantic import BaseModel
 
-from ._models import AgentSessionId, DurableAgentThread, RunRequest
+from ._models import AgentSessionId, DurableAgentThread
 
 logger = get_logger("agent_framework.azurefunctions.orchestration")
 
