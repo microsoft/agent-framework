@@ -22,16 +22,16 @@ from agent_framework import (
     Role,
     get_logger,
 )
-
-from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
-from ._durable_agent_state import (
+from agent_framework_durabletask import (
+    AgentCallbackContext,
+    AgentResponseCallbackProtocol,
     DurableAgentState,
     DurableAgentStateData,
     DurableAgentStateEntry,
     DurableAgentStateRequest,
     DurableAgentStateResponse,
+    RunRequest,
 )
-from ._models import RunRequest
 
 logger = get_logger("agent_framework.azurefunctions.entities")
 
@@ -138,10 +138,10 @@ class AgentEntity:
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
+        logger.debug(f"[AgentEntity.run] Received Message: {run_request}")
+
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self.state.data.conversation_history.append(state_request)
-
-        logger.debug(f"[AgentEntity.run] Received Message: {state_request}")
 
         try:
             # Build messages from conversation history, excluding error responses
