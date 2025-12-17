@@ -117,9 +117,11 @@ class OllamaChatClient(BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
+        # prepare
         options_dict = self._prepare_options(messages, chat_options)
 
         try:
+            # execute
             response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                 stream=False,
                 **options_dict,
@@ -128,7 +130,8 @@ class OllamaChatClient(BaseChatClient):
         except Exception as ex:
             raise ServiceResponseException(f"Ollama chat request failed : {ex}", ex) from ex
 
-        return self._ollama_response_to_agent_framework_response(response)
+        # process
+        return self._parse_response_from_ollama(response)
 
     async def _inner_get_streaming_response(
         self,
@@ -137,9 +140,11 @@ class OllamaChatClient(BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        # prepare
         options_dict = self._prepare_options(messages, chat_options)
 
         try:
+            # execute
             response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                 stream=True,
                 **options_dict,
@@ -148,49 +153,61 @@ class OllamaChatClient(BaseChatClient):
         except Exception as ex:
             raise ServiceResponseException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
+        # process
         async for part in response_object:
-            yield self._ollama_streaming_response_to_agent_framework_response(part)
+            yield self._parse_streaming_response_from_ollama(part)
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(exclude={"instructions", "type"})
-
-        # Promote additional_properties to the top level of options_dict
-        additional_props = options_dict.pop("additional_properties", {})
-        options_dict.update(additional_props)
-
-        # Prepare Messages from Agent Framework format to Ollama format
-        if messages and "messages" not in options_dict:
-            options_dict["messages"] = self._prepare_chat_history_for_request(messages)
-        if "messages" not in options_dict:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-
-        # Prepare Tools from Agent Framework format to Json Schema format
-        if chat_options.tools:
-            options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
-
-        # Currently Ollama only supports auto tool choice
+        # tool choice - Currently Ollama only supports auto tool choice
         if chat_options.tool_choice == "required":
             raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
-        # Always auto: remove tool_choice since Ollama does not expose configuration to force or disable tools.
-        if "tool_choice" in options_dict:
-            del options_dict["tool_choice"]
 
-        # Rename model_id to model for Ollama API, if no model is provided use the one from client initialization
-        if "model_id" in options_dict:
-            options_dict["model"] = options_dict.pop("model_id")
+        run_options = chat_options.to_dict(
+            exclude={
+                "type",
+                "instructions",
+                "tool_choice",  # Ollama does not support tool_choice configuration
+                "additional_properties",  # handled separately
+            }
+        )
 
-        if "model_id" not in options_dict:
-            options_dict["model"] = self.model_id
+        # messages
+        if messages and "messages" not in run_options:
+            run_options["messages"] = self._prepare_messages_for_ollama(messages)
+        if "messages" not in run_options:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
 
-        return options_dict
+        # translations between ChatOptions and Ollama API
+        translations = {"model_id": "model"}
+        for old_key, new_key in translations.items():
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
 
-    def _prepare_chat_history_for_request(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
-        ollama_messages = [self._agent_framework_message_to_ollama_message(msg) for msg in messages]
+        # model id
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
+            run_options["model"] = self.model_id
+
+        # tools
+        if chat_options.tools and (tools := self._prepare_tools_for_ollama(chat_options.tools)):
+            run_options["tools"] = tools
+
+        # additional properties
+        additional_options = {
+            key: value for key, value in chat_options.additional_properties.items() if value is not None
+        }
+        if additional_options:
+            run_options.update(additional_options)
+
+        return run_options
+
+    def _prepare_messages_for_ollama(self, messages: MutableSequence[ChatMessage]) -> list[OllamaMessage]:
+        ollama_messages = [self._prepare_message_for_ollama(msg) for msg in messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(ollama_messages))
 
-    def _agent_framework_message_to_ollama_message(self, message: ChatMessage) -> list[OllamaMessage]:
+    def _prepare_message_for_ollama(self, message: ChatMessage) -> list[OllamaMessage]:
         message_converters: dict[str, Callable[[ChatMessage], list[OllamaMessage]]] = {
             Role.SYSTEM.value: self._format_system_message,
             Role.USER.value: self._format_user_message,
@@ -250,21 +267,19 @@ class OllamaChatClient(BaseChatClient):
             if isinstance(item, FunctionResultContent)
         ]
 
-    def _ollama_response_to_agent_framework_content(self, response: OllamaChatResponse) -> list[Contents]:
+    def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Contents]:
         contents: list[Contents] = []
         if response.message.thinking:
             contents.append(TextReasoningContent(text=response.message.thinking))
         if response.message.content:
             contents.append(TextContent(text=response.message.content))
         if response.message.tool_calls:
-            tool_calls = self._parse_ollama_tool_calls(response.message.tool_calls)
+            tool_calls = self._parse_tool_calls_from_ollama(response.message.tool_calls)
             contents.extend(tool_calls)
         return contents
 
-    def _ollama_streaming_response_to_agent_framework_response(
-        self, response: OllamaChatResponse
-    ) -> ChatResponseUpdate:
-        contents = self._ollama_response_to_agent_framework_content(response)
+    def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+        contents = self._parse_contents_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
             role=Role.ASSISTANT,
@@ -272,8 +287,8 @@ class OllamaChatClient(BaseChatClient):
             created_at=response.created_at,
         )
 
-    def _ollama_response_to_agent_framework_response(self, response: OllamaChatResponse) -> ChatResponse:
-        contents = self._ollama_response_to_agent_framework_content(response)
+    def _parse_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponse:
+        contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
             messages=[ChatMessage(role=Role.ASSISTANT, contents=contents)],
@@ -285,7 +300,7 @@ class OllamaChatClient(BaseChatClient):
             ),
         )
 
-    def _parse_ollama_tool_calls(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Contents]:
+    def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Contents]:
         resp: list[Contents] = []
         for tool in tool_calls:
             fcc = FunctionCallContent(
@@ -297,7 +312,7 @@ class OllamaChatClient(BaseChatClient):
             resp.append(fcc)
         return resp
 
-    def _chat_to_tool_spec(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _prepare_tools_for_ollama(self, tools: list[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
         chat_tools: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):
