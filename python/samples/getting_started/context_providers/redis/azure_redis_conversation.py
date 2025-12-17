@@ -22,7 +22,7 @@ import asyncio
 import os
 
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_redis._chat_message_store import RedisChatMessageStore
+from agent_framework.redis import RedisChatMessageStore
 from azure.identity.aio import AzureCliCredential
 from redis.credentials import CredentialProvider
 
@@ -74,7 +74,7 @@ async def main() -> None:
     )
 
     # Create chat client
-    client = OpenAIChatClient(model_id=os.getenv("OPENAI_CHAT_MODEL_ID"), api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAIChatClient()
 
     # Create agent with Azure Redis store
     agent = client.create_agent(
@@ -100,7 +100,7 @@ async def main() -> None:
     print("User: ", query)
     print("Agent: ", result)
 
-    query = "Remember that anyone who does not clean shrimp will be eaten by a shark"
+    query = "Remember that I have a meeting at 3pm tomorrow"
     result = await agent.run(query)
     print("User: ", query)
     print("Agent: ", result)
