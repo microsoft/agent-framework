@@ -40,7 +40,7 @@ async def github_mcp_example() -> None:
 
     # 3. Create MCP tool with authentication
     # HostedMCPTool manages the connection to the MCP server and makes its tools available
-    # Set approval_mode="never_require" to allow mcp tool to execute without approval
+    # Set approval_mode="never_require" to allow the MCP tool to execute without approval
     github_mcp_tool = HostedMCPTool(
         name="GitHub",
         description="Tool for interacting with GitHub.",

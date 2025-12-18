@@ -12,7 +12,7 @@ The Model Context Protocol (MCP) is an open standard for connecting AI agents to
 |--------|------|-------------|
 | **Agent as MCP Server** | [`agent_as_mcp_server.py`](agent_as_mcp_server.py) | Shows how to expose an Agent Framework agent as an MCP server that other AI applications can connect to |
 | **API Key Authentication** | [`mcp_api_key_auth.py`](mcp_api_key_auth.py) | Demonstrates API key authentication with MCP servers |
-| **GitHub Integration with PAT** | [`mcp_github_pat.py`](mcp_github_pat.py) | Demonstrates connecting to a GitHub MCP server using Personal Access Token (PAT) authentication to interact with GitHub repositories, issues, and files |
+| **GitHub Integration with PAT** | [`mcp_github_pat.py`](mcp_github_pat.py) | Demonstrates connecting to GitHub's MCP server using Personal Access Token (PAT) authentication |
 
 ## Prerequisites
 
