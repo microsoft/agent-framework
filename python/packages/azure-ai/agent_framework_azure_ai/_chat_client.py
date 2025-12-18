@@ -411,19 +411,11 @@ class AzureAIAgentClient(BaseChatClient):
 
         # No thread ID was provided, so create a new thread.
         thread = await self.agents_client.threads.create(
-            tool_resources=run_options.get("tool_resources"), metadata=run_options.get("metadata")
+            tool_resources=run_options.get("tool_resources"),
+            metadata=run_options.get("metadata"),
+            messages=run_options.get("additional_messages"),
         )
-        thread_id = thread.id
-        # workaround for: https://github.com/Azure/azure-sdk-for-python/issues/42805
-        # this occurs when otel is enabled
-        # once fixed, in the function above, readd:
-        # `messages=run_options.pop("additional_messages")`
-        for msg in run_options.pop("additional_messages", []):
-            await self.agents_client.messages.create(
-                thread_id=thread_id, role=msg.role, content=msg.content, metadata=msg.metadata
-            )
-        # and remove until here.
-        return thread_id
+        return thread.id
 
     def _extract_url_citations(
         self, message_delta_chunk: MessageDeltaChunk, azure_search_tool_calls: list[dict[str, Any]]
@@ -822,6 +814,13 @@ class AzureAIAgentClient(BaseChatClient):
                 "tool_choice",  # handled separately
                 "response_format",  # handled separately
                 "additional_properties",  # handled separately
+                "frequency_penalty",  # not supported
+                "presence_penalty",  # not supported
+                "user",  # not supported
+                "stop",  # not supported
+                "logit_bias",  # not supported
+                "seed",  # not supported
+                "store",  # not supported
             }
         )
 
