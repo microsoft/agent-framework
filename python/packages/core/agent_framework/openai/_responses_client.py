@@ -128,7 +128,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
             # execute and process
-            if "text_format" in run_options:
+            if "text_format" not in run_options:
                 async for chunk in await client.responses.create(stream=True, **run_options):
                     yield self._parse_chunk_from_openai(
                         chunk, chat_options=chat_options, function_call_ids=function_call_ids
