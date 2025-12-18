@@ -86,7 +86,7 @@ async def test_default_orchestrator_merges_client_tools() -> None:
 
 
 async def test_default_orchestrator_with_camel_case_ids() -> None:
-    """Client tool declarations are merged with server tools before running agent."""
+    """Client tool is able to extract camelCase IDs."""
 
     agent = DummyAgent()
     orchestrator = DefaultOrchestrator()
@@ -113,14 +113,14 @@ async def test_default_orchestrator_with_camel_case_ids() -> None:
     async for event in orchestrator.run(context):
         events.append(event)
 
-    # assert the last event has the exacted run_id and thread_id
+    # assert the last event has the expected run_id and thread_id
     last_event = events[-1]
     assert last_event.run_id == "test-camelcase-runid"
     assert last_event.thread_id == "test-camelcase-threadid"
 
 
 async def test_default_orchestrator_with_snake_case_ids() -> None:
-    """Client tool declarations are merged with server tools before running agent."""
+    """Client tool is able to extract snake_case IDs."""
 
     agent = DummyAgent()
     orchestrator = DefaultOrchestrator()
@@ -147,7 +147,7 @@ async def test_default_orchestrator_with_snake_case_ids() -> None:
     async for event in orchestrator.run(context):
         events.append(event)
 
-    # assert the last event has the exacted run_id and thread_id
+    # assert the last event has the expected run_id and thread_id
     last_event = events[-1]
     assert last_event.run_id == "test-snakecase-runid"
     assert last_event.thread_id == "test-snakecase-threadid"
