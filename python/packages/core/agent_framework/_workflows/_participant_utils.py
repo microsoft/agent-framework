@@ -47,15 +47,13 @@ def wrap_participant(participant: AgentProtocol | Executor, *, executor_id: str 
     """Represent `participant` as an `Executor`."""
     if isinstance(participant, Executor):
         return participant
+
     if not isinstance(participant, AgentProtocol):
         raise TypeError(
             f"Participants must implement AgentProtocol or be Executor instances. Got {type(participant).__name__}."
         )
-    name = getattr(participant, "name", None)
-    if executor_id is None:
-        if not name:
-            raise ValueError("Agent participants must expose a stable 'name' attribute.")
-        executor_id = str(name)
+
+    executor_id = executor_id or participant.display_name
     return AgentExecutor(participant, id=executor_id)
 
 

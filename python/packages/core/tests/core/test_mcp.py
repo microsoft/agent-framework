@@ -24,14 +24,14 @@ from agent_framework import (
 )
 from agent_framework._mcp import (
     MCPTool,
-    _ai_content_to_mcp_types,
-    _chat_message_to_mcp_types,
     _get_input_model_from_mcp_prompt,
     _get_input_model_from_mcp_tool,
-    _mcp_call_tool_result_to_ai_contents,
-    _mcp_prompt_message_to_chat_message,
-    _mcp_type_to_ai_content,
     _normalize_mcp_name,
+    _parse_content_from_mcp,
+    _parse_contents_from_mcp_tool_result,
+    _parse_message_from_mcp,
+    _prepare_content_for_mcp,
+    _prepare_message_for_mcp,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
@@ -60,7 +60,7 @@ def test_normalize_mcp_name():
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
-    ai_content = _mcp_prompt_message_to_chat_message(mcp_message)
+    ai_content = _parse_message_from_mcp(mcp_message)
 
     assert isinstance(ai_content, ChatMessage)
     assert ai_content.role.value == "user"
@@ -70,22 +70,26 @@ def test_mcp_prompt_message_to_ai_content():
     assert ai_content.raw_representation == mcp_message
 
 
-def test_mcp_call_tool_result_to_ai_contents():
+def test_parse_contents_from_mcp_tool_result():
     """Test conversion from MCP tool result to AI contents."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data="xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data=b"abc", mimeType="image/webp"),
         ]
     )
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
-    assert len(ai_contents) == 2
+    assert len(ai_contents) == 3
     assert isinstance(ai_contents[0], TextContent)
     assert ai_contents[0].text == "Result text"
     assert isinstance(ai_contents[1], DataContent)
     assert ai_contents[1].uri == "data:image/png;base64,xyz"
     assert ai_contents[1].media_type == "image/png"
+    assert isinstance(ai_contents[2], DataContent)
+    assert ai_contents[2].uri == "data:image/webp;base64,abc"
+    assert ai_contents[2].media_type == "image/webp"
 
 
 def test_mcp_call_tool_result_with_meta_error():
@@ -96,7 +100,7 @@ def test_mcp_call_tool_result_with_meta_error():
         _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -127,7 +131,7 @@ def test_mcp_call_tool_result_with_meta_arbitrary_data():
         },
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -149,7 +153,7 @@ def test_mcp_call_tool_result_with_meta_merging_existing_properties():
     text_content = types.TextContent(type="text", text="Test content")
     mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     content = ai_contents[0]
@@ -165,7 +169,7 @@ def test_mcp_call_tool_result_with_meta_none():
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
     # No _meta field set
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -183,11 +187,11 @@ def test_mcp_call_tool_result_regression_successful_workflow():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="data:image/jpeg;base64,abc123", mimeType="image/jpeg"),
+            types.ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
         ]
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     # Verify basic conversion still works correctly
     assert len(ai_contents) == 2
@@ -209,7 +213,7 @@ def test_mcp_call_tool_result_regression_successful_workflow():
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Sample text"
@@ -218,8 +222,9 @@ def test_mcp_content_types_to_ai_content_text():
 
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
-    mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    mcp_content = types.ImageContent(type="image", data="abc", mimeType="image/jpeg")
+    mcp_content = types.ImageContent(type="image", data=b"abc", mimeType="image/jpeg")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:image/jpeg;base64,abc"
@@ -229,8 +234,8 @@ def test_mcp_content_types_to_ai_content_image():
 
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
-    mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    mcp_content = types.AudioContent(type="audio", data="def", mimeType="audio/wav")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:audio/wav;base64,def"
@@ -246,7 +251,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
         name="test_resource",
         mimeType="application/json",
     )
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, UriContent)
     assert ai_content.uri == "https://example.com/resource"
@@ -262,7 +267,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_text():
         text="Embedded text content",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=text_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Embedded text content"
@@ -278,7 +283,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=blob_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)[0]
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
@@ -289,7 +294,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
 def test_ai_content_to_mcp_content_types_text():
     """Test conversion of AI text content to MCP content."""
     ai_content = TextContent(text="Sample text")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.TextContent)
     assert mcp_content.type == "text"
@@ -299,7 +304,7 @@ def test_ai_content_to_mcp_content_types_text():
 def test_ai_content_to_mcp_content_types_data_image():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:image/png;base64,xyz", media_type="image/png")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ImageContent)
     assert mcp_content.type == "image"
@@ -310,7 +315,7 @@ def test_ai_content_to_mcp_content_types_data_image():
 def test_ai_content_to_mcp_content_types_data_audio():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:audio/mpeg;base64,xyz", media_type="audio/mpeg")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.AudioContent)
     assert mcp_content.type == "audio"
@@ -324,7 +329,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
         uri="data:application/octet-stream;base64,xyz",
         media_type="application/octet-stream",
     )
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.EmbeddedResource)
     assert mcp_content.type == "resource"
@@ -335,7 +340,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
 def test_ai_content_to_mcp_content_types_uri():
     """Test conversion of AI URI content to MCP content."""
     ai_content = UriContent(uri="https://example.com/resource", media_type="application/json")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ResourceLink)
     assert mcp_content.type == "resource_link"
@@ -343,7 +348,7 @@ def test_ai_content_to_mcp_content_types_uri():
     assert mcp_content.mimeType == "application/json"
 
 
-def test_chat_message_to_mcp_types():
+def test_prepare_message_for_mcp():
     message = ChatMessage(
         role="user",
         contents=[
@@ -351,7 +356,7 @@ def test_chat_message_to_mcp_types():
             DataContent(uri="data:image/png;base64,xyz", media_type="image/png"),
         ],
     )
-    mcp_contents = _chat_message_to_mcp_types(message)
+    mcp_contents = _prepare_message_for_mcp(message)
     assert len(mcp_contents) == 2
     assert isinstance(mcp_contents[0], types.TextContent)
     assert isinstance(mcp_contents[1], types.ImageContent)
