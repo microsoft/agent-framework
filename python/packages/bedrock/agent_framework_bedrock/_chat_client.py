@@ -31,7 +31,7 @@ from agent_framework import (
 )
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
@@ -72,7 +72,7 @@ class BedrockSettings(AFBaseSettings):
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class BedrockChatClient(BaseChatClient):
     """Async chat client for Amazon Bedrock's Converse API."""
