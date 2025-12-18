@@ -67,7 +67,6 @@ def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manag
         FoundryLocalClient(model_id="test-model-id", bootstrap=False, env_file_path="test.env")
 
         mock_manager_class.assert_called_once_with(
-            alias_or_model_id="test-model-id",
             bootstrap=False,
             timeout=None,
         )
@@ -82,7 +81,6 @@ def test_foundry_local_client_init_with_timeout(mock_foundry_local_manager: Magi
         FoundryLocalClient(model_id="test-model-id", timeout=60.0, env_file_path="test.env")
 
         mock_manager_class.assert_called_once_with(
-            alias_or_model_id="test-model-id",
             bootstrap=True,
             timeout=60.0,
         )
@@ -128,3 +126,73 @@ def test_foundry_local_client_init_from_env(
         client = FoundryLocalClient(env_file_path="test.env")
 
         assert client.model_id == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
+
+
+def test_foundry_local_client_init_with_device(mock_foundry_local_manager: MagicMock) -> None:
+    """Test FoundryLocalClient initialization with device parameter."""
+    from foundry_local.models import DeviceType
+
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+        return_value=mock_foundry_local_manager,
+    ):
+        FoundryLocalClient(model_id="test-model-id", device=DeviceType.CPU, env_file_path="test.env")
+
+        mock_foundry_local_manager.get_model_info.assert_called_once_with(
+            alias_or_model_id="test-model-id",
+            device=DeviceType.CPU,
+        )
+        mock_foundry_local_manager.download_model.assert_called_once_with(
+            alias_or_model_id="test-model-id",
+            device=DeviceType.CPU,
+        )
+        mock_foundry_local_manager.load_model.assert_called_once_with(
+            alias_or_model_id="test-model-id",
+            device=DeviceType.CPU,
+        )
+
+
+def test_foundry_local_client_init_model_not_found_with_device(mock_foundry_local_manager: MagicMock) -> None:
+    """Test FoundryLocalClient error message includes device when model not found with device specified."""
+    from foundry_local.models import DeviceType
+
+    mock_foundry_local_manager.get_model_info.return_value = None
+
+    with (
+        patch(
+            "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+            return_value=mock_foundry_local_manager,
+        ),
+        pytest.raises(ServiceInitializationError, match="unknown-model:GPU.*not found"),
+    ):
+        FoundryLocalClient(model_id="unknown-model", device=DeviceType.GPU, env_file_path="test.env")
+
+
+def test_foundry_local_client_init_with_prepare_model_false(mock_foundry_local_manager: MagicMock) -> None:
+    """Test FoundryLocalClient initialization with prepare_model=False skips download and load."""
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+        return_value=mock_foundry_local_manager,
+    ):
+        FoundryLocalClient(model_id="test-model-id", prepare_model=False, env_file_path="test.env")
+
+        mock_foundry_local_manager.download_model.assert_not_called()
+        mock_foundry_local_manager.load_model.assert_not_called()
+
+
+def test_foundry_local_client_init_calls_download_and_load(mock_foundry_local_manager: MagicMock) -> None:
+    """Test FoundryLocalClient initialization calls download_model and load_model by default."""
+    with patch(
+        "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
+        return_value=mock_foundry_local_manager,
+    ):
+        FoundryLocalClient(model_id="test-model-id", env_file_path="test.env")
+
+        mock_foundry_local_manager.download_model.assert_called_once_with(
+            alias_or_model_id="test-model-id",
+            device=None,
+        )
+        mock_foundry_local_manager.load_model.assert_called_once_with(
+            alias_or_model_id="test-model-id",
+            device=None,
+        )

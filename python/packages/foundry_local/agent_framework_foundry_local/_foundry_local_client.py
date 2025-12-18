@@ -143,7 +143,7 @@ class FoundryLocalClient(OpenAIBaseChatClient):
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{settings.model_id}:{device}' not found in Foundry Local."
+                f"Model with ID or alias '{settings.model_id}:{device.value}' not found in Foundry Local."
                 if device
                 else f"Model with ID or alias '{settings.model_id}' for your current device not found in Foundry Local."
             )
