@@ -35,7 +35,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      dotnetChanges: ${{ steps.filter.outputs.dotnet}}
+      dotnetChanges: ${{ steps.filter.outputs.dotnet }}
+      cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -44,10 +45,15 @@ jobs:
           filters: |
             dotnet:
               - 'dotnet/**'
+            cosmosdb:
+              - 'dotnet/src/Microsoft.Agents.AI.CosmosNoSql/**'
       # run only if 'dotnet' files were changed
       - name: dotnet tests
         if: steps.filter.outputs.dotnet == 'true'
         run: echo "Dotnet file"
+      - name: dotnet CosmosDB tests
+        if: steps.filter.outputs.cosmosdb == 'true'
+        run: echo "Dotnet CosmosDB changes"
       # run only if not 'dotnet' files were changed
       - name: not dotnet tests
         if: steps.filter.outputs.dotnet != 'true'
@@ -77,6 +83,16 @@ jobs:
               dotnet
               python
               workflow-samples
+              
+      # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
+      - name: Start Azure Cosmos DB Emulator
+        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || (github.event_name != 'pull_request' && matrix.integration-tests)) }}
+        shell: pwsh
+        run: |
+          Write-Host "Launching Azure Cosmos DB Emulator"
+          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
+          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.0.1
@@ -123,17 +139,7 @@ jobs:
           popd
           popd
           rm -rf "$TEMP_DIR"
-
-      # Start Cosmos DB Emulator for Cosmos-based unit tests (only on Windows)
-      - name: Start Azure Cosmos DB Emulator
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Write-Host "Launching Azure Cosmos DB Emulator"
-          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
-          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
-          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
-
+          
       - name: Run Unit Tests
         shell: bash
         run: |
@@ -225,7 +231,7 @@ jobs:
 
       - name: Upload coverage report artifact
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload

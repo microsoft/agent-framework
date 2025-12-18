@@ -154,6 +154,14 @@ Example:
 chat_completion = OpenAIChatClient(env_file_path="openai.env")
 ```
 
+# Method naming inside connectors
+
+When naming methods inside connectors, we have a loose preference for using the following conventions:
+- Use `_prepare_<object>_for_<purpose>` as a prefix for methods that prepare data for sending to the external service.
+- Use `_parse_<object>_from_<source>` as a prefix for methods that process data received from the external service.
+
+This is not a strict rule, but a guideline to help maintain consistency across the codebase.
+
 ## Tests
 
 All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.

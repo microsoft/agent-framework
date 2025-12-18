@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="11.0.0" />
+    <PackageVersion Include="Anthropic" Version="12.0.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.1.0" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
@@ -19,10 +19,10 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.440" />
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.3" />
-    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.4" />
+    <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
+    <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.5" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
-    <PackageVersion Include="Azure.AI.OpenAI" Version="2.7.0-beta.2" />
+    <PackageVersion Include="Azure.AI.OpenAI" Version="2.8.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.17.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- Google Gemini  -->
@@ -61,10 +61,9 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.0.0" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.1.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.1.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.AzureAIInference" Version="10.0.0-preview.1.25559.3" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.1.0-preview.1.25608.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.1.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.1.1" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.1.1-preview.1.25612.2" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
@@ -101,11 +100,10 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="Anthropic.SDK" Version="5.8.0" />
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.11" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
-    <PackageVersion Include="OpenAI" Version="2.7.0" />
+    <PackageVersion Include="OpenAI" Version="2.8.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.78.0" />
     <!-- Workflows -->

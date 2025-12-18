@@ -122,11 +122,17 @@ def _print_handoff_request(request: HandoffUserInputRequest, request_id: str) ->
     print(f"Awaiting agent: {request.awaiting_agent_id}")
     print(f"Prompt: {request.prompt}")
 
-    print("\nConversation so far:")
-    for msg in request.conversation[-3:]:
-        author = msg.author_name or msg.role.value
-        snippet = msg.text[:120] + "..." if len(msg.text) > 120 else msg.text
-        print(f"  {author}: {snippet}")
+    # Note: After checkpoint restore, conversation may be empty because it's not serialized
+    # to prevent duplication (the conversation is preserved in the coordinator's state).
+    # See issue #2667.
+    if request.conversation:
+        print("\nConversation so far:")
+        for msg in request.conversation[-3:]:
+            author = msg.author_name or msg.role.value
+            snippet = msg.text[:120] + "..." if len(msg.text) > 120 else msg.text
+            print(f"  {author}: {snippet}")
+    else:
+        print("\n(Conversation restored from checkpoint - context preserved in workflow state)")
 
     print(f"{'=' * 60}\n")
 
@@ -273,11 +279,7 @@ async def resume_with_responses(
 
         elif isinstance(event, WorkflowOutputEvent):
             print("\n[Workflow Output Event - Conversation Update]")
-            if (
-                event.data
-                and isinstance(event.data, list)
-                and all(isinstance(msg, ChatMessage) for msg in event.data)
-            ):
+            if event.data and isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):
                 # Now safe to cast event.data to list[ChatMessage]
                 conversation = cast(list[ChatMessage], event.data)
                 for msg in conversation[-3:]:  # Show last 3 messages

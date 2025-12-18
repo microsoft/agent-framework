@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     RequestInfoEvent,
     WorkflowErrorEvent,
@@ -366,8 +367,11 @@ class WorkflowExecutor(Executor):
         logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution {execution_id}")
 
         try:
-            # Run the sub-workflow and collect all events
-            result = await self.workflow.run(input_data)
+            # Get kwargs from parent workflow's SharedState to propagate to subworkflow
+            parent_kwargs: dict[str, Any] = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY) or {}
+
+            # Run the sub-workflow and collect all events, passing parent kwargs
+            result = await self.workflow.run(input_data, **parent_kwargs)
 
             logger.debug(
                 f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "

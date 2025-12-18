@@ -63,7 +63,7 @@ def _check_openai_version_for_callable_api_key() -> None:
             raise ServiceInitializationError(
                 f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
                 f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
-                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=0.1.118 "
+                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=1.0.0 "
                 f"to allow newer OpenAI versions."
             )
     except ServiceInitializationError:
@@ -160,16 +160,16 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    async def initialize_client(self) -> None:
+    async def _initialize_client(self) -> None:
         """Initialize OpenAI client asynchronously.
 
         Override in subclasses to initialize the OpenAI client asynchronously.
         """
         pass
 
-    async def ensure_client(self) -> AsyncOpenAI:
+    async def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client is initialized."""
-        await self.initialize_client()
+        await self._initialize_client()
         if self.client is None:
             raise ServiceInitializationError("OpenAI client is not initialized")
 

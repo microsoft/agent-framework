@@ -925,6 +925,10 @@ class DataContent(BaseContent):
             image_data = b"raw image bytes"
             data_content = DataContent(data=image_data, media_type="image/png")
 
+            # Create from base64-encoded string
+            base64_string = "iVBORw0KGgoAAAANS..."
+            data_content = DataContent(data=base64_string, media_type="image/png")
+
             # Create from data URI
             data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
             data_content = DataContent(uri=data_uri)
@@ -986,11 +990,38 @@ class DataContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
 
+    @overload
+    def __init__(
+        self,
+        *,
+        data: str,
+        media_type: str,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a DataContent instance with base64-encoded string data.
+
+        Important:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use ``UriContent`` for online resources.
+
+        Keyword Args:
+            data: The base64-encoded string data represented by this instance.
+                The data is used directly to construct a data URI.
+            media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+
     def __init__(
         self,
         *,
         uri: str | None = None,
-        data: bytes | None = None,
+        data: bytes | str | None = None,
         media_type: str | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1006,8 +1037,9 @@ class DataContent(BaseContent):
         Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
+            data: The binary data or base64-encoded string represented by this instance.
+                If bytes, the data is transformed into a base64-encoded data URI.
+                If str, it is assumed to be already base64-encoded and used directly.
             media_type: The media type of the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1017,7 +1049,9 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+            uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
         validated_uri = self._validate_uri(uri)
@@ -1816,13 +1850,14 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
     """Prepare the values of the function call results."""
     if isinstance(content, Contents):
         # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+        # Use default=str to handle datetime and other non-JSON-serializable objects
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
-    # fallback
-    return json.dumps(dumpable)
+    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
+    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants

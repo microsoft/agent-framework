@@ -67,7 +67,7 @@ internal sealed class HandoffAgentExecutor(
             List<AgentRunResponseUpdate> updates = [];
             List<ChatMessage> allMessages = handoffState.Messages;
 
-            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName);
+            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
             await foreach (var update in this._agent.RunStreamingAsync(allMessages,
                                                                        options: this._agentOptions,
@@ -85,7 +85,7 @@ internal sealed class HandoffAgentExecutor(
                                 new AgentRunResponseUpdate
                                 {
                                     AgentId = this._agent.Id,
-                                    AuthorName = this._agent.DisplayName,
+                                    AuthorName = this._agent.Name ?? this._agent.Id,
                                     Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
                                     CreatedAt = DateTimeOffset.UtcNow,
                                     MessageId = Guid.NewGuid().ToString("N"),

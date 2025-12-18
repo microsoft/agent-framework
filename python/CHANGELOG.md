@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **agent-framework-azurefunctions**: Durable Agents: platforms should use consistent entity method names (#2234)
+
+## [1.0.0b251216] - 2025-12-16
+
+### Added
+
+- **agent-framework-ollama**: Ollama connector for Agent Framework (#1104)
+- **agent-framework-core**: Added custom args and thread object to `ai_function` kwargs (#2769)
+- **agent-framework-core**: Enable checkpointing for `WorkflowAgent` (#2774)
+
+### Changed
+
+- **agent-framework-core**: [BREAKING] Observability updates (#2782)
+- **agent-framework-core**: Use agent description in `HandoffBuilder` auto-generated tools (#2714)
+- **agent-framework-core**: Remove warnings from workflow builder when not using factories (#2808)
+
+### Fixed
+
+- **agent-framework-core**: Fix `WorkflowAgent` to include thread conversation history (#2774)
+- **agent-framework-core**: Fix context duplication in handoff workflows when restoring from checkpoint (#2867)
+- **agent-framework-core**: Fix middleware terminate flag to exit function calling loop immediately (#2868)
+- **agent-framework-core**: Fix `WorkflowAgent` to emit `yield_output` as agent response (#2866)
+- **agent-framework-core**: Filter framework kwargs from MCP tool invocations (#2870)
+
 ## [1.0.0b251211] - 2025-12-11
 
 ### Added
@@ -366,7 +392,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...HEAD
+[1.0.0b251216]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...python-1.0.0b251216
 [1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
 [1.0.0b251209]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251204...python-1.0.0b251209
 [1.0.0b251204]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251120...python-1.0.0b251204
