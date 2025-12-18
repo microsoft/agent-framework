@@ -8,22 +8,11 @@ import os
 import dotenv
 from agent_framework import ChatMessage, DataContent, Role, TextContent
 from agent_framework.observability import get_tracer
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
-
-
-"""
-This sample shows you can leverage the built-in telemetry in Azure AI.
-It uses the Azure AI client to setup the telemetry, this calls out to
-Azure AI for the connection string of the attached Application Insights
-instance.
-
-You must add an Application Insights instance to your Azure AI project
-for this sample to work.
-"""
 
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
 dotenv.load_dotenv()
@@ -44,9 +33,10 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIAgentClient(project_client=project) as client,
+        AzureAIClient(project_client=project, agent_name="ImageAnalyzerAgent") as client,
     ):
         await client.setup_azure_ai_observability(enable_sensitive_data=True)
+
         with get_tracer().start_as_current_span(
             name="Basic Input and Output for Image Interpretation", kind=SpanKind.CLIENT
         ) as current_span:
@@ -58,9 +48,8 @@ async def main() -> None:
                 contents=[
                     TextContent(
                             text=(
-                                "Please analyze the attached image.\n"
-                                "1. Describe the image in detail.\n"
-                                "2. Return JSON exactly in this format:\n"
+                                "Please analyze the attached image and describe what you see in detail.\n"
+                                "Return your response as JSON in this format:\n"
                                 "{\n"
                                 '  "description": "<detailed summary>",\n'
                                 '  "image_uri": "data:image/png;base64,<base64 data for the full image>"\n'

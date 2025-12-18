@@ -10,7 +10,7 @@ from typing import Any, Annotated
 import dotenv
 from agent_framework import ChatMessage, DataContent, Role, TextContent, ChatAgent
 from agent_framework.observability import get_tracer
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from opentelemetry.trace import SpanKind
@@ -18,33 +18,32 @@ from opentelemetry.trace.span import format_trace_id
 from pydantic import Field
 
 
-"""
-This sample, shows you can leverage the built-in telemetry in Azure AI.
-It uses the Azure AI client to setup the telemetry, this calls out to
-Azure AI for the connection string of the attached Application Insights
-instance.
-
-You must add an Application Insights instance to your Azure AI project
-for this sample to work.
-"""
-
 # For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
 dotenv.load_dotenv()
 
-async def get_image_data(
-    location: Annotated[str, Field(description="Get image by textid")],
-) -> str:
-    textid = "elephant-20251030T233148"
-    return f"The image corresponding to {textid} is image_uri: 1234 and the label is elephant."
 
-# Image analysis function replacing get_weather
-def create_sample_image() -> tuple[str]:
-    """Load and encode the elephant image as base64."""
+def load_sample_image() -> str:
+    """Load and encode the elephant image as base64 data URI."""
     with open("../multimodal_input/elephant.jpg", "rb") as f:
         image_data = f.read()
         image_base64 = base64.b64encode(image_data).decode('utf-8')
         image_uri = f"data:image/jpeg;base64,{image_base64}"
     return image_uri
+
+
+async def store_image_analysis(
+    description: Annotated[str, Field(description="A detailed description of the image")],
+    main_subject: Annotated[str, Field(description="The main subject of the image")],
+    image_uri: Annotated[str, Field(description="The data URI of the image (can be shortened/truncated)")],
+) -> str:
+    """Store the image analysis results including the image URI. Call this after analyzing an image."""
+    print(f"\n[Tool Called] Storing analysis:")
+    print(f"  Main subject: {main_subject}")
+    print(f"  Description: {description[:100]}...")
+    print(f"  Image URI: {image_uri}")
+    
+    # In a real app, you'd save this to a database
+    return f"Successfully stored analysis for '{main_subject}' with image_uri"
 
 
 
@@ -53,21 +52,25 @@ async def main() -> None:
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project,
-        AzureAIAgentClient(project_client=project) as client,
+        AzureAIClient(project_client=project, agent_name="ImageAnalyzerAgent") as client,
     ):
         await client.setup_azure_ai_observability(enable_sensitive_data=True)
         with get_tracer().start_as_current_span(
-            name="Input and Image", kind=SpanKind.CLIENT
+            name="Image Analysis", kind=SpanKind.CLIENT
         ) as current_span:
             print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
-            image_uri = create_sample_image()
+            
+            # Load the image
+            image_uri = load_sample_image()
             
             agent = ChatAgent(
                 chat_client=client,
                 name="ImageInspector",
-                tools=get_image_data,
+                tools=[store_image_analysis],
                 instructions=(
-                    "You are an assistant that describes images and returns JSON responses with an embedded data URI."
+                    "You are an assistant that analyzes images. "
+                    "After analyzing an image, use the store_image_analysis tool to save the results. "
+                    "For image_uri, you can pass a shortened/truncated version of the data URI."
                 ),
             )
             
