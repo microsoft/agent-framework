@@ -473,9 +473,7 @@ class BedrockChatClient(BaseChatClient):
             if isinstance(tool_use, MutableMapping):
                 tool_name = tool_use.get("name")
                 if not tool_name:
-                    raise ServiceInvalidResponseError(
-                        "Bedrock response missing required tool name in toolUse block."
-                    )
+                    raise ServiceInvalidResponseError("Bedrock response missing required tool name in toolUse block.")
                 contents.append(
                     FunctionCallContent(
                         call_id=tool_use.get("toolUseId") or self._generate_tool_call_id(),

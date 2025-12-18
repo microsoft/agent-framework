@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-
+import logging
 from collections.abc import Sequence
 
 from agent_framework import (
@@ -14,7 +14,6 @@ from agent_framework import (
     ToolMode,
     ai_function,
 )
-import logging
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -22,12 +21,12 @@ from agent_framework_bedrock import BedrockChatClient
 @ai_function
 def get_weather(city: str) -> dict[str, str]:
     """Return a mock forecast for the requested city."""
-
     normalized = city.strip() or "New York"
     return {"city": normalized, "forecast": "72F and sunny"}
 
 
 async def main() -> None:
+    """Run the Bedrock sample agent, invoke the weather tool, and log the response."""
     agent = ChatAgent(
         chat_client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
@@ -59,6 +58,7 @@ def _log_contents(tag: str, contents: Sequence[object]) -> None:
             logging.info(f"  {idx}. tool_result ({content.call_id}) -> {content.result}")
         else:  # pragma: no cover - defensive
             logging.info(f"  {idx}. {content.type}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
