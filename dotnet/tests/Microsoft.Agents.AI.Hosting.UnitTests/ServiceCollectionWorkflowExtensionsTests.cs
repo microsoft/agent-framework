@@ -48,7 +48,7 @@ public class ServiceCollectionWorkflowExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that AddWorkflow returns the IHostWorkflowBuilder instance.
+    /// Verifies that AddWorkflow returns the IHostedWorkflowBuilder instance.
     /// </summary>
     [Fact]
     public void AddWorkflow_ValidParameters_ReturnsBuilder()
