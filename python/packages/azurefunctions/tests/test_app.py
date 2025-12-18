@@ -338,7 +338,7 @@ class TestAgentEntityOperations:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        result = await entity.run_agent(
+        result = await entity.run(
             mock_context,
             {"message": "Test message", "thread_id": "test-conv-123", "correlationId": "corr-app-entity-1"},
         )
@@ -358,7 +358,7 @@ class TestAgentEntityOperations:
         mock_context = Mock()
 
         # Send first message
-        await entity.run_agent(
+        await entity.run(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-2"}
         )
 
@@ -367,7 +367,7 @@ class TestAgentEntityOperations:
         assert len(history) == 1  # Just the user message
 
         # Send second message
-        await entity.run_agent(
+        await entity.run(
             mock_context, {"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2b"}
         )
 
@@ -398,12 +398,12 @@ class TestAgentEntityOperations:
 
         assert len(entity.state.data.conversation_history) == 0
 
-        await entity.run_agent(
+        await entity.run(
             mock_context, {"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-3a"}
         )
         assert len(entity.state.data.conversation_history) == 2
 
-        await entity.run_agent(
+        await entity.run(
             mock_context, {"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"}
         )
         assert len(entity.state.data.conversation_history) == 4
@@ -433,8 +433,36 @@ class TestAgentEntityFactory:
 
         assert callable(entity_function)
 
+    def test_entity_function_handles_run_operation(self) -> None:
+        """Test that the entity function handles the run operation."""
+        mock_agent = Mock()
+        mock_agent.run = AsyncMock(
+            return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
+        )
+
+        entity_function = create_agent_entity(mock_agent)
+
+        # Mock context
+        mock_context = Mock()
+        mock_context.operation_name = "run"
+        mock_context.get_input.return_value = {
+            "message": "Test message",
+            "thread_id": "conv-123",
+            "correlationId": "corr-app-factory-1",
+        }
+        mock_context.get_state.return_value = None
+
+        # Execute entity function
+        entity_function(mock_context)
+
+        # Verify result was set
+        assert mock_context.set_result.called
+        assert mock_context.set_state.called
+        result_call = mock_context.set_result.call_args[0][0]
+        assert "error" not in result_call
+
     def test_entity_function_handles_run_agent_operation(self) -> None:
-        """Test that the entity function handles the run_agent operation."""
+        """Test that the entity function handles the deprecated run_agent operation for backward compatibility."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
@@ -458,6 +486,8 @@ class TestAgentEntityFactory:
         # Verify result was set
         assert mock_context.set_result.called
         assert mock_context.set_state.called
+        result_call = mock_context.set_result.call_args[0][0]
+        assert "error" not in result_call
 
     def test_entity_function_handles_reset_operation(self) -> None:
         """Test that the entity function handles the reset operation."""
@@ -585,7 +615,7 @@ class TestErrorHandling:
         entity = AgentEntity(mock_agent)
         mock_context = Mock()
 
-        result = await entity.run_agent(
+        result = await entity.run(
             mock_context, {"message": "Test message", "thread_id": "conv-1", "correlationId": "corr-app-error-1"}
         )
 
@@ -605,7 +635,7 @@ class TestErrorHandling:
         entity_function = create_agent_entity(mock_agent)
 
         mock_context = Mock()
-        mock_context.operation_name = "run_agent"
+        mock_context.operation_name = "run"
         mock_context.get_input.side_effect = Exception("Input error")
         mock_context.get_state.return_value = None
 

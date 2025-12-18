@@ -886,6 +886,8 @@ def _parse_annotation(annotation: Any) -> Any:
     If the second annotation (after the type) is a string, then we convert that to a Pydantic Field description.
     The rest are returned as-is, allowing for multiple annotations.
 
+    Literal types are returned as-is to preserve their enum-like values.
+
     Args:
         annotation: The type annotation to parse.
 
@@ -894,6 +896,12 @@ def _parse_annotation(annotation: Any) -> Any:
     """
     origin = get_origin(annotation)
     if origin is not None:
+        # Literal types should be returned as-is - their args are the allowed values,
+        # not type annotations to be parsed. For example, Literal["Data", "Security"]
+        # has args ("Data", "Security") which are the valid string values.
+        if origin is Literal:
+            return annotation
+
         args = get_args(annotation)
         # For other generics, return the origin type (e.g., list for List[int])
         if len(args) > 1 and isinstance(args[1], str):
@@ -1770,11 +1778,6 @@ def _handle_function_calls_response(
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
-
-            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
-            tools = _extract_tools(kwargs)
-            if tools and kwargs.get("tool_choice") is None:
-                kwargs["tool_choice"] = "auto"
 
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)
