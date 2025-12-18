@@ -3,8 +3,7 @@
 import asyncio
 
 from agent_framework import TextReasoningContent
-
-from agent_framework_ollama import OllamaChatClient
+from agent_framework.ollama import OllamaChatClient
 
 """
 Ollama Agent Reasoning Example

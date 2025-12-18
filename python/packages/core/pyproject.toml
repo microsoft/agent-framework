@@ -52,6 +52,7 @@ all = [
     "agent-framework-devui",
     "agent-framework-lab",
     "agent-framework-mem0",
+    "agent-framework-ollama",
     "agent-framework-purview",
     "agent-framework-redis",
 ]
