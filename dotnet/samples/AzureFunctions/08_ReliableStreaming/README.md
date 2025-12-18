@@ -244,7 +244,7 @@ These patterns may be overkill for:
 
 ## Cleanup
 
-To stop and remove the redis Docker containers:
+To stop and remove the Redis Docker containers:
 
 ```bash
 docker stop redis

@@ -33,8 +33,6 @@ namespace ReliableStreaming;
 /// </remarks>
 public sealed class FunctionTriggers
 {
-    private const string TravelPlannerAgentName = "TravelPlanner";
-
     private readonly RedisStreamResponseHandler _streamHandler;
     private readonly ILogger<FunctionTriggers> _logger;
 
@@ -94,7 +92,7 @@ public sealed class FunctionTriggers
             return new BadRequestObjectResult("Request body must contain a prompt.");
         }
 
-        AIAgent agentProxy = durableClient.AsDurableAgentProxy(context, TravelPlannerAgentName);
+        AIAgent agentProxy = durableClient.AsDurableAgentProxy(context, "TravelPlanner");
 
         // Create a new agent thread
         AgentThread thread = agentProxy.GetNewThread();
@@ -227,7 +225,7 @@ public sealed class FunctionTriggers
         }
         catch (OperationCanceledException)
         {
-            this._logger.LogInformation("Client disconnected from stream {SessionKey}", conversationId);
+            this._logger.LogInformation("Client disconnected from stream {ConversationId}", conversationId);
         }
 
         return new EmptyResult();
