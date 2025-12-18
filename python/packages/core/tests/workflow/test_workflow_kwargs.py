@@ -492,6 +492,117 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
 # endregion
 
 
+# region WorkflowAgent (as_agent) kwargs Tests
+
+
+async def test_workflow_as_agent_run_propagates_kwargs_to_underlying_agent() -> None:
+    """Test that kwargs passed to workflow_agent.run() flow through to the underlying agents."""
+    agent = _KwargsCapturingAgent(name="inner_agent")
+    workflow = SequentialBuilder().participants([agent]).build()
+    workflow_agent = workflow.as_agent(name="TestWorkflowAgent")
+
+    custom_data = {"endpoint": "https://api.example.com", "version": "v1"}
+    user_token = {"user_name": "alice", "access_level": "admin"}
+
+    _ = await workflow_agent.run(
+        "test message",
+        custom_data=custom_data,
+        user_token=user_token,
+    )
+
+    # Verify inner agent received kwargs
+    assert len(agent.captured_kwargs) >= 1, "Inner agent should have been invoked at least once"
+    received = agent.captured_kwargs[0]
+    assert "custom_data" in received, "Inner agent should receive custom_data kwarg"
+    assert "user_token" in received, "Inner agent should receive user_token kwarg"
+    assert received["custom_data"] == custom_data
+    assert received["user_token"] == user_token
+
+
+async def test_workflow_as_agent_run_stream_propagates_kwargs_to_underlying_agent() -> None:
+    """Test that kwargs passed to workflow_agent.run_stream() flow through to the underlying agents."""
+    agent = _KwargsCapturingAgent(name="inner_agent")
+    workflow = SequentialBuilder().participants([agent]).build()
+    workflow_agent = workflow.as_agent(name="TestWorkflowAgent")
+
+    custom_data = {"session_id": "xyz123"}
+    api_token = "secret-token"
+
+    async for _ in workflow_agent.run_stream(
+        "test message",
+        custom_data=custom_data,
+        api_token=api_token,
+    ):
+        pass
+
+    # Verify inner agent received kwargs
+    assert len(agent.captured_kwargs) >= 1, "Inner agent should have been invoked at least once"
+    received = agent.captured_kwargs[0]
+    assert "custom_data" in received, "Inner agent should receive custom_data kwarg"
+    assert "api_token" in received, "Inner agent should receive api_token kwarg"
+    assert received["custom_data"] == custom_data
+    assert received["api_token"] == api_token
+
+
+async def test_workflow_as_agent_propagates_kwargs_to_multiple_agents() -> None:
+    """Test that kwargs flow to all agents when using workflow.as_agent()."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder().participants([agent1, agent2]).build()
+    workflow_agent = workflow.as_agent(name="MultiAgentWorkflow")
+
+    custom_data = {"batch_id": "batch-001"}
+
+    _ = await workflow_agent.run("test message", custom_data=custom_data)
+
+    # Both agents should have received kwargs
+    assert len(agent1.captured_kwargs) >= 1, "First agent should be invoked"
+    assert len(agent2.captured_kwargs) >= 1, "Second agent should be invoked"
+    assert agent1.captured_kwargs[0].get("custom_data") == custom_data
+    assert agent2.captured_kwargs[0].get("custom_data") == custom_data
+
+
+async def test_workflow_as_agent_kwargs_with_none_values() -> None:
+    """Test that kwargs with None values are passed through correctly via as_agent()."""
+    agent = _KwargsCapturingAgent(name="none_test_agent")
+    workflow = SequentialBuilder().participants([agent]).build()
+    workflow_agent = workflow.as_agent(name="NoneTestWorkflow")
+
+    _ = await workflow_agent.run("test", optional_param=None, other_param="value")
+
+    assert len(agent.captured_kwargs) >= 1
+    received = agent.captured_kwargs[0]
+    assert "optional_param" in received
+    assert received["optional_param"] is None
+    assert received["other_param"] == "value"
+
+
+async def test_workflow_as_agent_kwargs_with_complex_nested_data() -> None:
+    """Test that complex nested data structures flow through correctly via as_agent()."""
+    agent = _KwargsCapturingAgent(name="nested_agent")
+    workflow = SequentialBuilder().participants([agent]).build()
+    workflow_agent = workflow.as_agent(name="NestedDataWorkflow")
+
+    complex_data = {
+        "level1": {
+            "level2": {
+                "level3": ["a", "b", "c"],
+                "number": 42,
+            },
+            "list": [1, 2, {"nested": True}],
+        },
+    }
+
+    _ = await workflow_agent.run("test", complex_data=complex_data)
+
+    assert len(agent.captured_kwargs) >= 1
+    received = agent.captured_kwargs[0]
+    assert received.get("complex_data") == complex_data
+
+
+# endregion
+
+
 # region SubWorkflow (WorkflowExecutor) Tests
 
 
