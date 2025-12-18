@@ -437,10 +437,10 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             if chat_options.response_format is not None:
                 run_options["response_format"] = {
                     "type": "json_schema",
-                    "json_schema":{
-                        "name":chat_options.response_format.__name__, 
-                        "schema":chat_options.response_format.model_json_schema(),
-                        }
+                    "json_schema": {
+                        "name": chat_options.response_format.__name__,
+                        "schema": chat_options.response_format.model_json_schema(),
+                    },
                 }
 
         instructions: list[str] = []
