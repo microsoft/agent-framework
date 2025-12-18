@@ -7,7 +7,7 @@ from agent_framework import ChatClientProtocol
 from agent_framework.exceptions import ServiceInitializationError
 from pydantic import ValidationError
 
-from agent_framework_foundry_local import FoundryLocalChatClient
+from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
 
 # Settings Tests
@@ -46,12 +46,12 @@ def test_foundry_local_settings_explicit_overrides_env(foundry_local_unit_test_e
 
 
 def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> None:
-    """Test FoundryLocalChatClient initialization with mocked manager."""
+    """Test FoundryLocalClient initialization with mocked manager."""
     with patch(
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        client = FoundryLocalChatClient(model_id="test-model-id", env_file_path="test.env")
+        client = FoundryLocalClient(model_id="test-model-id", env_file_path="test.env")
 
         assert client.model_id == "test-model-id"
         assert client.manager is mock_foundry_local_manager
@@ -59,12 +59,12 @@ def test_foundry_local_client_init(mock_foundry_local_manager: MagicMock) -> Non
 
 
 def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manager: MagicMock) -> None:
-    """Test FoundryLocalChatClient initialization with bootstrap=False."""
+    """Test FoundryLocalClient initialization with bootstrap=False."""
     with patch(
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ) as mock_manager_class:
-        FoundryLocalChatClient(model_id="test-model-id", bootstrap=False, env_file_path="test.env")
+        FoundryLocalClient(model_id="test-model-id", bootstrap=False, env_file_path="test.env")
 
         mock_manager_class.assert_called_once_with(
             alias_or_model_id="test-model-id",
@@ -74,12 +74,12 @@ def test_foundry_local_client_init_with_bootstrap_false(mock_foundry_local_manag
 
 
 def test_foundry_local_client_init_with_timeout(mock_foundry_local_manager: MagicMock) -> None:
-    """Test FoundryLocalChatClient initialization with custom timeout."""
+    """Test FoundryLocalClient initialization with custom timeout."""
     with patch(
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ) as mock_manager_class:
-        FoundryLocalChatClient(model_id="test-model-id", timeout=60.0, env_file_path="test.env")
+        FoundryLocalClient(model_id="test-model-id", timeout=60.0, env_file_path="test.env")
 
         mock_manager_class.assert_called_once_with(
             alias_or_model_id="test-model-id",
@@ -89,7 +89,7 @@ def test_foundry_local_client_init_with_timeout(mock_foundry_local_manager: Magi
 
 
 def test_foundry_local_client_init_model_not_found(mock_foundry_local_manager: MagicMock) -> None:
-    """Test FoundryLocalChatClient initialization when model is not found."""
+    """Test FoundryLocalClient initialization when model is not found."""
     mock_foundry_local_manager.get_model_info.return_value = None
 
     with (
@@ -99,7 +99,7 @@ def test_foundry_local_client_init_model_not_found(mock_foundry_local_manager: M
         ),
         pytest.raises(ServiceInitializationError, match="not found in Foundry Local"),
     ):
-        FoundryLocalChatClient(model_id="unknown-model", env_file_path="test.env")
+        FoundryLocalClient(model_id="unknown-model", env_file_path="test.env")
 
 
 def test_foundry_local_client_uses_model_info_id(mock_foundry_local_manager: MagicMock) -> None:
@@ -112,7 +112,7 @@ def test_foundry_local_client_uses_model_info_id(mock_foundry_local_manager: Mag
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        client = FoundryLocalChatClient(model_id="model-alias", env_file_path="test.env")
+        client = FoundryLocalClient(model_id="model-alias", env_file_path="test.env")
 
         assert client.model_id == "resolved-model-id"
 
@@ -120,11 +120,11 @@ def test_foundry_local_client_uses_model_info_id(mock_foundry_local_manager: Mag
 def test_foundry_local_client_init_from_env(
     foundry_local_unit_test_env: dict[str, str], mock_foundry_local_manager: MagicMock
 ) -> None:
-    """Test FoundryLocalChatClient initialization using environment variables."""
+    """Test FoundryLocalClient initialization using environment variables."""
     with patch(
         "agent_framework_foundry_local._foundry_local_client.FoundryLocalManager",
         return_value=mock_foundry_local_manager,
     ):
-        client = FoundryLocalChatClient(env_file_path="test.env")
+        client = FoundryLocalClient(env_file_path="test.env")
 
         assert client.model_id == foundry_local_unit_test_env["FOUNDRY_LOCAL_MODEL_ID"]
