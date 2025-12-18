@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -81,7 +81,7 @@ public abstract class DelegatingAIAgent : AIAgent
         => this.InnerAgent.DeserializeThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc />
-    public override Task<AgentRunResponse> RunAsync(
+    public override Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -89,7 +89,7 @@ public abstract class DelegatingAIAgent : AIAgent
         => this.InnerAgent.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc />
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

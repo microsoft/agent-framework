@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -149,7 +149,7 @@ public class InProcessExecutionTests
         public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) => new SimpleTestAgentThread();
 
-        public override Task<AgentRunResponse> RunAsync(
+        public override Task<AgentResponse> RunAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -157,10 +157,10 @@ public class InProcessExecutionTests
         {
             var lastMessage = messages.LastOrDefault();
             var responseMessage = new ChatMessage(ChatRole.Assistant, $"Echo: {lastMessage?.Text ?? "no message"}");
-            return Task.FromResult(new AgentRunResponse(responseMessage));
+            return Task.FromResult(new AgentResponse(responseMessage));
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -174,14 +174,14 @@ public class InProcessExecutionTests
             string messageId = Guid.NewGuid().ToString("N");
 
             // Yield role first
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name)
             {
                 AuthorName = this.Name,
                 MessageId = messageId
             };
 
             // Then yield content
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, responseText)
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
             {
                 AuthorName = this.Name,
                 MessageId = messageId

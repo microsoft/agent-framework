@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -71,7 +71,7 @@ internal sealed class A2AAgent : AIAgent
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -98,7 +98,7 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, message.ContextId);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
@@ -112,7 +112,7 @@ internal sealed class A2AAgent : AIAgent
         {
             UpdateThread(typedThread, agentTask.ContextId, agentTask.Id);
 
-            var response = new AgentRunResponse
+            var response = new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
@@ -134,7 +134,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -289,9 +289,9 @@ internal sealed class A2AAgent : AIAgent
         return null;
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentMessage message)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
@@ -303,9 +303,9 @@ internal sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(AgentTask task)
     {
-        return new AgentRunResponseUpdate
+        return new AgentResponseUpdate
         {
             AgentId = this.Id,
             ResponseId = task.Id,
@@ -316,9 +316,9 @@ internal sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentRunResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
+    private AgentResponseUpdate ConvertToAgentResponseUpdate(TaskUpdateEvent taskUpdateEvent)
     {
-        AgentRunResponseUpdate responseUpdate = new()
+        AgentResponseUpdate responseUpdate = new()
         {
             AgentId = this.Id,
             ResponseId = taskUpdateEvent.TaskId,

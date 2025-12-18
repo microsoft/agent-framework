@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using Microsoft.Agents.AI;
@@ -21,13 +21,13 @@ internal sealed class EntityAgentWrapper(
     // The ID of the agent is always the entity ID.
     protected override string? IdCore => this._entityContext.Id.ToString();
 
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        AgentRunResponse response = await base.RunAsync(
+        AgentResponse response = await base.RunAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),
@@ -37,13 +37,13 @@ internal sealed class EntityAgentWrapper(
         return response;
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (AgentRunResponseUpdate update in base.RunStreamingAsync(
+        await foreach (AgentResponseUpdate update in base.RunStreamingAsync(
             messages,
             thread,
             this.GetAgentEntityRunOptions(options),

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -63,7 +63,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <exception cref="AgentNotRegisteredException">Thrown when the agent has not been registered.</exception>
     /// <exception cref="ArgumentException">Thrown when the provided thread is not valid for a durable agent.</exception>
     /// <exception cref="NotSupportedException">Thrown when cancellation is requested (cancellation is not supported for durable agents).</exception>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -105,7 +105,7 @@ public sealed class DurableAIAgent : AIAgent
 
         try
         {
-            return await this._context.Entities.CallEntityAsync<AgentRunResponse>(
+            return await this._context.Entities.CallEntityAsync<AgentResponse>(
                 durableThread.SessionId,
                 nameof(AgentEntity.Run),
                 request);
@@ -128,7 +128,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A streaming response enumerable.</returns>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -136,8 +136,8 @@ public sealed class DurableAIAgent : AIAgent
     {
         // Streaming is not supported for durable agents, so we just return the full response
         // as a single update.
-        AgentRunResponse response = await this.RunAsync(messages, thread, options, cancellationToken);
-        foreach (AgentRunResponseUpdate update in response.ToAgentRunResponseUpdates())
+        AgentResponse response = await this.RunAsync(messages, thread, options, cancellationToken);
+        foreach (AgentResponseUpdate update in response.ToAgentResponseUpdates())
         {
             yield return update;
         }
@@ -160,7 +160,7 @@ public sealed class DurableAIAgent : AIAgent
     /// Thrown when the agent response is empty or cannot be deserialized.
     /// </exception>
     /// <returns>The output from the agent.</returns>
-    public async Task<AgentRunResponse<T>> RunAsync<T>(
+    public async Task<AgentResponse<T>> RunAsync<T>(
         string message,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -194,7 +194,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <returns>The output from the agent.</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fallback to reflection-based deserialization is intentional for library flexibility with user-defined types.")]
     [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050", Justification = "Fallback to reflection-based deserialization is intentional for library flexibility with user-defined types.")]
-    public async Task<AgentRunResponse<T>> RunAsync<T>(
+    public async Task<AgentResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         JsonSerializerOptions? serializerOptions = null,
@@ -221,7 +221,7 @@ public sealed class DurableAIAgent : AIAgent
         // Create the JSON schema for the response type
         durableOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>();
 
-        AgentRunResponse response = await this.RunAsync(messages, thread, durableOptions, cancellationToken);
+        AgentResponse response = await this.RunAsync(messages, thread, durableOptions, cancellationToken);
 
         // Deserialize the response text to the requested type
         if (string.IsNullOrEmpty(response.Text))
@@ -240,11 +240,11 @@ public sealed class DurableAIAgent : AIAgent
             : JsonSerializer.Deserialize<T>(response.Text, serializerOptions))
             ?? throw new InvalidOperationException($"Failed to deserialize agent response to type {typeof(T).Name}.");
 
-        return new DurableAIAgentRunResponse<T>(response, result);
+        return new DurableAIAgentResponse<T>(response, result);
     }
 
-    private sealed class DurableAIAgentRunResponse<T>(AgentRunResponse response, T result)
-        : AgentRunResponse<T>(response.AsChatResponse())
+    private sealed class DurableAIAgentResponse<T>(AgentResponse response, T result)
+        : AgentResponse<T>(response.AsChatResponse())
     {
         public override T Result { get; } = result;
     }

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -20,8 +20,8 @@ public class AnonymousDelegatingAIAgentTests
     private readonly List<ChatMessage> _testMessages;
     private readonly AgentThread _testThread;
     private readonly AgentRunOptions _testOptions;
-    private readonly AgentRunResponse _testResponse;
-    private readonly AgentRunResponseUpdate[] _testStreamingResponses;
+    private readonly AgentResponse _testResponse;
+    private readonly AgentResponseUpdate[] _testStreamingResponses;
 
     public AnonymousDelegatingAIAgentTests()
     {
@@ -29,10 +29,10 @@ public class AnonymousDelegatingAIAgentTests
         this._testMessages = [new ChatMessage(ChatRole.User, "Test message")];
         this._testThread = new Mock<AgentThread>().Object;
         this._testOptions = new AgentRunOptions();
-        this._testResponse = new AgentRunResponse([new ChatMessage(ChatRole.Assistant, "Test response")]);
+        this._testResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]);
         this._testStreamingResponses = [
-            new AgentRunResponseUpdate(ChatRole.Assistant, "Response 1"),
-            new AgentRunResponseUpdate(ChatRole.Assistant, "Response 2")
+            new AgentResponseUpdate(ChatRole.Assistant, "Response 1"),
+            new AgentResponseUpdate(ChatRole.Assistant, "Response 2")
         ];
 
         this._innerAgentMock.Setup(x => x.RunAsync(
@@ -433,7 +433,7 @@ public class AnonymousDelegatingAIAgentTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => agent.RunAsync(this._testMessages, this._testThread, this._testOptions));
 
-        Assert.Contains("without producing an AgentRunResponse", exception.Message);
+        Assert.Contains("without producing an AgentResponse", exception.Message);
     }
 
     #endregion
@@ -730,7 +730,7 @@ public class AnonymousDelegatingAIAgentTests
         var runExecutionOrder = new List<string>();
         var streamingExecutionOrder = new List<string>();
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> FirstStreamingMiddlewareAsync(
+        static async IAsyncEnumerable<AgentResponseUpdate> FirstStreamingMiddlewareAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent,
             [EnumeratorCancellation] CancellationToken cancellationToken,
             List<string> executionOrder)
@@ -743,7 +743,7 @@ public class AnonymousDelegatingAIAgentTests
             executionOrder.Add("First-Streaming-Post");
         }
 
-        static async IAsyncEnumerable<AgentRunResponseUpdate> SecondStreamingMiddlewareAsync(
+        static async IAsyncEnumerable<AgentResponseUpdate> SecondStreamingMiddlewareAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent,
             [EnumeratorCancellation] CancellationToken cancellationToken,
             List<string> executionOrder)
@@ -881,7 +881,7 @@ public class AnonymousDelegatingAIAgentTests
     {
         // Arrange
         var executionOrder = new List<string>();
-        var fallbackResponse = new AgentRunResponse([new ChatMessage(ChatRole.Assistant, "Fallback response")]);
+        var fallbackResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Fallback response")]);
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
             .Use(
@@ -961,7 +961,7 @@ public class AnonymousDelegatingAIAgentTests
     public async Task AIAgentBuilder_Use_MiddlewareShortCircuits_InnerAgentNotCalledAsync()
     {
         // Arrange
-        var shortCircuitResponse = new AgentRunResponse([new ChatMessage(ChatRole.Assistant, "Short-circuited")]);
+        var shortCircuitResponse = new AgentResponse([new ChatMessage(ChatRole.Assistant, "Short-circuited")]);
         var executionOrder = new List<string>();
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)

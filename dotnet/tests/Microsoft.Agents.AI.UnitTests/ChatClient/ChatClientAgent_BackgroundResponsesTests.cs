@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -216,7 +216,7 @@ public class ChatClientAgent_BackgroundResponsesTests
     }
 
     [Fact]
-    public async Task RunAsyncPropagatesContinuationTokenFromChatResponseToAgentRunResponseAsync()
+    public async Task RunAsyncPropagatesContinuationTokenFromChatResponseToAgentResponseAsync()
     {
         // Arrange
         var continuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
@@ -264,7 +264,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         ChatClientAgentThread thread = new();
 
         // Act
-        var actualUpdates = new List<AgentRunResponseUpdate>();
+        var actualUpdates = new List<AgentResponseUpdate>();
         await foreach (var u in agent.RunStreamingAsync([new(ChatRole.User, "hi")], thread, options: new ChatClientAgentRunOptions(new ChatOptions { AllowBackgroundResponses = true })))
         {
             actualUpdates.Add(u);

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -22,17 +22,17 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(
+    public override Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return this.RunStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -172,8 +172,8 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         return result ?? messages;
     }
 
-    private static AgentRunResponseUpdate ProcessOutgoingApprovalRequests(
-        AgentRunResponseUpdate update,
+    private static AgentResponseUpdate ProcessOutgoingApprovalRequests(
+        AgentResponseUpdate update,
         JsonSerializerOptions jsonSerializerOptions)
     {
         IList<AIContent>? updatedContents = null;
@@ -207,7 +207,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         {
             var chatUpdate = update.AsChatResponseUpdate();
             // Yield a tool call update that represents the approval request
-            return new AgentRunResponseUpdate(new ChatResponseUpdate()
+            return new AgentResponseUpdate(new ChatResponseUpdate()
             {
                 Role = chatUpdate.Role,
                 Contents = updatedContents,

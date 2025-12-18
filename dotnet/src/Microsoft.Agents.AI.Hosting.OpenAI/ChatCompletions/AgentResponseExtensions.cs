@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -12,33 +12,33 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 /// <summary>
 /// Extension methods for converting agent responses to ChatCompletion models.
 /// </summary>
-internal static class AgentRunResponseExtensions
+internal static class AgentResponseExtensions
 {
-    public static ChatCompletion ToChatCompletion(this AgentRunResponse agentRunResponse, CreateChatCompletion request)
+    public static ChatCompletion ToChatCompletion(this AgentResponse AgentResponse, CreateChatCompletion request)
     {
-        IList<ChatCompletionChoice> choices = agentRunResponse.ToChoices();
+        IList<ChatCompletionChoice> choices = AgentResponse.ToChoices();
 
         return new ChatCompletion
         {
             Id = IdGenerator.NewId(prefix: "chatcmpl", delimiter: "-", stringLength: 13),
             Choices = choices,
-            Created = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            Created = (AgentResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
             Model = request.Model,
-            Usage = agentRunResponse.Usage.ToCompletionUsage(),
+            Usage = AgentResponse.Usage.ToCompletionUsage(),
             ServiceTier = request.ServiceTier ?? "default"
         };
     }
 
-    public static List<ChatCompletionChoice> ToChoices(this AgentRunResponse agentRunResponse)
+    public static List<ChatCompletionChoice> ToChoices(this AgentResponse AgentResponse)
     {
         var chatCompletionChoices = new List<ChatCompletionChoice>();
         var index = 0;
 
-        var finishReason = (agentRunResponse.RawRepresentation is ChatResponse { FinishReason: not null } chatResponse)
+        var finishReason = (AgentResponse.RawRepresentation is ChatResponse { FinishReason: not null } chatResponse)
             ? chatResponse.FinishReason.ToString()
             : "stop"; // "stop" is a natural stop point; returning this by-default
 
-        foreach (var message in agentRunResponse.Messages)
+        foreach (var message in AgentResponse.Messages)
         {
             foreach (var content in message.Contents)
             {

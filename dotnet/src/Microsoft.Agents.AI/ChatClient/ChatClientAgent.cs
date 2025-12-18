@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -149,7 +149,7 @@ public sealed partial class ChatClientAgent : AIAgent
     internal ChatOptions? ChatOptions => this._agentOptions?.ChatOptions;
 
     /// <inheritdoc/>
-    public override Task<AgentRunResponse> RunAsync(
+    public override Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -160,9 +160,9 @@ public sealed partial class ChatClientAgent : AIAgent
             return chatClient.GetResponseAsync(threadMessages, chatOptions, ct);
         }
 
-        static AgentRunResponse CreateResponse(ChatResponse chatResponse)
+        static AgentResponse CreateResponse(ChatResponse chatResponse)
         {
-            return new AgentRunResponse(chatResponse);
+            return new AgentResponse(chatResponse);
         }
 
         return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
@@ -193,7 +193,7 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -367,14 +367,14 @@ public sealed partial class ChatClientAgent : AIAgent
 
     #region Private
 
-    private async Task<TAgentRunResponse> RunCoreAsync<TAgentRunResponse, TChatClientResponse>(
+    private async Task<TAgentResponse> RunCoreAsync<TAgentResponse, TChatClientResponse>(
         Func<IChatClient, List<ChatMessage>, ChatOptions?, CancellationToken, Task<TChatClientResponse>> chatClientRunFunc,
-        Func<TChatClientResponse, TAgentRunResponse> agentResponseFactoryFunc,
+        Func<TChatClientResponse, TAgentResponse> agentResponseFactoryFunc,
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
-        where TAgentRunResponse : AgentRunResponse
+        where TAgentResponse : AgentResponse
         where TChatClientResponse : ChatResponse
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();

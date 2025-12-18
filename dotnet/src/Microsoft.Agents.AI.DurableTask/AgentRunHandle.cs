@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI.DurableTask.State;
 using Microsoft.DurableTask.Client;
@@ -44,7 +44,7 @@ internal sealed class AgentRunHandle
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The agent response corresponding to this request.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the response is not found after polling.</exception>
-    public async Task<AgentRunResponse> ReadAgentResponseAsync(CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> ReadAgentResponseAsync(CancellationToken cancellationToken = default)
     {
         TimeSpan pollInterval = TimeSpan.FromMilliseconds(50); // Start with 50ms
         TimeSpan maxPollInterval = TimeSpan.FromSeconds(3); // Maximum 3 seconds

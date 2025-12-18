@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static class AIAgentsAbstractionsExtensions
 {
-    public static ChatMessage ToChatMessage(this AgentRunResponseUpdate update) =>
+    public static ChatMessage ToChatMessage(this AgentResponseUpdate update) =>
         new()
         {
             AuthorName = update.AuthorName,

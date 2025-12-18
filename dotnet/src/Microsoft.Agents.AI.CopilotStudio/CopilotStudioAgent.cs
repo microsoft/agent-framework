@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -58,7 +58,7 @@ public class CopilotStudioAgent : AIAgent
         => new CopilotStudioAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -88,7 +88,7 @@ public class CopilotStudioAgent : AIAgent
         // TODO: Review list of ChatResponse properties to ensure we set all availble values.
         // Setting ResponseId and MessageId end up being particularly important for streaming consumers
         // so that they can tell things like response boundaries.
-        return new AgentRunResponse(responseMessagesList)
+        return new AgentResponse(responseMessagesList)
         {
             AgentId = this.Id,
             ResponseId = responseMessagesList.LastOrDefault()?.MessageId,
@@ -96,7 +96,7 @@ public class CopilotStudioAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -124,7 +124,7 @@ public class CopilotStudioAgent : AIAgent
             // TODO: Review list of ChatResponse properties to ensure we set all availble values.
             // Setting ResponseId and MessageId end up being particularly important for streaming consumers
             // so that they can tell things like response boundaries.
-            yield return new AgentRunResponseUpdate(message.Role, message.Contents)
+            yield return new AgentResponseUpdate(message.Role, message.Contents)
             {
                 AgentId = this.Id,
                 AdditionalProperties = message.AdditionalProperties,

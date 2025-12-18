@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use a simple AI agent with Azure Foundry Agents as the backend.
 
@@ -27,7 +27,7 @@ AgentVersion agentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName:
 AIAgent jokerAgent = aiProjectClient.GetAIAgent(agentVersion);
 
 // Invoke the agent with streaming support.
-await foreach (AgentRunResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))
+await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))
 {
     Console.WriteLine(update);
 }

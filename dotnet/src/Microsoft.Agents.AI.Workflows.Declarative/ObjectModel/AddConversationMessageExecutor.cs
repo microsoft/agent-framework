@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading;
@@ -30,7 +30,7 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
 
         if (isWorkflowConversation)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentRunResponse(newMessage)), cancellationToken).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, new AgentResponse(newMessage)), cancellationToken).ConfigureAwait(false);
         }
 
         return default;

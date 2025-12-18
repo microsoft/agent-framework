@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AGUI;
@@ -51,7 +51,7 @@ try
         bool isFirstUpdate = true;
         string? threadId = null;
 
-        await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -19,12 +19,12 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -63,7 +63,7 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
 
         var firstRunMessages = messages.Append(stateUpdateMessage);
 
-        var allUpdates = new List<AgentRunResponseUpdate>();
+        var allUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in this.InnerAgent.RunStreamingAsync(firstRunMessages, thread, firstRunOptions, cancellationToken).ConfigureAwait(false))
         {
             allUpdates.Add(update);
@@ -76,14 +76,14 @@ internal sealed class SharedStateAgent : DelegatingAIAgent
             }
         }
 
-        var response = allUpdates.ToAgentRunResponse();
+        var response = allUpdates.ToAgentResponse();
 
         if (response.TryDeserialize(this._jsonSerializerOptions, out JsonElement stateSnapshot))
         {
             byte[] stateBytes = JsonSerializer.SerializeToUtf8Bytes(
                 stateSnapshot,
                 this._jsonSerializerOptions.GetTypeInfo(typeof(JsonElement)));
-            yield return new AgentRunResponseUpdate
+            yield return new AgentResponseUpdate
             {
                 Contents = [new DataContent(stateBytes, "application/json")]
             };

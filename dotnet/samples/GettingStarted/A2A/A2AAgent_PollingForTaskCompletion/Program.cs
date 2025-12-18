@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to poll for long-running task completion using continuation tokens with an A2A AI agent.
 
@@ -19,7 +19,7 @@ AIAgent agent = agentCard.GetAIAgent();
 AgentThread thread = agent.GetNewThread();
 
 // Start the initial run with a long-running task.
-AgentRunResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", thread);
+AgentResponse response = await agent.RunAsync("Conduct a comprehensive analysis of quantum computing applications in cryptography, including recent breakthroughs, implementation challenges, and future roadmap. Please include diagrams and visual representations to illustrate complex concepts.", thread);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)

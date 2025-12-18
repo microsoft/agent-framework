@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
@@ -65,7 +65,7 @@ internal sealed class SampleService(AIProjectClient client, AIAgent agent, IHost
             }
 
             // Stream the output to the console as it is generated.
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(input, this._thread, cancellationToken: cancellationToken))
             {
                 Console.Write(update);
             }

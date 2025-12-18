@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows all the required steps to create a fully custom agent implementation.
 // In this case the agent doesn't use AI at all, and simply parrots back the user input in upper case.
@@ -34,7 +34,7 @@ namespace SampleApp
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
             => new CustomAgentThread(serializedThread, jsonSerializerOptions);
 
-        public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        public override async Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -50,7 +50,7 @@ namespace SampleApp
             // Notify the thread of the input and output messages.
             await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
 
-            return new AgentRunResponse
+            return new AgentResponse
             {
                 AgentId = this.Id,
                 ResponseId = Guid.NewGuid().ToString("N"),
@@ -58,7 +58,7 @@ namespace SampleApp
             };
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
@@ -76,7 +76,7 @@ namespace SampleApp
 
             foreach (var message in responseMessages)
             {
-                yield return new AgentRunResponseUpdate
+                yield return new AgentResponseUpdate
                 {
                     AgentId = this.Id,
                     AuthorName = this.DisplayName,

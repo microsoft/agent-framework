@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
 using System.Threading;
@@ -22,7 +22,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
     {
         List<ChatMessage>? roleChanged = messages.ChangeAssistantToUserForOtherParticipants(agent.DisplayName);
 
-        List<AgentRunResponseUpdate> updates = [];
+        List<AgentResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))
         {
             updates.Add(update);
@@ -35,7 +35,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
         roleChanged.ResetUserToAssistantForChangedRoles();
 
         List<ChatMessage> result = includeInputInOutput ? [.. messages] : [];
-        result.AddRange(updates.ToAgentRunResponse().Messages);
+        result.AddRange(updates.ToAgentResponse().Messages);
 
         await context.SendMessageAsync(result, cancellationToken: cancellationToken).ConfigureAwait(false);
     }

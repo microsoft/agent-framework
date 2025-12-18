@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use an agent with function tools that require a human in the loop for approvals.
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
@@ -33,7 +33,7 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: AssistantName, mo
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.
 AgentThread thread = agent.GetNewThread();
-AgentRunResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
+AgentResponse response = await agent.RunAsync("What is the weather like in Amsterdam?", thread);
 
 // Check if there are any user input requests (approvals needed).
 List<UserInputRequestContent> userInputRequests = response.UserInputRequests.ToList();

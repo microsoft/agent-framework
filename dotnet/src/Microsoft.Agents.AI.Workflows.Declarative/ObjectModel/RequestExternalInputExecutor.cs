@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
 using System.Threading;
@@ -26,7 +26,7 @@ internal sealed class RequestExternalInputExecutor(RequestExternalInput model, W
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
-        ExternalInputRequest inputRequest = new(new AgentRunResponse());
+        ExternalInputRequest inputRequest = new(new AgentResponse());
 
         await context.SendMessageAsync(inputRequest, cancellationToken).ConfigureAwait(false);
 

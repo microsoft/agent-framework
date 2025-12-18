@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net;
 using System.Text.Json;
@@ -21,11 +21,11 @@ public static class FunctionTriggers
         DurableAIAgent writer = context.GetAgent("WriterAgent");
         AgentThread writerThread = writer.GetNewThread();
 
-        AgentRunResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
+        AgentResponse<TextResponse> initial = await writer.RunAsync<TextResponse>(
             message: "Write a concise inspirational sentence about learning.",
             thread: writerThread);
 
-        AgentRunResponse<TextResponse> refined = await writer.RunAsync<TextResponse>(
+        AgentResponse<TextResponse> refined = await writer.RunAsync<TextResponse>(
             message: $"Improve this further while keeping it under 25 words: {initial.Result.Text}",
             thread: writerThread);
 
