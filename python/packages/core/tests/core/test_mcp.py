@@ -75,17 +75,21 @@ def test_mcp_call_tool_result_to_ai_contents():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data="xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data=b"abc", mimeType="image/webp"),
         ]
     )
     ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
 
-    assert len(ai_contents) == 2
+    assert len(ai_contents) == 3
     assert isinstance(ai_contents[0], TextContent)
     assert ai_contents[0].text == "Result text"
     assert isinstance(ai_contents[1], DataContent)
     assert ai_contents[1].uri == "data:image/png;base64,xyz"
     assert ai_contents[1].media_type == "image/png"
+    assert isinstance(ai_contents[2], DataContent)
+    assert ai_contents[2].uri == "data:image/webp;base64,abc"
+    assert ai_contents[2].media_type == "image/webp"
 
 
 def test_mcp_call_tool_result_with_meta_error():
@@ -183,7 +187,7 @@ def test_mcp_call_tool_result_regression_successful_workflow():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="data:image/jpeg;base64,abc123", mimeType="image/jpeg"),
+            types.ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
         ]
     )
 
@@ -218,7 +222,8 @@ def test_mcp_content_types_to_ai_content_text():
 
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
-    mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
+    mcp_content = types.ImageContent(type="image", data="abc", mimeType="image/jpeg")
+    mcp_content = types.ImageContent(type="image", data=b"abc", mimeType="image/jpeg")
     ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
@@ -229,7 +234,7 @@ def test_mcp_content_types_to_ai_content_image():
 
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
-    mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
+    mcp_content = types.AudioContent(type="audio", data="def", mimeType="audio/wav")
     ai_content = _mcp_type_to_ai_content(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)

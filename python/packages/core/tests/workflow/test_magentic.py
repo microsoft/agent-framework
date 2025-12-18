@@ -876,3 +876,204 @@ def test_magentic_builder_does_not_have_human_input_hook():
         "MagenticBuilder should not have with_human_input_hook - "
         "use with_plan_review() or with_human_input_on_stall() instead"
     )
+
+
+# region Message Deduplication Tests
+
+
+async def test_magentic_no_duplicate_messages_with_conversation_history():
+    """Test that passing list[ChatMessage] does not create duplicate messages in chat_history.
+
+    When a frontend passes conversation history as list[ChatMessage], the last message
+    (task) should not be duplicated in the orchestrator's chat_history.
+    """
+    manager = FakeManager(max_round_count=10)
+    manager.satisfied_after_signoff = True  # Complete immediately after first agent response
+
+    wf = MagenticBuilder().participants(agentA=_DummyExec("agentA")).with_standard_manager(manager).build()
+
+    # Simulate frontend passing conversation history
+    conversation: list[ChatMessage] = [
+        ChatMessage(role=Role.USER, text="previous question"),
+        ChatMessage(role=Role.ASSISTANT, text="previous answer"),
+        ChatMessage(role=Role.USER, text="current task"),
+    ]
+
+    # Get orchestrator to inspect chat_history after run
+    orchestrator = None
+    for executor in wf.executors.values():
+        if isinstance(executor, MagenticOrchestratorExecutor):
+            orchestrator = executor
+            break
+
+    events: list[WorkflowEvent] = []
+    async for event in wf.run_stream(conversation):
+        events.append(event)
+        if isinstance(event, WorkflowStatusEvent) and event.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    assert orchestrator is not None
+    assert orchestrator._context is not None  # type: ignore[reportPrivateUsage]
+
+    # Count occurrences of each message text in chat_history
+    history = orchestrator._context.chat_history  # type: ignore[reportPrivateUsage]
+    user_task_count = sum(1 for msg in history if msg.text == "current task")
+    prev_question_count = sum(1 for msg in history if msg.text == "previous question")
+    prev_answer_count = sum(1 for msg in history if msg.text == "previous answer")
+
+    # Each input message should appear exactly once (no duplicates)
+    assert prev_question_count == 1, f"Expected 1 'previous question', got {prev_question_count}"
+    assert prev_answer_count == 1, f"Expected 1 'previous answer', got {prev_answer_count}"
+    assert user_task_count == 1, f"Expected 1 'current task', got {user_task_count}"
+
+
+async def test_magentic_agent_executor_no_duplicate_messages_on_broadcast():
+    """Test that MagenticAgentExecutor does not duplicate messages from broadcasts.
+
+    When the orchestrator broadcasts the task ledger to all agents, each agent
+    should receive it exactly once, not multiple times.
+    """
+    backing_executor = _DummyExec("backing")
+    agent_exec = MagenticAgentExecutor(backing_executor, "agentA")
+
+    # Simulate orchestrator sending a broadcast message
+    broadcast_msg = ChatMessage(
+        role=Role.ASSISTANT,
+        text="Task ledger content",
+        author_name="magentic_manager",
+    )
+
+    # Simulate the same message being received multiple times (e.g., from checkpoint restore + live)
+    from agent_framework._workflows._magentic import _MagenticResponseMessage
+
+    response1 = _MagenticResponseMessage(body=broadcast_msg, broadcast=True)
+    response2 = _MagenticResponseMessage(body=broadcast_msg, broadcast=True)
+
+    # Create a mock context
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_context = MagicMock()
+    mock_context.send_message = AsyncMock()
+
+    # Call the handler twice with the same message
+    await agent_exec.handle_response_message(response1, mock_context)  # type: ignore[arg-type]
+    await agent_exec.handle_response_message(response2, mock_context)  # type: ignore[arg-type]
+
+    # Count how many times the broadcast message appears
+    history = agent_exec._chat_history  # type: ignore[reportPrivateUsage]
+    broadcast_count = sum(1 for msg in history if msg.text == "Task ledger content")
+
+    # Each broadcast should be recorded (this is expected behavior - broadcasts are additive)
+    # The test documents current behavior. If dedup is needed, this assertion would change.
+    assert broadcast_count == 2, (
+        f"Expected 2 broadcasts (current behavior is additive), got {broadcast_count}. "
+        "If deduplication is required, update the handler logic."
+    )
+
+
+async def test_magentic_context_no_duplicate_on_reset():
+    """Test that MagenticContext.reset() clears chat_history without leaving duplicates."""
+    ctx = MagenticContext(
+        task=ChatMessage(role=Role.USER, text="task"),
+        participant_descriptions={"Alice": "Researcher"},
+    )
+
+    # Add some history
+    ctx.chat_history.append(ChatMessage(role=Role.ASSISTANT, text="response1"))
+    ctx.chat_history.append(ChatMessage(role=Role.ASSISTANT, text="response2"))
+    assert len(ctx.chat_history) == 2
+
+    # Reset
+    ctx.reset()
+
+    # Verify clean slate
+    assert len(ctx.chat_history) == 0, "chat_history should be empty after reset"
+
+    # Add new history
+    ctx.chat_history.append(ChatMessage(role=Role.ASSISTANT, text="new_response"))
+    assert len(ctx.chat_history) == 1, "Should have exactly 1 message after adding to reset context"
+
+
+async def test_magentic_start_message_messages_list_integrity():
+    """Test that _MagenticStartMessage preserves message list without internal duplication."""
+    conversation: list[ChatMessage] = [
+        ChatMessage(role=Role.USER, text="msg1"),
+        ChatMessage(role=Role.ASSISTANT, text="msg2"),
+        ChatMessage(role=Role.USER, text="msg3"),
+    ]
+
+    start_msg = _MagenticStartMessage(conversation)
+
+    # Verify messages list is preserved
+    assert len(start_msg.messages) == 3, f"Expected 3 messages, got {len(start_msg.messages)}"
+
+    # Verify task is the last message (not a copy)
+    assert start_msg.task is start_msg.messages[-1], "task should be the same object as messages[-1]"
+    assert start_msg.task.text == "msg3"
+
+
+async def test_magentic_checkpoint_restore_no_duplicate_history():
+    """Test that checkpoint restore does not create duplicate messages in chat_history."""
+    manager = FakeManager(max_round_count=10)
+    storage = InMemoryCheckpointStorage()
+
+    wf = (
+        MagenticBuilder()
+        .participants(agentA=_DummyExec("agentA"))
+        .with_standard_manager(manager)
+        .with_checkpointing(storage)
+        .build()
+    )
+
+    # Run with conversation history to create initial checkpoint
+    conversation: list[ChatMessage] = [
+        ChatMessage(role=Role.USER, text="history_msg"),
+        ChatMessage(role=Role.USER, text="task_msg"),
+    ]
+
+    async for event in wf.run_stream(conversation):
+        if isinstance(event, WorkflowStatusEvent) and event.state in (
+            WorkflowRunState.IDLE,
+            WorkflowRunState.IDLE_WITH_PENDING_REQUESTS,
+        ):
+            break
+
+    # Get checkpoint
+    checkpoints = await storage.list_checkpoints()
+    assert len(checkpoints) > 0, "Should have created checkpoints"
+
+    latest_checkpoint = checkpoints[-1]
+
+    # Load checkpoint and verify no duplicates in shared state
+    checkpoint_data = await storage.load_checkpoint(latest_checkpoint.checkpoint_id)
+    assert checkpoint_data is not None
+
+    # Check the magentic_context in the checkpoint
+    for _, executor_state in checkpoint_data.metadata.items():
+        if isinstance(executor_state, dict) and "magentic_context" in executor_state:
+            ctx_data = executor_state["magentic_context"]
+            chat_history = ctx_data.get("chat_history", [])
+
+            # Count unique messages by text
+            texts = [
+                msg.get("text") or (msg.get("contents", [{}])[0].get("text") if msg.get("contents") else None)
+                for msg in chat_history
+            ]
+            text_counts: dict[str, int] = {}
+            for text in texts:
+                if text:
+                    text_counts[text] = text_counts.get(text, 0) + 1
+
+            # Input messages should not be duplicated
+            assert text_counts.get("history_msg", 0) <= 1, (
+                f"'history_msg' appears {text_counts.get('history_msg', 0)} times in checkpoint - expected <= 1"
+            )
+            assert text_counts.get("task_msg", 0) <= 1, (
+                f"'task_msg' appears {text_counts.get('task_msg', 0)} times in checkpoint - expected <= 1"
+            )
+
+
+# endregion

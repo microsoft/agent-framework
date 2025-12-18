@@ -15,7 +15,7 @@ from agent_framework import (
     use_function_invocation,
 )
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
-from agent_framework.observability import use_observability
+from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
@@ -49,7 +49,7 @@ TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class AzureAIClient(OpenAIBaseResponsesClient):
     """Azure AI Agent client."""
@@ -164,26 +164,93 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         # Track whether we should close client connection
         self._should_close_client = should_close_client
 
-    async def setup_azure_ai_observability(self, enable_sensitive_data: bool | None = None) -> None:
-        """Use this method to setup tracing in your Azure AI Project.
+    async def configure_azure_monitor(
+        self,
+        enable_sensitive_data: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Setup observability with Azure Monitor (Azure AI Foundry integration).
 
-        This will take the connection string from the project project_client.
-        It will override any connection string that is set in the environment variables.
-        It will disable any OTLP endpoint that might have been set.
+        This method configures Azure Monitor for telemetry collection using the
+        connection string from the Azure AI project client.
+
+        Args:
+            enable_sensitive_data: Enable sensitive data logging (prompts, responses).
+                Should only be enabled in development/test environments. Default is False.
+            **kwargs: Additional arguments passed to configure_azure_monitor().
+                Common options include:
+                - enable_live_metrics (bool): Enable Azure Monitor Live Metrics
+                - credential (TokenCredential): Azure credential for Entra ID auth
+                - resource (Resource): Custom OpenTelemetry resource
+                See https://learn.microsoft.com/python/api/azure-monitor-opentelemetry/azure.monitor.opentelemetry.configure_azure_monitor
+                for full list of options.
+
+        Raises:
+            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.azure import AzureAIClient
+                from azure.ai.projects.aio import AIProjectClient
+                from azure.identity.aio import DefaultAzureCredential
+
+                async with (
+                    DefaultAzureCredential() as credential,
+                    AIProjectClient(
+                        endpoint="https://your-project.api.azureml.ms", credential=credential
+                    ) as project_client,
+                    AzureAIClient(project_client=project_client) as client,
+                ):
+                    # Setup observability with defaults
+                    await client.configure_azure_monitor()
+
+                    # With live metrics enabled
+                    await client.configure_azure_monitor(enable_live_metrics=True)
+
+                    # With sensitive data logging (dev/test only)
+                    await client.configure_azure_monitor(enable_sensitive_data=True)
+
+        Note:
+            This method retrieves the Application Insights connection string from the
+            Azure AI project client automatically. You must have Application Insights
+            configured in your Azure AI project for this to work.
         """
+        # Get connection string from project client
         try:
             conn_string = await self.project_client.telemetry.get_application_insights_connection_string()
         except ResourceNotFoundError:
             logger.warning(
-                "No Application Insights connection string found for the Azure AI Project, "
-                "please call setup_observability() manually."
+                "No Application Insights connection string found for the Azure AI Project. "
+                "Please ensure Application Insights is configured in your Azure AI project, "
+                "or call configure_otel_providers() manually with custom exporters."
             )
             return
-        from agent_framework.observability import setup_observability
 
-        setup_observability(
-            applicationinsights_connection_string=conn_string, enable_sensitive_data=enable_sensitive_data
+        # Import Azure Monitor with proper error handling
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+        except ImportError as exc:
+            raise ImportError(
+                "azure-monitor-opentelemetry is required for Azure Monitor integration. "
+                "Install it with: pip install azure-monitor-opentelemetry"
+            ) from exc
+
+        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
+
+        # Create resource if not provided in kwargs
+        if "resource" not in kwargs:
+            kwargs["resource"] = create_resource()
+
+        # Configure Azure Monitor with connection string and kwargs
+        configure_azure_monitor(
+            connection_string=conn_string,
+            views=create_metric_views(),
+            **kwargs,
         )
+
+        # Complete setup with core observability
+        enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
 
     async def __aenter__(self) -> "Self":
         """Async context manager entry."""
@@ -268,6 +335,10 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
             if "tools" in run_options:
                 args["tools"] = run_options["tools"]
+            if "temperature" in run_options:
+                args["temperature"] = run_options["temperature"]
+            if "top_p" in run_options:
+                args["top_p"] = run_options["top_p"]
 
             if "response_format" in run_options:
                 response_format = run_options["response_format"]
@@ -346,7 +417,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         # Remove properties that are not supported on request level
         # but were configured on agent level
-        exclude = ["model", "tools", "response_format"]
+        exclude = ["model", "tools", "response_format", "temperature", "top_p"]
 
         for property in exclude:
             run_options.pop(property, None)
