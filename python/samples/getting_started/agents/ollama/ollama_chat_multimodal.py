@@ -3,8 +3,7 @@
 import asyncio
 
 from agent_framework import ChatMessage, DataContent, Role, TextContent
-
-from agent_framework_ollama import OllamaChatClient
+from agent_framework.ollama import OllamaChatClient
 
 """
 Ollama Agent Multimodal Example

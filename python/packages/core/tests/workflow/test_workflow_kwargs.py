@@ -490,3 +490,155 @@ async def test_magentic_kwargs_stored_in_shared_state() -> None:
 
 
 # endregion
+
+
+# region SubWorkflow (WorkflowExecutor) Tests
+
+
+async def test_subworkflow_kwargs_propagation() -> None:
+    """Test that kwargs are propagated to subworkflows.
+
+    Verifies kwargs passed to parent workflow.run_stream() flow through to agents
+    in subworkflows wrapped by WorkflowExecutor.
+    """
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    # Create an agent inside the subworkflow that captures kwargs
+    inner_agent = _KwargsCapturingAgent(name="inner_agent")
+
+    # Build the inner (sub) workflow with the agent
+    inner_workflow = SequentialBuilder().participants([inner_agent]).build()
+
+    # Wrap the inner workflow in a WorkflowExecutor so it can be used as a subworkflow
+    subworkflow_executor = WorkflowExecutor(workflow=inner_workflow, id="subworkflow_executor")
+
+    # Build the outer (parent) workflow containing the subworkflow
+    outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
+
+    # Define kwargs that should propagate to subworkflow
+    custom_data = {"api_key": "secret123", "endpoint": "https://api.example.com"}
+    user_token = {"user_name": "alice", "access_level": "admin"}
+
+    # Run the outer workflow with kwargs
+    async for event in outer_workflow.run_stream(
+        "test message for subworkflow",
+        custom_data=custom_data,
+        user_token=user_token,
+    ):
+        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Verify that the inner agent was called
+    assert len(inner_agent.captured_kwargs) >= 1, "Inner agent in subworkflow should have been invoked"
+
+    received_kwargs = inner_agent.captured_kwargs[0]
+
+    # Verify kwargs were propagated from parent workflow to subworkflow agent
+    assert "custom_data" in received_kwargs, (
+        f"Subworkflow agent should receive 'custom_data' kwarg. Received keys: {list(received_kwargs.keys())}"
+    )
+    assert "user_token" in received_kwargs, (
+        f"Subworkflow agent should receive 'user_token' kwarg. Received keys: {list(received_kwargs.keys())}"
+    )
+    assert received_kwargs.get("custom_data") == custom_data, (
+        f"Expected custom_data={custom_data}, got {received_kwargs.get('custom_data')}"
+    )
+    assert received_kwargs.get("user_token") == user_token, (
+        f"Expected user_token={user_token}, got {received_kwargs.get('user_token')}"
+    )
+
+
+async def test_subworkflow_kwargs_accessible_via_shared_state() -> None:
+    """Test that kwargs are accessible via SharedState within subworkflow.
+
+    Verifies that WORKFLOW_RUN_KWARGS_KEY is populated in the subworkflow's SharedState
+    with kwargs from the parent workflow.
+    """
+    from agent_framework import Executor, WorkflowContext, handler
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    captured_kwargs_from_state: list[dict[str, Any]] = []
+
+    class _SharedStateReader(Executor):
+        """Executor that reads kwargs from SharedState for verification."""
+
+        @handler
+        async def read_kwargs(self, msgs: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+            kwargs_from_state = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
+            captured_kwargs_from_state.append(kwargs_from_state or {})
+            await ctx.send_message(msgs)
+
+    # Build inner workflow with SharedState reader
+    state_reader = _SharedStateReader(id="state_reader")
+    inner_workflow = SequentialBuilder().participants([state_reader]).build()
+
+    # Wrap as subworkflow
+    subworkflow_executor = WorkflowExecutor(workflow=inner_workflow, id="subworkflow")
+
+    # Build outer workflow
+    outer_workflow = SequentialBuilder().participants([subworkflow_executor]).build()
+
+    # Run with kwargs
+    async for event in outer_workflow.run_stream(
+        "test",
+        my_custom_kwarg="should_be_propagated",
+        another_kwarg=42,
+    ):
+        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Verify the state reader was invoked
+    assert len(captured_kwargs_from_state) >= 1, "SharedState reader should have been invoked"
+
+    kwargs_in_subworkflow = captured_kwargs_from_state[0]
+
+    assert kwargs_in_subworkflow.get("my_custom_kwarg") == "should_be_propagated", (
+        f"Expected 'my_custom_kwarg' in subworkflow SharedState, got: {kwargs_in_subworkflow}"
+    )
+    assert kwargs_in_subworkflow.get("another_kwarg") == 42, (
+        f"Expected 'another_kwarg'=42 in subworkflow SharedState, got: {kwargs_in_subworkflow}"
+    )
+
+
+async def test_nested_subworkflow_kwargs_propagation() -> None:
+    """Test kwargs propagation through multiple levels of nested subworkflows.
+
+    Verifies kwargs flow through 3 levels:
+    - Outer workflow
+      - Middle subworkflow (WorkflowExecutor)
+        - Inner subworkflow (WorkflowExecutor) with agent
+    """
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    # Innermost agent
+    inner_agent = _KwargsCapturingAgent(name="deeply_nested_agent")
+
+    # Build inner workflow
+    inner_workflow = SequentialBuilder().participants([inner_agent]).build()
+    inner_executor = WorkflowExecutor(workflow=inner_workflow, id="inner_executor")
+
+    # Build middle workflow containing inner
+    middle_workflow = SequentialBuilder().participants([inner_executor]).build()
+    middle_executor = WorkflowExecutor(workflow=middle_workflow, id="middle_executor")
+
+    # Build outer workflow containing middle
+    outer_workflow = SequentialBuilder().participants([middle_executor]).build()
+
+    # Run with kwargs
+    async for event in outer_workflow.run_stream(
+        "deeply nested test",
+        deep_kwarg="should_reach_inner",
+    ):
+        if isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Verify inner agent was called
+    assert len(inner_agent.captured_kwargs) >= 1, "Deeply nested agent should be invoked"
+
+    received = inner_agent.captured_kwargs[0]
+    assert received.get("deep_kwarg") == "should_reach_inner", (
+        f"Deeply nested agent should receive 'deep_kwarg'. Got: {received}"
+    )
+
+
+# endregion
