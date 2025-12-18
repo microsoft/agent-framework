@@ -25,7 +25,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
 
         // Act & Assert
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
@@ -44,7 +44,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
         IHostedAgentBuilder agentBuilder = null!;
@@ -66,7 +66,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -86,7 +86,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -106,7 +106,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -132,7 +132,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -174,7 +174,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -194,7 +194,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -214,7 +214,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -240,7 +240,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -282,7 +282,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
@@ -303,7 +303,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
@@ -324,7 +324,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
@@ -351,7 +351,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
         AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
@@ -395,8 +395,8 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agent1Builder = builder.AddAIAgent("agent1", "Instructions1", chatClientServiceKey: "chat-client");
-        IHostedAgentBuilder agent2Builder = builder.AddAIAgent("agent2", "Instructions2", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agent1Builder = builder.Services.AddAIAgent("agent1", "Instructions1", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agent2Builder = builder.Services.AddAIAgent("agent2", "Instructions2", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -416,7 +416,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -435,7 +435,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 
@@ -462,7 +462,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 

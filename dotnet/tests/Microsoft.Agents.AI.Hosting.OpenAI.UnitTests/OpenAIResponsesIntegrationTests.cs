@@ -1234,7 +1234,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddOpenAIResponses();
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
@@ -1257,7 +1257,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         builder.AddOpenAIResponses();
         builder.AddOpenAIConversations();
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
@@ -1278,7 +1278,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         builder.WebHost.UseTestServer();
 
         builder.Services.AddKeyedSingleton($"chat-client-{agentName}", chatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: $"chat-client-{agentName}");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: $"chat-client-{agentName}");
         builder.AddOpenAIResponses();
 
         this._app = builder.Build();
@@ -1303,7 +1303,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         {
             IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
             builder.Services.AddKeyedSingleton($"chat-client-{name}", mockChatClient);
-            builder.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
+            builder.Services.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
         }
 
         builder.AddOpenAIResponses();

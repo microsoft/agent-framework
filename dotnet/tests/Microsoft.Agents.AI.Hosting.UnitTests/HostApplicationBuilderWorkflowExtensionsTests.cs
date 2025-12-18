@@ -12,17 +12,6 @@ namespace Microsoft.Agents.AI.Hosting.UnitTests;
 public class HostApplicationBuilderWorkflowExtensionsTests
 {
     /// <summary>
-    /// Verifies that providing a null builder to AddWorkflow throws an ArgumentNullException.
-    /// </summary>
-    [Fact]
-    public void AddWorkflow_NullBuilder_ThrowsArgumentNullException() =>
-        Assert.Throws<ArgumentNullException>(
-            () => HostApplicationBuilderWorkflowExtensions.AddWorkflow(
-                null!,
-                "workflow",
-                (sp, key) => CreateTestWorkflow(key)));
-
-    /// <summary>
     /// Verifies that AddWorkflow throws ArgumentNullException for null name.
     /// </summary>
     [Fact]
@@ -31,7 +20,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
 
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddWorkflow(null!, (sp, key) => CreateTestWorkflow(key)));
+            builder.Services.AddWorkflow(null!, (sp, key) => CreateTestWorkflow(key)));
         Assert.Equal("name", exception.ParamName);
     }
 
@@ -44,7 +33,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
 
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            builder.AddWorkflow("workflowName", null!));
+            builder.Services.AddWorkflow("workflowName", null!));
         Assert.Equal("createWorkflowDelegate", exception.ParamName);
     }
 
@@ -56,7 +45,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
 
-        var result = builder.AddWorkflow("workflowName", (sp, key) => CreateTestWorkflow(key));
+        var result = builder.Services.AddWorkflow("workflowName", (sp, key) => CreateTestWorkflow(key));
 
         Assert.NotNull(result);
         Assert.IsType<IHostedWorkflowBuilder>(result, exactMatch: false);
@@ -71,7 +60,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
 
-        builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var descriptor = builder.Services.FirstOrDefault(
             d => (d.ServiceKey as string) == WorkflowName &&
@@ -89,9 +78,9 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
 
-        builder.AddWorkflow("workflow1", (sp, key) => CreateTestWorkflow(key));
-        builder.AddWorkflow("workflow2", (sp, key) => CreateTestWorkflow(key));
-        builder.AddWorkflow("workflow3", (sp, key) => CreateTestWorkflow(key));
+        builder.Services.AddWorkflow("workflow1", (sp, key) => CreateTestWorkflow(key));
+        builder.Services.AddWorkflow("workflow2", (sp, key) => CreateTestWorkflow(key));
+        builder.Services.AddWorkflow("workflow3", (sp, key) => CreateTestWorkflow(key));
 
         var workflowDescriptors = builder.Services
             .Where(d => d.ServiceType == typeof(Workflow) && d.ServiceKey is string)
@@ -110,7 +99,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     public void AddWorkflow_EmptyName_ThrowsArgumentException()
     {
         var builder = new HostApplicationBuilder();
-        var result = builder.AddWorkflow("", (sp, key) => CreateTestWorkflow(key));
+        var result = builder.Services.AddWorkflow("", (sp, key) => CreateTestWorkflow(key));
         Assert.NotNull(result);
     }
 
@@ -129,7 +118,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
 
-        var result = builder.AddWorkflow(name, (sp, key) => CreateTestWorkflow(key));
+        var result = builder.Services.AddWorkflow(name, (sp, key) => CreateTestWorkflow(key));
 
         var descriptor = builder.Services.FirstOrDefault(
             d => (d.ServiceKey as string) == name &&
@@ -145,7 +134,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent();
 
@@ -171,7 +160,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
         const string AgentName = "testAgent";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent(AgentName);
 
@@ -203,7 +192,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         const string WorkflowName = "myWorkflow";
         const string AgentName = "myAgent";
 
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
         workflowBuilder.AddAsAIAgent(AgentName);
 
         var serviceProvider = builder.Build().Services;
@@ -229,7 +218,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
         const string AgentName = "testAgent";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent(AgentName);
 
@@ -246,7 +235,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent();
 
@@ -263,7 +252,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder1 = workflowBuilder.AddAsAIAgent("agent1");
         var agentBuilder2 = workflowBuilder.AddAsAIAgent("agent2");
@@ -294,7 +283,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent(name: null);
 
@@ -315,7 +304,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
-        var workflowBuilder = builder.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
+        var workflowBuilder = builder.Services.AddWorkflow(WorkflowName, (sp, key) => CreateTestWorkflow(key));
 
         var agentBuilder = workflowBuilder.AddAsAIAgent(name: "");
 

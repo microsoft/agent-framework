@@ -192,7 +192,7 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIResponses();
         builder.AddOpenAIChatCompletions();
 
@@ -224,7 +224,7 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.CustomContentMockChatClient(contentProvider);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIResponses();
 
         this._app = builder.Build();
@@ -255,7 +255,7 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.ToolCallMockChatClient(functionName, arguments);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIResponses();
         builder.AddOpenAIChatCompletions();
 

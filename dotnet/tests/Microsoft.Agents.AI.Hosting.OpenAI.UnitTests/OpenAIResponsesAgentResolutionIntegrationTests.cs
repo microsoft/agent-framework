@@ -418,7 +418,7 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         {
             IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
             builder.Services.AddKeyedSingleton($"chat-client-{name}", mockChatClient);
-            builder.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
+            builder.Services.AddAIAgent(name, instructions, chatClientServiceKey: $"chat-client-{name}");
         }
 
         builder.AddOpenAIResponses();
