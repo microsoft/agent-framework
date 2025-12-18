@@ -7,12 +7,8 @@ No inheritance required - just import and call.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
 
 from .._types import ChatMessage, Role
-
-if TYPE_CHECKING:
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
@@ -98,40 +94,6 @@ def create_completion_message(
         role=Role.ASSISTANT,
         text=message_text,
         author_name=author_name,
-    )
-
-
-def prepare_participant_request(
-    *,
-    participant_name: str,
-    conversation: list[ChatMessage],
-    instruction: str | None = None,
-    task: ChatMessage | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> "_GroupChatRequestMessage":
-    """Create a standardized participant request message.
-
-    Simple helper to avoid duplicating request construction.
-
-    Args:
-        participant_name: Name of the target participant
-        conversation: Conversation history to send
-        instruction: Optional instruction from manager/orchestrator
-        task: Optional task context
-        metadata: Optional metadata dict
-
-    Returns:
-        GroupChatRequestMessage ready to send
-    """
-    # Import here to avoid circular dependency
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
-
-    return _GroupChatRequestMessage(
-        agent_name=participant_name,
-        conversation=list(conversation),
-        instruction=instruction or "",
-        task=task,
-        metadata=metadata,
     )
 
 
