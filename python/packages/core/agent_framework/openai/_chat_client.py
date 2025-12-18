@@ -234,7 +234,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 contents.append(text_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
-            messages.append(ChatMessage(role="assistant", contents=contents))
+            messages.append(
+                ChatMessage(
+                    role="assistant",
+                    contents=contents,
+                    additional_properties={"reasoning_details": getattr(choice.message, "reasoning_details", None)},
+                )
+            )
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -394,6 +400,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             }
             if message.author_name and message.role != Role.TOOL:
                 args["name"] = message.author_name
+            if "reasoning_details" in message.additional_properties and (
+                details := message.additional_properties["reasoning_details"]
+            ):
+                args["reasoning_details"] = details
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:
