@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 internal class TestEchoAgent(string? id = null, string? name = null, string? prefix = null) : AIAgent
 {
-    public override string Id => id ?? base.Id;
+    protected override string? IdCore => id;
     public override string? Name => name ?? base.Name;
 
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
@@ -47,7 +47,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
               select
                     UpdateThread(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
                     {
-                        AuthorName = this.DisplayName,
+                        AuthorName = this.Name ?? this.Id,
                         CreatedAt = DateTimeOffset.Now,
                         MessageId = Guid.NewGuid().ToString("N")
                     }, thread as InMemoryAgentThread);

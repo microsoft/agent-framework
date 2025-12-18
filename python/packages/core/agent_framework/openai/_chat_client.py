@@ -14,7 +14,7 @@ from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from .._clients import BaseChatClient
 from .._logging import get_logger
@@ -44,7 +44,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_observability
+from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -69,10 +69,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        client = await self.ensure_client()
+        client = await self._ensure_client()
+        # prepare
         options_dict = self._prepare_options(messages, chat_options)
         try:
-            return self._create_chat_response(
+            # execute and process
+            return self._parse_response_from_openai(
                 await client.chat.completions.create(stream=False, **options_dict), chat_options
             )
         except BadRequestError as ex:
@@ -98,14 +100,16 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        client = await self.ensure_client()
+        client = await self._ensure_client()
+        # prepare
         options_dict = self._prepare_options(messages, chat_options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
+            # execute and process
             async for chunk in await client.chat.completions.create(stream=True, **options_dict):
                 if len(chunk.choices) == 0 and chunk.usage is None:
                     continue
-                yield self._create_chat_response_update(chunk)
+                yield self._parse_response_update_from_openai(chunk)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -124,7 +128,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
     # region content creation
 
-    def _chat_to_tool_spec(self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]) -> list[dict[str, Any]]:
+    def _prepare_tools_for_openai(
+        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
+    ) -> list[dict[str, Any]]:
         chat_tools: list[dict[str, Any]] = []
         for tool in tools:
             if isinstance(tool, ToolProtocol):
@@ -157,48 +163,65 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         return None
 
     def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        # Preprocess web search tool if it exists
-        options_dict = chat_options.to_dict(
+        run_options = chat_options.to_dict(
             exclude={
                 "type",
                 "instructions",  # included as system message
+                "response_format",  # handled separately
+                "additional_properties",  # handled separately
             }
         )
 
-        if messages and "messages" not in options_dict:
-            options_dict["messages"] = self._prepare_chat_history_for_request(messages)
-        if "messages" not in options_dict:
+        # messages
+        if messages and "messages" not in run_options:
+            run_options["messages"] = self._prepare_messages_for_openai(messages)
+        if "messages" not in run_options:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
+
+        # Translation between ChatOptions and Chat Completion API
+        translations = {
+            "model_id": "model",
+            "allow_multiple_tool_calls": "parallel_tool_calls",
+            "max_tokens": "max_output_tokens",
+        }
+        for old_key, new_key in translations.items():
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
+
+        # model id
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
+            run_options["model"] = self.model_id
+
+        # tools
         if chat_options.tools is not None:
-            web_search_options = self._process_web_search_tool(chat_options.tools)
-            if web_search_options:
-                options_dict["web_search_options"] = web_search_options
-            options_dict["tools"] = self._chat_to_tool_spec(chat_options.tools)
-        if not options_dict.get("tools", None):
-            options_dict.pop("tools", None)
-            options_dict.pop("parallel_tool_calls", None)
-            options_dict.pop("tool_choice", None)
+            # Preprocess web search tool if it exists
+            if web_search_options := self._process_web_search_tool(chat_options.tools):
+                run_options["web_search_options"] = web_search_options
+            run_options["tools"] = self._prepare_tools_for_openai(chat_options.tools)
+        if not run_options.get("tools", None):
+            run_options.pop("tools", None)
+            run_options.pop("parallel_tool_calls", None)
+            run_options.pop("tool_choice", None)
+        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
+        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            run_options["tool_choice"] = tool_choice["mode"]
 
-        if "model_id" not in options_dict:
-            options_dict["model"] = self.model_id
-        else:
-            options_dict["model"] = options_dict.pop("model_id")
-        if (
-            chat_options.response_format
-            and isinstance(chat_options.response_format, type)
-            and issubclass(chat_options.response_format, BaseModel)
-        ):
-            options_dict["response_format"] = type_to_response_format_param(chat_options.response_format)
-        if additional_properties := options_dict.pop("additional_properties", None):
-            for key, value in additional_properties.items():
-                if value is not None:
-                    options_dict[key] = value
-        if (tool_choice := options_dict.get("tool_choice")) and len(tool_choice.keys()) == 1:
-            options_dict["tool_choice"] = tool_choice["mode"]
-        return options_dict
+        # response format
+        if chat_options.response_format:
+            run_options["response_format"] = type_to_response_format_param(chat_options.response_format)
 
-    def _create_chat_response(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":
-        """Create a chat message content object from a choice."""
+        # additional properties
+        additional_options = {
+            key: value for key, value in chat_options.additional_properties.items() if value is not None
+        }
+        if additional_options:
+            run_options.update(additional_options)
+        return run_options
+
+    def _parse_response_from_openai(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":
+        """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
         finish_reason: FinishReason | None = None
@@ -207,15 +230,15 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
             contents: list[Contents] = []
-            if text_content := self._parse_text_from_choice(choice):
+            if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
-            if parsed_tool_calls := [tool for tool in self._get_tool_calls_from_chat_choice(choice)]:
+            if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            usage_details=self._usage_details_from_openai(response.usage) if response.usage else None,
+            usage_details=self._parse_usage_from_openai(response.usage) if response.usage else None,
             messages=messages,
             model_id=response.model,
             additional_properties=response_metadata,
@@ -223,16 +246,16 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             response_format=chat_options.response_format,
         )
 
-    def _create_chat_response_update(
+    def _parse_response_update_from_openai(
         self,
         chunk: ChatCompletionChunk,
     ) -> ChatResponseUpdate:
-        """Create a streaming chat message content object from a choice."""
+        """Parse a streaming response update from OpenAI."""
         chunk_metadata = self._get_metadata_from_streaming_chat_response(chunk)
         if chunk.usage:
             return ChatResponseUpdate(
                 role=Role.ASSISTANT,
-                contents=[UsageContent(details=self._usage_details_from_openai(chunk.usage), raw_representation=chunk)],
+                contents=[UsageContent(details=self._parse_usage_from_openai(chunk.usage), raw_representation=chunk)],
                 model_id=chunk.model,
                 additional_properties=chunk_metadata,
                 response_id=chunk.id,
@@ -242,11 +265,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         finish_reason: FinishReason | None = None
         for choice in chunk.choices:
             chunk_metadata.update(self._get_metadata_from_chat_choice(choice))
-            contents.extend(self._get_tool_calls_from_chat_choice(choice))
+            contents.extend(self._parse_tool_calls_from_openai(choice))
             if choice.finish_reason:
                 finish_reason = FinishReason(value=choice.finish_reason)
 
-            if text_content := self._parse_text_from_choice(choice):
+            if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -260,7 +283,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             message_id=chunk.id,
         )
 
-    def _usage_details_from_openai(self, usage: CompletionUsage) -> UsageDetails:
+    def _parse_usage_from_openai(self, usage: CompletionUsage) -> UsageDetails:
         details = UsageDetails(
             input_token_count=usage.prompt_tokens,
             output_token_count=usage.completion_tokens,
@@ -282,7 +305,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 details["prompt/cached_tokens"] = tokens
         return details
 
-    def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
         """Parse the choice into a TextContent object."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
@@ -309,8 +332,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             "logprobs": getattr(choice, "logprobs", None),
         }
 
-    def _get_tool_calls_from_chat_choice(self, choice: Choice | ChunkChoice) -> list[Contents]:
-        """Get tool calls from a chat choice."""
+    def _parse_tool_calls_from_openai(self, choice: Choice | ChunkChoice) -> list[Contents]:
+        """Parse tool calls from an OpenAI response choice."""
         resp: list[Contents] = []
         content = choice.message if isinstance(choice, Choice) else choice.delta
         if content and content.tool_calls:
@@ -328,13 +351,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
         return resp
 
-    def _prepare_chat_history_for_request(
+    def _prepare_messages_for_openai(
         self,
         chat_messages: Sequence[ChatMessage],
         role_key: str = "role",
         content_key: str = "content",
     ) -> list[dict[str, Any]]:
-        """Prepare the chat history for a request.
+        """Prepare the chat history for an OpenAI request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
 
@@ -352,14 +375,14 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         Returns:
             prepared_chat_history (Any): The prepared chat history for a request.
         """
-        list_of_list = [self._openai_chat_message_parser(message) for message in chat_messages]
+        list_of_list = [self._prepare_message_for_openai(message) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
     # region Parsers
 
-    def _openai_chat_message_parser(self, message: ChatMessage) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
+    def _prepare_message_for_openai(self, message: ChatMessage) -> list[dict[str, Any]]:
+        """Prepare a chat message for OpenAI."""
         all_messages: list[dict[str, Any]] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
@@ -369,13 +392,15 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             args: dict[str, Any] = {
                 "role": message.role.value if isinstance(message.role, Role) else message.role,
             }
+            if message.author_name and message.role != Role.TOOL:
+                args["name"] = message.author_name
             match content:
                 case FunctionCallContent():
                     if all_messages and "tool_calls" in all_messages[-1]:
                         # If the last message already has tool calls, append to it
-                        all_messages[-1]["tool_calls"].append(self._openai_content_parser(content))
+                        all_messages[-1]["tool_calls"].append(self._prepare_content_for_openai(content))
                     else:
-                        args["tool_calls"] = [self._openai_content_parser(content)]  # type: ignore
+                        args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case FunctionResultContent():
                     args["tool_call_id"] = content.call_id
                     if content.result is not None:
@@ -384,13 +409,13 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     if "content" not in args:
                         args["content"] = []
                     # this is a list to allow multi-modal content
-                    args["content"].append(self._openai_content_parser(content))  # type: ignore
+                    args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
             if "content" in args or "tool_calls" in args:
                 all_messages.append(args)
         return all_messages
 
-    def _openai_content_parser(self, content: Contents) -> dict[str, Any]:
-        """Parse contents into the openai format."""
+    def _prepare_content_for_openai(self, content: Contents) -> dict[str, Any]:
+        """Prepare content for OpenAI."""
         match content:
             case FunctionCallContent():
                 args = json.dumps(content.arguments) if isinstance(content.arguments, Mapping) else content.arguments
@@ -467,7 +492,7 @@ TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
     """OpenAI Chat completion class."""

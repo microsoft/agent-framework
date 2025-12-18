@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class DirectEdgeData : EdgeData
 {
-    internal DirectEdgeData(string sourceId, string sinkId, EdgeId id, PredicateT? condition = null) : base(id)
+    internal DirectEdgeData(string sourceId, string sinkId, EdgeId id, PredicateT? condition = null, string? label = null) : base(id, label)
     {
         this.SourceId = sourceId;
         this.SinkId = sinkId;

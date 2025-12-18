@@ -4,7 +4,8 @@
 
 This module provides a high-level, agent-focused API to assemble a sequential
 workflow where:
-- Participants are a sequence of AgentProtocol instances or Executors
+- Participants can be provided as AgentProtocol or Executor instances via `.participants()`,
+  or as factories returning AgentProtocol or Executor via `.register_participants()`
 - A shared conversation context (list[ChatMessage]) is passed along the chain
 - Agents append their assistant messages to the context
 - Custom executors can transform or summarize and return a refined context
@@ -15,7 +16,7 @@ Typical wiring:
 
 Notes:
 - Participants can mix AgentProtocol and Executor objects
-- Agents are auto-wrapped by WorkflowBuilder as AgentExecutor
+- Agents are auto-wrapped by WorkflowBuilder as AgentExecutor (unless already wrapped)
 - AgentExecutor produces AgentExecutorResponse; _ResponseToConversation converts this to list[ChatMessage]
 - Non-agent executors must define a handler that consumes `list[ChatMessage]` and sends back
   the updated `list[ChatMessage]` via their workflow context
@@ -37,7 +38,7 @@ confusion and to mirror how the concurrent builder uses explicit dispatcher/aggr
 """  # noqa: E501
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from agent_framework import AgentProtocol, ChatMessage
@@ -72,11 +73,7 @@ class _InputToConversation(Executor):
         await ctx.send_message(normalize_messages_input(message))
 
     @handler
-    async def from_messages(
-        self,
-        messages: list[str | ChatMessage],
-        ctx: WorkflowContext[list[ChatMessage]],
-    ) -> None:
+    async def from_messages(self, messages: list[str | ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
         await ctx.send_message(normalize_messages_input(messages))
 
 
@@ -102,7 +99,10 @@ class _EndWithConversation(Executor):
 class SequentialBuilder:
     r"""High-level builder for sequential agent/executor workflows with shared context.
 
-    - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor
+    - `participants([...])` accepts a list of AgentProtocol (recommended) or Executor instances
+    - `register_participants([...])` accepts a list of factories for AgentProtocol (recommended)
+       or Executor factories
+    - Executors must define a handler that consumes list[ChatMessage] and sends out a list[ChatMessage]
     - The workflow wires participants in order, passing a list[ChatMessage] down the chain
     - Agents append their assistant messages to the conversation
     - Custom executors can transform/summarize and return a list[ChatMessage]
@@ -114,7 +114,13 @@ class SequentialBuilder:
 
         from agent_framework import SequentialBuilder
 
+        # With agent instances
         workflow = SequentialBuilder().participants([agent1, agent2, summarizer_exec]).build()
+
+        # With agent factories
+        workflow = (
+            SequentialBuilder().register_participants([create_agent1, create_agent2, create_summarizer_exec]).build()
+        )
 
         # Enable checkpoint persistence
         workflow = SequentialBuilder().participants([agent1, agent2]).with_checkpointing(storage).build()
@@ -133,9 +139,29 @@ class SequentialBuilder:
 
     def __init__(self) -> None:
         self._participants: list[AgentProtocol | Executor] = []
+        self._participant_factories: list[Callable[[], AgentProtocol | Executor]] = []
         self._checkpoint_storage: CheckpointStorage | None = None
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
+
+    def register_participants(
+        self,
+        participant_factories: Sequence[Callable[[], AgentProtocol | Executor]],
+    ) -> "SequentialBuilder":
+        """Register participant factories for this sequential workflow."""
+        if self._participants:
+            raise ValueError(
+                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
+            )
+
+        if self._participant_factories:
+            raise ValueError("register_participants() has already been called on this builder instance.")
+
+        if not participant_factories:
+            raise ValueError("participant_factories cannot be empty")
+
+        self._participant_factories = list(participant_factories)
+        return self
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> "SequentialBuilder":
         """Define the ordered participants for this sequential workflow.
@@ -143,6 +169,14 @@ class SequentialBuilder:
         Accepts AgentProtocol instances (auto-wrapped as AgentExecutor) or Executor instances.
         Raises if empty or duplicates are provided for clarity.
         """
+        if self._participant_factories:
+            raise ValueError(
+                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
+            )
+
+        if self._participants:
+            raise ValueError("participants() has already been called on this builder instance.")
+
         if not participants:
             raise ValueError("participants cannot be empty")
 
@@ -217,13 +251,22 @@ class SequentialBuilder:
         - _InputToConversation normalizes the initial input into list[ChatMessage]
         - For each participant in order:
             - If Agent (or AgentExecutor): pass conversation to the agent, then optionally
-              route through human input interceptor, then convert response to conversation
+              route through a request info interceptor, then convert response to conversation
               via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
         - _EndWithConversation yields the final conversation and the workflow becomes idle
         """
-        if not self._participants:
-            raise ValueError("No participants provided. Call .participants([...]) first.")
+        if not self._participants and not self._participant_factories:
+            raise ValueError(
+                "No participants or participant factories provided to the builder. "
+                "Use .participants([...]) or .register_participants([...])."
+            )
+
+        if self._participants and self._participant_factories:
+            # Defensive strategy: this should never happen due to checks in respective methods
+            raise ValueError(
+                "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
+            )
 
         # Internal nodes
         input_conv = _InputToConversation(id="input-conversation")
@@ -235,13 +278,19 @@ class SequentialBuilder:
         # Start of the chain is the input normalizer
         prior: Executor | AgentProtocol = input_conv
 
-        for p in self._participants:
-            # Agent-like branch: either explicitly an AgentExecutor or any non-AgentExecutor
-            if not (isinstance(p, Executor) and not isinstance(p, AgentExecutor)):
-                # input conversation -> [human_input_interceptor] -> (agent) -> response -> conversation
-                label: str
-                label = p.id if isinstance(p, Executor) else getattr(p, "name", None) or p.__class__.__name__
-                resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
+        participants: list[Executor | AgentProtocol] = []
+        if self._participant_factories:
+            # Resolve the participant factories now. This doesn't break the factory pattern
+            # since the Sequential builder still creates new instances per workflow build.
+            for factory in self._participant_factories:
+                p = factory()
+                participants.append(p)
+        else:
+            participants = self._participants
+
+        for p in participants:
+            if isinstance(p, (AgentProtocol, AgentExecutor)):
+                label = p.id if isinstance(p, AgentExecutor) else p.display_name
 
                 if self._request_info_enabled:
                     # Insert request info interceptor BEFORE the agent
@@ -254,13 +303,15 @@ class SequentialBuilder:
                 else:
                     builder.add_edge(prior, p)
 
+                resp_to_conv = _ResponseToConversation(id=f"to-conversation:{label}")
                 builder.add_edge(p, resp_to_conv)
                 prior = resp_to_conv
             elif isinstance(p, Executor):
                 # Custom executor operates on list[ChatMessage]
+                # If the executor doesn't handle list[ChatMessage] correctly, validation will fail
                 builder.add_edge(prior, p)
                 prior = p
-            else:  # pragma: no cover - defensive
+            else:
                 raise TypeError(f"Unsupported participant type: {type(p).__name__}")
 
         # Terminate with the final conversation

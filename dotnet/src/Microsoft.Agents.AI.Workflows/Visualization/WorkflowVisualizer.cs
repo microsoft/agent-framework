@@ -99,10 +99,30 @@ public static class WorkflowVisualizer
         }
 
         // Emit normal edges
-        foreach (var (src, target, isConditional) in ComputeNormalEdges(workflow))
+        foreach (var (src, target, isConditional, label) in ComputeNormalEdges(workflow))
         {
-            var edgeAttr = isConditional ? " [style=dashed, label=\"conditional\"]" : "";
-            lines.Add($"{indent}\"{MapId(src)}\" -> \"{MapId(target)}\"{edgeAttr};");
+            // Build edge attributes
+            var attributes = new List<string>();
+
+            // Add style for conditional edges
+            if (isConditional)
+            {
+                attributes.Add("style=dashed");
+            }
+
+            // Add label (custom label or default "conditional" for conditional edges)
+            if (label != null)
+            {
+                attributes.Add($"label=\"{EscapeDotLabel(label)}\"");
+            }
+            else if (isConditional)
+            {
+                attributes.Add("label=\"conditional\"");
+            }
+
+            // Combine attributes
+            var attrString = attributes.Count > 0 ? $" [{string.Join(", ", attributes)}]" : "";
+            lines.Add($"{indent}\"{MapId(src)}\" -> \"{MapId(target)}\"{attrString};");
         }
     }
 
@@ -133,12 +153,7 @@ public static class WorkflowVisualizer
 
     private static void EmitWorkflowMermaid(Workflow workflow, List<string> lines, string indent, string? ns = null)
     {
-        string sanitize(string input)
-        {
-            return input;
-        }
-
-        string MapId(string id) => ns != null ? $"{sanitize(ns)}/{sanitize(id)}" : id;
+        string MapId(string id) => ns != null ? $"{ns}/{id}" : id;
 
         // Add start node
         var startExecutorId = workflow.StartExecutorId;
@@ -175,14 +190,23 @@ public static class WorkflowVisualizer
         }
 
         // Emit normal edges
-        foreach (var (src, target, isConditional) in ComputeNormalEdges(workflow))
+        foreach (var (src, target, isConditional, label) in ComputeNormalEdges(workflow))
         {
             if (isConditional)
             {
-                lines.Add($"{indent}{MapId(src)} -. conditional .--> {MapId(target)};");
+                string effectiveLabel = label != null ? EscapeMermaidLabel(label) : "conditional";
+
+                // Conditional edge, with user label or default
+                lines.Add($"{indent}{MapId(src)} -. {effectiveLabel} .--> {MapId(target)};");
+            }
+            else if (label != null)
+            {
+                // Regular edge with label
+                lines.Add($"{indent}{MapId(src)} -->|{EscapeMermaidLabel(label)}| {MapId(target)};");
             }
             else
             {
+                // Regular edge without label
                 lines.Add($"{indent}{MapId(src)} --> {MapId(target)};");
             }
         }
@@ -214,9 +238,9 @@ public static class WorkflowVisualizer
         return result;
     }
 
-    private static List<(string Source, string Target, bool IsConditional)> ComputeNormalEdges(Workflow workflow)
+    private static List<(string Source, string Target, bool IsConditional, string? Label)> ComputeNormalEdges(Workflow workflow)
     {
-        var edges = new List<(string, string, bool)>();
+        var edges = new List<(string, string, bool, string?)>();
         foreach (var edgeGroup in workflow.Edges.Values.SelectMany(x => x))
         {
             if (edgeGroup.Kind == EdgeKind.FanIn)
@@ -229,14 +253,15 @@ public static class WorkflowVisualizer
                 case EdgeKind.Direct when edgeGroup.DirectEdgeData != null:
                     var directData = edgeGroup.DirectEdgeData;
                     var isConditional = directData.Condition != null;
-                    edges.Add((directData.SourceId, directData.SinkId, isConditional));
+                    var label = directData.Label;
+                    edges.Add((directData.SourceId, directData.SinkId, isConditional, label));
                     break;
 
                 case EdgeKind.FanOut when edgeGroup.FanOutEdgeData != null:
                     var fanOutData = edgeGroup.FanOutEdgeData;
                     foreach (var sinkId in fanOutData.SinkIds)
                     {
-                        edges.Add((fanOutData.SourceId, sinkId, false));
+                        edges.Add((fanOutData.SourceId, sinkId, false, fanOutData.Label));
                     }
                     break;
             }
@@ -274,6 +299,25 @@ public static class WorkflowVisualizer
 
         workflow = null;
         return false;
+    }
+
+    // Helper method to escape special characters in DOT labels
+    private static string EscapeDotLabel(string label)
+    {
+        return label.Replace("\"", "\\\"").Replace("\n", "\\n");
+    }
+
+    // Helper method to escape special characters in Mermaid labels
+    private static string EscapeMermaidLabel(string label)
+    {
+        return label
+            .Replace("&", "&amp;")      // Must be first to avoid double-escaping
+            .Replace("|", "&#124;")     // Pipe breaks Mermaid delimiter syntax
+            .Replace("\"", "&quot;")    // Quote character
+            .Replace("<", "&lt;")       // Less than
+            .Replace(">", "&gt;")       // Greater than
+            .Replace("\n", "<br/>")     // Newline to HTML break
+            .Replace("\r", "");         // Remove carriage return
     }
 
     #endregion

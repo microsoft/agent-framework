@@ -1,5 +1,12 @@
 # Release History
 
+## [Unreleased]
+
+### Changed
+
+- Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
+- Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
+
 ## v1.0.0-preview.251204.1
 
 - Added orchestration ID to durable agent entity state ([#2137](https://github.com/microsoft/agent-framework/pull/2137))
