@@ -443,3 +443,27 @@ def test_chat_response_update_created_at_uses_utc(openai_unit_test_env: dict[str
     assert response_update.created_at == expected_formatted, (
         f"Expected UTC timestamp {expected_formatted}, got {response_update.created_at}"
     )
+
+
+# endregion
+
+# region Prepare Chat History Tests
+
+
+def test_prepare_chat_history_includes_author_name(openai_unit_test_env: dict[str, str]):
+    """Test that _prepare_chat_history_for_request includes author name when provided."""
+    from agent_framework import Role
+
+    chat_history = [
+        ChatMessage(role=Role.USER, text="Hello", author_name="Alice"),
+        ChatMessage(role=Role.ASSISTANT, text="Hi there!", author_name="Bot"),
+    ]
+
+    client = OpenAIChatClient()
+    prepared_history = client._prepare_chat_history_for_request(chat_history)  # type: ignore
+
+    assert prepared_history[0]["name"] == "Alice", "Author name for user message should be included."
+    assert prepared_history[1]["name"] == "Bot", "Author name for assistant message should be included."
+
+
+# endregion
