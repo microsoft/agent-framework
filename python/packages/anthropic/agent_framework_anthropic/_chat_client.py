@@ -602,7 +602,7 @@ class AnthropicClient(BaseChatClient):
                                 raw_representation=content_block,
                             )
                         )
-                    elif "code_execution" in (content_block.name or "") or content_block.type == "tool_use":
+                    elif "code_execution" in (content_block.name or ""):
                         contents.append(
                             CodeInterpreterToolCallContent(
                                 call_id=content_block.id,
