@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import logging
 from typing import cast
 
 from agent_framework import (
@@ -14,8 +13,6 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
-
-logging.basicConfig(level=logging.INFO)
 
 """
 Sample: Group Chat with Agent-Based Manager
@@ -43,13 +40,10 @@ async def main() -> None:
         instructions="""
 You coordinate a team conversation to solve the user's task.
 
-Review the conversation history and select the next participant to speak.
-
 Guidelines:
 - Start with Researcher to gather information
 - Then have Writer synthesize the final answer
 - Only finish after both have contributed meaningfully
-- Allow for multiple rounds of information gathering if needed
 """,
         chat_client=_get_chat_client(),
     )
@@ -70,7 +64,7 @@ Guidelines:
 
     workflow = (
         GroupChatBuilder()
-        .set_manager(coordinator, display_name="Orchestrator")
+        .with_agent_orchestrator(coordinator)
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == Role.ASSISTANT) >= 2)
         .participants([researcher, writer])
         .build()

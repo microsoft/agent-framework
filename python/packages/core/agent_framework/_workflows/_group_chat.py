@@ -27,17 +27,17 @@ from typing import ClassVar, Never, cast
 
 from pydantic import BaseModel, Field
 
-from agent_framework import AgentExecutor, AgentExecutorRequest, AgentThread, ChatAgent, Role
-
-from .._agents import AgentProtocol
-from .._types import ChatMessage
-from ._agent_executor import AgentExecutorResponse
+from .._agents import AgentProtocol, ChatAgent
+from .._threads import AgentThread
+from .._types import ChatMessage, Role
+from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
     GroupChatParticipantMessage,
     GroupChatRequestMessage,
     GroupChatResponseMessage,
     GroupChatWorkflowContext_T_Out,
+    ParticipantRegistry,
     TerminationCondition,
 )
 from ._checkpoint import CheckpointStorage
@@ -56,10 +56,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class GroupChatState:
-    """Immutable state of the group chat for the selection function to determine the next speaker."""
+    """Immutable state of the group chat for the selection function to determine the next speaker.
 
+    Attributes:
+        current_round: The current round index of the group chat, starting from 0.
+        participants: A mapping of participant names to their descriptions in the group chat.
+        conversation: The full conversation history up to this point as a list of ChatMessage.
+    """
+
+    # Round index, starting from 0
     current_round: int
-    participants: list[str]
+    # participant name to description mapping
+    participants: dict[str, str]
+    # Full conversation history up to this point
     conversation: list[ChatMessage]
 
 
@@ -97,9 +106,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     def __init__(
         self,
         id: str,
+        participant_registry: ParticipantRegistry,
         selection_func: GroupChatSelectionFunction,
         *,
-        participants: list[str],
         name: str | None = None,
         max_rounds: int | None = None,
         termination_condition: TerminationCondition | None = None,
@@ -109,8 +118,8 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         Args:
             id: Unique executor ID for the orchestrator. The ID must be unique within the workflow.
             selection_func: Function to select the next speaker based on conversation state
-            participants: List of participant names in the group chat. This should match the
-                executor IDs of the participants.
+            participant_registry: Registry of participants in the group chat that track executor types
+                (agents vs. executors) and provide resolution utilities.
             name: Optional display name for the orchestrator in the messages, defaults to executor ID.
                 A more descriptive name that is not an ID could help models better understand the role
                 of the orchestrator in multi-agent conversations. If the ID is not human-friendly,
@@ -140,9 +149,14 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
                 max_rounds=10,
             )
         """
-        super().__init__(id, name=name, max_rounds=max_rounds, termination_condition=termination_condition)
+        super().__init__(
+            id,
+            participant_registry,
+            name=name,
+            max_rounds=max_rounds,
+            termination_condition=termination_condition,
+        )
         self._selection_func = selection_func
-        self._participants = participants
 
     @override
     async def _handle_messages(
@@ -194,7 +208,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participants if p != participant],
+            participants=[p for p in self._participant_registry.participants() if p != participant],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
@@ -206,7 +220,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Determine the next speaker using the selection function."""
         group_chat_state = GroupChatState(
             current_round=self._round_index,
-            participants=self._participants,
+            participants=self._participant_registry.participants(),
             conversation=self._get_conversation(),
         )
 
@@ -214,7 +228,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         if inspect.isawaitable(next_speaker):
             next_speaker = await next_speaker
 
-        if next_speaker not in self._participants:
+        if next_speaker not in self._participant_registry.participants():
             raise RuntimeError(f"Selection function returned unknown participant '{next_speaker}'.")
 
         return next_speaker
@@ -231,11 +245,13 @@ class AgentOrchestrationOutput(BaseModel):
     model_config = {
         "extra": "forbid",
         # OpenAI strict mode requires all properties to be in required array
-        "json_schema_extra": {"required": ["terminate", "next_speaker", "final_message"]},
+        "json_schema_extra": {"required": ["terminate", "reason", "next_speaker", "final_message"]},
     }
 
     # Whether to terminate the conversation
     terminate: bool
+    # An explanation for the decision made
+    reason: str
     # Next speaker to select if not terminating
     next_speaker: str | None = Field(
         default=None,
@@ -266,8 +282,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     def __init__(
         self,
         agent: ChatAgent,
+        participant_registry: ParticipantRegistry,
         *,
-        participants: list[str],
         max_rounds: int | None = None,
         termination_condition: TerminationCondition | None = None,
         retry_attempts: int | None = None,
@@ -277,8 +293,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         Args:
             agent: Agent that selects the next speaker based on conversation state
-            participants: List of participant names in the group chat. This should match the
-                executor IDs of the participants.
+            participant_registry: Registry of participants in the group chat that track executor types
+                (agents vs. executors) and provide resolution utilities.
             name: Optional display name for the orchestrator in the messages, defaults to executor ID.
                 A more descriptive name that is not an ID could help models better understand the role
                 of the orchestrator in multi-agent conversations. If the ID is not human-friendly,
@@ -288,9 +304,14 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             retry_attempts: Optional number of retry attempts for the agent in case of failure.
             thread: Optional agent thread to use for the orchestrator agent.
         """
-        super().__init__(agent.id, name=agent.name, max_rounds=max_rounds, termination_condition=termination_condition)
+        super().__init__(
+            agent.id,
+            participant_registry,
+            name=agent.name,
+            max_rounds=max_rounds,
+            termination_condition=termination_condition,
+        )
         self._agent = agent
-        self._participants = participants
         self._retry_attempts = retry_attempts
         self._thread = thread or agent.get_new_thread()
 
@@ -314,6 +335,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             return
 
         self._increment_round()
+        # We don't need the full conversation since the thread should maintain history
+        self._clear_conversation()
 
         # Broadcast messages to all participants for context
         await self._broadcast_messages_to_participants(
@@ -348,6 +371,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
         self._increment_round()
+        # We don't need the full conversation since the thread should maintain history
+        self._clear_conversation()
 
         # Broadcast participant messages to all participants for context, except
         # the participant that just responded
@@ -355,7 +380,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participants if p != participant],
+            participants=[p for p in self._participant_registry.participants() if p != participant],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
@@ -384,15 +409,17 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         current_conversation = self._get_conversation()
         instruction = (
-            "Based on the current conversation, decide what to do next.\n"
-            "Respond with a JSON object of the following format:\n"
+            "Decide what to do next. Respond with a JSON object of the following format:\n"
             "{\n"
             '  "terminate": <true|false>,\n'
+            '  "reason": "<explanation for the decision>",\n'
             '  "next_speaker": "<name of the next participant to speak (if not terminating)>",\n'
             '  "final_message": "<optional final message if terminating>"\n'
             "}\n"
-            "If not terminating, here are the valid participant names (case-sensitive):\n"
-            f"{', '.join(self._participants)}"
+            "If not terminating, here are the valid participant names (case-sensitive) and their descriptions:\n"
+            + "\n".join([
+                f"{name}: {description}" for name, description in self._participant_registry.participants().items()
+            ])
         )
         # Prepend instruction as system message
         current_conversation.append(ChatMessage(role=Role.USER, text=instruction))
@@ -407,6 +434,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                     raise
                 retry_attempts -= 1
                 logger.debug(f"Retrying agent orchestration invocation, attempts left: {retry_attempts}")
+                # We don't need the full conversation since the thread should maintain history
                 current_conversation = [
                     ChatMessage(
                         role=Role.USER,
@@ -463,14 +491,18 @@ class GroupChatBuilder:
     def __init__(self) -> None:
         """Initialize the GroupChatBuilder."""
         self._participants: dict[str, AgentProtocol | Executor] = {}
+
         # Orchestrator related members
         self._orchestrator: BaseGroupChatOrchestrator | None = None
         self._selection_func: GroupChatSelectionFunction | None = None
+        self._agent_orchestrator: ChatAgent | None = None
         self._termination_condition: TerminationCondition | None = None
         self._max_rounds: int | None = None
         self._orchestrator_name: str | None = None
+
         # Checkpoint related members
         self._checkpoint_storage: CheckpointStorage | None = None
+
         # Request info related members
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] = set()
@@ -483,30 +515,53 @@ class GroupChatBuilder:
         until the termination conditions are met.
 
         Args:
-            orchestrator: An instance of GroupChatOrchestrator to manage the group chat.
+            orchestrator: An instance of BaseGroupChatOrchestrator to manage the group chat.
 
         Returns:
             Self for fluent chaining.
 
+        Raises:
+            ValueError: If orchestrator has already been set
+
         Example:
         .. code-block:: python
 
-            from agent_framework import GroupChatBuilder, GroupChatOrchestrator
+            from agent_framework import GroupChatBuilder
 
 
-            orchestrator = GroupChatOrchestrator(...)
+            orchestrator = CustomGroupChatOrchestrator(...)
             workflow = GroupChatBuilder().with_orchestrator(orchestrator).participants([agent1, agent2]).build()
         """
         if self._orchestrator is not None:
             raise ValueError("Orchestrator has already been configured. Call with_orchestrator(...) at most once.")
 
-        if self._selection_func is not None:
+        self._orchestrator = orchestrator
+        return self
+
+    def with_agent_orchestrator(self, agent: ChatAgent) -> "GroupChatBuilder":
+        """Set an agent-based orchestrator for this group chat workflow.
+
+        An agent-based group chat orchestrator uses a ChatAgent to select the next speaker
+        intelligently based on the conversation context.
+
+        Args:
+            agent: An instance of ChatAgent to manage the group chat.
+
+        Returns:
+            Self for fluent chaining.
+
+        Raises:
+            ValueError: If agent orchestrator has already been set
+
+        Note: If a custom orchestrator has already been set via `with_orchestrator()`, that will take
+        precedence and this agent-based orchestrator will be ignored.
+        """
+        if self._agent_orchestrator is not None:
             raise ValueError(
-                "select_speakers_func has already been configured. Call with_orchestrator(...) or "
-                "with_select_speakers_func(...) but not both."
+                "Agent orchestrator has already been configured. Call with_agent_orchestrator(...) at most once."
             )
 
-        self._orchestrator = orchestrator
+        self._agent_orchestrator = agent
         return self
 
     def with_select_speaker_func(
@@ -530,6 +585,12 @@ class GroupChatBuilder:
         Returns:
             Self for fluent chaining
 
+        Raises:
+            ValueError: If selection function has already been set
+
+        Note: If a custom orchestrator has already been set via `with_orchestrator()`, that will take
+        precedence and this selection function will be ignored.
+
         Example:
         .. code-block:: python
 
@@ -551,12 +612,6 @@ class GroupChatBuilder:
         if self._selection_func is not None:
             raise ValueError(
                 "select_speakers_func has already been configured. Call with_select_speakers_func(...) at most once."
-            )
-
-        if self._orchestrator is not None:
-            raise ValueError(
-                "Orchestrator has already been configured. Call with_orchestrator(...) or "
-                "with_select_speakers_func(...) but not both."
             )
 
         self._selection_func = selection_func
@@ -732,22 +787,42 @@ class GroupChatBuilder:
 
         return self
 
-    def _resolve_orchestrator(self) -> Executor:
-        """Determine the orchestrator to use for the workflow."""
+    def _resolve_orchestrator(self, participants: Sequence[Executor]) -> Executor:
+        """Determine the orchestrator to use for the workflow.
+
+        Args:
+            participants: List of resolved participant executors
+        """
         if self._orchestrator is not None:
             return self._orchestrator
+
+        if self._agent_orchestrator is not None and self._selection_func is not None:
+            raise ValueError(
+                "Both agent-based orchestrator and selection function are configured; only one can be used at a time."
+            )
 
         if self._selection_func is not None:
             return GroupChatOrchestrator(
                 id=self.DEFAULT_ORCHESTRATOR_ID,
+                participant_registry=ParticipantRegistry(participants),
                 selection_func=self._selection_func,
                 name=self._orchestrator_name,
                 max_rounds=self._max_rounds,
                 termination_condition=self._termination_condition,
-                participants=list(self._participants.keys()),
             )
 
-        raise RuntimeError("Orchestrator could not be resolved. This should not happen.")
+        if self._agent_orchestrator is not None:
+            return AgentBasedGroupChatOrchestrator(
+                agent=self._agent_orchestrator,
+                participant_registry=ParticipantRegistry(participants),
+                max_rounds=self._max_rounds,
+                termination_condition=self._termination_condition,
+            )
+
+        raise RuntimeError(
+            "Orchestrator could not be resolved. Please provide one via with_orchestrator(), "
+            "with_agent_orchestrator(), or with_select_speaker_func()."
+        )
 
     def _resolve_participants(self) -> list[Executor]:
         """Resolve participant instances into Executor objects."""
@@ -773,26 +848,13 @@ class GroupChatBuilder:
 
         Returns:
             Validated Workflow instance ready for execution
-
-        Raises:
-            ValueError: If orchestrator or participants are not properly configured
         """
-        if self._orchestrator is None and self._selection_func is None:
-            raise ValueError(
-                "Orchestrator must be configured before build(). "
-                "Call with_orchestrator(...) or with_select_speakers_func(...)."
-            )
-        if self._orchestrator and self._selection_func:
-            logger.warning(
-                "Both orchestrator and selection function are configured; the custom orchestrator will take precedence."
-            )
-
         if not self._participants:
             raise ValueError("participants must be configured before build()")
 
         # Resolve orchestrator and participants to executors
-        orchestrator: Executor = self._resolve_orchestrator()
         participants: list[Executor] = self._resolve_participants()
+        orchestrator: Executor = self._resolve_orchestrator(participants)
 
         # Build workflow graph
         workflow_builder = WorkflowBuilder().set_start_executor(orchestrator)

@@ -11,11 +11,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Never, TypeAlias
 
-from agent_framework import AgentExecutorRequest, AgentExecutorResponse, Role, WorkflowEvent
-
-from .._types import ChatMessage
+from .._types import ChatMessage, Role
+from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._events import WorkflowEvent
 from ._executor import Executor, handler
-from ._orchestrator_helpers import ParticipantRegistry
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -105,6 +104,68 @@ class GroupChatRequestSentEvent(GroupChatEvent):
 # endregion
 
 
+# region Participant registry
+class ParticipantRegistry:
+    """Simple registry for tracking group chat participants and their types and other properties."""
+
+    EMPTY_DESCRIPTION_PLACEHOLDER: ClassVar[str] = (
+        "<no description, use name to identify the purpose of this participant>"
+    )
+
+    def __init__(self, participants: Sequence[Executor]) -> None:
+        """Initialize the registry and validate participant IDs.
+
+        Args:
+            participants: List of executors (agents or custom executors) to register
+        Raises:
+            ValueError: If there are duplicate or conflicting participant IDs
+        """
+        self._agents: set[str] = set()
+        self._executors: set[str] = set()
+        self._descriptions: dict[str, str] = {}
+        self._resolve_participants(participants)
+
+    def _resolve_participants(self, participants: Sequence[Executor]) -> None:
+        """Register participants and validate IDs."""
+        for participant in participants:
+            if isinstance(participant, AgentExecutor):
+                if participant.id in self._executors:
+                    raise ValueError(
+                        f"Participant ID conflict: '{participant.id}' registered as both agent and executor."
+                    )
+                if participant.id in self._agents:
+                    raise ValueError(
+                        f"Duplicate participant ID: '{participant.id}' registered multiple times as agent."
+                    )
+                self._agents.add(participant.id)
+                if participant.description:
+                    self._descriptions[participant.id] = participant.description
+            else:
+                if participant.id in self._agents:
+                    raise ValueError(
+                        f"Participant ID conflict: '{participant.id}' registered as both executor and agent."
+                    )
+                if participant.id in self._executors:
+                    raise ValueError(
+                        f"Duplicate participant ID: '{participant.id}' registered multiple times as executor."
+                    )
+                self._executors.add(participant.id)
+
+    def is_agent(self, name: str) -> bool:
+        """Check if a participant is an agent (vs custom executor)."""
+        return name in self._agents
+
+    def participants(self) -> dict[str, str]:
+        """Get all registered participant names."""
+        return {
+            **{agent: self._descriptions.get(agent, self.EMPTY_DESCRIPTION_PLACEHOLDER) for agent in self._agents},
+            **{executor: self.EMPTY_DESCRIPTION_PLACEHOLDER for executor in self._executors},
+        }
+
+
+# endregion
+
+
 class BaseGroupChatOrchestrator(Executor, ABC):
     """Abstract base class for group chat orchestrators.
 
@@ -121,6 +182,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
     def __init__(
         self,
         id: str,
+        participant_registry: ParticipantRegistry,
         *,
         name: str | None = None,
         max_rounds: int | None = None,
@@ -130,6 +192,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
         Args:
             id: Unique identifier for this orchestrator executor
+            participant_registry: Registry of group chat participants that tracks their types (agents
+                vs custom executors)
             name: Optional display name for orchestrator messages
             max_rounds: Optional maximum number of conversation rounds.
                 Must be equal to or greater than 1 if set. Number smaller than 1 will be coerced to 1.
@@ -140,7 +204,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         self._max_rounds = max(1, max_rounds) if max_rounds is not None else None
         self._termination_condition = termination_condition
         self._round_index: int = 0
-        self._registry = ParticipantRegistry()
+        self._participant_registry = participant_registry
         # Shared conversation state management
         self._conversation: list[ChatMessage] = []
 
@@ -264,23 +328,6 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
     # endregion
 
-    def register_participant_entry(
-        self, name: str, *, entry_id: str, is_agent: bool, exit_id: str | None = None
-    ) -> None:
-        """Record routing details for a participant's entry executor.
-
-        This method provides a unified interface for registering participants
-        across all orchestrator patterns, whether they are agents or custom executors.
-
-        Args:
-            name: Participant name (used for selection and tracking)
-            entry_id: Executor ID for this participant's entry point
-            is_agent: Whether this is an AgentExecutor (True) or custom Executor (False)
-            exit_id: Executor ID for this participant's exit point (where responses come from).
-                    If None, defaults to entry_id.
-        """
-        self._registry.register(name, entry_id=entry_id, is_agent=is_agent, exit_id=exit_id)
-
     # Conversation state management (shared across all patterns)
 
     def _append_messages(self, messages: Sequence[ChatMessage]) -> None:
@@ -387,10 +434,12 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             participants: Optional list of participant names to route to.
                           If None, routes to all registered participants.
         """
-        target_participants = participants if participants is not None else list(self._registry.all_participants())
+        target_participants = (
+            participants if participants is not None else list(self._participant_registry.participants())
+        )
 
         async def _send_messages(target: str) -> None:
-            if self._registry.is_agent(target):
+            if self._participant_registry.is_agent(target):
                 # Send messages without requesting a response
                 await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=False), target_id=target)
             else:
@@ -423,32 +472,28 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Raises:
             ValueError: If participant is not registered
         """
-        entry_id = self._registry.get_entry_id(target)
-        if entry_id is None:
-            raise ValueError(f"No registered entry executor for participant '{target}'.")
-
-        if self._registry.is_agent(target):
+        if self._participant_registry.is_agent(target):
             # AgentExecutors receive simple message list
             messages: list[ChatMessage] = []
             if additional_instruction:
                 messages.append(ChatMessage(role=Role.USER, text=additional_instruction))
             request = AgentExecutorRequest(messages=messages, should_respond=True)
-            await ctx.send_message(request, target_id=entry_id)
+            await ctx.send_message(request, target_id=target)
             await ctx.add_event(
                 GroupChatRequestSentEvent(
                     round_index=self._round_index,
-                    participant_name=entry_id,
+                    participant_name=target,
                     data=request,
                 )
             )
         else:
             # Custom executors receive full context envelope
             request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)
-            await ctx.send_message(request, target_id=entry_id)
+            await ctx.send_message(request, target_id=target)
             await ctx.add_event(
                 GroupChatRequestSentEvent(
                     round_index=self._round_index,
-                    participant_name=entry_id,
+                    participant_name=target,
                     data=request,
                 )
             )
