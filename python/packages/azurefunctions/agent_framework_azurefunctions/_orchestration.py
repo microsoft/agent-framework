@@ -278,7 +278,6 @@ class DurableAIAgent(AgentProtocol):
             message=message_str,
             enable_tool_calls=enable_tool_calls,
             correlation_id=correlation_id,
-            thread_id=session_id.key,
             response_format=response_format,
             orchestration_id=self.context.instance_id,
             created_at=self.context.current_utc_datetime,

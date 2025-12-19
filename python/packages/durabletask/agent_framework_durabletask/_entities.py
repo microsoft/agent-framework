@@ -37,6 +37,7 @@ class AgentEntityStateProviderMixin:
     Concrete classes must implement:
     - _get_state_dict(): fetch raw persisted state dict (default should be {})
     - _set_state_dict(): persist raw state dict
+    - _get_thread_id_from_entity(): fetch the thread ID from the underlying context
     """
 
     _state_cache: DurableAgentState | None = None
@@ -46,6 +47,13 @@ class AgentEntityStateProviderMixin:
 
     def _set_state_dict(self, state: dict[str, Any]) -> None:
         raise NotImplementedError
+
+    def _get_thread_id_from_entity(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def thread_id(self) -> str:
+        return self._get_thread_id_from_entity()
 
     @property
     def state(self) -> DurableAgentState:
@@ -127,10 +135,10 @@ class AgentEntity:
             run_request = request
 
         message = run_request.message
-        thread_id = run_request.thread_id
+        thread_id = self._state_provider.thread_id
         correlation_id = run_request.correlation_id
         if not thread_id:
-            raise ValueError("RunRequest must include a thread_id")
+            raise ValueError("Entity State Provider must provide a thread_id")
         if not correlation_id:
             raise ValueError("RunRequest must include a correlation_id")
         response_format = run_request.response_format
@@ -323,20 +331,14 @@ class AgentEntity:
 
 
 class DurableTaskEntityStateProvider(DurableEntity, AgentEntityStateProviderMixin):
-    """durabletask.entities.DurableEntity wrapper around AgentEntity."""
+    """DurableTask Durable Entity state provider for AgentEntity.
 
-    agent: AgentProtocol
-    callback: AgentResponseCallbackProtocol | None
+    This class utilizes the Durable Entity context from `durabletask` package
+    to get and set the state of the agent entity.
+    """
 
-    def __init__(
-        self,
-        agent: AgentProtocol,
-        callback: AgentResponseCallbackProtocol | None = None,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.agent = agent
-        self.callback = callback
-        self._agent_entity = AgentEntity(agent, callback=callback, state_provider=self)
 
     def _get_state_dict(self) -> dict[str, Any]:
         raw = self.get_state(dict, default={})
@@ -344,3 +346,6 @@ class DurableTaskEntityStateProvider(DurableEntity, AgentEntityStateProviderMixi
 
     def _set_state_dict(self, state: dict[str, Any]) -> None:
         self.set_state(state)
+
+    def _get_thread_id_from_entity(self) -> str:
+        return self.entity_context.entity_id.key

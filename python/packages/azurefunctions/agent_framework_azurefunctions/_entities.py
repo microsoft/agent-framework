@@ -23,7 +23,11 @@ logger = get_logger("agent_framework.azurefunctions.entities")
 
 
 class AzureFunctionEntityStateProvider(AgentEntityStateProviderMixin):
-    """Azure Functions-specific state provider for AgentEntity."""
+    """Azure Functions Durable Entity state provider for AgentEntity.
+
+    This class utilizes the Durable Entity context from `azure-functions-durable` package
+    to get and set the state of the agent entity.
+    """
 
     def __init__(self, context: df.DurableEntityContext) -> None:
         self._context = context
@@ -36,6 +40,9 @@ class AzureFunctionEntityStateProvider(AgentEntityStateProviderMixin):
 
     def _set_state_dict(self, state: dict[str, Any]) -> None:
         self._context.set_state(state)
+
+    def _get_thread_id_from_entity(self) -> str:
+        return self._context.entity_key
 
 
 def create_agent_entity(

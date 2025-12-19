@@ -46,9 +46,9 @@ class TestCreateAgentEntity:
         # Mock context
         mock_context = Mock()
         mock_context.operation_name = "run"
+        mock_context.entity_key = "conv-123"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-123",
             "correlationId": "corr-entity-factory",
         }
         mock_context.get_state.return_value = None

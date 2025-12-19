@@ -300,8 +300,7 @@ class TestDurableAIAgent:
         assert request["enable_tool_calls"] is True
         assert "correlationId" in request
         assert request["correlationId"] == "correlation-guid"
-        assert "thread_id" in request
-        assert request["thread_id"] == "thread-guid"
+        assert "thread_id" not in request
         # Verify orchestration ID is set from context.instance_id
         assert "orchestrationId" in request
         assert request["orchestrationId"] == "test-instance-001"

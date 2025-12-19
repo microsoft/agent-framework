@@ -859,7 +859,6 @@ class AgentFunctionApp(DFAppBase):
             request_response_format=request_response_format,
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
-            thread_id=thread_id,
             correlation_id=correlation_id,
             created_at=datetime.now(timezone.utc),
         ).to_dict()

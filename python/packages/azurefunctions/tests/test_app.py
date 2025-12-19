@@ -35,7 +35,8 @@ def _identity_decorator(func: TFunc) -> TFunc:
 
 
 class _InMemoryStateProvider(AgentEntityStateProviderMixin):
-    def __init__(self, initial_state: dict[str, Any] | None = None) -> None:
+    def __init__(self, *, thread_id: str = "test-thread", initial_state: dict[str, Any] | None = None) -> None:
+        self._thread_id = thread_id
         self._state_dict: dict[str, Any] = initial_state or {}
 
     def _get_state_dict(self) -> dict[str, Any]:
@@ -43,6 +44,9 @@ class _InMemoryStateProvider(AgentEntityStateProviderMixin):
 
     def _set_state_dict(self, state: dict[str, Any]) -> None:
         self._state_dict = state
+
+    def _get_thread_id_from_entity(self) -> str:
+        return self._thread_id
 
 
 class TestAgentFunctionAppInit:
@@ -355,11 +359,10 @@ class TestAgentEntityOperations:
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Test response")])
         )
 
-        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider())
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="test-conv-123"))
 
         result = await entity.run({
             "message": "Test message",
-            "thread_id": "test-conv-123",
             "correlationId": "corr-app-entity-1",
         })
 
@@ -374,17 +377,17 @@ class TestAgentEntityOperations:
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response 1")])
         )
 
-        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider())
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
         # Send first message
-        await entity.run({"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-2"})
+        await entity.run({"message": "Message 1", "correlationId": "corr-app-entity-2"})
 
         # Each conversation turn creates 2 entries: request and response
         history = entity.state.data.conversation_history[0].messages  # Request entry
         assert len(history) == 1  # Just the user message
 
         # Send second message
-        await entity.run({"message": "Message 2", "thread_id": "conv-2", "correlationId": "corr-app-entity-2b"})
+        await entity.run({"message": "Message 2", "correlationId": "corr-app-entity-2b"})
 
         # Now we have 4 entries total (2 requests + 2 responses)
         # Access the first request entry
@@ -408,14 +411,14 @@ class TestAgentEntityOperations:
             return_value=AgentRunResponse(messages=[ChatMessage(role="assistant", text="Response")])
         )
 
-        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider())
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
         assert len(entity.state.data.conversation_history) == 0
 
-        await entity.run({"message": "Message 1", "thread_id": "conv-1", "correlationId": "corr-app-entity-3a"})
+        await entity.run({"message": "Message 1", "correlationId": "corr-app-entity-3a"})
         assert len(entity.state.data.conversation_history) == 2
 
-        await entity.run({"message": "Message 2", "thread_id": "conv-1", "correlationId": "corr-app-entity-3b"})
+        await entity.run({"message": "Message 2", "correlationId": "corr-app-entity-3b"})
         assert len(entity.state.data.conversation_history) == 4
 
     def test_entity_reset(self) -> None:
@@ -456,7 +459,6 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-123",
             "correlationId": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
@@ -484,7 +486,6 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run_agent"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-123",
             "correlationId": "corr-app-factory-1",
         }
         mock_context.get_state.return_value = None
@@ -607,7 +608,6 @@ class TestAgentEntityFactory:
         mock_context.operation_name = "run"
         mock_context.get_input.return_value = {
             "message": "Test message",
-            "thread_id": "conv-restore-1",
             "correlationId": "corr-restore-1",
         }
         mock_context.get_state.return_value = existing_state
@@ -626,11 +626,10 @@ class TestErrorHandling:
         mock_agent = Mock()
         mock_agent.run = AsyncMock(side_effect=Exception("Agent error"))
 
-        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider())
+        entity = AgentEntity(mock_agent, state_provider=_InMemoryStateProvider(thread_id="conv-1"))
 
         result = await entity.run({
             "message": "Test message",
-            "thread_id": "conv-1",
             "correlationId": "corr-app-error-1",
         })
 
@@ -792,7 +791,7 @@ class TestHttpRunRoute:
 
         assert run_request["message"] == "Plain text via HTTP"
         assert run_request["role"] == "user"
-        assert "thread_id" in run_request
+        assert "thread_id" not in run_request
 
     async def test_http_run_accept_header_returns_json(self) -> None:
         """Test that Accept header requesting JSON results in JSON response."""
