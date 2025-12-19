@@ -1020,6 +1020,44 @@ def test_streaming_response_basic_structure() -> None:
     assert response.raw_representation is mock_event
 
 
+def test_streaming_response_created_type() -> None:
+    """Test streaming response with created type"""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.created"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_1234"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_5678"
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id == "conv_5678"
+
+
+def test_streaming_response_in_progress_type() -> None:
+    """Test streaming response with in_progress type"""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.in_progress"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_1234"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_5678"
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id == "conv_5678"
+
+
 def test_streaming_annotation_added_with_file_path() -> None:
     """Test streaming annotation added event with file_path type extracts HostedFileContent."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
