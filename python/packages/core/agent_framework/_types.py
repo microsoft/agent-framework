@@ -789,8 +789,9 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
@@ -802,6 +803,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +825,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
@@ -846,13 +858,18 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -869,7 +886,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
@@ -887,6 +906,11 @@ class TextReasoningContent(BaseContent):
             self.raw_representation = (
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
 
         # Merge annotations
         if other.annotations:

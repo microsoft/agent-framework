@@ -858,6 +858,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         metadata: dict[str, Any] = {}
         contents: list[Contents] = []
         conversation_id: str | None = None
+        response_id: str | None = None
         model = self.model_id
         # TODO(peterychang): Add support for other content types
         match event.type:
@@ -940,7 +941,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case "response.reasoning_summary_text.done":
                 contents.append(TextReasoningContent(text=event.text, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.created":
+                response_id = event.response.id
+                conversation_id = self._get_conversation_id(event.response, chat_options.store)
+            case "response.in_progress":
+                response_id = event.response.id
+                conversation_id = self._get_conversation_id(event.response, chat_options.store)
             case "response.completed":
+                response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, chat_options.store)
                 model = event.response.model
                 if event.response.usage:
@@ -1106,6 +1114,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         return ChatResponseUpdate(
             contents=contents,
             conversation_id=conversation_id,
+            response_id=response_id,
             role=Role.ASSISTANT,
             model_id=model,
             additional_properties=metadata,
