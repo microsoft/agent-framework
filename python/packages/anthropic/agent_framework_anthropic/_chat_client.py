@@ -15,12 +15,16 @@ from agent_framework import (
     CitationAnnotation,
     Contents,
     FinishReason,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
     FunctionCallContent,
     FunctionResultContent,
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedMCPTool,
     HostedWebSearchTool,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -588,21 +592,39 @@ class AnthropicClient(BaseChatClient):
                     )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     self._last_call_id_name = (content_block.id, content_block.name)
-                    contents.append(
-                        FunctionCallContent(
-                            call_id=content_block.id,
-                            name=content_block.name,
-                            arguments=content_block.input,
-                            raw_representation=content_block,
+                    if content_block.type == "mcp_tool_use":
+                        contents.append(
+                            MCPServerToolCallContent(
+                                call_id=content_block.id,
+                                tool_name=content_block.name,
+                                server_name=None,
+                                arguments=content_block.input,
+                                raw_representation=content_block,
+                            )
                         )
-                    )
+                    elif "code_execution" in (content_block.name or "") or content_block.type == "tool_use":
+                        contents.append(
+                            CodeInterpreterToolCallContent(
+                                call_id=content_block.id,
+                                inputs=[TextContent(text=str(content_block.input), raw_representation=content_block)],
+                                raw_representation=content_block,
+                            )
+                        )
+                    else:
+                        contents.append(
+                            FunctionCallContent(
+                                call_id=content_block.id,
+                                name=content_block.name,
+                                arguments=content_block.input,
+                                raw_representation=content_block,
+                            )
+                        )
                 case "mcp_tool_result":
                     call_id, name = self._last_call_id_name or (None, None)
                     contents.append(
-                        FunctionResultContent(
+                        MCPServerToolResultContent(
                             call_id=content_block.tool_use_id,
-                            name=name if name and call_id == content_block.tool_use_id else "mcp_tool",
-                            result=self._parse_contents_from_anthropic(content_block.content)
+                            output=self._parse_contents_from_anthropic(content_block.content)
                             if isinstance(content_block.content, list)
                             else content_block.content,
                             raw_representation=content_block,
@@ -638,10 +660,9 @@ class AnthropicClient(BaseChatClient):
                                     HostedFileContent(file_id=result_content.file_id, raw_representation=result_content)
                                 )
                     contents.append(
-                        FunctionResultContent(
+                        CodeInterpreterToolResultContent(
                             call_id=content_block.tool_use_id,
-                            name=name if name and call_id == content_block.tool_use_id else "code_execution_tool",
-                            result=content_block.content,
+                            outputs=None,
                             raw_representation=content_block,
                         )
                     )

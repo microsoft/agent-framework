@@ -31,8 +31,8 @@ from agent_framework import (
     ImageGenerationToolResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
-    McpServerToolCallContent,
-    McpServerToolResultContent,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -335,16 +335,16 @@ def test_image_generation_tool_contents():
 
 
 def test_mcp_server_tool_call_and_result():
-    call = McpServerToolCallContent(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
+    call = MCPServerToolCallContent(call_id="c-1", tool_name="tool", server_name="server", arguments={"x": 1})
     assert call.type == "mcp_server_tool_call"
     assert call.arguments == {"x": 1}
 
-    result = McpServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
+    result = MCPServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
     assert result.output and isinstance(result.output[0], TextContent)
 
     with raises(ValueError):
-        McpServerToolCallContent(call_id="", tool_name="tool")
+        MCPServerToolCallContent(call_id="", tool_name="tool")
 
 
 # region: HostedVectorStoreContent

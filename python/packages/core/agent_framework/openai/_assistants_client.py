@@ -29,6 +29,8 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     Contents,
+    CodeInterpreterToolCallContent,
+    MCPServerToolCallContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
@@ -378,9 +380,35 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         if event_data.required_action is not None:
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
                 call_id = json.dumps([response_id, tool_call.id])
-                function_name = tool_call.function.name
-                function_arguments = json.loads(tool_call.function.arguments)
-                contents.append(FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments))
+                tool_type = getattr(tool_call, "type", None)
+                if tool_type == "code_interpreter" and getattr(tool_call, "code_interpreter", None):
+                    code_input = getattr(tool_call.code_interpreter, "input", None)
+                    inputs = (
+                        [TextContent(text=code_input, raw_representation=tool_call)]
+                        if code_input is not None
+                        else None
+                    )
+                    contents.append(
+                        CodeInterpreterToolCallContent(
+                            call_id=call_id,
+                            inputs=inputs,
+                            raw_representation=tool_call,
+                        )
+                    )
+                elif tool_type == "mcp":
+                    contents.append(
+                        MCPServerToolCallContent(
+                            call_id=call_id,
+                            tool_name=getattr(tool_call, "name", "") or "",
+                            server_name=getattr(tool_call, "server_label", None),
+                            arguments=getattr(tool_call, "args", None),
+                            raw_representation=tool_call,
+                        )
+                    )
+                else:
+                    function_name = tool_call.function.name
+                    function_arguments = json.loads(tool_call.function.arguments)
+                    contents.append(FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments))
 
         return contents
 
