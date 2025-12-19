@@ -50,12 +50,14 @@ async def main() -> None:
     # Create an agent with customized image generation options
     agent = OpenAIResponsesClient().create_agent(
         instructions="You are a helpful AI that can generate images.",
-        tools=HostedImageGenerationTool(
-            options={
-                "size": "1024x1024",
-                "output_format": "webp",
-            }
-        ),
+        tools=[
+            HostedImageGenerationTool(
+                options={
+                    "size": "1024x1024",
+                    "output_format": "webp",
+                }
+            )
+        ],
     )
 
     query = "Generate a nice beach scenery with blue skies in summer time."
