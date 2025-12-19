@@ -864,7 +864,7 @@ class TextReasoningContent(BaseContent):
 
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
@@ -886,7 +886,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
