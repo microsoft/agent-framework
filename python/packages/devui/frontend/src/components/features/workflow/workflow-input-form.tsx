@@ -169,6 +169,7 @@ function FormField({
         }
 
       case "number":
+      case "integer":
         return (
           <div className="space-y-2">
             <Label htmlFor={name}>
@@ -180,7 +181,9 @@ function FormField({
               type="number"
               value={typeof value === "number" ? value : ""}
               onChange={(e) => {
-                const val = parseFloat(e.target.value);
+                const val = type === "integer" 
+                  ? parseInt(e.target.value, 10)
+                  : parseFloat(e.target.value);
                 onChange(isNaN(val) ? "" : val);
               }}
               placeholder={

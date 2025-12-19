@@ -1,0 +1,30 @@
+#
+# This workflow demonstrates sequential agent interaction to develop product marketing copy.
+#
+# Example input:
+# An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_analyst
+      conversationId: =System.ConversationId
+      agent:
+        name: AnalystAgent
+
+    - kind: InvokeAzureAgent
+      id: invoke_writer
+      conversationId: =System.ConversationId
+      agent:
+        name: WriterAgent
+
+    - kind: InvokeAzureAgent
+      id: invoke_editor
+      conversationId: =System.ConversationId
+      agent:
+        name: EditorAgent

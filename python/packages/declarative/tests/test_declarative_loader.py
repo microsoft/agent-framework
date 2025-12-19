@@ -454,3 +454,95 @@ def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir:
     result = agent_schema_dispatch(yaml.safe_load(content))
     # Result can be None for unknown kinds, but should not raise exceptions
     assert result is not None, f"agent_schema_dispatch returned None for {yaml_file.relative_to(agent_samples_dir)}"
+
+
+class TestAgentFactoryCreateFromDict:
+    """Tests for AgentFactory.create_agent_from_dict method."""
+
+    def test_create_agent_from_dict_parses_prompt_agent(self):
+        """Test that create_agent_from_dict correctly parses a PromptAgent definition."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "description": "A test agent",
+            "instructions": "You are a helpful assistant.",
+        }
+
+        # Use a pre-configured chat client to avoid needing model
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+        agent = factory.create_agent_from_dict(agent_def)
+
+        assert agent is not None
+
+    def test_create_agent_from_dict_matches_yaml(self):
+        """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative import AgentFactory
+
+        yaml_content = """
+kind: Prompt
+name: TestAgent
+description: A test agent
+instructions: You are a helpful assistant.
+"""
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "description": "A test agent",
+            "instructions": "You are a helpful assistant.",
+        }
+
+        # Use a pre-configured chat client to avoid needing model
+        mock_client = MagicMock()
+        mock_client.create_agent.return_value = MagicMock()
+
+        factory = AgentFactory(chat_client=mock_client)
+
+        # Create from YAML string
+        agent_from_yaml = factory.create_agent_from_yaml(yaml_content)
+
+        # Create from dict
+        agent_from_dict = factory.create_agent_from_dict(agent_def)
+
+        # Both should produce agents with same name
+        assert agent_from_yaml.name == agent_from_dict.name
+        assert agent_from_yaml.description == agent_from_dict.description
+
+    def test_create_agent_from_dict_invalid_kind_raises(self):
+        """Test that non-PromptAgent kind raises DeclarativeLoaderError."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._loader import DeclarativeLoaderError
+
+        # Resource kind (not PromptAgent)
+        agent_def = {
+            "kind": "Resource",
+            "name": "TestResource",
+        }
+
+        factory = AgentFactory()
+        with pytest.raises(DeclarativeLoaderError, match="Only definitions for a PromptAgent are supported"):
+            factory.create_agent_from_dict(agent_def)
+
+    def test_create_agent_from_dict_without_model_or_client_raises(self):
+        """Test that missing both model and chat_client raises DeclarativeLoaderError."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._loader import DeclarativeLoaderError
+
+        agent_def = {
+            "kind": "Prompt",
+            "name": "TestAgent",
+            "instructions": "You are helpful.",
+        }
+
+        factory = AgentFactory()
+        with pytest.raises(DeclarativeLoaderError, match="ChatClient must be provided"):
+            factory.create_agent_from_dict(agent_def)

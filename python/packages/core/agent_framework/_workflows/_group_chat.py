@@ -35,6 +35,7 @@ from ._agent_executor import AgentExecutorRequest, AgentExecutorResponse
 from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage
 from ._conversation_history import ensure_author, latest_user_message
+from ._edge import EdgeCondition
 from ._executor import Executor, handler
 from ._orchestration_request_info import RequestInfoInterceptor
 from ._participant_utils import GroupChatParticipantSpec, prepare_participant_metadata, wrap_participant
@@ -213,7 +214,7 @@ class _GroupChatConfig:
 # region Default participant factory
 
 _GroupChatOrchestratorFactory: TypeAlias = Callable[[_GroupChatConfig], Executor]
-_InterceptorSpec: TypeAlias = tuple[Callable[[_GroupChatConfig], Executor], Callable[[Any], bool]]
+_InterceptorSpec: TypeAlias = tuple[Callable[[_GroupChatConfig], Executor], EdgeCondition]
 
 
 def _default_participant_factory(
@@ -1701,7 +1702,7 @@ class GroupChatBuilder:
         self,
         handler: Callable[[_GroupChatConfig], Executor] | Executor,
         *,
-        condition: Callable[[Any], bool],
+        condition: EdgeCondition,
     ) -> "GroupChatBuilder":
         """Register an interceptor factory that creates executors for special requests.
 

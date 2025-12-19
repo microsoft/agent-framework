@@ -199,7 +199,15 @@ export function convertWorkflowDumpToEdges(
     // Use typed workflow structure to extract connections from edge_groups
     connections = [];
     typedWorkflow.edge_groups.forEach((group) => {
+      // Skip InternalEdgeGroup edges - they reference internal:* sources that don't exist as visible nodes
+      if (group.type === "InternalEdgeGroup") {
+        return;
+      }
       group.edges.forEach((edge) => {
+        // Also filter out any edges with internal: prefix in source_id
+        if (edge.source_id.startsWith("internal:")) {
+          return;
+        }
         connections.push({
           source: edge.source_id,
           target: edge.target_id,

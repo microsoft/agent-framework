@@ -1,0 +1,164 @@
+#
+# This workflow demonstrates using multiple agents to provide automated
+# troubleshooting steps to resolve common issues with escalation options.
+#
+# Example input: 
+# My PC keeps rebooting and I can't use it.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_demo
+  actions:
+
+    # Interact with user until the issue has been resolved or 
+    # a determination is made that a ticket is required.
+    - kind: InvokeAzureAgent
+      id: service_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: SelfServiceAgent
+      input:
+        externalLoop:
+          when: |-
+            =Not(Local.ServiceParameters.IsResolved)
+             And 
+             Not(Local.ServiceParameters.NeedsTicket)
+      output:
+        responseObject: Local.ServiceParameters
+
+    # All done if issue is resolved.
+    - kind: ConditionGroup
+      id: check_if_resolved
+      conditions:
+    
+        - condition: =Local.ServiceParameters.IsResolved
+          id: test_if_resolved
+          actions:
+            - kind: GotoAction
+              id: end_when_resolved
+              actionId: all_done
+    
+    # Create the ticket.
+    - kind: InvokeAzureAgent
+      id: ticket_agent
+      agent:
+        name: TicketingAgent
+      input:
+        arguments:
+          IssueDescription: =Local.ServiceParameters.IssueDescription
+          AttemptedResolutionSteps: =Local.ServiceParameters.AttemptedResolutionSteps
+      output:
+        responseObject: Local.TicketParameters
+
+    # Capture the attempted resolution steps.
+    - kind: SetVariable
+      id: capture_attempted_resolution
+      variable: Local.ResolutionSteps
+      value: =Local.ServiceParameters.AttemptedResolutionSteps
+
+    # Notify user of ticket identifier.
+    - kind: SendActivity
+      id: log_ticket
+      activity: "Created ticket #{Local.TicketParameters.TicketId}"
+
+    # Determine which team for which route the ticket.
+    - kind: InvokeAzureAgent
+      id: routing_agent
+      agent:
+        name: TicketRoutingAgent
+      input:
+        messages: =UserMessage(Local.ServiceParameters.IssueDescription)
+      output:
+        responseObject: Local.RoutingParameters
+
+    # Notify user of routing decision.
+    - kind: SendActivity
+      id: log_route
+      activity: Routing to {Local.RoutingParameters.TeamName}
+
+    - kind: ConditionGroup
+      id: check_routing
+      conditions:
+
+        - condition: =Local.RoutingParameters.TeamName = "Windows Support"
+          id: route_to_support
+          actions:
+
+            # Invoke the support agent to attempt to resolve the issue.
+            - kind: CreateConversation
+              id: conversation_support
+              conversationId: Local.SupportConversationId
+
+            - kind: InvokeAzureAgent
+              id: support_agent
+              conversationId: =Local.SupportConversationId
+              agent:
+                name: WindowsSupportAgent
+              input:
+                arguments:
+                  IssueDescription: =Local.ServiceParameters.IssueDescription
+                  AttemptedResolutionSteps: =Local.ServiceParameters.AttemptedResolutionSteps
+                externalLoop:
+                  when: |-
+                    =Not(Local.SupportParameters.IsResolved)
+                     And 
+                     Not(Local.SupportParameters.NeedsEscalation)
+              output:
+                autoSend: true
+                responseObject: Local.SupportParameters
+
+            # Capture the attempted resolution steps.
+            - kind: SetVariable
+              id: capture_support_resolution
+              variable: Local.ResolutionSteps
+              value: =Local.SupportParameters.ResolutionSummary
+
+            # Check if the issue was resolved by support.
+            - kind: ConditionGroup
+              id: check_resolved
+              conditions:
+
+                # Resolve ticket
+                - condition: =Local.SupportParameters.IsResolved
+                  id: handle_if_resolved
+                  actions:
+        
+                    - kind: InvokeAzureAgent
+                      id: resolution_agent
+                      agent:
+                        name: TicketResolutionAgent
+                      input:
+                        arguments:
+                          TicketId: =Local.TicketParameters.TicketId
+                          ResolutionSummary: =Local.SupportParameters.ResolutionSummary
+
+                    - kind: GotoAction
+                      id: end_when_solved
+                      actionId: all_done
+
+    # Escalate the ticket by sending an email notification.
+    - kind: CreateConversation
+      id: conversation_escalate
+      conversationId: Local.EscalationConversationId
+
+    - kind: InvokeAzureAgent
+      id: escalate_agent
+      conversationId: =Local.EscalationConversationId
+      agent:
+        name: TicketEscalationAgent
+      input:
+        arguments:
+          TicketId: =Local.TicketParameters.TicketId
+          IssueDescription: =Local.ServiceParameters.IssueDescription
+          ResolutionSummary: =Local.ResolutionSteps
+        externalLoop:
+          when: =Not(Local.EscalationParameters.IsComplete)
+      output:
+        autoSend: true
+        responseObject: Local.EscalationParameters
+
+    # All done
+    - kind: EndWorkflow
+      id: all_done

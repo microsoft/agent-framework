@@ -439,6 +439,34 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
 # ============================================================================
 
 
+def _safe_isinstance(obj: Any, target_type: type) -> bool:
+    """Safely check isinstance, handling parameterized generics.
+
+    In Python 3.9+, isinstance() cannot be called with parameterized generics
+    like list[str] or Mapping[str, Any]. This helper extracts the origin type
+    for such cases.
+
+    Args:
+        obj: Object to check
+        target_type: Type to check against (may be parameterized generic)
+
+    Returns:
+        True if obj is an instance of target_type (or its origin for generics)
+    """
+    # Get the origin type for parameterized generics (e.g., list for list[str])
+    origin = get_origin(target_type)
+    if origin is not None:
+        # Use the origin type for isinstance check
+        return isinstance(obj, origin)
+
+    # For regular types, use isinstance directly
+    try:
+        return isinstance(obj, target_type)
+    except TypeError:
+        # Fallback: if isinstance fails, return False
+        return False
+
+
 def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     """Parse input data to match the target type.
 
@@ -455,8 +483,8 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     Returns:
         Parsed input matching target_type, or original input if parsing fails
     """
-    # If already correct type, return as-is
-    if isinstance(input_data, target_type):
+    # If already correct type, return as-is (use safe isinstance for generics)
+    if _safe_isinstance(input_data, target_type):
         return input_data
 
     # Handle string input

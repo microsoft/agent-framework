@@ -480,34 +480,53 @@ class DevServer:
                         workflow_dump = {k: v for k, v in entity_obj.__dict__.items() if not k.startswith("_")}
 
                     # Get input schema information
-                    input_schema = {}
+                    # First, check if the workflow has an explicit input_schema (e.g., declarative workflows)
+                    input_schema: dict[str, Any] = {}
                     input_type_name = "Unknown"
                     start_executor_id = ""
 
-                    try:
-                        from ._utils import (
-                            extract_executor_message_types,
-                            generate_input_schema,
-                            select_primary_input_type,
-                        )
+                    # Check for explicit input_schema on workflow (declarative workflows set this)
+                    if hasattr(entity_obj, "input_schema") and entity_obj.input_schema:
+                        input_schema = entity_obj.input_schema
+                        input_type_name = "Inputs"
 
-                        start_executor = entity_obj.get_start_executor()
-                    except Exception as e:
-                        logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
-                    else:
-                        if start_executor:
-                            start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
-                                start_executor, "id", ""
+                    # Fall back to introspecting the start executor's message types
+                    if not input_schema:
+                        try:
+                            from ._utils import (
+                                extract_executor_message_types,
+                                generate_input_schema,
+                                select_primary_input_type,
                             )
 
-                            message_types = extract_executor_message_types(start_executor)
-                            input_type = select_primary_input_type(message_types)
+                            start_executor = entity_obj.get_start_executor()
+                        except Exception as e:
+                            logger.debug(f"Could not extract input info for workflow {entity_id}: {e}")
+                        else:
+                            if start_executor:
+                                start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
+                                    start_executor, "id", ""
+                                )
 
-                            if input_type:
-                                input_type_name = getattr(input_type, "__name__", str(input_type))
+                                message_types = extract_executor_message_types(start_executor)
+                                input_type = select_primary_input_type(message_types)
 
-                                # Generate schema using comprehensive schema generation
-                                input_schema = generate_input_schema(input_type)
+                                if input_type:
+                                    input_type_name = getattr(input_type, "__name__", str(input_type))
+
+                                    # Generate schema using comprehensive schema generation
+                                    input_schema = generate_input_schema(input_type)
+
+                    # Get start executor ID if not already set
+                    if not start_executor_id:
+                        try:
+                            start_executor = entity_obj.get_start_executor()
+                            if start_executor:
+                                start_executor_id = getattr(start_executor, "executor_id", "") or getattr(
+                                    start_executor, "id", ""
+                                )
+                        except Exception:
+                            logger.debug(f"Could not get start executor for workflow {entity_id}")
 
                     if not input_schema:
                         input_schema = {"type": "string"}
