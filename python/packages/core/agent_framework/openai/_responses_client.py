@@ -758,7 +758,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
-                    outputs: list[Contents] = []
+                    outputs: list["Contents"] = []
                     if hasattr(item, "outputs") and item.outputs:
                         for code_output in item.outputs:
                             if getattr(code_output, "type", None) == "logs":
