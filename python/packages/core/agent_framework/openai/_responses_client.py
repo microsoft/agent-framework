@@ -1123,13 +1123,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     )
                 ]
                 image_id = getattr(event, "item_id", None)
-                if image_id:
-                    contents.append(
-                        ImageGenerationToolCallContent(
-                            image_id=image_id,
-                            raw_representation=event,
-                        )
+                contents.append(
+                    ImageGenerationToolCallContent(
+                        image_id=image_id,
+                        raw_representation=event,
                     )
+                )
                 contents.append(
                     ImageGenerationToolResultContent(
                         image_id=image_id,
