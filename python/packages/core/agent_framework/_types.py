@@ -789,8 +789,9 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
@@ -802,6 +803,7 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: Optional protected reasoning data that needs to be sent back.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +816,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":

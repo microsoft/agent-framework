@@ -16,6 +16,8 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import ValidationError
 
+from agent_framework import TextReasoningContent
+
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
@@ -234,11 +236,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 contents.append(text_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
+            if reasoning_details := getattr(choice.message, "reasoning_details", None):
+                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
             messages.append(
                 ChatMessage(
                     role="assistant",
                     contents=contents,
-                    additional_properties={"reasoning_details": getattr(choice.message, "reasoning_details", None)},
                 )
             )
         return ChatResponse(
@@ -415,6 +418,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                     args["tool_call_id"] = content.call_id
                     if content.result is not None:
                         args["content"] = prepare_function_call_results(content.result)
+                case TextReasoningContent(protected_data=protected_data) if protected_data is not None:
+                    all_messages[-1]["reasoning_details"] = json.loads(protected_data)
                 case _:
                     if "content" not in args:
                         args["content"] = []

@@ -239,7 +239,8 @@ class OllamaChatClient(BaseChatClient):
 
     def _format_assistant_message(self, message: ChatMessage) -> list[OllamaMessage]:
         text_content = message.text
-        reasoning_contents = "".join(c.text for c in message.contents if isinstance(c, TextReasoningContent))
+        # Ollama shouldn't have encrypted reasoning, so we just process text.
+        reasoning_contents = "".join((c.text or "") for c in message.contents if isinstance(c, TextReasoningContent))
 
         assistant_message = OllamaMessage(role="assistant", content=text_content, thinking=reasoning_contents)
 
