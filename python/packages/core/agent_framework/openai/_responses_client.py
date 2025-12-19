@@ -31,6 +31,7 @@ from .._tools import (
     AIFunction,
     HostedCodeInterpreterTool,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedWebSearchTool,
     ToolProtocol,
@@ -42,6 +43,8 @@ from .._types import (
     ChatResponse,
     ChatResponseUpdate,
     CitationAnnotation,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
     Contents,
     DataContent,
     FunctionApprovalRequestContent,
@@ -50,6 +53,8 @@ from .._types import (
     FunctionResultContent,
     HostedFileContent,
     HostedVectorStoreContent,
+    ImageGenerationToolCallContent,
+    ImageGenerationToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -314,6 +319,24 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 else None,
                             )
                         )
+                    case HostedImageGenerationTool():
+                        mapped_tool: dict[str, Any] = {"type": "image_generation"}
+                        if tool.options:
+                            mapped_tool.update(tool.options)
+                        if tool.additional_properties:
+                            mapped_tool.update(tool.additional_properties)
+                        parameter_mapping = {
+                            "format": "output_format",
+                            "compression": "output_compression",
+                        }
+                        for user_param, api_param in parameter_mapping.items():
+                            if user_param in mapped_tool:
+                                mapped_tool[api_param] = mapped_tool.pop(user_param)
+                        if "partial_images" in mapped_tool:
+                            partial_images = mapped_tool["partial_images"]
+                            if not isinstance(partial_images, int) or partial_images < 0 or partial_images > 3:
+                                raise ValueError("partial_images must be an integer between 0 and 3 (inclusive).")
+                        response_tools.append(mapped_tool)
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
             else:
@@ -767,22 +790,36 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 TextReasoningContent(text=summary.text, raw_representation=summary)  # type: ignore[arg-type]
                             )
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
+                    call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
+                    outputs: list[Contents] = []
                     if hasattr(item, "outputs") and item.outputs:
                         for code_output in item.outputs:
-                            if code_output.type == "logs":
-                                contents.append(TextContent(text=code_output.logs, raw_representation=item))
-                            if code_output.type == "image":
-                                contents.append(
+                            if getattr(code_output, "type", None) == "logs":
+                                outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
+                            if getattr(code_output, "type", None) == "image":
+                                outputs.append(
                                     UriContent(
                                         uri=code_output.url,
-                                        raw_representation=item,
-                                        # no more specific media type then this can be inferred
+                                        raw_representation=code_output,
                                         media_type="image",
                                     )
                                 )
-                    elif hasattr(item, "code") and item.code:
-                        # fallback if no output was returned is the code:
-                        contents.append(TextContent(text=item.code, raw_representation=item))
+                    if hasattr(item, "code") and item.code:
+                        contents.append(
+                            CodeInterpreterToolCallContent(
+                                call_id=call_id,
+                                inputs=[TextContent(text=item.code, raw_representation=item)],
+                                raw_representation=item,
+                            )
+                        )
+                    if outputs:
+                        contents.append(
+                            CodeInterpreterToolResultContent(
+                                call_id=call_id,
+                                outputs=outputs,
+                                raw_representation=item,
+                            )
+                        )
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         FunctionCallContent(
@@ -808,25 +845,35 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     if item.result:
-                        # Handle the result as either a proper data URI or raw base64 string
                         uri = item.result
                         media_type = None
                         if not uri.startswith("data:"):
-                            # Raw base64 string - convert to proper data URI format using helper
                             uri, media_type = DataContent.create_data_uri_from_base64(uri)
                         else:
-                            # Parse media type from existing data URI
                             try:
-                                # Extract media type from data URI (e.g., "data:image/png;base64,...")
                                 if ";" in uri and uri.startswith("data:"):
                                     media_type = uri.split(";")[0].split(":", 1)[1]
                             except Exception:
-                                # Fallback if parsing fails
                                 media_type = "image"
-                        contents.append(
+                        outputs = [
                             DataContent(
                                 uri=uri,
                                 media_type=media_type,
+                                raw_representation=item,
+                            )
+                        ]
+                        image_id = getattr(item, "image_id", None) or getattr(item, "id", None)
+                        if image_id:
+                            contents.append(
+                                ImageGenerationToolCallContent(
+                                    image_id=image_id,
+                                    raw_representation=item,
+                                )
+                            )
+                        contents.append(
+                            ImageGenerationToolResultContent(
+                                image_id=image_id,
+                                outputs=outputs,
                                 raw_representation=item,
                             )
                         )
@@ -995,22 +1042,36 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             )
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
+                        call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
+                        outputs: list[Contents] = []
                         if hasattr(event_item, "outputs") and event_item.outputs:
                             for code_output in event_item.outputs:
-                                if code_output.type == "logs":
-                                    contents.append(TextContent(text=code_output.logs, raw_representation=event_item))
-                                if code_output.type == "image":
-                                    contents.append(
+                                if getattr(code_output, "type", None) == "logs":
+                                    outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
+                                if getattr(code_output, "type", None) == "image":
+                                    outputs.append(
                                         UriContent(
                                             uri=code_output.url,
-                                            raw_representation=event_item,
-                                            # no more specific media type then this can be inferred
+                                            raw_representation=code_output,
                                             media_type="image",
                                         )
                                     )
-                        elif hasattr(event_item, "code") and event_item.code:
-                            # fallback if no output was returned is the code:
-                            contents.append(TextContent(text=event_item.code, raw_representation=event_item))
+                        if hasattr(event_item, "code") and event_item.code:
+                            contents.append(
+                                CodeInterpreterToolCallContent(
+                                    call_id=call_id,
+                                    inputs=[TextContent(text=event_item.code, raw_representation=event_item)],
+                                    raw_representation=event_item,
+                                )
+                            )
+                        if outputs:
+                            contents.append(
+                                CodeInterpreterToolResultContent(
+                                    call_id=call_id,
+                                    outputs=outputs,
+                                    raw_representation=event_item,
+                                )
+                            )
                     case "reasoning":  # ResponseOutputReasoning
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
@@ -1050,7 +1111,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 # Use helper function to create data URI from base64
                 uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
 
-                contents.append(
+                outputs = [
                     DataContent(
                         uri=uri,
                         media_type=media_type,
@@ -1058,6 +1119,21 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             "partial_image_index": partial_index,
                             "is_partial_image": True,
                         },
+                        raw_representation=event,
+                    )
+                ]
+                image_id = getattr(event, "item_id", None)
+                if image_id:
+                    contents.append(
+                        ImageGenerationToolCallContent(
+                            image_id=image_id,
+                            raw_representation=event,
+                        )
+                    )
+                contents.append(
+                    ImageGenerationToolResultContent(
+                        image_id=image_id,
+                        outputs=outputs,
                         raw_representation=event,
                     )
                 )
