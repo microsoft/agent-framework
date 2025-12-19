@@ -380,7 +380,7 @@ async def test_response_format_parse_path() -> None:
 
 
 async def test_response_format_parse_path_with_conversation_id() -> None:
-    """Test get_response response_format parsing path."""
+    """Test get_response response_format parsing path with set conversation ID."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock successful parse response
