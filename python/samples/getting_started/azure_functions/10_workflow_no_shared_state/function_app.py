@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from anyio import Path
+from pathlib import Path
 from agent_framework import (
     AgentExecutorResponse,
     Case,
@@ -192,15 +192,14 @@ def _create_workflow() -> Workflow:
     return workflow
 
 
-def launch(durable: bool = True) -> None:
-
-    app: AgentFunctionApp = None
-    workflow = None
+def launch(durable: bool = True) -> AgentFunctionApp | None:
+    workflow: Workflow | None = None
 
     if durable:
         # Initialize app
         workflow = _create_workflow()
         app = AgentFunctionApp(workflow=workflow, enable_health_check=True, enable_shared_state=False)
+        return app
     else:
         # Launch the spam detection workflow in DevUI
         from agent_framework.devui import serve
@@ -220,8 +219,8 @@ def launch(durable: bool = True) -> None:
 
         workflow = _create_workflow()
         serve(entities=[workflow], port=8094, auto_open=True)
-    
-    return app
 
+        return None
+    
 
 app = launch(durable=True)

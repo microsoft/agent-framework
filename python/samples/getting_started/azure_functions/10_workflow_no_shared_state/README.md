@@ -50,14 +50,6 @@ SpamDetectionAgent → [branch based on is_spam]:
    ```
 
 2. Configure `local.settings.json`:
-   ```json
-   {
-     "Values": {
-       "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-       "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4o"
-     }
-   }
-   ```
 
 3. Install dependencies:
    ```bash

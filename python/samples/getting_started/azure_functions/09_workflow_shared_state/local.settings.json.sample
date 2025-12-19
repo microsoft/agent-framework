@@ -2,7 +2,7 @@
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "MSSQL_CONNECTION_STRING": "Server=localhost,1435;Database=DurableDB;User Id=sa;Password=<YourStrong!Passw0rd>;TrustServerCertificate=True;",
+    "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AZURE_OPENAI_ENDPOINT": "<Your Azure OpenAI endpoint>",
     "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "<Your Azure OpenAI chat deployment name>"

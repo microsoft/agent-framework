@@ -1,23 +1,7 @@
 {
   "version": "2.0",
-  "logging": {
-    "applicationInsights": {
-      "samplingSettings": {
-        "isEnabled": true,
-        "maxTelemetryItemsPerSecond": 20
-      }
-    }
-  },
   "extensionBundle": {
-    "id": "Microsoft.Azure.Functions.ExtensionBundle.Preview",
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[4.*, 5.0.0)"
-  },
-  "extensions": {
-    "durableTask": {
-      "storageProvider": {
-        "type": "azureManaged",
-        "connectionStringName": "DURABLE_TASK_SCHEDULER_CONNECTION_STRING"
-      }
-    }
   }
 }

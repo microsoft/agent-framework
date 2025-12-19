@@ -26,7 +26,6 @@ from agent_framework import (
     SharedState,
     WorkflowCheckpoint,
     WorkflowEvent,
-    WorkflowOutputEvent,
 )
 from pydantic import BaseModel
 
@@ -281,6 +280,8 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
                 module = importlib.import_module(module_name)
                 target_type = getattr(module, type_name, None)
             except Exception:
+                # Ignore import errors - type may not be available in this context
+                # Will fall back to returning the raw dict below
                 pass
 
     if target_type:
@@ -292,6 +293,8 @@ def deserialize_value(data: Any, type_registry: dict[str, type] | None = None) -
             elif issubclass(target_type, BaseModel):
                 return target_type(**clean_data)
         except Exception:
+            # Ignore reconstruction errors (e.g., missing fields, type mismatches)
+            # Will fall back to returning the raw dict below
             pass
 
     return data
