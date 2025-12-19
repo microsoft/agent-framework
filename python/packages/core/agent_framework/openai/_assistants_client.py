@@ -28,11 +28,11 @@ from .._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
-    Contents,
     CodeInterpreterToolCallContent,
-    MCPServerToolCallContent,
+    Contents,
     FunctionCallContent,
     FunctionResultContent,
+    MCPServerToolCallContent,
     Role,
     TextContent,
     ToolMode,
@@ -408,7 +408,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 else:
                     function_name = tool_call.function.name
                     function_arguments = json.loads(tool_call.function.arguments)
-                    contents.append(FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments))
+                    contents.append(
+                        FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
+                    )
 
         return contents
 
