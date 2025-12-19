@@ -374,8 +374,34 @@ async def test_response_format_parse_path() -> None:
         response = await client.get_response(
             messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
         )
-
+        assert response.response_id == "parsed_response_123"
         assert response.conversation_id == "parsed_response_123"
+        assert response.model_id == "test-model"
+
+
+async def test_response_format_parse_path_with_conversation_id() -> None:
+    """Test get_response response_format parsing path."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Mock successful parse response
+    mock_parsed_response = MagicMock()
+    mock_parsed_response.id = "parsed_response_123"
+    mock_parsed_response.text = "Parsed response"
+    mock_parsed_response.model = "test-model"
+    mock_parsed_response.created_at = 1000000000
+    mock_parsed_response.metadata = {}
+    mock_parsed_response.output_parsed = None
+    mock_parsed_response.usage = None
+    mock_parsed_response.finish_reason = None
+    mock_parsed_response.conversation = MagicMock()
+    mock_parsed_response.conversation.id = "conversation_456"
+
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+        response = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
+        )
+        assert response.response_id == "parsed_response_123"
+        assert response.conversation_id == "conversation_456"
         assert response.model_id == "test-model"
 
 
