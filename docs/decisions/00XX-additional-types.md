@@ -225,7 +225,7 @@ class ComputerUseCallContent(BaseContent):
 | `end_coordinate`         | `end_x`, `end_y`        | N/A                    | `args.end_x`, `args.end_y` | End position for drag operations         |
 | `text`                   | `text`                  | `text`                 | `args.text`              | Text to type                               |
 | `key`                    | `key`                   | `key`                  | `args.key`               | Key or key combo to press                  |
-| `button`                 | `button`                | N/A (in action name)   | `args.button`            | Mouse button                               |
+| `button`                 | `button`                | action: `CLICK` & button=`left`-> `left_click` action   | `args.button`            | Mouse button                               |
 | `scroll_amount`          | `scroll_x`/`scroll_y`   | `scroll_amount`        | `args.amount`            | Scroll distance                            |
 
 ## ComputerUseResultContent Design
@@ -271,6 +271,9 @@ class ComputerUseResultContent(BaseContent):
 | `screenshot`      | `input_image` (base64)       | `content` (image bytes)              | `inline_data` (PNG blob)      | Screenshot as `DataContent`                  |
 | `text_output`     | N/A                          | `content` (text result)              | N/A                           | Text result as `TextContent` or string       |
 | `error`           | (in additional_properties)   | `is_error`, `content`                | (error in response)           | Error message if action failed               |
+
+> [!Note]
+> OpenAI uses `pending_safety_checks` to warn users of potentially unsafe actions. This should probably result in a FunctionCallApprovalRequestContent being created to allow user approval before proceeding, we should adapt that class to also support ComputerCallContent instead of only FunctionCallContent.
 
 ### Usage Example
 
