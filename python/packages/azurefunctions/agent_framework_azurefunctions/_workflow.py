@@ -172,14 +172,18 @@ def run_workflow_orchestrator(
     Returns:
         List of workflow outputs collected from executor activities
     """
-    pending_messages: dict[str, list[Any]] = {workflow.start_executor_id: [initial_message]}
+    # pending_messages stores {target_executor_id: [(message, source_executor_id), ...]}
+    # This allows executors to know who sent them each message
+    pending_messages: dict[str, list[tuple[Any, str]]] = {
+        workflow.start_executor_id: [(initial_message, "__workflow_start__")]
+    }
     iteration = 0
     max_iterations = workflow.max_iterations
     workflow_outputs: list[Any] = []
 
     # Track pending sources for FanInEdgeGroups
-    # Structure: {group_id: {source_id: [messages]}}
-    fan_in_pending: dict[str, dict[str, list[Any]]] = {}
+    # Structure: {group_id: {source_id: [(message, source_executor_id)]}}
+    fan_in_pending: dict[str, dict[str, list[tuple[Any, str]]]] = {}
 
     # Initialize fan-in tracking for all FanInEdgeGroups
     for group in workflow.edge_groups:
@@ -188,13 +192,13 @@ def run_workflow_orchestrator(
 
     while pending_messages and iteration < max_iterations:
         logger.debug("Orchestrator iteration %d", iteration)
-        next_pending_messages: dict[str, list[Any]] = {}
+        next_pending_messages: dict[str, list[tuple[Any, str]]] = {}
 
-        for executor_id, messages in pending_messages.items():
-            logger.debug("Processing executor: %s with %d messages", executor_id, len(messages))
+        for executor_id, messages_with_sources in pending_messages.items():
+            logger.debug("Processing executor: %s with %d messages", executor_id, len(messages_with_sources))
             executor = workflow.executors[executor_id]
 
-            for message in messages:
+            for message, source_executor_id in messages_with_sources:
                 output_message: Any | None = None
                 result: dict[str, Any] | None = None  # Activity result (only set for standard executors)
 
@@ -256,6 +260,7 @@ def run_workflow_orchestrator(
                         "executor_id": executor_id,
                         "message": serialize_message(message),
                         "shared_state_snapshot": shared_state_snapshot,
+                        "source_executor_ids": [source_executor_id],
                     }
 
                     # Serialize to JSON string to work around Azure Functions type validation issues
@@ -304,7 +309,7 @@ def run_workflow_orchestrator(
                     if explicit_target:
                         if explicit_target not in next_pending_messages:
                             next_pending_messages[explicit_target] = []
-                        next_pending_messages[explicit_target].append(msg_to_route)
+                        next_pending_messages[explicit_target].append((msg_to_route, executor_id))
                         logger.debug("Routed message from %s to explicit target %s", executor_id, explicit_target)
                         continue
 
@@ -314,7 +319,7 @@ def run_workflow_orchestrator(
                             # Accumulate message for fan-in
                             if executor_id not in fan_in_pending[group.id]:
                                 fan_in_pending[group.id][executor_id] = []
-                            fan_in_pending[group.id][executor_id].append(msg_to_route)
+                            fan_in_pending[group.id][executor_id].append((msg_to_route, executor_id))
                             logger.debug("Accumulated message for FanIn group %s from %s", group.id, executor_id)
 
                     # Use MAF's edge group routing for other edge types
@@ -328,7 +333,7 @@ def run_workflow_orchestrator(
                         logger.debug("Routing to %s", target_id)
                         if target_id not in next_pending_messages:
                             next_pending_messages[target_id] = []
-                        next_pending_messages[target_id].append(msg_to_route)
+                        next_pending_messages[target_id].append((msg_to_route, executor_id))
 
         # Check if any FanInEdgeGroups are ready to deliver
         for group in workflow.edge_groups:
@@ -336,10 +341,13 @@ def run_workflow_orchestrator(
                 pending_sources = fan_in_pending.get(group.id, {})
                 # Check if all sources have contributed at least one message
                 if all(src in pending_sources for src in group.source_executor_ids):
-                    # Aggregate all messages into a single list
+                    # Aggregate all messages into a single list (extract just the messages)
                     aggregated: list[Any] = []
+                    aggregated_sources: list[str] = []
                     for src in group.source_executor_ids:
-                        aggregated.extend(pending_sources[src])
+                        for msg, msg_source in pending_sources[src]:
+                            aggregated.append(msg)
+                            aggregated_sources.append(msg_source)
 
                     target_id = group.target_executor_ids[0]
                     logger.debug(
@@ -348,7 +356,10 @@ def run_workflow_orchestrator(
 
                     if target_id not in next_pending_messages:
                         next_pending_messages[target_id] = []
-                    next_pending_messages[target_id].append(aggregated)
+                    # For fan-in, the aggregated list is the message, sources are all contributors
+                    # Use first source as representative (or could join them)
+                    first_source = aggregated_sources[0] if aggregated_sources else "__fan_in__"
+                    next_pending_messages[target_id].append((aggregated, first_source))
 
                     # Clear the pending sources for this group
                     fan_in_pending[group.id] = {}

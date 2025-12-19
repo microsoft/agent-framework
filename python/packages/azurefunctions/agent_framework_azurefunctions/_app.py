@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentExecutor, AgentProtocol, Workflow, get_logger
-from agent_framework._workflows._typing_utils import is_instance_of
+from agent_framework import AgentExecutor, AgentProtocol, Workflow, WorkflowOutputEvent, get_logger
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -39,7 +38,7 @@ from ._errors import IncomingRequestError
 from ._models import AgentSessionId
 from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
 from ._shared_state import SHARED_STATE_ENTITY_NAME, DurableSharedState, create_shared_state_entity_function
-from ._utils import CapturingWorkflowContext, reconstruct_message_for_handler, serialize_message
+from ._utils import CapturingRunnerContext, deserialize_value, reconstruct_message_for_handler, serialize_message
 from ._workflow import run_workflow_orchestrator
 
 logger = get_logger("agent_framework.azurefunctions")
@@ -257,10 +256,13 @@ class AgentFunctionApp(DFAppBase):
             """
             import json as json_module
 
+            from agent_framework import SharedState
+
             data = json_module.loads(inputData)
             executor_id = data["executor_id"]
             message_data = data["message"]
             shared_state_snapshot = data.get("shared_state_snapshot", {})
+            source_executor_ids = data.get("source_executor_ids", ["__orchestrator__"])
 
             if not self.workflow:
                 raise RuntimeError("Workflow not initialized in AgentFunctionApp")
@@ -269,44 +271,69 @@ class AgentFunctionApp(DFAppBase):
             if not executor:
                 raise ValueError(f"Unknown executor: {executor_id}")
 
-            # Reconstruct message - try to match handler's expected types
-            message = reconstruct_message_for_handler(message_data, executor._handlers)
+            # Reconstruct message - try to match handler's expected types using public input_types
+            message = reconstruct_message_for_handler(message_data, executor.input_types)
 
             async def run() -> dict[str, Any]:
-                # Create context asynchronously using factory method
-                ctx = await CapturingWorkflowContext.create(
-                    shared_state_snapshot=shared_state_snapshot,
+                # Create runner context and shared state
+                runner_context = CapturingRunnerContext()
+                shared_state = SharedState()
+
+                # Deserialize shared state values to reconstruct dataclasses/Pydantic models
+                deserialized_state = {
+                    k: deserialize_value(v) for k, v in (shared_state_snapshot or {}).items()
+                }
+                original_snapshot = dict(deserialized_state)
+                await shared_state.import_state(deserialized_state)
+
+                # Execute using the public execute() method
+                await executor.execute(
+                    message=message,
+                    source_executor_ids=source_executor_ids,
+                    shared_state=shared_state,
+                    runner_context=runner_context,
                 )
 
-                # Find handler
-                handler = None
-                for message_type, handler_func in executor._handlers.items():
-                    if is_instance_of(message, message_type):
-                        handler = handler_func
-                        break
+                # Export current state and compute changes
+                current_state = await shared_state.export_state()
+                original_keys = set(original_snapshot.keys())
+                current_keys = set(current_state.keys())
 
-                if handler:
-                    await handler(message, ctx)
-                else:
-                    raise ValueError(f"Executor {executor_id} cannot handle message of type {type(message)}")
+                # Deleted = was in original, not in current
+                deletes = original_keys - current_keys
 
-                # Get changes asynchronously
-                updates, deletes = await ctx.get_shared_state_changes()
+                # Updates = keys in current that are new or have different values
+                updates = {
+                    k: v
+                    for k, v in current_state.items()
+                    if k not in original_snapshot or original_snapshot[k] != v
+                }
 
-                # Serialize all outputs for JSON compatibility
-                serialized_sent_messages = [
-                    {
-                        "message": serialize_message(msg["message"]),
-                        "target_id": msg.get("target_id"),
-                    }
-                    for msg in ctx.sent_messages
-                ]
-                serialized_outputs = [serialize_message(o) for o in ctx.outputs]
+                # Drain messages and events from runner context
+                sent_messages = await runner_context.drain_messages()
+                events = await runner_context.drain_events()
+
+                # Extract outputs from WorkflowOutputEvent instances
+                outputs: list[Any] = []
+                for event in events:
+                    if isinstance(event, WorkflowOutputEvent):
+                        outputs.append(serialize_message(event.data))
+
+                # Serialize messages for JSON compatibility
+                serialized_sent_messages = []
+                for source_id, msg_list in sent_messages.items():
+                    for msg in msg_list:
+                        serialized_sent_messages.append({
+                            "message": serialize_message(msg.data),
+                            "target_id": msg.target_id,
+                            "source_id": msg.source_id,
+                        })
+
                 serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
 
                 return {
                     "sent_messages": serialized_sent_messages,
-                    "outputs": serialized_outputs,
+                    "outputs": outputs,
                     "shared_state_updates": serialized_updates,
                     "shared_state_deletes": list(deletes),
                 }
