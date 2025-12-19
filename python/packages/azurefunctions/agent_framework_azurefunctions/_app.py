@@ -227,7 +227,7 @@ class AgentFunctionApp(DFAppBase):
             logger.debug("[AgentFunctionApp] Extracting agents from workflow")
             for executor in workflow.executors.values():
                 if isinstance(executor, AgentExecutor):
-                    agents.append(executor._agent)
+                    agents.append(executor.agent)
 
             self._setup_executor_activity()
             self._setup_workflow_orchestration()
