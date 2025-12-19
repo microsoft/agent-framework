@@ -64,6 +64,7 @@ from .._types import (
     UriContent,
     UsageContent,
     UsageDetails,
+    _parse_content,
     prepare_function_call_results,
 )
 from ..exceptions import (
@@ -828,15 +829,14 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
                     result_output = (
-                        getattr(item, "result", None)
-                        or getattr(item, "output", None)
-                        or getattr(item, "outputs", None)
+                        getattr(item, "result", None) or getattr(item, "output", None) or getattr(item, "outputs", None)
                     )
                     parsed_output: list[Contents] | None = None
                     if result_output:
                         normalized = (
                             result_output
-                            if isinstance(result_output, Sequence) and not isinstance(result_output, (str, bytes, MutableMapping))
+                            if isinstance(result_output, Sequence)
+                            and not isinstance(result_output, (str, bytes, MutableMapping))
                             else [result_output]
                         )
                         parsed_output = [_parse_content(output_item) for output_item in normalized]

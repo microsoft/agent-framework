@@ -39,9 +39,9 @@ __all__ = [
     "ChatOptions",
     "ChatResponse",
     "ChatResponseUpdate",
+    "CitationAnnotation",
     "CodeInterpreterToolCallContent",
     "CodeInterpreterToolResultContent",
-    "CitationAnnotation",
     "Contents",
     "DataContent",
     "ErrorContent",
@@ -50,12 +50,12 @@ __all__ = [
     "FunctionApprovalResponseContent",
     "FunctionCallContent",
     "FunctionResultContent",
+    "HostedFileContent",
+    "HostedVectorStoreContent",
     "ImageGenerationToolCallContent",
     "ImageGenerationToolResultContent",
-    "HostedFileContent",
     "MCPServerToolCallContent",
     "MCPServerToolResultContent",
-    "HostedVectorStoreContent",
     "Role",
     "TextContent",
     "TextReasoningContent",
@@ -1635,6 +1635,8 @@ class HostedFileContent(BaseContent):
 
         Args:
             file_id: The identifier of the hosted file.
+            media_type: Optional media type of the hosted file.
+            name: Optional display name of the hosted file.
 
         Keyword Args:
             additional_properties: Optional additional properties associated with the content.
