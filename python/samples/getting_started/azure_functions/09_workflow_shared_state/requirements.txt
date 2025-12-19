@@ -1,0 +1,6 @@
+agent-framework-azurefunctions
+azure-functions
+azure-functions-durable
+azure-identity
+openai
+agents-maf

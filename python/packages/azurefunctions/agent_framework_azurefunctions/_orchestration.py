@@ -7,6 +7,7 @@ This module provides support for using agents inside Durable Function orchestrat
 
 import uuid
 from collections.abc import AsyncIterator, Callable
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from agent_framework import (
@@ -281,6 +282,7 @@ class DurableAIAgent(AgentProtocol):
             thread_id=session_id.key,
             response_format=response_format,
             orchestration_id=self.context.instance_id,
+            created_at=datetime.now(timezone.utc),
         )
 
         logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])

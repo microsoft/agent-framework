@@ -6,6 +6,7 @@ from agent_framework_durabletask import AgentCallbackContext, AgentResponseCallb
 
 from ._app import AgentFunctionApp
 from ._orchestration import DurableAIAgent
+from ._shared_state import DurableSharedState
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -17,5 +18,6 @@ __all__ = [
     "AgentFunctionApp",
     "AgentResponseCallbackProtocol",
     "DurableAIAgent",
+    "DurableSharedState",
     "__version__",
 ]
