@@ -73,6 +73,7 @@ __all__ = [
     "FunctionInvocationConfiguration",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedImageGenerationTool",
     "HostedMCPSpecificApproval",
     "HostedMCPTool",
     "HostedWebSearchTool",
@@ -322,6 +323,30 @@ class HostedWebSearchTool(BaseTool):
         if description is not None:
             args["description"] = description
         super().__init__(**args)
+
+
+class HostedImageGenerationTool(BaseTool):
+    """Represents a hosted tool that can be specified to an AI service to enable it to perform image generation."""
+
+    def __init__(
+        self,
+        *,
+        options: dict[str, Any] | None = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a HostedImageGenerationTool."""
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
+
+        self.options = options
+        super().__init__(
+            name="image_generation",
+            description=description or "",
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):

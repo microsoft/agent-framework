@@ -34,9 +34,14 @@ from agent_framework import (
     HostedCodeInterpreterTool,
     HostedFileContent,
     HostedFileSearchTool,
+    HostedImageGenerationTool,
     HostedMCPTool,
     HostedVectorStoreContent,
     HostedWebSearchTool,
+    ImageGenerationToolCallContent,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
+    ImageGenerationToolResultContent,
     MCPStreamableHTTPTool,
     Role,
     TextContent,
@@ -612,11 +617,14 @@ def test_response_content_creation_with_code_interpreter() -> None:
     response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert len(response.messages[0].contents) == 2
-    assert isinstance(response.messages[0].contents[0], TextContent)
-    assert response.messages[0].contents[0].text == "Code execution log"
-    assert isinstance(response.messages[0].contents[1], UriContent)
-    assert response.messages[0].contents[1].uri == "https://example.com/image.png"
-    assert response.messages[0].contents[1].media_type == "image"
+    call_content, result_content = response.messages[0].contents
+    assert isinstance(call_content, CodeInterpreterToolCallContent)
+    assert call_content.inputs is not None
+    assert isinstance(call_content.inputs[0], TextContent)
+    assert isinstance(result_content, CodeInterpreterToolResultContent)
+    assert result_content.outputs is not None
+    assert any(isinstance(out, TextContent) for out in result_content.outputs)
+    assert any(isinstance(out, UriContent) for out in result_content.outputs)
 
 
 def test_response_content_creation_with_function_call() -> None:
@@ -834,6 +842,24 @@ def test_prepare_tools_for_openai_with_raw_image_generation_minimal() -> None:
     assert image_tool["type"] == "image_generation"
     # Should only have the type parameter when created with minimal config
     assert len(image_tool) == 1
+
+
+def test_prepare_tools_for_openai_with_hosted_image_generation() -> None:
+    """Test HostedImageGenerationTool conversion."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    tool = HostedImageGenerationTool(
+        description="Generate images",
+        options={"format": "png", "size": "512x512"},
+        additional_properties={"quality": "high"},
+    )
+
+    resp_tools = client._prepare_tools_for_openai([tool])
+    assert len(resp_tools) == 1
+    image_tool = resp_tools[0]
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["output_format"] == "png"
+    assert image_tool["size"] == "512x512"
+    assert image_tool["quality"] == "high"
 
 
 def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
@@ -1278,9 +1304,9 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
 
     result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
-    assert isinstance(result.contents[0], UriContent)
-    assert result.contents[0].uri == "https://example.com/plot.png"
-    assert result.contents[0].media_type == "image"
+    assert isinstance(result.contents[0], CodeInterpreterToolResultContent)
+    assert result.contents[0].outputs
+    assert any(isinstance(out, UriContent) and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs)
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
@@ -1495,12 +1521,16 @@ def test_parse_response_from_openai_image_generation_raw_base64():
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
-    # Verify the response contains DataContent with proper URI and media_type
-    assert len(response.messages[0].contents) == 1
-    content = response.messages[0].contents[0]
-    assert isinstance(content, DataContent)
-    assert content.uri.startswith("data:image/png;base64,")
-    assert content.media_type == "image/png"
+    # Verify the response contains call + result with DataContent output
+    assert len(response.messages[0].contents) == 2
+    call_content, result_content = response.messages[0].contents
+    assert isinstance(call_content, ImageGenerationToolCallContent)
+    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert result_content.outputs
+    data_out = result_content.outputs[0]
+    assert isinstance(data_out, DataContent)
+    assert data_out.uri.startswith("data:image/png;base64,")
+    assert data_out.media_type == "image/png"
 
 
 def test_parse_response_from_openai_image_generation_existing_data_uri():
@@ -1528,12 +1558,16 @@ def test_parse_response_from_openai_image_generation_existing_data_uri():
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
-    # Verify the response contains DataContent with proper media_type parsed from URI
-    assert len(response.messages[0].contents) == 1
-    content = response.messages[0].contents[0]
-    assert isinstance(content, DataContent)
-    assert content.uri == f"data:image/webp;base64,{valid_webp_base64}"
-    assert content.media_type == "image/webp"
+    # Verify the response contains call + result with DataContent output
+    assert len(response.messages[0].contents) == 2
+    call_content, result_content = response.messages[0].contents
+    assert isinstance(call_content, ImageGenerationToolCallContent)
+    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert result_content.outputs
+    data_out = result_content.outputs[0]
+    assert isinstance(data_out, DataContent)
+    assert data_out.uri == f"data:image/webp;base64,{valid_webp_base64}"
+    assert data_out.media_type == "image/webp"
 
 
 def test_parse_response_from_openai_image_generation_format_detection():
@@ -1559,10 +1593,12 @@ def test_parse_response_from_openai_image_generation_format_detection():
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response_jpeg = client._parse_response_from_openai(mock_response_jpeg, chat_options=ChatOptions())  # type: ignore
-    content_jpeg = response_jpeg.messages[0].contents[0]
-    assert isinstance(content_jpeg, DataContent)
-    assert content_jpeg.media_type == "image/jpeg"
-    assert "data:image/jpeg;base64," in content_jpeg.uri
+    result_contents = response_jpeg.messages[0].contents
+    assert isinstance(result_contents[1], ImageGenerationToolResultContent)
+    outputs = result_contents[1].outputs
+    assert outputs and isinstance(outputs[0], DataContent)
+    assert outputs[0].media_type == "image/jpeg"
+    assert "data:image/jpeg;base64," in outputs[0].uri
 
     # Test WEBP detection
     webp_signature = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP"
@@ -1583,10 +1619,10 @@ def test_parse_response_from_openai_image_generation_format_detection():
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response_webp = client._parse_response_from_openai(mock_response_webp, chat_options=ChatOptions())  # type: ignore
-    content_webp = response_webp.messages[0].contents[0]
-    assert isinstance(content_webp, DataContent)
-    assert content_webp.media_type == "image/webp"
-    assert "data:image/webp;base64," in content_webp.uri
+    outputs_webp = response_webp.messages[0].contents[1].outputs
+    assert outputs_webp and isinstance(outputs_webp[0], DataContent)
+    assert outputs_webp[0].media_type == "image/webp"
+    assert "data:image/webp;base64," in outputs_webp[0].uri
 
 
 def test_parse_response_from_openai_image_generation_fallback():
@@ -1615,9 +1651,11 @@ def test_parse_response_from_openai_image_generation_fallback():
         response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     # Verify it falls back to PNG format for unrecognized binary data
-    assert len(response.messages[0].contents) == 1
-    content = response.messages[0].contents[0]
-    assert isinstance(content, DataContent)
+    assert len(response.messages[0].contents) == 2
+    result_content = response.messages[0].contents[1]
+    assert isinstance(result_content, ImageGenerationToolResultContent)
+    assert result_content.outputs and isinstance(result_content.outputs[0], DataContent)
+    content = result_content.outputs[0]
     assert content.media_type == "image/png"
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
 
