@@ -64,7 +64,7 @@ One key decision is that people might expect that we also provide a local setup 
 Each provider’s documentation defines a way to enable a “Computer Use” capability (often as a tool or model) and the parameters it accepts:
 
 | **Provider** | **Tool Name / Feature** | **Key Parameters (Fields)** |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| -------------- | ---------------------- | -------------------- |
 | **OpenAI**              | **Computer Use tool** (via `computer-use-preview` model) [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use), [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use) | *Tool Type*: `"computer_use_preview"`; *Display Width/Height*: e.g. `display_width=1024`, `display_height=768` (pixels); *Environment*: context of operation, e.g. `"browser"` (also supports `"mac"`, `"windows"`, `"ubuntu"`) [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use), [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use). *(No separate “name” needed in the call; the tool is included in the request’s tools list.)* |
 | **Anthropic (Claude)**  | **Computer Use tool** (beta) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool) | *Tool Type*: e.g. `"computer_20250124"` (versioned identifier for the computer-use tool) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool); *Tool Name*: usually `"computer"` [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool); *Display Dimensions*: `display_width_px` and `display_height_px` (e.g. 1024×768) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool); *Display Number*: e.g. `display_number=1` for primary screen [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool). *(Requires a special beta API header to enable.)* |
 | **Google (Gemini API)** | **Computer Use model & tool** (Gemini 2.5 Preview) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use)  | The Computer Use functionality is enabled by using the *Gemini 2.5 Computer-Use Preview* model together with its built-in *ComputerUse tool*. Key parameters are provided via the API config: *Environment*: e.g. `Environment.ENVIRONMENT_BROWSER` to specify a web browser context [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use); *Excluded Actions (optional)*: a list of UI actions to disallow (via `excluded_predefined_functions`) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). *Display size* is **not manually set**; the model internally normalizes coordinates to the screen used (recommended resolution \~1440×900, but no explicit width/height param) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). |
@@ -76,11 +76,11 @@ Each provider’s documentation defines a way to enable a “Computer Use” cap
 When the model decides to use the Computer Use capability, it returns a structured response indicating the action to perform (mouse movement, click, typing, etc.) rather than a normal free-form message:
 
 | **Provider** | **Model’s Response Type** | **Description of Response Format** |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------------------- | ------------------------ | ----------------- |
 | **OpenAI**             | **Structured “tool call”** (`computer_call`) [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use) | The model’s response includes one or more **computer\_call items** in the output, each representing an action instruction [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use). For example, the response might contain a `ResponseComputerToolCall` object with details like `action=ActionScreenshot` or a click event and a unique `call_id`. This indicates the model is requesting an action (e.g. *“click at (x,y)”*, *“type text …”*) instead of providing a final answer. The response is not free-form text but a structured object in the API payload that your code must intercept and act upon. |
 | **Anthropic (Claude)** | **Tool Use invocation** (`stop_reason: "tool_use"`) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool) | Claude’s response indicates it’s attempting a tool action by returning a special message with `stop_reason` set to `"tool_use"` [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool). The content of the message includes a **`tool_use` block** that specifies the tool name (e.g. `"computer"`) and an **action with parameters** (such as `"action": "left_click", "coordinate": [x,y]`, or `"action": "type", "text": "…"`). This is a structured JSON-like content inside Claude’s response. Essentially, Claude stops its normal reply and asks for the tool to be executed with the given parameters [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool), [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool). |
 | **Google (Gemini)**    | **JSON Function Call** (`function_call`) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use)  | The Gemini Computer Use model responds with a **FunctionCall object** in the JSON payload whenever it wants to perform a UI action [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). The response message includes `function_call.name` (e.g. `"click_at"` or `"type_text_at"`) and `args` (arguments like coordinates and text) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). Multiple actions can even be returned in parallel (as separate function calls in one response) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). Google’s response may also include a `safety_decision` field indicating if the action needs user confirmation for safety [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). Overall, the model’s output is a structured JSON with the intended function to execute, not conversational text. |
-| **Amazon (Bedrock)**   | **Structured Tool Request** (`returnControl` payload) [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html), [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html) | In Bedrock Agents, when Claude (running via Bedrock) decides to use the computer tool, the InvokeAgent response contains a **`returnControl` JSON** with the tool and action. For example, `returnControl.invocationInputs[0].functionInvocationInput` will specify `"function": "computer"` and parameters like `"action": "screenshot"` or `"mouse_move"` [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html), [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). This structured payload is how Bedrock signals that the agent is asking for a computer action. The format is JSON (nested in the response), not a normal message string.                                                                                                                                                                                                                                         |
+| **Amazon (Bedrock)**   | **Structured Tool Request** (`returnControl` payload) [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html), [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html) | In Bedrock Agents, when Claude (running via Bedrock) decides to use the computer tool, the InvokeAgent response contains a **`returnControl` JSON** with the tool and action. For example, `returnControl.invocationInputs[0].functionInvocationInput` will specify `"function": "computer"` and parameters like `"action": "screenshot"` or `"mouse_move"` [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html), [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). This structured payload is how Bedrock signals that the agent is asking for a computer action. The format is JSON (nested in the response), not a normal message string. |
 
 > **Commonalities**: All providers use a **structured schema** for action requests. Instead of the model replying with prose, it produces a machine-readable instruction: OpenAI in its Responses API returns a `computer_call` object, Anthropic uses a `tool_use` content block with a JSON action, Google uses the formal function\_call mechanism, and AWS’s Bedrock also yields a JSON payload. In each case, the model’s intent to click/type is encoded in a standard format (not plain text), which includes the action name and parameters (like coordinates or text to enter). This consistency means the response is **not free-form** – the developer’s code can reliably parse the needed action.
 
@@ -88,10 +88,10 @@ When the model decides to use the Computer Use capability, it returns a structur
 After executing the instructed action on the real or virtual machine, the developer must send the **result** back to the model. The expected format for these results is also structured:
 
 | **Provider** | **Returning the Tool’s Output**  | **Format of Return Data** |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| -------- | ------ | ------------- |
 | **OpenAI**             | **Computer Call Output** (`computer_call_output`) [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use), [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use)                                              | The OpenAI Responses API expects the developer to **return a screenshot or result** of the action in the next request as a `computer_call_output`. This is done by including an input of type `"input_image"` (for screenshots) or other relevant types in the follow-up call [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use), [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use). Essentially, you capture the state (usually a PNG image of the screen after the click/typing) and send it back in the API call, tied to the `call_id` of the action. The model will then analyze this image in the next loop iteration. The data is sent in a structured way (e.g., base64-encoded image in JSON) rather than as plain text. |
-| **Anthropic (Claude)** | **Tool Result Message** (`tool_result` content block) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool)                                                                                                      | Claude expects the tool’s outcome returned as a special message in the conversation. The developer sends a new user-turn message whose content has type `"tool_result"`, referencing the original tool use ID and providing the result [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool). For a screenshot action, this content would include the image (encoded as binary/base64 data) and perhaps metadata. In code, Anthropic’s reference implementation returns, for example, an image’s bytes in the `content` field of the tool\_result [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). The format is JSON structure: e.g. `{type: "tool_result", tool_use_id: "...", content: {…result data…}}`. This structured result is then fed back into Claude, rather than a text description. |
-| **Google (Gemini)**    | **FunctionResponse objects** [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use)                                                                                   | Google’s API requires the results of each action to be sent back via **FunctionResponse** entries. After executing an action, the developer creates a `FunctionResponse` with the same function name and attaches the outcome: typically this includes a screenshot (binary image data) and the current page URL [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). In practice, the return is a JSON payload where the image is included as an `inline_data` blob (e.g., PNG bytes) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). The model will then ingest this structured data as the outcome of the function call. No free-form text is used here – the screenshot and any other info (like a confirmation that typing is done or a new page URL) are packed into the structured response object. |
+| **Anthropic (Claude)** | **Tool Result Message** (`tool_result` content block) [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool) | Claude expects the tool’s outcome returned as a special message in the conversation. The developer sends a new user-turn message whose content has type `"tool_result"`, referencing the original tool use ID and providing the result [\[platform.claude.com\]](https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool). For a screenshot action, this content would include the image (encoded as binary/base64 data) and perhaps metadata. In code, Anthropic’s reference implementation returns, for example, an image’s bytes in the `content` field of the tool\_result [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). The format is JSON structure: e.g. `{type: "tool_result", tool_use_id: "...", content: {…result data…}}`. This structured result is then fed back into Claude, rather than a text description. |
+| **Google (Gemini)**    | **FunctionResponse objects** [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use) | Google’s API requires the results of each action to be sent back via **FunctionResponse** entries. After executing an action, the developer creates a `FunctionResponse` with the same function name and attaches the outcome: typically this includes a screenshot (binary image data) and the current page URL [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). In practice, the return is a JSON payload where the image is included as an `inline_data` blob (e.g., PNG bytes) [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use). The model will then ingest this structured data as the outcome of the function call. No free-form text is used here – the screenshot and any other info (like a confirmation that typing is done or a new page URL) are packed into the structured response object. |
 | **Amazon (Bedrock)**   | **InvokeAgent with Result Data** [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html), [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html) | In Bedrock, after performing the action, the developer calls `InvokeAgent` again, supplying the results in the request. The Bedrock docs provide a code sample where after a screenshot action, they prepare a result dict containing the image bytes (in a field `"IMAGES"` with format and byte data) [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). This is sent back to the agent in the next invocation so Claude can process it. The format is structured JSON matching what the agent expects – for a screenshot, a list of images with their binary data and metadata [\[docs.aws.amazon.com\]](https://docs.aws.amazon.com/bedrock/latest/userguide/agent-computer-use-handle-tools.html). Similarly, outputs of other actions (like text from the TextEditor or stdout from Bash) are returned in JSON form. Essentially, the result is **not** just printed or described; it’s delivered as data in a predefined schema (following Anthropic’s tool interface conventions). |
 
 > **Common Return Format**: Across providers, the tool’s output (especially screenshots) is returned in a **machine-readable JSON structure** rather than as open text. Typically this means encoding images (usually PNG) in base64 within the API call’s payload or object, along with any identifiers. All platforms enforce this structured loop: the model asks for an action, the developer executes it and **returns a structured result** (image or data), which the model then uses for the next step. This ensures a universal pattern: *action requests in JSON, and action results in JSON*. The use of images/screenshots is central to “Computer Use” – every provider includes screenshot data as a return type (OpenAI and Google explicitly use images, Anthropic/AWS do the same via bytes in JSON). The consistency is that the **return type is not free-form text**; it’s typically a JSON object or list (often containing an image blob, or other structured info like updated URLs or confirmation flags) that the AI agent will interpret in the next iteration. [\[platform.openai.com\]](https://platform.openai.com/docs/guides/tools-computer-use), [\[ai.google.dev\]](https://ai.google.dev/gemini-api/docs/computer-use)
@@ -102,23 +102,6 @@ After executing the instructed action on the real or virtual machine, the develo
 ### Decision Outcome
 
 1. **ComputerUseTool** - A hosted tool abstraction for computer use capabilities.
-
-### Naming Options for Computer Use Types
-
-The current naming is inconsistent (`ComputerUseTool` vs `ComputerCallContent`). Here are naming options to consider:
-
-| Option | Tool Class | Call Content | Result Content | Action Enum | Notes |
-| ------ | ---------- | ------------ | -------------- | ----------- | ----- |
-| **Used in this document** | `ComputerUseTool` | `ComputerCallContent` | `ComputerResultContent` | `ComputerAction` | Inconsistent - "Use" only in Tool |
-| **ComputerUse** | `ComputerUseTool` | `ComputerUseCallContent` | `ComputerUseResultContent` | `ComputerUseAction` | Consistent with OpenAI naming |
-| **ComputerCalling** | `ComputerCallingTool` | `ComputerCallContent` | `ComputerResultContent` | `ComputerAction` | Tool emphasizes "calling", content stays short |
-| **Computer** | `ComputerTool` | `ComputerCallContent` | `ComputerResultContent` | `ComputerAction` | Shorter, consistent |
-| **Desktop** | `DesktopTool` | `DesktopCallContent` | `DesktopResultContent` | `DesktopAction` | Generic, avoids "computer" |
-| **Screen** | `ScreenTool` | `ScreenCallContent` | `ScreenResultContent` | `ScreenAction` | Emphasizes visual interaction |
-| **GUI** | `GUITool` | `GUICallContent` | `GUIResultContent` | `GUIAction` | Technical, explicit |
-| **Interface** | `InterfaceTool` | `InterfaceCallContent` | `InterfaceResultContent` | `InterfaceAction` | Abstract, provider-neutral |
-
-> **Recommendation**: Either **ComputerUse** (aligns with OpenAI's "computer-use" terminology) or **Computer** (shorter, still clear) for consistency across all types.
 
 ## ComputerUseTool Design
 
@@ -173,12 +156,12 @@ tools = [
 ]
 ```
 
-## ComputerCallContent Design
+## ComputerUseCallContent Design
 
-The `ComputerCallContent` represents an action request from the model to perform a computer interaction (click, type, screenshot, etc.).
+The `ComputerUseCallContent` represents an action request from the model to perform a computer interaction (click, type, screenshot, etc.).
 
 ```python
-class ComputerAction(str, Enum):
+class ComputerUseAction(str, Enum):
     """Represents the types of computer actions that can be requested."""
     CLICK = "click"
     DOUBLE_CLICK = "double_click"
@@ -191,7 +174,7 @@ class ComputerAction(str, Enum):
     SCROLL = "scroll"
     WAIT = "wait"
 
-class ComputerCallContent(BaseContent):
+class ComputerUseCallContent(BaseContent):
     """Represents a computer action request from the model.
 
     Attributes:
@@ -212,7 +195,7 @@ class ComputerCallContent(BaseContent):
         self,
         *,
         call_id: str,
-        action: ComputerAction | str,
+        action: ComputerUseAction | str,
         coordinate: tuple[int, int] | None = None,
         end_coordinate: tuple[int, int] | None = None,
         text: str | None = None,
@@ -230,7 +213,7 @@ class ComputerCallContent(BaseContent):
         self.type: Literal["computer_call"] = "computer_call"
 ```
 
-### Field Mapping for ComputerCallContent
+### Field Mapping for ComputerUseCallContent
 
 | Generic Field            | OpenAI Field            | Anthropic Field        | Google Field             | Notes                                      |
 | ------------------------ | ----------------------- | ---------------------- | ------------------------ | ------------------------------------------ |
@@ -243,12 +226,12 @@ class ComputerCallContent(BaseContent):
 | `button`                 | `button`                | N/A (in action name)   | `args.button`            | Mouse button                               |
 | `scroll_amount`          | `scroll_x`/`scroll_y`   | `scroll_amount`        | `args.amount`            | Scroll distance                            |
 
-## ComputerResultContent Design
+## ComputerUseResultContent Design
 
-The `ComputerResultContent` represents the result of executing a computer action, typically containing a screenshot and optional metadata.
+The `ComputerUseResultContent` represents the result of executing a computer action, typically containing a screenshot and optional metadata.
 
 ```python
-class ComputerResultContent(BaseContent):
+class ComputerUseResultContent(BaseContent):
     """Represents the result of a computer action execution.
 
     The result typically includes a screenshot of the screen state after the action,
@@ -280,7 +263,7 @@ class ComputerResultContent(BaseContent):
         self.type: Literal["computer_result"] = "computer_result"
 ```
 
-### Field Mapping for ComputerResultContent
+### Field Mapping for ComputerUseResultContent
 
 | Generic Field     | OpenAI Field                 | Anthropic Field                      | Google Field                  | Notes                                        |
 | ----------------- | ---------------------------- | ------------------------------------ | ----------------------------- | -------------------------------------------- |
@@ -293,30 +276,30 @@ class ComputerResultContent(BaseContent):
 ### Usage Example
 
 ```python
-from agent_framework import ComputerCallContent, ComputerResultContent, DataContent, TextContent
+from agent_framework import ComputerUseCallContent, ComputerUseResultContent, ComputerUseAction, DataContent, TextContent
 
 # Processing a computer call from the model
 for content in response.content:
-    if isinstance(content, ComputerCallContent):
+    if isinstance(content, ComputerUseCallContent):
         # Execute the action locally or via CUA/other implementation
         screenshot_bytes = execute_computer_action(content)
 
         # Create the result to send back
-        result = ComputerResultContent(
+        result = ComputerUseResultContent(
             call_id=content.call_id,
             screenshot=DataContent(data=screenshot_bytes, media_type="image/png"),
-            current_url="https://example.com" if content.action == ComputerAction.SCREENSHOT else None,
+            current_url="https://example.com" if content.action == ComputerUseAction.SCREENSHOT else None,
         )
 
         # Or with text output
-        result_with_text = ComputerResultContent(
+        result_with_text = ComputerUseResultContent(
             call_id=content.call_id,
             screenshot=DataContent(data=screenshot_bytes, media_type="image/png"),
             text_output=TextContent(text="Clipboard content: Hello World"),
         )
 
         # Or with an error
-        error_result = ComputerResultContent(
+        error_result = ComputerUseResultContent(
             call_id=content.call_id,
             error="Failed to click: coordinates out of bounds",
         )
@@ -602,7 +585,7 @@ for content in response.content:
 > [!IMPORTANT]
 > **This framework does NOT provide implementations of computer use or shell tools.**
 >
-> The types defined in this document (`ComputerUseTool`, `ComputerCallContent`, `ComputerResultContent`, `ShellTool`, `ShellCallContent`, `ShellResultContent`) are **abstractions only**. They exist solely to normalize the differences between providers (OpenAI, Anthropic, Google, etc.) and give developers building computer use or shell sandboxes an easier time creating cross-provider solutions.
+> The types defined in this document (`ComputerUseTool`, `ComputerUseCallContent`, `ComputerUseResultContent`, `ShellTool`, `ShellCallContent`, `ShellResultContent`) are **abstractions only**. They exist solely to normalize the differences between providers (OpenAI, Anthropic, Google, etc.) and give developers building computer use or shell sandboxes an easier time creating cross-provider solutions.
 >
 > **If you intend to implement computer use or shell execution capabilities, you must:**
 >
