@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Never, TypeAlias
 
-from agent_framework import AgentExecutorRequest, AgentExecutorResponse, Role
+from agent_framework import AgentExecutorRequest, AgentExecutorResponse, Role, WorkflowEvent
 
 from .._types import ChatMessage
 from ._executor import Executor, handler
@@ -55,6 +55,54 @@ class GroupChatResponseMessage:
 
 TerminationCondition: TypeAlias = Callable[[list[ChatMessage]], bool | Awaitable[bool]]
 GroupChatWorkflowContext_T_Out: TypeAlias = AgentExecutorRequest | GroupChatRequestMessage | GroupChatParticipantMessage
+
+
+# region Group chat events
+class GroupChatEvent(WorkflowEvent):
+    """Base class for group chat workflow events."""
+
+    def __init__(self, round_index: int, data: Any | None = None) -> None:
+        """Initialize group chat event.
+
+        Args:
+            round_index: Current round index
+            data: Optional event-specific data
+        """
+        super().__init__(data)
+        self.round_index = round_index
+
+
+class GroupChatResponseReceivedEvent(GroupChatEvent):
+    """Event emitted when a participant response is received."""
+
+    def __init__(self, round_index: int, participant_name: str, data: Any | None = None) -> None:
+        """Initialize response received event.
+
+        Args:
+            round_index: Current round index
+            participant_name: Name of the participant who sent the response
+            data: Optional event-specific data
+        """
+        super().__init__(round_index, data)
+        self.participant_name = participant_name
+
+
+class GroupChatRequestSentEvent(GroupChatEvent):
+    """Event emitted when a request is sent to a participant."""
+
+    def __init__(self, round_index: int, participant_name: str, data: Any | None = None) -> None:
+        """Initialize request sent event.
+
+        Args:
+            round_index: Current round index
+            participant_name: Name of the participant to whom the request was sent
+            data: Optional event-specific data
+        """
+        super().__init__(round_index, data)
+        self.participant_name = participant_name
+
+
+# endregion
 
 
 class BaseGroupChatOrchestrator(Executor, ABC):
@@ -171,6 +219,13 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             response: Response from a participant
             ctx: Workflow context
         """
+        await ctx.add_event(
+            GroupChatResponseReceivedEvent(
+                round_index=self._round_index,
+                participant_name=ctx.source_executor_ids[0] if ctx.source_executor_ids else "unknown",
+                data=response,
+            )
+        )
         await self._handle_response(response, ctx)
 
     # endregion
@@ -244,7 +299,9 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         """
         return list(self._conversation)
 
-    def _process_participant_response(self, response: AgentExecutorResponse | GroupChatResponseMessage) -> list[ChatMessage]:
+    def _process_participant_response(
+        self, response: AgentExecutorResponse | GroupChatResponseMessage
+    ) -> list[ChatMessage]:
         """Extract ChatMessage from participant response.
 
         Args:
@@ -375,14 +432,26 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             messages: list[ChatMessage] = []
             if additional_instruction:
                 messages.append(ChatMessage(role=Role.USER, text=additional_instruction))
-            await ctx.send_message(
-                AgentExecutorRequest(messages=messages, should_respond=True),
-                target_id=entry_id,
+            request = AgentExecutorRequest(messages=messages, should_respond=True)
+            await ctx.send_message(request, target_id=entry_id)
+            await ctx.add_event(
+                GroupChatRequestSentEvent(
+                    round_index=self._round_index,
+                    participant_name=entry_id,
+                    data=request,
+                )
             )
         else:
             # Custom executors receive full context envelope
             request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)
             await ctx.send_message(request, target_id=entry_id)
+            await ctx.add_event(
+                GroupChatRequestSentEvent(
+                    round_index=self._round_index,
+                    participant_name=entry_id,
+                    data=request,
+                )
+            )
 
     # Round limit enforcement (shared across all patterns)
 

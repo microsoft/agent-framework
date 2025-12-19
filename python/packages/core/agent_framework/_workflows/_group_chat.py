@@ -263,10 +263,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
     thus it must be capable of structured output.
     """
 
-    # TODO (@taochen): HIL
-    # Input -> Orchestrator -> Participant A -> HIL -> Orchestrator -> HIL -> Participant B -> HIL -> Orchestrator -> HIL -> Orchestrator -> Output
-    # Input -> Orchestrator -> Participant A -> (Orchestrator -> HIL -> Orchestrator) -> Participant B -> (Orchestrator -> HIL -> Orchestrator) -> Output
-
     def __init__(
         self,
         agent: ChatAgent,
@@ -444,7 +440,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
 # endregion
 
-
 # region Builder
 
 
@@ -474,8 +469,11 @@ class GroupChatBuilder:
         self._termination_condition: TerminationCondition | None = None
         self._max_rounds: int | None = None
         self._orchestrator_name: str | None = None
-
+        # Checkpoint related members
         self._checkpoint_storage: CheckpointStorage | None = None
+        # Request info related members
+        self._request_info_enabled: bool = False
+        self._request_info_filter: set[str] = set()
 
     def with_orchestrator(self, orchestrator: BaseGroupChatOrchestrator) -> "GroupChatBuilder":
         """Set the orchestrator for this group chat workflow.
@@ -702,6 +700,36 @@ class GroupChatBuilder:
             )
         """
         self._checkpoint_storage = checkpoint_storage
+        return self
+
+    def with_request_info(
+        self,
+        *,
+        agents: Sequence[str | AgentProtocol | Executor] | None = None,
+    ) -> "GroupChatBuilder":
+        """Enable request info before participant responses.
+
+        This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
+        When enabled, the workflow pauses before each participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and
+        optionally inject guidance before the participant responds. The caller provides
+        input via the standard response_handler/request_info pattern.
+
+        Simulated flow with HIL:
+        Input -> Orchestrator -> Request Info -> Participant -> Orchestrator -> Request Info -> Participant -> ...
+
+        Args:
+            agents: Optional list of agents or participant names to enable request info for.
+                    If None, enables HIL for all participants.
+
+        Returns:
+            Self for fluent chaining
+        """
+        from ._orchestration_request_info import resolve_request_info_filter
+
+        self._request_info_enabled = True
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None) or set()
+
         return self
 
     def _resolve_orchestrator(self) -> Executor:
