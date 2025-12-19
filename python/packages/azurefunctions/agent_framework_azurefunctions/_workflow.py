@@ -24,7 +24,6 @@ from agent_framework import (
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentRunResponse,
-    AgentThread,
     ChatMessage,
     Workflow,
 )
@@ -37,7 +36,7 @@ from agent_framework._workflows._edge import (
 )
 from azure.durable_functions import DurableOrchestrationContext
 
-from ._models import AgentSessionId
+from ._models import AgentSessionId, DurableAgentThread
 from ._orchestration import DurableAIAgent
 from ._shared_state import DurableSharedState
 from ._utils import deserialize_value, serialize_message
@@ -205,8 +204,8 @@ def run_workflow_orchestrator(
                 # Execute
                 if isinstance(executor, AgentExecutor):
                     # Durable Agent Execution
-                    agent_def = executor._agent
-                    agent_name = agent_def.name
+                    # Use executor.id which equals agent.name (set during AgentExecutor construction)
+                    agent_name = executor.id
                     logger.debug("Calling Durable Entity: %s", agent_name)
 
                     # Extract message content
@@ -215,9 +214,8 @@ def run_workflow_orchestrator(
                     # Create unique session for this orchestration instance
                     session_id = AgentSessionId(name=agent_name, key=context.instance_id)
 
-                    # Create a thread with the session ID
-                    thread = AgentThread()
-                    thread._durable_session_id = session_id  # type: ignore[attr-defined]
+                    # Create a durable thread with the session ID using proper class
+                    thread = DurableAgentThread(session_id=session_id)
 
                     # Create DurableAIAgent wrapper to call the entity
                     agent = DurableAIAgent(context, agent_name)
