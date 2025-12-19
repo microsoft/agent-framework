@@ -2010,7 +2010,7 @@ class FunctionApprovalRequestContent(BaseContent):
         self,
         *,
         id: str,
-        function_call: FunctionCallContent | MutableMapping[str, Any],
+        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2035,7 +2035,10 @@ class FunctionApprovalRequestContent(BaseContent):
         self.id = id
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
         if isinstance(function_call, MutableMapping):
-            self.function_call = FunctionCallContent.from_dict(function_call)
+            if function_call.get("type") == "mcp_server_tool_call":
+                self.function_call = MCPServerToolCallContent.from_dict(function_call)
+            else:
+                self.function_call = FunctionCallContent.from_dict(function_call)
         else:
             self.function_call = function_call
         # Override the type for this specific subclass

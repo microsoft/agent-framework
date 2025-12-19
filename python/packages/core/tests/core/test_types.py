@@ -547,6 +547,15 @@ def test_function_approval_serialization_roundtrip():
     # The Contents union will need to be handled differently when we fully migrate
 
 
+def test_function_approval_accepts_mcp_call():
+    """Ensure FunctionApprovalRequestContent supports MCP server tool calls."""
+    mcp_call = MCPServerToolCallContent(call_id="c-mcp", tool_name="tool", server_name="srv", arguments={"x": 1})
+    req = FunctionApprovalRequestContent(id="req-mcp", function_call=mcp_call)
+
+    assert isinstance(req.function_call, MCPServerToolCallContent)
+    assert req.function_call.call_id == "c-mcp"
+
+
 # region BaseContent Serialization
 
 
