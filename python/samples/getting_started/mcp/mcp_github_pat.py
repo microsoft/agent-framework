@@ -5,6 +5,7 @@ import os
 
 from agent_framework import ChatAgent, HostedMCPTool
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 
 """
 MCP GitHub Integration with Personal Access Token (PAT)
@@ -26,19 +27,22 @@ Prerequisites:
 
 async def github_mcp_example() -> None:
     """Example of using GitHub MCP server with PAT authentication."""
-    # 1. Get configuration from environment
+    # 1. Load environment variables from .env file if present
+    load_dotenv()
+
+    # 2. Get configuration from environment
     github_pat = os.getenv("GITHUB_PAT")
     if not github_pat:
         raise ValueError(
             "GITHUB_PAT environment variable must be set. Create a token at https://github.com/settings/tokens"
         )
 
-    # 2. Create authentication headers with GitHub PAT
+    # 3. Create authentication headers with GitHub PAT
     auth_headers = {
         "Authorization": f"Bearer {github_pat}",
     }
 
-    # 3. Create MCP tool with authentication
+    # 4. Create MCP tool with authentication
     # HostedMCPTool manages the connection to the MCP server and makes its tools available
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
     github_mcp_tool = HostedMCPTool(
@@ -49,7 +53,7 @@ async def github_mcp_example() -> None:
         approval_mode="never_require",
     )
 
-    # 4. Create agent with the GitHub MCP tool
+    # 5. Create agent with the GitHub MCP tool
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         name="GitHubAgent",
