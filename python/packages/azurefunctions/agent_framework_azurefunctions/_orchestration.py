@@ -281,6 +281,7 @@ class DurableAIAgent(AgentProtocol):
             thread_id=session_id.key,
             response_format=response_format,
             orchestration_id=self.context.instance_id,
+            created_at=self.context.current_utc_datetime,
         )
 
         logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])

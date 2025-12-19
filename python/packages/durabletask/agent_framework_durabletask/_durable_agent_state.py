@@ -82,7 +82,7 @@ def _parse_created_at(value: Any) -> datetime:
         except (ValueError, TypeError):
             pass
 
-    logger.error(
+    logger.warning(
         f"Invalid or missing created_at value in durable agent state; defaulting to current UTC time, {value}",
         stack_info=True,
     )

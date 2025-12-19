@@ -71,7 +71,7 @@ def _make_durabletask_entity(
     *,
     initial_state: dict[str, Any] | None = None,
 ) -> tuple[DurableTaskEntityStateProvider, MockEntityContext]:
-    """Create a DurableTaskAgentEntity wired to an in-memory durabletask context."""
+    """Create a DurableTaskEntityStateProvider wired to an in-memory durabletask context."""
     entity = DurableTaskEntityStateProvider(agent)
     ctx = MockEntityContext(initial_state)
     # DurableEntity provides this hook; required for get_state/set_state to work in unit tests.
@@ -156,8 +156,8 @@ class TestAgentEntityInit:
         assert entity2.agent.__class__.__name__ == "CustomAgent"
 
 
-class TestDurableTaskAgentEntity:
-    """Tests for DurableTaskAgentEntity wrapper behavior and persistence wiring."""
+class TestDurableTaskEntityStateProvider:
+    """Tests for DurableTaskEntityStateProvider wrapper behavior and persistence wiring."""
 
     def test_reset_persists_cleared_state(self) -> None:
         mock_agent = Mock()

@@ -69,7 +69,7 @@ class AgentEntityStateProviderMixin:
         """Clear conversation history by resetting state to a fresh DurableAgentState."""
         self._state_cache = DurableAgentState()
         self.persist_state()
-        logger.debug("[AgentEntityStateMixin.reset] State reset complete")
+        logger.debug("[AgentEntityStateProviderMixin.reset] State reset complete")
 
 
 class AgentEntity:
@@ -344,6 +344,3 @@ class DurableTaskEntityStateProvider(DurableEntity, AgentEntityStateProviderMixi
 
     def _set_state_dict(self, state: dict[str, Any]) -> None:
         self.set_state(state)
-
-    async def run(self, request: RunRequest | dict[str, Any] | str) -> AgentRunResponse:
-        return await self._agent_entity.run(request)
