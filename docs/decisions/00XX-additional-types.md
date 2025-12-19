@@ -165,7 +165,7 @@ class ComputerUseAction(str, Enum):
     """Represents the types of computer actions that can be requested."""
     CLICK = "click"
     DOUBLE_CLICK = "double_click"
-    RIGHT_CLICK = "right_click"
+    TRIPLE_CLICK = "triple_click"
     MOVE = "move"
     DRAG = "drag"
     TYPE = "type"
@@ -173,6 +173,7 @@ class ComputerUseAction(str, Enum):
     SCREENSHOT = "screenshot"
     SCROLL = "scroll"
     WAIT = "wait"
+    ZOOM = "zoom"
 
 class ComputerUseCallContent(BaseContent):
     """Represents a computer action request from the model.
@@ -185,6 +186,7 @@ class ComputerUseCallContent(BaseContent):
         text: Text to type, if applicable.
         key: Key or key combination to press (e.g., "Enter", "ctrl+c").
         button: Mouse button for click actions (left, right, middle).
+            Should be combined with a click action.
         scroll_amount: Amount to scroll (positive = down/right, negative = up/left).
         scroll_direction: Direction for scrolling ("vertical", "horizontal").
         duration: Duration in milliseconds for wait actions.
