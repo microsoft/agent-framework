@@ -238,12 +238,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
-            messages.append(
-                ChatMessage(
-                    role="assistant",
-                    contents=contents,
-                )
-            )
+            messages.append(ChatMessage(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
             created_at=datetime.fromtimestamp(response.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
