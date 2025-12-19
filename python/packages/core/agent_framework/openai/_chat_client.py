@@ -16,8 +16,6 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import ValidationError
 
-from agent_framework import TextReasoningContent
-
 from .._clients import BaseChatClient
 from .._logging import get_logger
 from .._middleware import use_chat_middleware
@@ -36,6 +34,7 @@ from .._types import (
     FunctionResultContent,
     Role,
     TextContent,
+    TextReasoningContent,
     UriContent,
     UsageContent,
     UsageDetails,
@@ -275,6 +274,8 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
+            if reasoning_details := getattr(choice.delta, "reasoning_details", None):
+                contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,

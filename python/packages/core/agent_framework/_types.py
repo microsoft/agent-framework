@@ -858,6 +858,10 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
             "text": self.text + other.text,
@@ -865,6 +869,7 @@ class TextReasoningContent(BaseContent):
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -899,6 +904,11 @@ class TextReasoningContent(BaseContent):
             self.raw_representation = (
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
 
         # Merge annotations
         if other.annotations:
