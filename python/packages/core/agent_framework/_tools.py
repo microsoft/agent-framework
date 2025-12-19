@@ -15,6 +15,7 @@ from typing import (
     Final,
     Generic,
     Literal,
+    TypedDict,
     Protocol,
     TypeVar,
     cast,
@@ -325,13 +326,24 @@ class HostedWebSearchTool(BaseTool):
         super().__init__(**args)
 
 
+class HostedImageGenerationToolOptions(TypedDict, total=False):
+    """Options for HostedImageGenerationTool."""
+
+    count: int
+    image_size: str
+    media_type: str
+    model_id: str
+    response_format: Literal["uri", "data", "hosted"]
+    streaming_count: int
+
+
 class HostedImageGenerationTool(BaseTool):
     """Represents a hosted tool that can be specified to an AI service to enable it to perform image generation."""
 
     def __init__(
         self,
         *,
-        options: dict[str, Any] | None = None,
+        options: HostedImageGenerationToolOptions | None = None,
         description: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         **kwargs: Any,

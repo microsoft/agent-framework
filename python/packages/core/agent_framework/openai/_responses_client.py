@@ -55,6 +55,8 @@ from .._types import (
     HostedVectorStoreContent,
     ImageGenerationToolCallContent,
     ImageGenerationToolResultContent,
+    MCPServerToolCallContent,
+    MCPServerToolResultContent,
     Role,
     TextContent,
     TextReasoningContent,
@@ -322,7 +324,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     case HostedImageGenerationTool():
                         mapped_tool: dict[str, Any] = {"type": "image_generation"}
                         if tool.options:
-                            mapped_tool.update(tool.options)
+                            option_mapping = {
+                                "count": "n",
+                                "image_size": "size",
+                                "media_type": "media_type",
+                                "model_id": "model",
+                                "response_format": "response_format",
+                                "streaming_count": "partial_images",
+                            }
+                            for key, value in tool.options.items():
+                                mapped_key = option_mapping.get(key, key)
+                                mapped_tool[mapped_key] = value
                         if tool.additional_properties:
                             mapped_tool.update(tool.additional_properties)
                         response_tools.append(mapped_tool)
@@ -334,7 +346,19 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
                 # Special handling for image_generation tools
                 if tool_dict.get("type") == "image_generation":
-                    response_tools.append(tool_dict.copy())
+                    mapped_tool = tool_dict.copy()
+                    option_mapping = {
+                        "count": "n",
+                        "image_size": "size",
+                        "media_type": "media_type",
+                        "model_id": "model",
+                        "response_format": "response_format",
+                        "streaming_count": "partial_images",
+                    }
+                    for key, value in list(mapped_tool.items()):
+                        if key in option_mapping:
+                            mapped_tool[option_mapping[key]] = mapped_tool.pop(key)
+                    response_tools.append(mapped_tool)
                 else:
                     response_tools.append(tool_dict)
         return response_tools
@@ -809,6 +833,37 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             ),
                         )
                     )
+                case "mcp_call":
+                    call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
+                    contents.append(
+                        MCPServerToolCallContent(
+                            call_id=call_id,
+                            tool_name=getattr(item, "name", "") or "",
+                            server_name=getattr(item, "server_label", None),
+                            arguments=getattr(item, "arguments", None),
+                            raw_representation=item,
+                        )
+                    )
+                    result_output = (
+                        getattr(item, "result", None)
+                        or getattr(item, "output", None)
+                        or getattr(item, "outputs", None)
+                    )
+                    parsed_output: list[Contents] | None = None
+                    if result_output:
+                        normalized = (
+                            result_output
+                            if isinstance(result_output, Sequence) and not isinstance(result_output, (str, bytes, MutableMapping))
+                            else [result_output]
+                        )
+                        parsed_output = [_parse_content(output_item) for output_item in normalized]
+                    contents.append(
+                        MCPServerToolResultContent(
+                            call_id=call_id,
+                            output=parsed_output,
+                            raw_representation=item,
+                        )
+                    )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
                     outputs: list["Contents"] = []
                     if item.result:
@@ -1005,6 +1060,38 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     additional_properties={"server_label": event_item.server_label},
                                     raw_representation=event_item,
                                 ),
+                            )
+                        )
+                    case "mcp_call":
+                        call_id = getattr(event_item, "id", None) or getattr(event_item, "call_id", None) or ""
+                        contents.append(
+                            MCPServerToolCallContent(
+                                call_id=call_id,
+                                tool_name=getattr(event_item, "name", "") or "",
+                                server_name=getattr(event_item, "server_label", None),
+                                arguments=getattr(event_item, "arguments", None),
+                                raw_representation=event_item,
+                            )
+                        )
+                        result_output = (
+                            getattr(event_item, "result", None)
+                            or getattr(event_item, "output", None)
+                            or getattr(event_item, "outputs", None)
+                        )
+                        parsed_output: list[Contents] | None = None
+                        if result_output:
+                            normalized = (
+                                result_output
+                                if isinstance(result_output, Sequence)
+                                and not isinstance(result_output, (str, bytes, MutableMapping))
+                                else [result_output]
+                            )
+                            parsed_output = [_parse_content(output_item) for output_item in normalized]
+                        contents.append(
+                            MCPServerToolResultContent(
+                                call_id=call_id,
+                                output=parsed_output,
+                                raw_representation=event_item,
                             )
                         )
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall

@@ -53,8 +53,8 @@ __all__ = [
     "ImageGenerationToolCallContent",
     "ImageGenerationToolResultContent",
     "HostedFileContent",
-    "McpServerToolCallContent",
-    "McpServerToolResultContent",
+    "MCPServerToolCallContent",
+    "MCPServerToolResultContent",
     "HostedVectorStoreContent",
     "Role",
     "TextContent",
@@ -136,9 +136,9 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
         case "image_generation_tool_result":
             return ImageGenerationToolResultContent.from_dict(content_data)
         case "mcp_server_tool_call":
-            return McpServerToolCallContent.from_dict(content_data)
+            return MCPServerToolCallContent.from_dict(content_data)
         case "mcp_server_tool_result":
-            return McpServerToolResultContent.from_dict(content_data)
+            return MCPServerToolResultContent.from_dict(content_data)
         case "function_approval_request":
             return FunctionApprovalRequestContent.from_dict(content_data)
         case "function_approval_response":
@@ -1820,7 +1820,7 @@ class ImageGenerationToolResultContent(BaseContent):
         self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
 
 
-class McpServerToolCallContent(BaseContent):
+class MCPServerToolCallContent(BaseContent):
     """Represents a tool call request to a MCP server."""
 
     def __init__(
@@ -1852,7 +1852,7 @@ class McpServerToolCallContent(BaseContent):
         self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
 
 
-class McpServerToolResultContent(BaseContent):
+class MCPServerToolResultContent(BaseContent):
     """Represents the result of a MCP server tool call."""
 
     def __init__(
@@ -2068,8 +2068,8 @@ Contents = (
     | CodeInterpreterToolResultContent
     | ImageGenerationToolCallContent
     | ImageGenerationToolResultContent
-    | McpServerToolCallContent
-    | McpServerToolResultContent
+    | MCPServerToolCallContent
+    | MCPServerToolResultContent
     | FunctionApprovalRequestContent
     | FunctionApprovalResponseContent
 )
