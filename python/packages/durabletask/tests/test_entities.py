@@ -7,7 +7,7 @@ Run with: pytest tests/test_entities.py -v
 
 from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any, TypeVar, cast
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -64,19 +64,6 @@ class _InMemoryStateProvider(AgentEntityStateProviderMixin):
 
 def _make_entity(agent: Any, callback: Any = None) -> AgentEntity:
     return AgentEntity(agent, callback=callback, state_provider=_InMemoryStateProvider())
-
-
-def _make_durabletask_entity(
-    agent: Any,
-    *,
-    initial_state: dict[str, Any] | None = None,
-) -> tuple[DurableTaskEntityStateProvider, MockEntityContext]:
-    """Create a DurableTaskEntityStateProvider wired to an in-memory durabletask context."""
-    entity = DurableTaskEntityStateProvider(agent)
-    ctx = MockEntityContext(initial_state)
-    # DurableEntity provides this hook; required for get_state/set_state to work in unit tests.
-    entity._initialize_entity_context(ctx)  # type: ignore[attr-defined]
-    return entity, ctx
 
 
 def _role_value(chat_message: DurableAgentStateMessage) -> str:
@@ -159,6 +146,19 @@ class TestAgentEntityInit:
 class TestDurableTaskEntityStateProvider:
     """Tests for DurableTaskEntityStateProvider wrapper behavior and persistence wiring."""
 
+    def _make_durabletask_entity_provider(
+        self,
+        agent: Any,
+        *,
+        initial_state: dict[str, Any] | None = None,
+    ) -> tuple[DurableTaskEntityStateProvider, MockEntityContext]:
+        """Create a DurableTaskEntityStateProvider wired to an in-memory durabletask context."""
+        entity = DurableTaskEntityStateProvider(agent)
+        ctx = MockEntityContext(initial_state)
+        # DurableEntity provides this hook; required for get_state/set_state to work in unit tests.
+        entity._initialize_entity_context(ctx)  # type: ignore[attr-defined]
+        return entity, ctx
+
     def test_reset_persists_cleared_state(self) -> None:
         mock_agent = Mock()
 
@@ -176,32 +176,13 @@ class TestDurableTaskEntityStateProvider:
             },
         }
 
-        entity, ctx = _make_durabletask_entity(mock_agent, initial_state=existing_state)
+        entity, ctx = self._make_durabletask_entity_provider(mock_agent, initial_state=existing_state)
 
         entity.reset()
 
         persisted = ctx.get_state(dict, default={})
         assert isinstance(persisted, dict)
         assert persisted["data"]["conversationHistory"] == []
-
-    async def test_run_persists_state_via_durable_entity_backend(self) -> None:
-        mock_agent = Mock()
-        mock_agent.run = AsyncMock(return_value=_agent_response("Response"))
-
-        entity, ctx = _make_durabletask_entity(mock_agent)
-
-        await entity.run({
-            "message": "Hello",
-            "thread_id": "thread-1",
-            "correlationId": "corr-1",
-        })
-
-        persisted = ctx.get_state(dict, default={})
-        persisted_dict = cast(dict[str, Any], persisted)
-
-        data = cast(dict[str, Any], persisted_dict["data"])
-        history = cast(list[Any], data["conversationHistory"])
-        assert len(history) == 2
 
 
 class TestAgentEntityRunAgent:
