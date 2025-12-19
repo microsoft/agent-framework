@@ -325,17 +325,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             mapped_tool.update(tool.options)
                         if tool.additional_properties:
                             mapped_tool.update(tool.additional_properties)
-                        parameter_mapping = {
-                            "format": "output_format",
-                            "compression": "output_compression",
-                        }
-                        for user_param, api_param in parameter_mapping.items():
-                            if user_param in mapped_tool:
-                                mapped_tool[api_param] = mapped_tool.pop(user_param)
-                        if "partial_images" in mapped_tool:
-                            partial_images = mapped_tool["partial_images"]
-                            if not isinstance(partial_images, int) or partial_images < 0 or partial_images > 3:
-                                raise ValueError("partial_images must be an integer between 0 and 3 (inclusive).")
                         response_tools.append(mapped_tool)
                     case _:
                         logger.debug("Unsupported tool passed (type: %s)", type(tool))
@@ -345,29 +334,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
 
                 # Special handling for image_generation tools
                 if tool_dict.get("type") == "image_generation":
-                    # Create a copy to avoid modifying the original
-                    mapped_tool = tool_dict.copy()
-
-                    # Map user-friendly parameter names to OpenAI API parameter names
-                    parameter_mapping = {
-                        "format": "output_format",
-                        "compression": "output_compression",
-                    }
-
-                    for user_param, api_param in parameter_mapping.items():
-                        if user_param in mapped_tool:
-                            # Map the parameter name and remove the old one
-                            mapped_tool[api_param] = mapped_tool.pop(user_param)
-
-                    # Validate partial_images parameter for streaming image generation
-                    # OpenAI API requires partial_images to be between 0-3 (inclusive) for image_generation tool
-                    # Reference: https://platform.openai.com/docs/api-reference/responses/create#responses_create-tools-image_generation_tool-partial_images
-                    if "partial_images" in mapped_tool:
-                        partial_images = mapped_tool["partial_images"]
-                        if not isinstance(partial_images, int) or partial_images < 0 or partial_images > 3:
-                            raise ValueError("partial_images must be an integer between 0 and 3 (inclusive).")
-
-                    response_tools.append(mapped_tool)
+                    response_tools.append(tool_dict.copy())
                 else:
                     response_tools.append(tool_dict)
         return response_tools
@@ -812,14 +779,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                 raw_representation=item,
                             )
                         )
-                    if outputs:
-                        contents.append(
-                            CodeInterpreterToolResultContent(
-                                call_id=call_id,
-                                outputs=outputs,
-                                raw_representation=item,
-                            )
+                    contents.append(
+                        CodeInterpreterToolResultContent(
+                            call_id=call_id,
+                            outputs=outputs,
+                            raw_representation=item,
                         )
+                    )
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         FunctionCallContent(
@@ -844,6 +810,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
+                    outputs: list[Contents] = []
                     if item.result:
                         uri = item.result
                         media_type = None
@@ -855,28 +822,27 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     media_type = uri.split(";")[0].split(":", 1)[1]
                             except Exception:
                                 media_type = "image"
-                        outputs = [
+                        outputs.append(
                             DataContent(
                                 uri=uri,
                                 media_type=media_type,
                                 raw_representation=item,
                             )
-                        ]
-                        image_id = getattr(item, "image_id", None) or getattr(item, "id", None)
-                        if image_id:
-                            contents.append(
-                                ImageGenerationToolCallContent(
-                                    image_id=image_id,
-                                    raw_representation=item,
-                                )
-                            )
-                        contents.append(
-                            ImageGenerationToolResultContent(
-                                image_id=image_id,
-                                outputs=outputs,
-                                raw_representation=item,
-                            )
                         )
+                    image_id = getattr(item, "image_id", None) or getattr(item, "id", None)
+                    contents.append(
+                        ImageGenerationToolCallContent(
+                            image_id=image_id,
+                            raw_representation=item,
+                        )
+                    )
+                    contents.append(
+                        ImageGenerationToolResultContent(
+                            image_id=image_id,
+                            outputs=outputs,
+                            raw_representation=item,
+                        )
+                    )
                 # TODO(peterychang): Add support for other content types
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
@@ -1064,14 +1030,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     raw_representation=event_item,
                                 )
                             )
-                        if outputs:
-                            contents.append(
-                                CodeInterpreterToolResultContent(
-                                    call_id=call_id,
-                                    outputs=outputs,
-                                    raw_representation=event_item,
-                                )
+                        contents.append(
+                            CodeInterpreterToolResultContent(
+                                call_id=call_id,
+                                outputs=outputs,
+                                raw_representation=event_item,
                             )
+                        )
                     case "reasoning":  # ResponseOutputReasoning
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):

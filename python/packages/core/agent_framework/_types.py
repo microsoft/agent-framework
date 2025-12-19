@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
 import base64
 import json
 import re
@@ -15,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypeVar, Union, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -1711,7 +1709,7 @@ class CodeInterpreterToolCallContent(BaseContent):
         self,
         *,
         call_id: str | None = None,
-        inputs: Sequence["Contents" | MutableMapping[str, Any]] | None = None,
+        inputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1725,7 +1723,7 @@ class CodeInterpreterToolCallContent(BaseContent):
         )
         self.call_id = call_id
         if inputs:
-            normalized_inputs: Sequence["Contents" | MutableMapping[str, Any]] = (
+            normalized_inputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 inputs
                 if isinstance(inputs, Sequence) and not isinstance(inputs, (str, bytes, MutableMapping))
                 else [inputs]
@@ -1743,7 +1741,7 @@ class CodeInterpreterToolResultContent(BaseContent):
         self,
         *,
         call_id: str | None = None,
-        outputs: Sequence["Contents" | MutableMapping[str, Any]] | None = None,
+        outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1757,7 +1755,7 @@ class CodeInterpreterToolResultContent(BaseContent):
         )
         self.call_id = call_id
         if outputs:
-            normalized_outputs: Sequence["Contents" | MutableMapping[str, Any]] = (
+            normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 outputs
                 if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
                 else [outputs]
@@ -1797,7 +1795,7 @@ class ImageGenerationToolResultContent(BaseContent):
         self,
         *,
         image_id: str | None = None,
-        outputs: Sequence["Contents" | MutableMapping[str, Any]] | None = None,
+        outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1811,7 +1809,7 @@ class ImageGenerationToolResultContent(BaseContent):
         )
         self.image_id = image_id
         if outputs:
-            normalized_outputs: Sequence["Contents" | MutableMapping[str, Any]] = (
+            normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 outputs
                 if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
                 else [outputs]
@@ -1861,7 +1859,7 @@ class McpServerToolResultContent(BaseContent):
         self,
         call_id: str,
         *,
-        output: Sequence["Contents" | MutableMapping[str, Any]] | None = None,
+        output: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1877,7 +1875,7 @@ class McpServerToolResultContent(BaseContent):
         )
         self.call_id = call_id
         if output:
-            normalized_output: Sequence[Contents | MutableMapping[str, Any]] = (
+            normalized_output: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 output
                 if isinstance(output, Sequence) and not isinstance(output, (str, bytes, MutableMapping))
                 else [output]
