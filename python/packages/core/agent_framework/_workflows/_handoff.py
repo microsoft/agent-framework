@@ -337,9 +337,8 @@ def _has_tool_result_for_call(conversation: list[ChatMessage], call_id: str) -> 
             continue
 
         for content in msg.contents:
-            if isinstance(content, FunctionResultContent):
-                if content.call_id == call_id:
-                    return True
+            if isinstance(content, FunctionResultContent) and content.call_id == call_id:
+                return True
 
     return False
 
