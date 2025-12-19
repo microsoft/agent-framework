@@ -803,7 +803,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
-            protected_data: Optional protected reasoning data that needs to be sent back.
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
