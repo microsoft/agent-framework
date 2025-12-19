@@ -70,8 +70,8 @@ def route_message_through_edge_groups(
 
         # SwitchCaseEdgeGroup and FanOutEdgeGroup use selection_func
         if isinstance(group, (SwitchCaseEdgeGroup, FanOutEdgeGroup)):
-            if group._selection_func is not None:
-                selected = group._selection_func(message, group.target_executor_ids)
+            if group.selection_func is not None:
+                selected = group.selection_func(message, group.target_executor_ids)
                 targets.extend(selected)
             else:
                 # No selection func means broadcast to all targets
