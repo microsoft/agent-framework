@@ -810,7 +810,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    outputs: list[Contents] = []
+                    outputs: list["Contents"] = []
                     if item.result:
                         uri = item.result
                         media_type = None
