@@ -18,7 +18,8 @@ Running this sample the first time will be slow, as the model needs to be
 downloaded and initialized.
 
 Also, not every model supports function calling, so be sure to check the
-model capabilities in the Foundry catalog.
+model capabilities in the Foundry catalog, or pick one from the list printed
+when running this sample.
 """
 
 
@@ -54,15 +55,16 @@ async def streaming_example(agent: "ChatAgent") -> None:
 
 
 async def main() -> None:
-    print("=== Basic Foundry Chat Client Agent Example ===")
+    print("=== Basic Foundry Local Client Agent Example ===")
 
     client = FoundryLocalClient(model_id="phi-4-mini")
     print(f"Client Model ID: {client.model_id}\n")
-    print("Other available models:")
+    print("Other available models (tool calling supported only):")
     for model in client.manager.list_catalog_models():
-        print(
-            f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
-        )
+        if model.supports_tool_calling:
+            print(
+                f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
+            )
     agent = client.create_agent(
         name="LocalAgent",
         instructions="You are a helpful agent.",
