@@ -272,11 +272,12 @@ class AgentFunctionApp(DFAppBase):
             # Reconstruct message - try to match handler's expected types
             message = reconstruct_message_for_handler(message_data, executor._handlers)
 
-            ctx = CapturingWorkflowContext(
-                shared_state_snapshot=shared_state_snapshot,
-            )
+            async def run() -> dict[str, Any]:
+                # Create context asynchronously using factory method
+                ctx = await CapturingWorkflowContext.create(
+                    shared_state_snapshot=shared_state_snapshot,
+                )
 
-            async def run() -> None:
                 # Find handler
                 handler = None
                 for message_type, handler_func in executor._handlers.items():
@@ -289,27 +290,28 @@ class AgentFunctionApp(DFAppBase):
                 else:
                     raise ValueError(f"Executor {executor_id} cannot handle message of type {type(message)}")
 
-            asyncio.run(run())
+                # Get changes asynchronously
+                updates, deletes = await ctx.get_shared_state_changes()
 
-            updates, deletes = ctx.get_shared_state_changes()
+                # Serialize all outputs for JSON compatibility
+                serialized_sent_messages = [
+                    {
+                        "message": serialize_message(msg["message"]),
+                        "target_id": msg.get("target_id"),
+                    }
+                    for msg in ctx.sent_messages
+                ]
+                serialized_outputs = [serialize_message(o) for o in ctx.outputs]
+                serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
 
-            # Serialize all outputs for JSON compatibility
-            serialized_sent_messages = [
-                {
-                    "message": serialize_message(msg["message"]),
-                    "target_id": msg.get("target_id"),
+                return {
+                    "sent_messages": serialized_sent_messages,
+                    "outputs": serialized_outputs,
+                    "shared_state_updates": serialized_updates,
+                    "shared_state_deletes": list(deletes),
                 }
-                for msg in ctx.sent_messages
-            ]
-            serialized_outputs = [serialize_message(o) for o in ctx.outputs]
-            serialized_updates = {k: serialize_message(v) for k, v in updates.items()}
 
-            result = {
-                "sent_messages": serialized_sent_messages,
-                "outputs": serialized_outputs,
-                "shared_state_updates": serialized_updates,
-                "shared_state_deletes": list(deletes),
-            }
+            result = asyncio.run(run())
             return json_module.dumps(result)
 
     def _setup_shared_state_entity(self) -> None:

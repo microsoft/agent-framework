@@ -32,28 +32,35 @@ class CapturingWorkflowContext:
     This class does NOT inherit from WorkflowContext to avoid requiring
     RunnerContext instances. Instead, it duck-types the interface that
     executor handlers expect.
+
+    Use the async `create()` factory method to instantiate this class.
     """
 
-    def __init__(
-        self,
+    def __init__(self) -> None:
+        """Initialize the capturing context. Use create() factory method instead."""
+        self._original_snapshot: dict[str, Any] = {}
+        self._shared_state = SharedState()
+        self.sent_messages: list[dict[str, Any]] = []
+        self.outputs: list[Any] = []
+
+    @classmethod
+    async def create(
+        cls,
         shared_state_snapshot: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> "CapturingWorkflowContext":
         """
-        Initialize the capturing context.
+        Create a new CapturingWorkflowContext asynchronously.
 
         Args:
             shared_state_snapshot: Snapshot of current shared state from orchestrator
+
+        Returns:
+            A new CapturingWorkflowContext instance
         """
-        # Keep original snapshot for diffing later
-        self._original_snapshot: dict[str, Any] = dict(shared_state_snapshot or {})
-
-        # Create real SharedState, pre-populated with snapshot
-        self._shared_state = SharedState()
-        self._shared_state._state = dict(shared_state_snapshot or {})
-
-        # Captured outputs
-        self.sent_messages: list[dict[str, Any]] = []
-        self.outputs: list[Any] = []
+        instance = cls()
+        instance._original_snapshot = dict(shared_state_snapshot or {})
+        await instance._shared_state.import_state(shared_state_snapshot or {})
+        return instance
 
     @property
     def shared_state(self) -> SharedState:
@@ -97,7 +104,7 @@ class CapturingWorkflowContext:
         """
         await self._shared_state.set(key, value)
 
-    def get_shared_state_changes(self) -> tuple[dict[str, Any], set[str]]:
+    async def get_shared_state_changes(self) -> tuple[dict[str, Any], set[str]]:
         """
         Get all shared state changes made during execution.
 
@@ -108,7 +115,7 @@ class CapturingWorkflowContext:
         Returns:
             Tuple of (updates dict, deletes set)
         """
-        current_state = self._shared_state._state
+        current_state = await self._shared_state.export_state()
         original_keys = set(self._original_snapshot.keys())
         current_keys = set(current_state.keys())
 
