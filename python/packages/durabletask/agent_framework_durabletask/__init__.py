@@ -40,6 +40,7 @@ from ._durable_agent_state import (
     DurableAgentStateUsage,
     DurableAgentStateUsageContent,
 )
+from ._entities import AgentEntity, AgentEntityStateProviderMixin
 from ._models import RunRequest, serialize_response_format
 
 __all__ = [
@@ -54,6 +55,8 @@ __all__ = [
     "WAIT_FOR_RESPONSE_FIELD",
     "WAIT_FOR_RESPONSE_HEADER",
     "AgentCallbackContext",
+    "AgentEntity",
+    "AgentEntityStateProviderMixin",
     "AgentResponseCallbackProtocol",
     "ApiResponseFields",
     "ContentTypes",

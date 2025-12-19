@@ -50,6 +50,7 @@ all = [
     "agent-framework-copilotstudio",
     "agent-framework-declarative",
     "agent-framework-devui",
+    "agent-framework-durabletask",
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-purview",
