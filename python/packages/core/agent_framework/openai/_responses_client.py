@@ -343,24 +343,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             else:
                 # Handle raw dictionary tools
                 tool_dict = tool if isinstance(tool, dict) else dict(tool)
-
-                # Special handling for image_generation tools
-                if tool_dict.get("type") == "image_generation":
-                    mapped_tool = tool_dict.copy()
-                    option_mapping = {
-                        "count": "n",
-                        "image_size": "size",
-                        "media_type": "media_type",
-                        "model_id": "model",
-                        "response_format": "response_format",
-                        "streaming_count": "partial_images",
-                    }
-                    for key, value in list(mapped_tool.items()):
-                        if key in option_mapping:
-                            mapped_tool[option_mapping[key]] = mapped_tool.pop(key)
-                    response_tools.append(mapped_tool)
-                else:
-                    response_tools.append(tool_dict)
+                response_tools.append(tool_dict)
         return response_tools
 
     @staticmethod
