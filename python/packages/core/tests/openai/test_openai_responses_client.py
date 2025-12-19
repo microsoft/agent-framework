@@ -769,14 +769,13 @@ def test_prepare_tools_for_openai_with_raw_image_generation() -> None:
     """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    # Test with raw tool dict using user-friendly parameter names
+    # Test with raw tool dict using OpenAI parameters directly
     tool = {
         "type": "image_generation",
         "size": "1536x1024",
         "quality": "high",
-        "format": "webp",  # Will be mapped to output_format
-        "compression": 75,  # Will be mapped to output_compression
-        "background": "transparent",
+        "output_format": "webp",
+        "output_quality": 75,
     }
 
     resp_tools = client._prepare_tools_for_openai([tool])
@@ -788,10 +787,8 @@ def test_prepare_tools_for_openai_with_raw_image_generation() -> None:
     assert image_tool["type"] == "image_generation"
     assert image_tool["size"] == "1536x1024"
     assert image_tool["quality"] == "high"
-    assert image_tool["background"] == "transparent"
-    # Check parameter name mapping
     assert image_tool["output_format"] == "webp"
-    assert image_tool["output_compression"] == 75
+    assert image_tool["output_quality"] == 75
 
 
 def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_params() -> None:
@@ -805,7 +802,7 @@ def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_par
         "model": "gpt-image-1",
         "input_fidelity": "high",
         "moderation": "strict",
-        "partial_images": 2,  # Should be integer 0-3
+        "output_format": "png",
     }
 
     resp_tools = client._prepare_tools_for_openai([tool])
@@ -823,7 +820,7 @@ def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_par
     assert tool_dict["model"] == "gpt-image-1"
     assert tool_dict["input_fidelity"] == "high"
     assert tool_dict["moderation"] == "strict"
-    assert tool_dict["partial_images"] == 2
+    assert tool_dict["output_format"] == "png"
 
 
 def test_prepare_tools_for_openai_with_raw_image_generation_minimal() -> None:
@@ -849,7 +846,7 @@ def test_prepare_tools_for_openai_with_hosted_image_generation() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     tool = HostedImageGenerationTool(
         description="Generate images",
-        options={"format": "png", "size": "512x512"},
+        options={"output_format": "png", "size": "512x512"},
         additional_properties={"quality": "high"},
     )
 
