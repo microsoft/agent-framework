@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4

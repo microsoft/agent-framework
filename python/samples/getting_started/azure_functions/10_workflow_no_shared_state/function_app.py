@@ -38,7 +38,6 @@ from agent_framework_azurefunctions import AgentFunctionApp
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
-app: AgentFunctionApp = None
 
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
 AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
@@ -195,7 +194,7 @@ def _create_workflow() -> Workflow:
 
 def launch(durable: bool = True) -> None:
 
-    global app
+    app: AgentFunctionApp = None
     workflow = None
 
     if durable:
@@ -211,9 +210,6 @@ def launch(durable: bool = True) -> None:
         env_path = Path(__file__).parent / ".env"
         load_dotenv(dotenv_path=env_path)
 
-        # logging.basicConfig(level=logging.INFO, format="%(message)s")
-        logger = logging.getLogger(__name__)
-
         logger.info("Starting Multi-Agent Spam Detection Workflow")
         logger.info("Available at: http://localhost:8094")
         logger.info("\nThis workflow demonstrates:")
@@ -224,6 +220,8 @@ def launch(durable: bool = True) -> None:
 
         workflow = _create_workflow()
         serve(entities=[workflow], port=8094, auto_open=True)
+    
+    return app
 
 
-launch(durable=True)
+app = launch(durable=True)
