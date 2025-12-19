@@ -11,13 +11,13 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="11.0.0" />
+    <PackageVersion Include="Anthropic" Version="12.0.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.1.0" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0-beta.440" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
     <PackageVersion Include="Azure.AI.Projects.OpenAI" Version="1.0.0-beta.5" />
@@ -100,7 +100,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="0.4.0-preview.3" />
     <!-- Inference SDKs -->
-    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.4.11" />
+    <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
     <PackageVersion Include="OpenAI" Version="2.8.0" />
@@ -112,15 +112,15 @@
     <PackageVersion Include="Microsoft.Bot.ObjectModel.PowerFx" Version="1.2025.1106.1" />
     <PackageVersion Include="Microsoft.PowerFx.Interpreter" Version="1.5.0-build.20251008-1002" />
     <!-- Durable Task -->
-    <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.16.2" />
-    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.16.2-preview.1" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.16.2" />
-    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.16.2-preview.1" />
+    <PackageVersion Include="Microsoft.DurableTask.Client" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Client.AzureManaged" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker" Version="1.18.0" />
+    <PackageVersion Include="Microsoft.DurableTask.Worker.AzureManaged" Version="1.18.0" />
     <!-- Azure Functions -->
     <PackageVersion Include="Microsoft.Azure.Functions.Worker" Version="2.50.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.50.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.9.0" />
-    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask" Version="1.11.0" />
+    <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.DurableTask.AzureManaged" Version="1.0.1" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Extensions.Mcp" Version="1.0.0" />

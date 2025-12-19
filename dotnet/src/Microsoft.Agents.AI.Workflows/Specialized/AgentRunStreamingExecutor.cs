@@ -20,7 +20,7 @@ internal sealed class AgentRunStreamingExecutor(AIAgent agent, bool includeInput
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
     {
-        List<ChatMessage>? roleChanged = messages.ChangeAssistantToUserForOtherParticipants(agent.DisplayName);
+        List<ChatMessage>? roleChanged = messages.ChangeAssistantToUserForOtherParticipants(agent.Name ?? agent.Id);
 
         List<AgentRunResponseUpdate> updates = [];
         await foreach (var update in agent.RunStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))

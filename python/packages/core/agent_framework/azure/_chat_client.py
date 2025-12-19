@@ -154,7 +154,7 @@ class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
         )
 
     @override
-    def _parse_text_from_choice(self, choice: Choice | ChunkChoice) -> TextContent | None:
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> TextContent | None:
         """Parse the choice into a TextContent object.
 
         Overwritten from OpenAIBaseChatClient to deal with Azure On Your Data function.

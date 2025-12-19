@@ -789,8 +789,9 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
@@ -802,6 +803,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +825,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
@@ -846,13 +858,18 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -869,7 +886,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
@@ -887,6 +906,11 @@ class TextReasoningContent(BaseContent):
             self.raw_representation = (
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
 
         # Merge annotations
         if other.annotations:
@@ -924,6 +948,10 @@ class DataContent(BaseContent):
             # Create from binary data
             image_data = b"raw image bytes"
             data_content = DataContent(data=image_data, media_type="image/png")
+
+            # Create from base64-encoded string
+            base64_string = "iVBORw0KGgoAAAANS..."
+            data_content = DataContent(data=base64_string, media_type="image/png")
 
             # Create from data URI
             data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
@@ -986,11 +1014,38 @@ class DataContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
 
+    @overload
+    def __init__(
+        self,
+        *,
+        data: str,
+        media_type: str,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a DataContent instance with base64-encoded string data.
+
+        Important:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use ``UriContent`` for online resources.
+
+        Keyword Args:
+            data: The base64-encoded string data represented by this instance.
+                The data is used directly to construct a data URI.
+            media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+
     def __init__(
         self,
         *,
         uri: str | None = None,
-        data: bytes | None = None,
+        data: bytes | str | None = None,
         media_type: str | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1006,8 +1061,9 @@ class DataContent(BaseContent):
         Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
+            data: The binary data or base64-encoded string represented by this instance.
+                If bytes, the data is transformed into a base64-encoded data URI.
+                If str, it is assumed to be already base64-encoded and used directly.
             media_type: The media type of the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1017,7 +1073,9 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+            uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
         validated_uri = self._validate_uri(uri)
