@@ -1,217 +1,167 @@
-# Hybrid Multi-Agent Workflow with Durable Functions – Python
+# Workflow Execution Sample (No SharedState)
 
-This sample demonstrates a **hybrid approach** that combines Durable Functions orchestration with Agent Framework workflows.
+This sample demonstrates running **Agent Framework workflows** in Azure Durable Functions without using SharedState.
 
 ## Overview
 
-This sample bridges the gap between the two previous samples:
-- **`06_multi_agent_orchestration_conditionals`** - Pure Durable Functions orchestration
-- **`09_workflow_shared_state`** - Workflow with shared state
+This sample shows how to use `AgentFunctionApp` with a `WorkflowBuilder` workflow. The workflow is passed directly to `AgentFunctionApp`, which orchestrates execution using Durable Functions:
 
-The hybrid approach:
-1. Registers agents via `AgentFunctionApp` (Durable Functions style)
-2. Retrieves agents from `DurableOrchestrationContext` during orchestration
-3. Builds a `WorkflowBuilder` graph using those agents
-4. Executes the workflow logic within the durable orchestration
-
-## Architecture
-
-```text
-AgentFunctionApp
-  ├─ Register SpamDetectionAgent
-  └─ Register EmailAssistantAgent
-
-DurableOrchestration
-  ├─ Get agents from context
-  ├─ Build WorkflowBuilder graph with agents + executors
-  └─ Execute workflow logic (procedural with agents)
+```python
+workflow = _create_workflow()  # Build the workflow graph
+app = AgentFunctionApp(workflow=workflow, enable_shared_state=False)
 ```
 
-## Components
+This approach provides durable, fault-tolerant workflow execution with minimal code.
 
-### AI Agents (registered via AgentFunctionApp)
+## What This Sample Demonstrates
 
-1. **SpamDetectionAgent** - Analyzes emails for spam
-2. **EmailAssistantAgent** - Drafts professional responses
+1. **Workflow Registration** - Pass a `Workflow` directly to `AgentFunctionApp`
+2. **Durable Execution** - Workflow executes with Durable Functions durability and scalability
+3. **Conditional Routing** - Route messages based on spam detection (is_spam → spam handler, not spam → email assistant)
+4. **Agent + Executor Composition** - Combine AI agents with non-AI executor classes
 
-### Executors (defined as classes)
+## Workflow Architecture
 
-1. **SpamHandlerExecutor** - Handles spam emails (non-AI activity)
-2. **EmailSenderExecutor** - Sends email responses (non-AI activity)
+```
+SpamDetectionAgent → [branch based on is_spam]:
+    ├── If spam: SpamHandlerExecutor → yield "Email marked as spam: {reason}"
+    └── If not spam: EmailAssistantAgent → EmailSenderExecutor → yield "Email sent: {response}"
+```
 
-## Key Features
+### Components
 
-- **Agent Registration**: Uses `AgentFunctionApp` for centralized agent management
-- **Context-Based Retrieval**: Gets agents from `context.get_agent()`
-- **Workflow Builder**: Constructs declarative workflow graphs
-- **Executor Pattern**: Uses Executor classes (no traditional activity triggers)
-- **Durable Orchestration**: Runs within durable context with state persistence
+| Component | Type | Description |
+|-----------|------|-------------|
+| `SpamDetectionAgent` | AI Agent | Analyzes emails for spam indicators |
+| `EmailAssistantAgent` | AI Agent | Drafts professional email responses |
+| `SpamHandlerExecutor` | Executor | Handles spam emails (non-AI) |
+| `EmailSenderExecutor` | Executor | Sends email responses (non-AI) |
 
-## Running the Sample
+## Prerequisites
 
-### Prerequisites
+1. **Azure OpenAI** - Endpoint and deployment configured
+2. **Azurite** - For local storage emulation
 
-1. Install dependencies:
+## Setup
 
+1. Copy configuration files:
+   ```bash
+   cp local.settings.json.sample local.settings.json
+   ```
+
+2. Configure `local.settings.json`:
+   ```json
+   {
+     "Values": {
+       "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
+       "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "gpt-4o"
+     }
+   }
+   ```
+
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. Configure your environment:
-
-   Copy the sample configuration files:
+4. Start Azurite:
    ```bash
-   cp .env.sample .env
-   cp local.settings.json.sample local.settings.json
+   azurite --silent
    ```
 
-   Update `.env` and `local.settings.json` with your Azure OpenAI credentials.
-
-3. Start Azurite (for local storage):
-
+5. Run the function app:
    ```bash
-   azurite
+   func start
    ```
 
-### Execution Modes
+## Testing
 
-This sample can be run in two modes by modifying the `launch(durable=...)` call at the bottom of `function_app.py`.
+Use the `demo.http` file with REST Client extension or curl:
 
-#### 1. Durable Functions Mode (Default)
-
-Set `launch(durable=True)` in `function_app.py`.
-
-- **Configuration**: Requires `local.settings.json`.
-- **Command**:
-
-  ```bash
-  func start
-  ```
-
-- **Description**: Runs the workflow as a Durable Functions orchestration. The app will start on `http://localhost:7071`.
-
-#### 2. Standalone Workflow Mode (DevUI)
-
-Set `launch(durable=False)` in `function_app.py`.
-
-- **Configuration**: Requires `.env`.
-- **Command**:
-
-  ```bash
-  python function_app.py
-  ```
-
-- **Description**: Runs the workflow locally using the Agent Framework DevUI (available at `http://localhost:8094`).
-
-### Test with HTTP Requests
-
-Use `demo.http` or curl:
-
+### Test Spam Email
 ```bash
-# Start orchestration
 curl -X POST http://localhost:7071/api/workflow/run \
   -H "Content-Type: application/json" \
-  -d '{"email_id": "test-001", "email_content": "URGENT! Click here now!"}'
+  -d '{"email_id": "test-001", "email_content": "URGENT! You have won $1,000,000! Click here!"}'
+```
 
-# Check status
+### Test Legitimate Email
+```bash
+curl -X POST http://localhost:7071/api/workflow/run \
+  -H "Content-Type: application/json" \
+  -d '{"email_id": "test-002", "email_content": "Hi team, reminder about our meeting tomorrow at 10 AM."}'
+```
+
+### Check Status
+```bash
 curl http://localhost:7071/api/workflow/status/{instanceId}
 ```
 
-## Comparison with Other Samples
+## Expected Output
 
-| Feature | Orchestration | Workflow | **Hybrid** |
-|---------|--------------|----------|------------|
-| **Agent Registration** | AgentFunctionApp | Direct creation | **AgentFunctionApp** |
-| **Agent Retrieval** | context.get_agent() | Direct reference | **context.get_agent()** |
-| **Workflow Definition** | Procedural (yield) | Declarative (WorkflowBuilder) | **Both** |
-| **Activity Style** | @activity_trigger | Executor classes | **Executor classes** |
-| **Execution Model** | Durable orchestration | In-memory workflow | **Durable orchestration** |
-| **State Persistence** | ✅ Azure Storage | ❌ In-memory | **✅ Azure Storage** |
-| **Scalability** | ✅ Cloud-native | ❌ Single process | **✅ Cloud-native** |
+**Spam email:**
+```
+Email marked as spam: This email exhibits spam characteristics including urgent language, unrealistic claims of monetary winnings, and requests to click suspicious links.
+```
 
-## When to Use This Approach
-
-**Use the Hybrid approach** when you:
-
-- Want the declarative nature of WorkflowBuilder for documentation
-- Need durable state persistence and cloud scalability
-- Want to use Executor classes instead of activity triggers
-- Want to visualize workflow structure programmatically
-- Need both agent-based reasoning and executor-based activities
-- Are exploring workflow patterns within durable orchestrations
-
-**Don't use it** when:
-
-- You only need simple orchestration (use pure Durable Functions)
-- You want standalone workflows without Azure infrastructure (use pure WorkflowBuilder)
-- The added complexity doesn't provide value
+**Legitimate email:**
+```
+Email sent: Hi, Thank you for the reminder about the sprint planning meeting tomorrow at 10 AM. I will be there.
+```
 
 ## Code Highlights
 
-### Agent Registration
+### Creating the Workflow
 
 ```python
-app = AgentFunctionApp(agents=_create_agents(), enable_health_check=True)
-```
-
-### Agent Retrieval in Orchestration
-
-```python
-@app.orchestration_trigger(context_name="context")
-def spam_detection_workflow_orchestration(context: DurableOrchestrationContext):
-    # Get agents from context
-    spam_agent = context.get_agent(SPAM_AGENT_NAME)
-    email_agent = context.get_agent(EMAIL_AGENT_NAME)
-
-    # Build workflow graph
-    workflow = (
-        WorkflowBuilder()
-        .set_start_executor(spam_agent)
-        .add_switch_case_edge_group(...)
-        .build()
+workflow = (
+    WorkflowBuilder()
+    .set_start_executor(spam_agent)
+    .add_switch_case_edge_group(
+        spam_agent,
+        [
+            Case(condition=is_spam_detected, target=spam_handler),
+            Default(target=email_agent),
+        ],
     )
+    .add_edge(email_agent, email_sender)
+    .build()
+)
 ```
 
-### Mixed Execution Styles
+### Registering with AgentFunctionApp
 
 ```python
-# Executor-based activity (no @activity_trigger needed)
+app = AgentFunctionApp(workflow=workflow, enable_health_check=True, enable_shared_state=False)
+```
+
+### Executor Classes
+
+```python
 class SpamHandlerExecutor(Executor):
     @handler
-    async def handle_spam_result(self, agent_response, ctx):
+    async def handle_spam_result(
+        self,
+        agent_response: AgentExecutorResponse,
+        ctx: WorkflowContext[Never, str],
+    ) -> None:
         spam_result = SpamDetectionResult.model_validate_json(agent_response.agent_run_response.text)
-        message = f"Email marked as spam: {spam_result.reason}"
-        await ctx.yield_output(message)
-
-# Workflow execution follows the graph structure but runs procedurally
-if spam_result.is_spam:
-    result = f"Email marked as spam: {spam_result.reason}"
-    return result
+        await ctx.yield_output(f"Email marked as spam: {spam_result.reason}")
 ```
 
-## Benefits of Hybrid Approach
+## Standalone Mode (DevUI)
 
-1. **Documentation** - WorkflowBuilder graph serves as living documentation
-2. **Flexibility** - Mix declarative structure with procedural execution
-3. **Scalability** - Leverage durable orchestration for production workloads
-4. **Type Safety** - Workflow validation catches type mismatches
-5. **Executor Pattern** - Modern class-based activity definitions instead of decorators
+This sample also supports running standalone for local development:
 
-## Limitations
+```python
+# Change launch(durable=True) to launch(durable=False) in function_app.py
+# Then run:
+python function_app.py
+```
 
-- WorkflowBuilder used for structure/documentation only (not native execution)
-- Execution is still procedural with yield-based orchestration
-- Requires understanding of both workflow and orchestration paradigms
-- Executor classes defined but not automatically invoked by workflow engine
-
-## Next Steps
-
-- Explore pure workflow execution without orchestration
-- Add workflow visualization endpoints
-- Implement workflow-native execution within durable context
-- Add telemetry and monitoring integration
+This starts the DevUI at `http://localhost:8094` for interactive testing.
 
 ## Related Samples
 
-- `06_multi_agent_orchestration_conditionals` - Pure Durable Functions approach
-- `09_workflow_shared_state` - Workflow with shared state
+- `09_workflow_shared_state` - Workflow with SharedState for passing data between executors
+- `06_multi_agent_orchestration_conditionals` - Manual Durable Functions orchestration with agents
