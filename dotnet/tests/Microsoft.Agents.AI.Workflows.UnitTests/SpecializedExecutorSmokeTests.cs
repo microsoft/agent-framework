@@ -231,15 +231,127 @@ public class SpecializedExecutorSmokeTests
         var definition = workflow.ToWorkflowInfo();
 
         // Verify that the agent host executor registration IDs in the workflow definition
-        // match the agent IDs when agent names are not provided.
-        // The property DisplayName falls back to using the agent ID when Name is not set.
-        agentA.GetDescriptiveId().Should().Contain(agentA.Id);
-        agentB.GetDescriptiveId().Should().Contain(agentB.Id);
+        // use the agent's type name and first 8 characters of the ID when names are not provided.
+        // The format is "{TypeName}_{first8charsOfId}" for readability in workflow visualizations.
+        agentA.GetDescriptiveId().Should().Contain(nameof(TestAIAgent));
+        agentB.GetDescriptiveId().Should().Contain(nameof(TestAIAgent));
+        agentA.GetDescriptiveId().Should().Contain(agentA.Id.Substring(0, 8));
+        agentB.GetDescriptiveId().Should().Contain(agentB.Id.Substring(0, 8));
         definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
         definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
 
         // This will create an instance of the start agent and verify that the ID
         // of the executor instance matches the ID of the registration.
+        var protocolDescriptor = await workflow.DescribeProtocolAsync();
+        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
+    }
+
+    [Fact]
+    public void Test_GetDescriptiveId_WithName_ReturnsNameWithGuidSuffix()
+    {
+        // Arrange
+        const string agentName = "MyPhysicist";
+        TestAIAgent agent = new(name: agentName);
+
+        // Act
+        string descriptiveId = agent.GetDescriptiveId();
+
+        // Assert
+        descriptiveId.Should().StartWith($"{agentName}_");
+        descriptiveId.Should().HaveLength(agentName.Length + 1 + 8); // name + underscore + 8 chars
+        descriptiveId.Should().Contain(agent.Id.Substring(0, 8));
+    }
+
+    [Fact]
+    public void Test_GetDescriptiveId_WithoutName_ReturnsTypeNameWithGuidSuffix()
+    {
+        // Arrange
+        TestAIAgent agent = new();
+
+        // Act
+        string descriptiveId = agent.GetDescriptiveId();
+
+        // Assert
+        descriptiveId.Should().StartWith($"{nameof(TestAIAgent)}_");
+        descriptiveId.Should().HaveLength(nameof(TestAIAgent).Length + 1 + 8); // typename + underscore + 8 chars
+        descriptiveId.Should().Contain(agent.Id.Substring(0, 8));
+    }
+
+    [Fact]
+    public void Test_GetDescriptiveId_SanitizesInvalidCharacters()
+    {
+        // Arrange
+        const string agentName = "My Agent-Name!@#";
+        TestAIAgent agent = new(name: agentName);
+
+        // Act
+        string descriptiveId = agent.GetDescriptiveId();
+
+        // Assert
+        descriptiveId.Should().NotContain(" ");
+        descriptiveId.Should().NotContain("-");
+        descriptiveId.Should().NotContain("!");
+        descriptiveId.Should().NotContain("@");
+        descriptiveId.Should().NotContain("#");
+        descriptiveId.Should().MatchRegex("^[A-Za-z0-9_]+$");
+    }
+
+    [Fact]
+    public void Test_BindAsExecutor_WithCustomDescriptiveId_UsesProvidedId()
+    {
+        // Arrange
+        TestAIAgent agent = new(name: "SomeAgent");
+        const string customId = "MyCustomExecutorId";
+
+        // Act
+        ExecutorBinding binding = agent.BindAsExecutor(customId);
+
+        // Assert
+        binding.Id.Should().Be(customId);
+    }
+
+    [Fact]
+    public void Test_BindAsExecutor_WithCustomDescriptiveId_PreservesAgentInBinding()
+    {
+        // Arrange
+        TestAIAgent agent = new(name: "SomeAgent");
+        const string customId = "MyCustomExecutorId";
+
+        // Act
+        AIAgentBinding binding = (AIAgentBinding)agent.BindAsExecutor(customId);
+
+        // Assert
+        binding.Agent.Should().BeSameAs(agent);
+        binding.DescriptiveId.Should().Be(customId);
+    }
+
+    [Fact]
+    public async Task Test_BindAsExecutor_WithCustomDescriptiveId_WorkflowVisualizationUsesCustomIdAsync()
+    {
+        // Arrange
+        TestAIAgent agentA = new(name: "Physicist");
+        TestAIAgent agentB = new(name: "Chemist");
+        ExecutorBinding physicistExecutor = agentA.BindAsExecutor("Physicist");
+        ExecutorBinding chemistExecutor = agentB.BindAsExecutor("Chemist");
+
+        // Act
+        var workflow = new WorkflowBuilder(physicistExecutor)
+            .AddEdge(physicistExecutor, chemistExecutor)
+            .Build();
+
+        var mermaid = workflow.ToMermaidString();
+        var dot = workflow.ToDotString();
+
+        // Assert - visualization should use custom IDs, not GUIDs
+        mermaid.Should().Contain("Physicist");
+        mermaid.Should().Contain("Chemist");
+        mermaid.Should().NotContain(agentA.Id.Substring(0, 8)); // Should not contain GUID suffix
+        mermaid.Should().NotContain(agentB.Id.Substring(0, 8));
+
+        dot.Should().Contain("Physicist");
+        dot.Should().Contain("Chemist");
+
+        // Verify workflow is still functional
         var protocolDescriptor = await workflow.DescribeProtocolAsync();
         protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
     }

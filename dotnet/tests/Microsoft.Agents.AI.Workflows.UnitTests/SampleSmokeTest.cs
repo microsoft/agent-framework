@@ -192,9 +192,19 @@ public class SampleSmokeTest
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
 
+        // Note: Executor IDs now include a GUID suffix for uniqueness (e.g., "HelloAgent_12345678")
+        // We check that the output contains the agent name and expected greeting
         Assert.Collection(lines,
-            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
-            line => Assert.Contains($"{Step6EntryPoint.EchoAgentId}: {Step6EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line)
+            line =>
+            {
+                Assert.Contains(HelloAgent.DefaultId, line);
+                Assert.Contains(HelloAgent.Greeting, line);
+            },
+            line =>
+            {
+                Assert.Contains(Step6EntryPoint.EchoAgentId, line);
+                Assert.Contains($"{Step6EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line);
+            }
         );
     }
 
@@ -211,11 +221,29 @@ public class SampleSmokeTest
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
 
+        // Note: Executor IDs now include a GUID suffix for uniqueness (e.g., "HelloAgent_12345678")
+        // We check that the output contains the agent name and expected greeting
         Assert.Collection(lines,
-            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
-            line => Assert.Contains($"{Step7EntryPoint.EchoAgentId}: {Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line),
-            line => Assert.Contains($"{HelloAgent.DefaultId}: {HelloAgent.Greeting}", line),
-            line => Assert.Contains($"{Step7EntryPoint.EchoAgentId}: {Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line)
+            line =>
+            {
+                Assert.Contains(HelloAgent.DefaultId, line);
+                Assert.Contains(HelloAgent.Greeting, line);
+            },
+            line =>
+            {
+                Assert.Contains(Step7EntryPoint.EchoAgentId, line);
+                Assert.Contains($"{Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line);
+            },
+            line =>
+            {
+                Assert.Contains(HelloAgent.DefaultId, line);
+                Assert.Contains(HelloAgent.Greeting, line);
+            },
+            line =>
+            {
+                Assert.Contains(Step7EntryPoint.EchoAgentId, line);
+                Assert.Contains($"{Step7EntryPoint.EchoPrefix}{HelloAgent.Greeting}", line);
+            }
         );
     }
 

@@ -14,10 +14,14 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     private readonly AIAgent _agent;
     private AgentThread? _thread;
 
-    public AIAgentHostExecutor(AIAgent agent, bool emitEvents = false) : base(id: agent.GetDescriptiveId())
+    public AIAgentHostExecutor(AIAgent agent, string id, bool emitEvents = false) : base(id: id)
     {
         this._agent = agent;
         this._emitEvents = emitEvents;
+    }
+
+    public AIAgentHostExecutor(AIAgent agent, bool emitEvents = false) : this(agent, agent.GetDescriptiveId(), emitEvents)
+    {
     }
 
     private AgentThread EnsureThread(IWorkflowContext context) =>

@@ -423,6 +423,22 @@ public static class ExecutorBindingExtensions
         => new AIAgentBinding(agent, emitEvents);
 
     /// <summary>
+    /// Configure an <see cref="AIAgent"/> as an executor for use in a workflow with a custom descriptive ID.
+    /// </summary>
+    /// <remarks>
+    /// Use this overload when you want explicit control over the executor's ID as displayed in workflow
+    /// visualizations. The descriptive ID should be unique within the workflow and will have any invalid
+    /// characters (non-alphanumeric except underscore) replaced with underscores.
+    /// </remarks>
+    /// <param name="agent">The agent instance.</param>
+    /// <param name="descriptiveId">A custom descriptive ID for the executor. This ID will be used in workflow
+    /// visualizations and must be unique within the workflow.</param>
+    /// <param name="emitEvents">Specifies whether the agent should emit streaming events.</param>
+    /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent with the custom ID.</returns>
+    public static ExecutorBinding BindAsExecutor(this AIAgent agent, string descriptiveId, bool emitEvents = false)
+        => new AIAgentBinding(Throw.IfNull(agent), emitEvents, Throw.IfNullOrWhitespace(descriptiveId));
+
+    /// <summary>
     /// Configure a <see cref="RequestPort"/> as an executor for use in a workflow.
     /// </summary>
     /// <param name="port">The port configuration.</param>
