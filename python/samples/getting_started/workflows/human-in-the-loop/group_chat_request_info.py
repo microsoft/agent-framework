@@ -25,7 +25,9 @@ Prerequisites:
 import asyncio
 
 from agent_framework import (
+    AgentExecutorResponse,
     AgentRequestInfoResponse,
+    AgentRunResponse,
     AgentRunUpdateEvent,
     ChatMessage,
     GroupChatBuilder,
@@ -73,14 +75,13 @@ async def main() -> None:
     orchestrator = chat_client.create_agent(
         name="orchestrator",
         instructions=(
-            "You are a discussion manager coordinating a team conversation between optimist, "
-            "pragmatist, and creative. Your job is to select who speaks next.\n\n"
+            "You are a discussion manager coordinating a team conversation between participants. "
+            "Your job is to select who speaks next.\n\n"
             "RULES:\n"
             "1. Rotate through ALL participants - do not favor any single participant\n"
             "2. Each participant should speak at least once before any participant speaks twice\n"
-            "3. If human feedback redirects the topic, acknowledge it and continue rotating\n"
-            "4. Continue for at least 5 participant turns before concluding\n"
-            "5. Do NOT select the same participant twice in a row"
+            "3. Continue for at least 5 rounds before ending the discussion\n"
+            "4. Do NOT select the same participant twice in a row"
         ),
     )
 
@@ -130,22 +131,24 @@ async def main() -> None:
 
             elif isinstance(event, RequestInfoEvent):
                 current_agent = None  # Reset for next agent
-                if isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
+                if isinstance(event.data, AgentExecutorResponse):
                     # Display pre-agent context for human input
                     print("\n" + "-" * 40)
                     print("INPUT REQUESTED")
                     print(f"About to call agent: {event.source_executor_id}")
                     print("-" * 40)
                     print("Conversation context:")
-                    recent: list[ChatMessage] = event.data[-3:] if len(event.data) > 3 else event.data  # type: ignore
+                    agent_run_response: AgentRunResponse = event.data.agent_run_response
+                    messages: list[ChatMessage] = agent_run_response.messages
+                    recent: list[ChatMessage] = messages[-3:] if len(messages) > 3 else messages  # type: ignore
                     for msg in recent:
-                        role = msg.role.value if msg.role else "unknown"
+                        name = msg.author_name or "unknown"
                         text = (msg.text or "")[:100]
-                        print(f"  [{role}]: {text}...")
+                        print(f"  [{name}]: {text}...")
                     print("-" * 40)
 
                     # Get human input to steer the agent
-                    user_input = input("Steer the discussion (or 'skip' to continue): ")  # noqa: ASYNC250
+                    user_input = input(f"Feedback for {event.source_executor_id} (or 'skip' to continue): ")  # noqa: ASYNC250
                     if user_input.lower() == "skip":
                         pending_responses = {event.request_id: AgentRequestInfoResponse.approve()}
                     else:
@@ -158,11 +161,12 @@ async def main() -> None:
                 print("=" * 60)
                 print("Final conversation:")
                 if event.data:
-                    messages: list[ChatMessage] = event.data[-4:]
+                    messages: list[ChatMessage] = event.data
                     for msg in messages:
-                        role = msg.role.value if msg.role else "unknown"
+                        role = msg.role.value.capitalize()
+                        name = msg.author_name or "unknown"
                         text = (msg.text or "")[:200]
-                        print(f"[{role}]: {text}...")
+                        print(f"[{role}][{name}]: {text}...")
                 workflow_complete = True
 
             elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:

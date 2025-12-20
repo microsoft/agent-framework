@@ -249,6 +249,8 @@ class Executor(RequestInfoMixin, DictConvertible):
         ):
             # Find the handler and handler spec that matches the message type.
             handler = self._find_handler(message)
+
+            original_message = message
             if isinstance(message, Message):
                 # Unwrap raw data for handler call
                 message = message.data
@@ -260,6 +262,9 @@ class Executor(RequestInfoMixin, DictConvertible):
                 runner_context=runner_context,
                 trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
+                request_id=original_message.original_request_info_event.request_id
+                if isinstance(original_message, Message) and original_message.original_request_info_event
+                else None,
             )
 
             # Invoke the handler with the message and context
@@ -287,6 +292,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
+        request_id: str | None = None,
     ) -> WorkflowContext[Any]:
         """Create the appropriate WorkflowContext based on the handler's context annotation.
 
@@ -296,6 +302,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
+            request_id: Optional request ID if this context is for a `handle_response` handler.
 
         Returns:
             WorkflowContext[Any] based on the handler's context annotation.
@@ -308,6 +315,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context=runner_context,
             trace_contexts=trace_contexts,
             source_span_ids=source_span_ids,
+            request_id=request_id,
         )
 
     def _discover_handlers(self) -> None:
@@ -453,11 +461,15 @@ class Executor(RequestInfoMixin, DictConvertible):
                     f"Executor {self.__class__.__name__} cannot handle message of type {type(message.data)}."
                 )
             # Response message case - find response handler based on original request and response types
-            handler = self._find_response_handler(message.original_request, message.data)
+            if message.original_request_info_event is None:
+                raise RuntimeError(
+                    f"Executor {self.__class__.__name__} received a response message without an original request event."
+                )
+            handler = self._find_response_handler(message.original_request_info_event.data, message.data)
             if not handler:
                 raise RuntimeError(
                     f"Executor {self.__class__.__name__} cannot handle request of type "
-                    f"{type(message.original_request)} and response of type {type(message.data)}."
+                    f"{type(message.original_request_info_event.data)} and response of type {type(message.data)}."
                 )
             return handler
 

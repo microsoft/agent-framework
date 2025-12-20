@@ -44,7 +44,7 @@ class Message:
     source_span_ids: list[str] | None = None  # Publishing span IDs for linking from multiple sources
 
     # For response messages, the original request data
-    original_request: Any = None
+    original_request_info_event: RequestInfoEvent | None = None
 
     # Backward compatibility properties
     @property
@@ -66,7 +66,7 @@ class Message:
             "type": self.type.value,
             "trace_contexts": self.trace_contexts,
             "source_span_ids": self.source_span_ids,
-            "original_request": self.original_request,
+            "original_request_info_event": self.original_request_info_event,
         }
 
     @staticmethod
@@ -86,7 +86,7 @@ class Message:
             type=MessageType(data.get("type", "standard")),
             trace_contexts=data.get("trace_contexts"),
             source_span_ids=data.get("source_span_ids"),
-            original_request=data.get("original_request"),
+            original_request_info_event=data.get("original_request_info_event"),
         )
 
 
@@ -505,7 +505,7 @@ class InProcRunnerContext:
             source_id=INTERNAL_SOURCE_ID(event.source_executor_id),
             target_id=event.source_executor_id,
             type=MessageType.RESPONSE,
-            original_request=event.data,
+            original_request_info_event=event,
         )
 
         await self.send_message(response_msg)

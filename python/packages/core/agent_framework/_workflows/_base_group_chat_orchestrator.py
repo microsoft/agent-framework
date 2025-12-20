@@ -16,6 +16,7 @@ from .._types import ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._events import WorkflowEvent
 from ._executor import Executor, handler
+from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -131,7 +132,7 @@ class ParticipantRegistry:
             if participant.id in self._participants:
                 raise ValueError(f"Participant ID conflict: '{participant.id}' registered as both agent and executor.")
 
-            if isinstance(participant, AgentExecutor):
+            if isinstance(participant, AgentExecutor | AgentApprovalExecutor):
                 self._agents.add(participant.id)
                 self._participants[participant.id] = participant.description or self.EMPTY_DESCRIPTION_PLACEHOLDER
             else:

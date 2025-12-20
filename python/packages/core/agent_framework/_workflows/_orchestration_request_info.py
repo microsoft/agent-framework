@@ -122,7 +122,8 @@ class AgentApprovalExecutor(WorkflowExecutor):
         Args:
             agent: The agent protocol to use for generating responses.
         """
-        super().__init__(workflow=self._build_workflow(agent), id=agent.display_name)
+        super().__init__(workflow=self._build_workflow(agent), id=agent.display_name, propagate_request=True)
+        self._description = agent.description
 
     def _build_workflow(self, agent: AgentProtocol) -> Workflow:
         """Build the internal workflow for the AgentApprovalExecutor."""
@@ -131,8 +132,14 @@ class AgentApprovalExecutor(WorkflowExecutor):
 
         return (
             WorkflowBuilder()
+            # Create a loop between agent executor and request info executor
             .add_edge(agent_executor, request_info_executor)
             .add_edge(request_info_executor, agent_executor)
             .set_start_executor(agent_executor)
             .build()
         )
+
+    @property
+    def description(self) -> str | None:
+        """Get a description of the underlying agent."""
+        return self._description
