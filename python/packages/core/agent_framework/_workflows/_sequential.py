@@ -53,7 +53,7 @@ from ._executor import (
     handler,
 )
 from ._message_utils import normalize_messages_input
-from ._orchestration_request_info import RequestInfoInterceptor
+from ._orchestration_request_info_old import RequestInfoInterceptor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext

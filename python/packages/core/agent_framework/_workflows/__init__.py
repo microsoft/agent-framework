@@ -57,6 +57,7 @@ from ._function_executor import FunctionExecutor, executor
 from ._group_chat import (
     AgentBasedGroupChatOrchestrator,
     GroupChatBuilder,
+    GroupChatState,
 )
 
 # from ._handoff import HandoffBuilder, HandoffUserInputRequest
@@ -80,7 +81,7 @@ from ._group_chat import (
 #     MagenticStallInterventionRequest,
 #     StandardMagenticManager,
 # )
-from ._orchestration_request_info import AgentInputRequest, AgentResponseReviewRequest, RequestInfoInterceptor
+from ._orchestration_request_info import AgentRequestInfoResponse
 from ._orchestration_state import OrchestrationState
 from ._request_info_mixin import response_handler
 from ._runner import Runner
@@ -111,8 +112,8 @@ __all__ = [
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
-    "AgentInputRequest",
-    "AgentResponseReviewRequest",
+    "AgentRequestInfoResponse",
+    "AgentRequestInfoResponse",
     "AgentRunEvent",
     "AgentRunUpdateEvent",
     "Case",
@@ -132,6 +133,7 @@ __all__ = [
     "FunctionExecutor",
     "GraphConnectivityError",
     "GroupChatBuilder",
+    "GroupChatState",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     # "MagenticBuilder",
@@ -151,7 +153,6 @@ __all__ = [
     "Message",
     "OrchestrationState",
     "RequestInfoEvent",
-    "RequestInfoInterceptor",
     "Runner",
     "RunnerContext",
     "SequentialBuilder",

@@ -21,6 +21,7 @@ existing observability and streaming semantics continue to apply.
 import inspect
 import logging
 import sys
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Never, cast
@@ -42,6 +43,7 @@ from ._base_group_chat_orchestrator import (
 )
 from ._checkpoint import CheckpointStorage
 from ._executor import Executor
+from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -66,8 +68,8 @@ class GroupChatState:
 
     # Round index, starting from 0
     current_round: int
-    # participant name to description mapping
-    participants: dict[str, str]
+    # participant name to description mapping as a ordered dict
+    participants: OrderedDict[str, str]
     # Full conversation history up to this point
     conversation: list[ChatMessage]
 
@@ -99,10 +101,6 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
     and implementing custom logic in the message and response handlers.
     """
 
-    # TODO (@taochen): HIL
-    # Input -> Orchestrator -> Participant A -> HIL -> Orchestrator -> HIL -> Participant B -> HIL -> Orchestrator -> HIL -> Orchestrator -> Output
-    # Input -> Orchestrator -> Participant A -> (Orchestrator -> HIL -> Orchestrator) -> Participant B -> (Orchestrator -> HIL -> Orchestrator) -> Output
-
     def __init__(
         self,
         id: str,
@@ -117,9 +115,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         Args:
             id: Unique executor ID for the orchestrator. The ID must be unique within the workflow.
-            selection_func: Function to select the next speaker based on conversation state
             participant_registry: Registry of participants in the group chat that track executor types
                 (agents vs. executors) and provide resolution utilities.
+            selection_func: Function to select the next speaker based on conversation state
             name: Optional display name for the orchestrator in the messages, defaults to executor ID.
                 A more descriptive name that is not an ID could help models better understand the role
                 of the orchestrator in multi-agent conversations. If the ID is not human-friendly,
@@ -208,7 +206,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participant_registry.participants() if p != participant],
+            participants=[p for p in self._participant_registry.participants if p != participant],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
@@ -220,7 +218,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Determine the next speaker using the selection function."""
         group_chat_state = GroupChatState(
             current_round=self._round_index,
-            participants=self._participant_registry.participants(),
+            participants=self._participant_registry.participants,
             conversation=self._get_conversation(),
         )
 
@@ -228,7 +226,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         if inspect.isawaitable(next_speaker):
             next_speaker = await next_speaker
 
-        if next_speaker not in self._participant_registry.participants():
+        if next_speaker not in self._participant_registry.participants:
             raise RuntimeError(f"Selection function returned unknown participant '{next_speaker}'.")
 
         return next_speaker
@@ -295,17 +293,13 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             agent: Agent that selects the next speaker based on conversation state
             participant_registry: Registry of participants in the group chat that track executor types
                 (agents vs. executors) and provide resolution utilities.
-            name: Optional display name for the orchestrator in the messages, defaults to executor ID.
-                A more descriptive name that is not an ID could help models better understand the role
-                of the orchestrator in multi-agent conversations. If the ID is not human-friendly,
-                providing a name can improve context for the agents.
             max_rounds: Optional limit on selection rounds to prevent infinite loops.
             termination_condition: Optional callable that halts the conversation when it returns True
             retry_attempts: Optional number of retry attempts for the agent in case of failure.
             thread: Optional agent thread to use for the orchestrator agent.
         """
         super().__init__(
-            agent.id,
+            agent.display_name,
             participant_registry,
             name=agent.name,
             max_rounds=max_rounds,
@@ -335,8 +329,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             return
 
         self._increment_round()
-        # We don't need the full conversation since the thread should maintain history
-        self._clear_conversation()
 
         # Broadcast messages to all participants for context
         await self._broadcast_messages_to_participants(
@@ -371,8 +363,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
         self._increment_round()
-        # We don't need the full conversation since the thread should maintain history
-        self._clear_conversation()
 
         # Broadcast participant messages to all participants for context, except
         # the participant that just responded
@@ -380,7 +370,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participant_registry.participants() if p != participant],
+            participants=[p for p in self._participant_registry.participants if p != participant],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
@@ -407,7 +397,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
             return agent_orchestration_output
 
+        # We only need the last message for context since history is maintained in the thread
         current_conversation = self._get_conversation()
+        current_conversation = current_conversation[-1:] if current_conversation else []
         instruction = (
             "Decide what to do next. Respond with a JSON object of the following format:\n"
             "{\n"
@@ -418,7 +410,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             "}\n"
             "If not terminating, here are the valid participant names (case-sensitive) and their descriptions:\n"
             + "\n".join([
-                f"{name}: {description}" for name, description in self._participant_registry.participants().items()
+                f"{name}: {description}" for name, description in self._participant_registry.participants.items()
             ])
         )
         # Prepend instruction as system message
@@ -658,7 +650,9 @@ class GroupChatBuilder:
             if isinstance(participant, Executor):
                 identifier = participant.id
             elif isinstance(participant, AgentProtocol):
-                identifier = participant.display_name
+                if not participant.name:
+                    raise ValueError("AgentProtocol participants must have a non-empty name.")
+                identifier = participant.name
             else:
                 raise TypeError(
                     f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."
@@ -757,25 +751,24 @@ class GroupChatBuilder:
         self._checkpoint_storage = checkpoint_storage
         return self
 
-    def with_request_info(
-        self,
-        *,
-        agents: Sequence[str | AgentProtocol | Executor] | None = None,
-    ) -> "GroupChatBuilder":
-        """Enable request info before participant responses.
+    def with_request_info(self, *, agents: Sequence[str | AgentProtocol] | None = None) -> "GroupChatBuilder":
+        """Enable request info before agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
-        When enabled, the workflow pauses before each participant runs, emitting
-        a RequestInfoEvent that allows the caller to review the conversation and
-        optionally inject guidance before the participant responds. The caller provides
-        input via the standard response_handler/request_info pattern.
+        When enabled, the workflow pauses before each agent participant runs, emitting
+        a RequestInfoEvent that allows the caller to review the conversation and optionally
+        inject guidance before the agent participant responds. The caller provides input via
+        the standard response_handler/request_info pattern.
 
         Simulated flow with HIL:
         Input -> Orchestrator -> Request Info -> Participant -> Orchestrator -> Request Info -> Participant -> ...
 
+        Note: This is only available for agent participants. Executor participants can incorporate
+        request info handling in their own implementation if desired.
+
         Args:
-            agents: Optional list of agents or participant names to enable request info for.
-                    If None, enables HIL for all participants.
+            agents: Optional list of agents names to enable request info for.
+                    If None, enables HIL for all agent participants.
 
         Returns:
             Self for fluent chaining
@@ -783,7 +776,7 @@ class GroupChatBuilder:
         from ._orchestration_request_info import resolve_request_info_filter
 
         self._request_info_enabled = True
-        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None) or set()
+        self._request_info_filter = resolve_request_info_filter(list(agents) if agents else None)
 
         return self
 
@@ -831,7 +824,13 @@ class GroupChatBuilder:
             if isinstance(participant, Executor):
                 executors.append(participant)
             elif isinstance(participant, AgentProtocol):
-                executors.append(AgentExecutor(participant))
+                if self._request_info_enabled and (
+                    not self._request_info_filter or participant.name in self._request_info_filter
+                ):
+                    # Handle request info enabled agents
+                    executors.append(AgentApprovalExecutor(participant))
+                else:
+                    executors.append(AgentExecutor(participant))
             else:
                 raise TypeError(
                     f"Participants must be AgentProtocol or Executor instances. Got {type(participant).__name__}."

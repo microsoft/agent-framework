@@ -423,7 +423,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any]] = set()
 
         # Collect workflow output types from all handlers
-        for handler_spec in self._handler_specs:
+        for handler_spec in self._handler_specs + self._response_handler_specs:
             handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
             output_types.update(handler_workflow_output_types)
 

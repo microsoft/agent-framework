@@ -25,7 +25,7 @@ Prerequisites:
 import asyncio
 
 from agent_framework import (
-    AgentInputRequest,
+    AgentRequestInfoResponse,
     AgentRunUpdateEvent,
     ChatMessage,
     GroupChatBuilder,
@@ -69,9 +69,9 @@ async def main() -> None:
         ),
     )
 
-    # Manager orchestrates the discussion
-    manager = chat_client.create_agent(
-        name="manager",
+    # Orchestrator coordinates the discussion
+    orchestrator = chat_client.create_agent(
+        name="orchestrator",
         instructions=(
             "You are a discussion manager coordinating a team conversation between optimist, "
             "pragmatist, and creative. Your job is to select who speaks next.\n\n"
@@ -88,7 +88,7 @@ async def main() -> None:
     # Using agents= filter to only pause before pragmatist speaks (not every turn)
     workflow = (
         GroupChatBuilder()
-        .set_manager(manager=manager, display_name="Discussion Manager")
+        .with_agent_orchestrator(orchestrator)
         .participants([optimist, pragmatist, creative])
         .with_max_rounds(6)
         .with_request_info(agents=[pragmatist])  # Only pause before pragmatist speaks
@@ -96,7 +96,7 @@ async def main() -> None:
     )
 
     # Run the workflow with human-in-the-loop
-    pending_responses: dict[str, str] | None = None
+    pending_responses: dict[str, AgentRequestInfoResponse] | None = None
     workflow_complete = False
     current_agent: str | None = None  # Track current streaming agent
 
@@ -130,16 +130,14 @@ async def main() -> None:
 
             elif isinstance(event, RequestInfoEvent):
                 current_agent = None  # Reset for next agent
-                if isinstance(event.data, AgentInputRequest):
+                if isinstance(event.data, list) and all(isinstance(msg, ChatMessage) for msg in event.data):  # type: ignore
                     # Display pre-agent context for human input
                     print("\n" + "-" * 40)
                     print("INPUT REQUESTED")
-                    print(f"About to call agent: {event.data.target_agent_id}")
+                    print(f"About to call agent: {event.source_executor_id}")
                     print("-" * 40)
                     print("Conversation context:")
-                    recent = (
-                        event.data.conversation[-3:] if len(event.data.conversation) > 3 else event.data.conversation
-                    )
+                    recent: list[ChatMessage] = event.data[-3:] if len(event.data) > 3 else event.data  # type: ignore
                     for msg in recent:
                         role = msg.role.value if msg.role else "unknown"
                         text = (msg.text or "")[:100]
@@ -149,9 +147,9 @@ async def main() -> None:
                     # Get human input to steer the agent
                     user_input = input("Steer the discussion (or 'skip' to continue): ")  # noqa: ASYNC250
                     if user_input.lower() == "skip":
-                        user_input = "Please continue the discussion naturally."
-
-                    pending_responses = {event.request_id: user_input}
+                        pending_responses = {event.request_id: AgentRequestInfoResponse.approve()}
+                    else:
+                        pending_responses = {event.request_id: AgentRequestInfoResponse.from_strings([user_input])}
                     print("(Resuming discussion...)")
 
             elif isinstance(event, WorkflowOutputEvent):

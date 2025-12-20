@@ -7,6 +7,7 @@ import inspect
 import logging
 import sys
 from abc import ABC
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Never, TypeAlias
@@ -121,46 +122,29 @@ class ParticipantRegistry:
             ValueError: If there are duplicate or conflicting participant IDs
         """
         self._agents: set[str] = set()
-        self._executors: set[str] = set()
-        self._descriptions: dict[str, str] = {}
+        self._participants: OrderedDict[str, str] = OrderedDict()
         self._resolve_participants(participants)
 
     def _resolve_participants(self, participants: Sequence[Executor]) -> None:
         """Register participants and validate IDs."""
         for participant in participants:
+            if participant.id in self._participants:
+                raise ValueError(f"Participant ID conflict: '{participant.id}' registered as both agent and executor.")
+
             if isinstance(participant, AgentExecutor):
-                if participant.id in self._executors:
-                    raise ValueError(
-                        f"Participant ID conflict: '{participant.id}' registered as both agent and executor."
-                    )
-                if participant.id in self._agents:
-                    raise ValueError(
-                        f"Duplicate participant ID: '{participant.id}' registered multiple times as agent."
-                    )
                 self._agents.add(participant.id)
-                if participant.description:
-                    self._descriptions[participant.id] = participant.description
+                self._participants[participant.id] = participant.description or self.EMPTY_DESCRIPTION_PLACEHOLDER
             else:
-                if participant.id in self._agents:
-                    raise ValueError(
-                        f"Participant ID conflict: '{participant.id}' registered as both executor and agent."
-                    )
-                if participant.id in self._executors:
-                    raise ValueError(
-                        f"Duplicate participant ID: '{participant.id}' registered multiple times as executor."
-                    )
-                self._executors.add(participant.id)
+                self._participants[participant.id] = self.EMPTY_DESCRIPTION_PLACEHOLDER
 
     def is_agent(self, name: str) -> bool:
         """Check if a participant is an agent (vs custom executor)."""
         return name in self._agents
 
-    def participants(self) -> dict[str, str]:
-        """Get all registered participant names."""
-        return {
-            **{agent: self._descriptions.get(agent, self.EMPTY_DESCRIPTION_PLACEHOLDER) for agent in self._agents},
-            **{executor: self.EMPTY_DESCRIPTION_PLACEHOLDER for executor in self._executors},
-        }
+    @property
+    def participants(self) -> OrderedDict[str, str]:
+        """Get all registered participant names and descriptions in an ordered dictionary."""
+        return self._participants
 
 
 # endregion
@@ -435,7 +419,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
                           If None, routes to all registered participants.
         """
         target_participants = (
-            participants if participants is not None else list(self._participant_registry.participants())
+            participants if participants is not None else list(self._participant_registry.participants)
         )
 
         async def _send_messages(target: str) -> None:
