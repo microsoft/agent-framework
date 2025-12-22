@@ -2248,20 +2248,21 @@ def _process_update(
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        if (
-            isinstance(content, FunctionCallContent)
-            and len(message.contents) > 0
-            and isinstance(message.contents[-1], FunctionCallContent)
-        ):
-            try:
-                message.contents[-1] += content
-            except AdditionItemMismatch:
+        # Use type attribute check first (fast string comparison) before isinstance (slower)
+        content_type = getattr(content, "type", None)
+        if content_type == "function_call":
+            if len(message.contents) > 0 and getattr(message.contents[-1], "type", None) == "function_call":
+                try:
+                    message.contents[-1] += content
+                except AdditionItemMismatch:
+                    message.contents.append(content)
+            else:
                 message.contents.append(content)
-        elif isinstance(content, UsageContent):
+        elif content_type == "usage":
             if response.usage_details is None:
                 response.usage_details = UsageDetails()
             response.usage_details += content.details
-        elif isinstance(content, (dict, MutableMapping)):
+        elif content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
                 cont = _parse_content(content)
                 message.contents.append(cont)
