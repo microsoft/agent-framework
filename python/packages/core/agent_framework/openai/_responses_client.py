@@ -763,11 +763,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     if hasattr(item, "outputs") and item.outputs:
                         for code_output in item.outputs:
                             if getattr(code_output, "type", None) == "logs":
-                                outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
-                            if getattr(code_output, "type", None) == "image":
+                                outputs.append(
+                                    TextContent(text=cast(Any, code_output).logs, raw_representation=code_output)
+                                )
+                            elif getattr(code_output, "type", None) == "image":
                                 outputs.append(
                                     UriContent(
-                                        uri=code_output.url,
+                                        uri=cast(Any, code_output).url,
                                         raw_representation=code_output,
                                         media_type="image",
                                     )
@@ -841,7 +843,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
                 case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    outputs: list["Contents"] = []
+                    image_outputs: list["Contents"] = []
                     if item.result:
                         uri = item.result
                         media_type = None
@@ -853,7 +855,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                                     media_type = uri.split(";")[0].split(":", 1)[1]
                             except Exception:
                                 media_type = "image"
-                        outputs.append(
+                        image_outputs.append(
                             DataContent(
                                 uri=uri,
                                 media_type=media_type,
@@ -870,7 +872,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     contents.append(
                         ImageGenerationToolResultContent(
                             image_id=image_id,
-                            outputs=outputs,
+                            outputs=image_outputs or None,
                             raw_representation=item,
                         )
                     )
@@ -1076,11 +1078,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         if hasattr(event_item, "outputs") and event_item.outputs:
                             for code_output in event_item.outputs:
                                 if getattr(code_output, "type", None) == "logs":
-                                    outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
-                                if getattr(code_output, "type", None) == "image":
+                                    outputs.append(
+                                        TextContent(text=cast(Any, code_output).logs, raw_representation=code_output)
+                                    )
+                                elif getattr(code_output, "type", None) == "image":
                                     outputs.append(
                                         UriContent(
-                                            uri=code_output.url,
+                                            uri=cast(Any, code_output).url,
                                             raw_representation=code_output,
                                             media_type="image",
                                         )

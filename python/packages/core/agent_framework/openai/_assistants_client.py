@@ -3,7 +3,7 @@
 import json
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
-from typing import Any
+from typing import Any, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -379,14 +379,13 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if event_data.required_action is not None:
             for tool_call in event_data.required_action.submit_tool_outputs.tool_calls:
+                tool_call_any = cast(Any, tool_call)
                 call_id = json.dumps([response_id, tool_call.id])
                 tool_type = getattr(tool_call, "type", None)
-                if tool_type == "code_interpreter" and getattr(tool_call, "code_interpreter", None):
-                    code_input = getattr(tool_call.code_interpreter, "input", None)
+                if tool_type == "code_interpreter" and getattr(tool_call_any, "code_interpreter", None):
+                    code_input = getattr(tool_call_any.code_interpreter, "input", None)
                     inputs = (
-                        [TextContent(text=code_input, raw_representation=tool_call)]
-                        if code_input is not None
-                        else None
+                        [TextContent(text=code_input, raw_representation=tool_call)] if code_input is not None else None
                     )
                     contents.append(
                         CodeInterpreterToolCallContent(

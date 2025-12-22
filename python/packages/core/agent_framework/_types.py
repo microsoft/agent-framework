@@ -1722,6 +1722,7 @@ class CodeInterpreterToolCallContent(BaseContent):
             **kwargs,
         )
         self.call_id = call_id
+        self.inputs: list["Contents"] | None = None
         if inputs:
             normalized_inputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 inputs
@@ -1729,8 +1730,6 @@ class CodeInterpreterToolCallContent(BaseContent):
                 else [inputs]
             )
             self.inputs = _parse_content_list(list(normalized_inputs))
-        else:
-            self.inputs = None
         self.type: Literal["code_interpreter_tool_call"] = "code_interpreter_tool_call"
 
 
@@ -1754,6 +1753,7 @@ class CodeInterpreterToolResultContent(BaseContent):
             **kwargs,
         )
         self.call_id = call_id
+        self.outputs: list["Contents"] | None = None
         if outputs:
             normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 outputs
@@ -1761,8 +1761,6 @@ class CodeInterpreterToolResultContent(BaseContent):
                 else [outputs]
             )
             self.outputs = _parse_content_list(list(normalized_outputs))
-        else:
-            self.outputs = None
         self.type: Literal["code_interpreter_tool_result"] = "code_interpreter_tool_result"
 
 
@@ -1808,6 +1806,7 @@ class ImageGenerationToolResultContent(BaseContent):
             **kwargs,
         )
         self.image_id = image_id
+        self.outputs: list["Contents"] | None = None
         if outputs:
             normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 outputs
@@ -1815,8 +1814,6 @@ class ImageGenerationToolResultContent(BaseContent):
                 else [outputs]
             )
             self.outputs = _parse_content_list(list(normalized_outputs))
-        else:
-            self.outputs = None
         self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
 
 
@@ -1847,9 +1844,15 @@ class MCPServerToolCallContent(BaseContent):
         )
         self.call_id = call_id
         self.tool_name = tool_name
+        # Maintain compatibility with existing call content interfaces
+        self.name = tool_name
         self.server_name = server_name
         self.arguments = dict(arguments) if arguments is not None else None
         self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
+
+    def parse_arguments(self) -> dict[str, Any] | None:
+        """Returns the parsed arguments for the MCP server tool call, if any."""
+        return self.arguments
 
 
 class MCPServerToolResultContent(BaseContent):
@@ -1874,6 +1877,7 @@ class MCPServerToolResultContent(BaseContent):
             **kwargs,
         )
         self.call_id = call_id
+        self.output: list["Contents"] | None = None
         if output:
             normalized_output: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
                 output
@@ -1881,8 +1885,6 @@ class MCPServerToolResultContent(BaseContent):
                 else [output]
             )
             self.output = _parse_content_list(list(normalized_output))
-        else:
-            self.output = None
         self.type: Literal["mcp_server_tool_result"] = "mcp_server_tool_result"
 
 
@@ -1946,7 +1948,7 @@ class FunctionApprovalResponseContent(BaseContent):
         approved: bool,
         *,
         id: str,
-        function_call: FunctionCallContent | MutableMapping[str, Any],
+        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1974,8 +1976,12 @@ class FunctionApprovalResponseContent(BaseContent):
         self.id = id
         self.approved = approved
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
+        self.function_call: FunctionCallContent | MCPServerToolCallContent
         if isinstance(function_call, MutableMapping):
-            self.function_call = FunctionCallContent.from_dict(function_call)
+            if function_call.get("type") == "mcp_server_tool_call":
+                self.function_call = MCPServerToolCallContent.from_dict(function_call)
+            else:
+                self.function_call = FunctionCallContent.from_dict(function_call)
         else:
             self.function_call = function_call
         # Override the type for this specific subclass
@@ -2033,6 +2039,7 @@ class FunctionApprovalRequestContent(BaseContent):
             **kwargs,
         )
         self.id = id
+        self.function_call: FunctionCallContent | MCPServerToolCallContent
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
         if isinstance(function_call, MutableMapping):
             if function_call.get("type") == "mcp_server_tool_call":

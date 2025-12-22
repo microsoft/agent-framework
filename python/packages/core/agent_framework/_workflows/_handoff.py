@@ -35,6 +35,7 @@ from agent_framework import (
     FunctionApprovalRequestContent,
     FunctionCallContent,
     FunctionResultContent,
+    MCPServerToolCallContent,
     Role,
     ai_function,
 )
@@ -245,7 +246,7 @@ class _HandoffResolution:
     """Result of handoff detection containing the target alias and originating call."""
 
     target: str
-    function_call: FunctionCallContent | None = None
+    function_call: FunctionCallContent | MCPServerToolCallContent | None = None
 
 
 def _resolve_handoff_target(agent_response: AgentRunResponse) -> _HandoffResolution | None:
@@ -278,9 +279,11 @@ def _resolution_from_message(message: ChatMessage) -> _HandoffResolution | None:
     return None
 
 
-def _resolution_from_function_call(function_call: FunctionCallContent | None) -> _HandoffResolution | None:
+def _resolution_from_function_call(
+    function_call: FunctionCallContent | MCPServerToolCallContent | None,
+) -> _HandoffResolution | None:
     """Wrap the target resolved from a function call in a `_HandoffResolution`."""
-    if function_call is None:
+    if function_call is None or not isinstance(function_call, FunctionCallContent):
         return None
     target = _target_from_function_call(function_call)
     if not target:
@@ -540,14 +543,14 @@ class _HandoffCoordinator(BaseGroupChatOrchestrator):
             resolved_id = self._specialist_by_alias.get(candidate)
 
         if resolved_id:
-            if resolution.function_call:
+            if resolution.function_call and isinstance(resolution.function_call, FunctionCallContent):
                 self._append_tool_acknowledgement(conversation, resolution.function_call, resolved_id)
             return resolved_id
 
         lowered = candidate.lower()
         for alias, exec_id in self._specialist_by_alias.items():
             if alias.lower() == lowered:
-                if resolution.function_call:
+                if resolution.function_call and isinstance(resolution.function_call, FunctionCallContent):
                     self._append_tool_acknowledgement(conversation, resolution.function_call, exec_id)
                 return exec_id
 

@@ -1303,7 +1303,9 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     assert len(result.contents) == 1
     assert isinstance(result.contents[0], CodeInterpreterToolResultContent)
     assert result.contents[0].outputs
-    assert any(isinstance(out, UriContent) and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs)
+    assert any(
+        isinstance(out, UriContent) and out.uri == "https://example.com/plot.png" for out in result.contents[0].outputs
+    )
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
