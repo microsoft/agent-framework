@@ -259,7 +259,7 @@ internal static class FormulaValueExtensions
                         [.. value.OfType<ExpandoObject>().Select(element => element.ToRecord())]),
                 _ when typeof(ChatMessage).IsAssignableFrom(elementType) =>
                     FormulaValue.NewTable(
-                        TypeSchema.MessageContent.RecordType,
+                        TypeSchema.Message.RecordType,
                         [.. value.OfType<ChatMessage>().Select(message => message.ToRecord())]),
                 _ when typeof(IDictionary).IsAssignableFrom(elementType) => value.ToTableOfRecords(),
                 _ => throw new DeclarativeModelException($"Unsupported element type: {elementType.Name}"),
