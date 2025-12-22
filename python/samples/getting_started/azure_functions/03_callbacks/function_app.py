@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, DefaultDict
 
 import azure.functions as func
-from agent_framework import AgentRunResponseUpdate
+from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
@@ -81,7 +81,7 @@ class ConversationAuditTrail(AgentResponseCallbackProtocol):
             preview,
         )
 
-    async def on_agent_response(self, response, context: AgentCallbackContext) -> None:
+    async def on_agent_response(self, response: AgentRunResponse, context: AgentCallbackContext) -> None:
         event = self._build_base_event(context)
         event.update(
             {

@@ -101,7 +101,6 @@ class RunRequest:
         role: The role of the message sender (user, system, or assistant)
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
-        thread_id: Optional thread ID for tracking
         correlation_id: Optional correlation ID for tracking the response to this specific request
         created_at: Optional timestamp when the request was created
         orchestration_id: Optional ID of the orchestration that initiated this request
@@ -112,7 +111,6 @@ class RunRequest:
     role: Role = Role.USER
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
-    thread_id: str | None = None
     correlation_id: str | None = None
     created_at: datetime | None = None
     orchestration_id: str | None = None
@@ -124,7 +122,6 @@ class RunRequest:
         role: Role | str | None = Role.USER,
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
-        thread_id: str | None = None,
         correlation_id: str | None = None,
         created_at: datetime | None = None,
         orchestration_id: str | None = None,
@@ -134,7 +131,6 @@ class RunRequest:
         self.response_format = response_format
         self.request_response_format = request_response_format
         self.enable_tool_calls = enable_tool_calls
-        self.thread_id = thread_id
         self.correlation_id = correlation_id
         self.created_at = created_at
         self.orchestration_id = orchestration_id
@@ -161,8 +157,6 @@ class RunRequest:
         }
         if self.response_format:
             result["response_format"] = serialize_response_format(self.response_format)
-        if self.thread_id:
-            result["thread_id"] = self.thread_id
         if self.correlation_id:
             result["correlationId"] = self.correlation_id
         if self.created_at:
@@ -188,7 +182,6 @@ class RunRequest:
             role=cls.coerce_role(data.get("role")),
             response_format=_deserialize_response_format(data.get("response_format")),
             enable_tool_calls=data.get("enable_tool_calls", True),
-            thread_id=data.get("thread_id"),
             correlation_id=data.get("correlationId"),
             created_at=created_at,
             orchestration_id=data.get("orchestrationId"),
