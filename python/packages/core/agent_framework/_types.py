@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, Union, cast, overload
+from typing import Any, ClassVar, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -1709,7 +1709,7 @@ class CodeInterpreterToolCallContent(BaseContent):
         self,
         *,
         call_id: str | None = None,
-        inputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
+        inputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1724,7 +1724,7 @@ class CodeInterpreterToolCallContent(BaseContent):
         self.call_id = call_id
         self.inputs: list["Contents"] | None = None
         if inputs:
-            normalized_inputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
+            normalized_inputs: Sequence["Contents | MutableMapping[str, Any]"] = (
                 inputs
                 if isinstance(inputs, Sequence) and not isinstance(inputs, (str, bytes, MutableMapping))
                 else [inputs]
@@ -1740,7 +1740,7 @@ class CodeInterpreterToolResultContent(BaseContent):
         self,
         *,
         call_id: str | None = None,
-        outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
+        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1755,7 +1755,7 @@ class CodeInterpreterToolResultContent(BaseContent):
         self.call_id = call_id
         self.outputs: list["Contents"] | None = None
         if outputs:
-            normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
+            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
                 outputs
                 if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
                 else [outputs]
@@ -1793,7 +1793,7 @@ class ImageGenerationToolResultContent(BaseContent):
         self,
         *,
         image_id: str | None = None,
-        outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
+        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1808,7 +1808,7 @@ class ImageGenerationToolResultContent(BaseContent):
         self.image_id = image_id
         self.outputs: list["Contents"] | None = None
         if outputs:
-            normalized_outputs: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
+            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
                 outputs
                 if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
                 else [outputs]
@@ -1862,7 +1862,7 @@ class MCPServerToolResultContent(BaseContent):
         self,
         call_id: str,
         *,
-        output: Sequence[Union["Contents", MutableMapping[str, Any]]] | None = None,
+        output: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1879,7 +1879,7 @@ class MCPServerToolResultContent(BaseContent):
         self.call_id = call_id
         self.output: list["Contents"] | None = None
         if output:
-            normalized_output: Sequence[Union["Contents", MutableMapping[str, Any]]] = (
+            normalized_output: Sequence["Contents | MutableMapping[str, Any]"] = (
                 output
                 if isinstance(output, Sequence) and not isinstance(output, (str, bytes, MutableMapping))
                 else [output]
@@ -2016,7 +2016,7 @@ class FunctionApprovalRequestContent(BaseContent):
         self,
         *,
         id: str,
-        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
+        function_call: FunctionCallContent | MutableMapping[str, Any],
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2039,13 +2039,10 @@ class FunctionApprovalRequestContent(BaseContent):
             **kwargs,
         )
         self.id = id
-        self.function_call: FunctionCallContent | MCPServerToolCallContent
+        self.function_call: FunctionCallContent
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
         if isinstance(function_call, MutableMapping):
-            if function_call.get("type") == "mcp_server_tool_call":
-                self.function_call = MCPServerToolCallContent.from_dict(function_call)
-            else:
-                self.function_call = FunctionCallContent.from_dict(function_call)
+            self.function_call = FunctionCallContent.from_dict(function_call)
         else:
             self.function_call = function_call
         # Override the type for this specific subclass
