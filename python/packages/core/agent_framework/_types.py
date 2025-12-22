@@ -2795,6 +2795,7 @@ class AgentRunResponse(SerializationMixin):
         | MutableMapping[str, Any]
         | list[MutableMapping[str, Any]]
         | None = None,
+        conversation_id: str | None = None,
         response_id: str | None = None,
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | MutableMapping[str, Any] | None = None,
@@ -2807,6 +2808,7 @@ class AgentRunResponse(SerializationMixin):
 
         Keyword Args:
             messages: The list of chat messages in the response.
+            conversation_id: The ID of the current conversation.
             response_id: The ID of the chat response.
             created_at: A timestamp for the chat response.
             usage_details: The usage details for the chat response.
@@ -2835,6 +2837,7 @@ class AgentRunResponse(SerializationMixin):
             usage_details = UsageDetails.from_dict(usage_details)
 
         self.messages = processed_messages
+        self.conversation_id = conversation_id
         self.response_id = response_id
         self.created_at = created_at
         self.usage_details = usage_details
@@ -2961,6 +2964,7 @@ class AgentRunResponseUpdate(SerializationMixin):
         text: TextContent | str | None = None,
         role: Role | MutableMapping[str, Any] | str | None = None,
         author_name: str | None = None,
+        conversation_id: str | None = None,
         response_id: str | None = None,
         message_id: str | None = None,
         created_at: CreatedAtT | None = None,
@@ -2975,6 +2979,7 @@ class AgentRunResponseUpdate(SerializationMixin):
             text: Optional text content of the update.
             role: The role of the author of the response update (Role, string, or dict
             author_name: Optional name of the author of the response update.
+            conversation_id: Optional identifier for the conversation of which this update is a part.
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             created_at: Optional timestamp for the chat response update.
@@ -2999,6 +3004,7 @@ class AgentRunResponseUpdate(SerializationMixin):
         self.contents = parsed_contents
         self.role = role
         self.author_name = author_name
+        self.conversation_id = conversation_id
         self.response_id = response_id
         self.message_id = message_id
         self.created_at = created_at
