@@ -6,6 +6,7 @@ from ._agent_executor import (
     AgentExecutorRequest,
     AgentExecutorResponse,
 )
+from ._base_group_chat_orchestrator import GroupChatRequestSentEvent, GroupChatResponseReceivedEvent
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -133,6 +134,8 @@ __all__ = [
     "FunctionExecutor",
     "GraphConnectivityError",
     "GroupChatBuilder",
+    "GroupChatRequestSentEvent",
+    "GroupChatResponseReceivedEvent",
     "GroupChatState",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",

@@ -169,7 +169,6 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
             return
 
         next_speaker = await self._get_next_speaker()
-        self._increment_round()
 
         # Broadcast messages to all participants for context
         await self._broadcast_messages_to_participants(
@@ -181,6 +180,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
         )
+        self._increment_round()
 
     @override
     async def _handle_response(
@@ -198,7 +198,6 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
             return
 
         next_speaker = await self._get_next_speaker()
-        self._increment_round()
 
         # Broadcast participant messages to all participants for context, except
         # the participant that just responded
@@ -213,6 +212,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
         )
+        self._increment_round()
 
     async def _get_next_speaker(self) -> str:
         """Determine the next speaker using the selection function."""
@@ -328,8 +328,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
 
-        self._increment_round()
-
         # Broadcast messages to all participants for context
         await self._broadcast_messages_to_participants(
             messages,
@@ -341,6 +339,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
         )
+        self._increment_round()
 
     @override
     async def _handle_response(
@@ -362,7 +361,6 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             cast(WorkflowContext[Never, list[ChatMessage]], ctx),
         ):
             return
-        self._increment_round()
 
         # Broadcast participant messages to all participants for context, except
         # the participant that just responded
@@ -378,6 +376,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
         )
+        self._increment_round()
 
     async def _invoke_agent(self) -> AgentOrchestrationOutput:
         """Invoke the orchestrator agent to determine the next speaker and termination."""
