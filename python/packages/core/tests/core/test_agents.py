@@ -370,6 +370,8 @@ async def test_chat_agent_run_stream_context_providers_with_conversation_id(chat
     async for update in agent.run_stream("Hello", thread=thread):
         updates.append(update)
 
+    # Verify conversation_id is propagated to thread
+    assert all(update.conversation_id == "conv-123" for update in updates)
     assert thread.service_thread_id == "conv-123"
 
 
