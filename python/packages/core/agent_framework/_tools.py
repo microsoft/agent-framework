@@ -1461,10 +1461,7 @@ async def _auto_invoke_function(
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
-    from ._types import (
-        FunctionResultContent,
-        MCPServerToolCallContent,
-    )
+    from ._types import FunctionCallContent, FunctionResultContent, MCPServerToolCallContent
 
     tool: AIFunction[BaseModel, Any] | None = None
     if isinstance(function_call_content, MCPServerToolCallContent):
