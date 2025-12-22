@@ -2,6 +2,7 @@
 
 """Tests for lightning module."""
 
+# ruff: noqa
 from unittest.mock import AsyncMock, patch
 
 import pytest
