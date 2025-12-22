@@ -8,6 +8,8 @@ from agent_framework import (
     AIFunction,
     Annotations,
     BaseChatClient,
+    ChatResponse,
+    ChatResponseUpdate,
     ChatMessage,
     ChatOptions,
     CodeInterpreterToolCallContent,
