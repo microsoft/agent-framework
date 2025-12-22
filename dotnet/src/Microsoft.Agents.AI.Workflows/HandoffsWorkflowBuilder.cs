@@ -14,6 +14,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public sealed class HandoffsWorkflowBuilder
 {
     internal const string FunctionPrefix = "handoff_to_";
+    private string _name = string.Empty;
     private readonly AIAgent _initialAgent;
     private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
@@ -65,6 +66,20 @@ public sealed class HandoffsWorkflowBuilder
     public HandoffsWorkflowBuilder WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior behavior)
     {
         this._toolCallFilteringBehavior = behavior;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the human-readable name for the handoffs workflow.
+    /// </summary>
+    /// <param name="name">The name of the workflow.</param>
+    /// <returns>The current <see cref="HandoffsWorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    /// <remarks>
+    /// This is required to test the workflow using DevUI.
+    /// </remarks>
+    public HandoffsWorkflowBuilder WithName(string name)
+    {
+        this._name = name;
         return this;
     }
 
@@ -175,6 +190,7 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
 
+        builder.WithName(this._name);
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
 
         // Create an AgentExecutor for each again.
