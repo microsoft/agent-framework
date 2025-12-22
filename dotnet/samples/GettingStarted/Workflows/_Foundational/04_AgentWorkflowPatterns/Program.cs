@@ -58,6 +58,7 @@ public static class Program
                 var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAgent)
                     .WithHandoffs(triageAgent, [mathTutor, historyTutor])
                     .WithHandoffs([mathTutor, historyTutor], triageAgent)
+                    .WithName("HandoffTutor")
                     .Build();
 
                 List<ChatMessage> messages = [];
