@@ -767,25 +767,23 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                     call_id = getattr(item, "call_id", None) or getattr(item, "id", None)
                     outputs: list["Contents"] = []
-                    if hasattr(item, "outputs") and item.outputs:
-                        for code_output in item.outputs:
+                    if item_outputs := getattr(item, "outputs", None):
+                        for code_output in item_outputs:
                             if getattr(code_output, "type", None) == "logs":
-                                outputs.append(
-                                    TextContent(text=cast(Any, code_output).logs, raw_representation=code_output)
-                                )
+                                outputs.append(TextContent(text=code_output.logs, raw_representation=code_output))
                             elif getattr(code_output, "type", None) == "image":
                                 outputs.append(
                                     UriContent(
-                                        uri=cast(Any, code_output).url,
+                                        uri=code_output.url,
                                         raw_representation=code_output,
                                         media_type="image",
                                     )
                                 )
-                    if hasattr(item, "code") and item.code:
+                    if code := getattr(item, "code", None):
                         contents.append(
                             CodeInterpreterToolCallContent(
                                 call_id=call_id,
-                                inputs=[TextContent(text=item.code, raw_representation=item)],
+                                inputs=[TextContent(text=code, raw_representation=item)],
                                 raw_representation=item,
                             )
                         )
@@ -883,7 +881,6 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=item,
                         )
                     )
-                # TODO(peterychang): Add support for other content types
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
         response_message = ChatMessage(role="assistant", contents=contents)

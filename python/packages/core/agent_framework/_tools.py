@@ -48,7 +48,6 @@ if TYPE_CHECKING:
         Contents,
         FunctionApprovalResponseContent,
         FunctionCallContent,
-        MCPServerToolCallContent,
     )
 
 if sys.version_info >= (3, 12):
@@ -1428,7 +1427,7 @@ class FunctionExecutionResult:
 
 
 async def _auto_invoke_function(
-    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent | MCPServerToolCallContent",
+    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
@@ -1461,11 +1460,9 @@ async def _auto_invoke_function(
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
-    from ._types import FunctionCallContent, FunctionResultContent, MCPServerToolCallContent
+    from ._types import FunctionCallContent, FunctionResultContent
 
     tool: AIFunction[BaseModel, Any] | None = None
-    if isinstance(function_call_content, MCPServerToolCallContent):
-        return function_call_content
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)
         # Tool should exist because _try_execute_function_calls validates this

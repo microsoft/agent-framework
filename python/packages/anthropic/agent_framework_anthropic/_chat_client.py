@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
 from typing import Any, ClassVar, Final, TypeVar
 
@@ -16,6 +15,7 @@ from agent_framework import (
     CodeInterpreterToolCallContent,
     CodeInterpreterToolResultContent,
     Contents,
+    ErrorContent,
     FinishReason,
     FunctionCallContent,
     FunctionResultContent,
@@ -49,6 +49,8 @@ from anthropic.types.beta import (
     BetaTextBlock,
     BetaUsage,
 )
+from anthropic.types.beta.beta_bash_code_execution_tool_result_error import BetaBashCodeExecutionToolResultError
+from anthropic.types.beta.beta_code_execution_tool_result_error import BetaCodeExecutionToolResultError
 from pydantic import SecretStr, ValidationError
 
 logger = get_logger("agent_framework.anthropic")
@@ -648,29 +650,183 @@ class AnthropicClient(BaseChatClient):
                             raw_representation=content_block,
                         )
                     )
-                case (
-                    "code_execution_tool_result"
-                    | "bash_code_execution_tool_result"
-                    | "text_editor_code_execution_tool_result"
-                ):
-                    call_id, name = self._last_call_id_name or (None, None)
-                    if (
-                        content_block.content
-                        and (
-                            content_block.content.type == "bash_code_execution_result"
-                            or content_block.content.type == "code_execution_result"
-                        )
-                        and content_block.content.content
-                    ):
-                        for result_content in content_block.content.content:
-                            if hasattr(result_content, "file_id"):
-                                contents.append(
-                                    HostedFileContent(file_id=result_content.file_id, raw_representation=result_content)
+                case "code_execution_tool_result":
+                    code_outputs: list[Contents] = []
+                    if content_block.content:
+                        if isinstance(content_block.content, BetaCodeExecutionToolResultError):
+                            code_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        else:
+                            if content_block.content.stdout:
+                                code_outputs.append(
+                                    TextContent(
+                                        text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if content_block.content.stderr:
+                                code_outputs.append(
+                                    ErrorContent(
+                                        message=content_block.content.stderr,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            for code_file_content in content_block.content.content:
+                                code_outputs.append(
+                                    HostedFileContent(
+                                        file_id=code_file_content.file_id, raw_representation=code_file_content
+                                    )
                                 )
                     contents.append(
                         CodeInterpreterToolResultContent(
                             call_id=content_block.tool_use_id,
-                            outputs=None,
+                            raw_representation=content_block,
+                            outputs=code_outputs,
+                        )
+                    )
+                case "bash_code_execution_tool_result":
+                    bash_outputs: list[Contents] = []
+                    if content_block.content:
+                        if isinstance(
+                            content_block.content,
+                            BetaBashCodeExecutionToolResultError,
+                        ):
+                            bash_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        else:
+                            if content_block.content.stdout:
+                                bash_outputs.append(
+                                    TextContent(
+                                        text=content_block.content.stdout,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            if content_block.content.stderr:
+                                bash_outputs.append(
+                                    ErrorContent(
+                                        message=content_block.content.stderr,
+                                        raw_representation=content_block.content,
+                                    )
+                                )
+                            for bash_file_content in content_block.content.content:
+                                contents.append(
+                                    HostedFileContent(
+                                        file_id=bash_file_content.file_id, raw_representation=bash_file_content
+                                    )
+                                )
+                    contents.append(
+                        FunctionResultContent(
+                            call_id=content_block.tool_use_id,
+                            name=content_block.type,
+                            result=bash_outputs,
+                            raw_representation=content_block,
+                        )
+                    )
+                case "text_editor_code_execution_tool_result":
+                    text_editor_outputs: list[Contents] = []
+                    match content_block.content.type:
+                        case "text_editor_code_execution_tool_result_error":
+                            text_editor_outputs.append(
+                                ErrorContent(
+                                    message=content_block.content.error_code
+                                    and getattr(content_block.content, "error_message", ""),
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_view_result":
+                            annotations = (
+                                [
+                                    CitationAnnotation(
+                                        raw_representation=content_block.content,
+                                        annotated_regions=[
+                                            TextSpanRegion(
+                                                start_index=content_block.content.start_line,
+                                                end_index=content_block.content.start_line
+                                                + (content_block.content.num_lines or 0),
+                                            )
+                                        ],
+                                    )
+                                ]
+                                if content_block.content.num_lines is not None
+                                and content_block.content.start_line is not None
+                                else None
+                            )
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=content_block.content.content,
+                                    annotations=annotations,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_str_replace_result":
+                            old_annotation = (
+                                CitationAnnotation(
+                                    raw_representation=content_block.content,
+                                    annotated_regions=[
+                                        TextSpanRegion(
+                                            start_index=content_block.content.old_start or 0,
+                                            end_index=(
+                                                (content_block.content.old_start or 0)
+                                                + (content_block.content.old_lines or 0)
+                                            ),
+                                        )
+                                    ],
+                                )
+                                if content_block.content.old_lines is not None
+                                and content_block.content.old_start is not None
+                                else None
+                            )
+                            new_annotation = (
+                                CitationAnnotation(
+                                    raw_representation=content_block.content,
+                                    snippet="\n".join(content_block.content.lines)
+                                    if content_block.content.lines
+                                    else None,
+                                    annotated_regions=[
+                                        TextSpanRegion(
+                                            start_index=content_block.content.new_start or 0,
+                                            end_index=(
+                                                (content_block.content.new_start or 0)
+                                                + (content_block.content.new_lines or 0)
+                                            ),
+                                        )
+                                    ],
+                                )
+                                if content_block.content.new_lines is not None
+                                and content_block.content.new_start is not None
+                                else None
+                            )
+                            annotations = [ann for ann in [old_annotation, new_annotation] if ann is not None]
+
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=(
+                                        "\n".join(content_block.content.lines) if content_block.content.lines else ""
+                                    ),
+                                    annotations=annotations or None,
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                        case "text_editor_code_execution_create_result":
+                            text_editor_outputs.append(
+                                TextContent(
+                                    text=f"File update: {content_block.content.is_file_update}",
+                                    raw_representation=content_block.content,
+                                )
+                            )
+                    contents.append(
+                        FunctionResultContent(
+                            call_id=content_block.tool_use_id,
+                            name=content_block.type,
+                            result=text_editor_outputs,
                             raw_representation=content_block,
                         )
                     )
