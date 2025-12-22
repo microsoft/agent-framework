@@ -345,7 +345,7 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
 
 
 async def test_chat_agent_run_stream_context_providers_with_conversation_id(chat_client: ChatClientProtocol) -> None:
-    """Test that context providers work with run_stream method."""
+    """Test that conversation_id from streaming responses is propagated to the thread's service_thread_id."""
     mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Stream context instructions")])
     mock_response_updates = [
         ChatResponseUpdate(
