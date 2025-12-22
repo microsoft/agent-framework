@@ -1789,7 +1789,7 @@ class ImageGenerationToolCallContent(BaseContent):
 
 
 class ImageGenerationToolResultContent(BaseContent):
-    """Represents an image generation tool call invocation by a hosted service."""
+    """Represents the result of an image generation tool call invocation by a hosted service."""
 
     def __init__(
         self,
