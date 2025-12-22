@@ -8,10 +8,11 @@ from agent_framework import (
     AIFunction,
     Annotations,
     BaseChatClient,
-    ChatResponse,
-    ChatResponseUpdate,
     ChatMessage,
     ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    CitationAnnotation,
     CodeInterpreterToolCallContent,
     CodeInterpreterToolResultContent,
     Contents,
@@ -620,12 +621,20 @@ class AnthropicClient(BaseChatClient):
                         )
                 case "mcp_tool_result":
                     call_id, name = self._last_call_id_name or (None, None)
+                    parsed_output: list[Contents] | None = None
+                    if content_block.content:
+                        if isinstance(content_block.content, list):
+                            parsed_output = self._parse_contents_from_anthropic(content_block.content)
+                        elif isinstance(content_block.content, (str, bytes)):
+                            parsed_output = [
+                                TextContent(text=str(content_block.content), raw_representation=content_block)
+                            ]
+                        else:
+                            parsed_output = self._parse_contents_from_anthropic([content_block.content])
                     contents.append(
                         MCPServerToolResultContent(
                             call_id=content_block.tool_use_id,
-                            output=self._parse_contents_from_anthropic(content_block.content)
-                            if isinstance(content_block.content, list)
-                            else content_block.content,
+                            output=parsed_output,
                             raw_representation=content_block,
                         )
                     )

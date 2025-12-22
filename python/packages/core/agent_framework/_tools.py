@@ -15,8 +15,8 @@ from typing import (
     Final,
     Generic,
     Literal,
-    TypedDict,
     Protocol,
+    TypedDict,
     TypeVar,
     cast,
     get_args,
@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         Contents,
         FunctionApprovalResponseContent,
         FunctionCallContent,
+        MCPServerToolCallContent,
     )
 
 if sys.version_info >= (3, 12):
@@ -1427,7 +1428,7 @@ class FunctionExecutionResult:
 
 
 async def _auto_invoke_function(
-    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent",
+    function_call_content: "FunctionCallContent | FunctionApprovalResponseContent | MCPServerToolCallContent",
     custom_args: dict[str, Any] | None = None,
     *,
     config: FunctionInvocationConfiguration,
@@ -1456,16 +1457,18 @@ async def _auto_invoke_function(
     Raises:
         KeyError: If the requested function is not found in the tool map.
     """
-    from ._types import (
-        FunctionResultContent,
-    )
-
     # Note: The scenarios for approval_mode="always_require", declaration_only, and
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
+    from ._types import (
+        FunctionResultContent,
+        MCPServerToolCallContent,
+    )
 
     tool: AIFunction[BaseModel, Any] | None = None
+    if isinstance(function_call_content, MCPServerToolCallContent):
+        return function_call_content
     if function_call_content.type == "function_call":
         tool = tool_map.get(function_call_content.name)
         # Tool should exist because _try_execute_function_calls validates this
@@ -1481,11 +1484,14 @@ async def _auto_invoke_function(
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
-        tool = tool_map.get(function_call_content.function_call.name)
+        inner_call = function_call_content.function_call
+        if not isinstance(inner_call, FunctionCallContent):
+            return function_call_content
+        tool = tool_map.get(inner_call.name)
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = function_call_content.function_call
+        function_call_content = inner_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
