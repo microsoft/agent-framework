@@ -36,7 +36,7 @@
                     <option value="@agent.Name">@GetAgentDisplayName(agent.Name!) - @agent.Description</option>
                 }
             </select>
-            @if (!string.IsNullOrEmpty(selectedAgentName) && currentConversation is null)
+            @if (!string.IsNullOrEmpty(selectedAgentName))
             {
                 <button class="start-chat-btn" @onclick="StartNewConversation">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
