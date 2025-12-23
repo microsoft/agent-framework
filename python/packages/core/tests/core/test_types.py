@@ -1814,6 +1814,7 @@ def test_agent_run_response_update_all_content_types():
                         "contents": [{"type": "text", "text": "Answer"}],
                     },
                 ],
+                "conversation_id": "conv-123",
                 "response_id": "run-123",
                 "usage_details": {
                     "type": "usage_details",
@@ -1833,6 +1834,7 @@ def test_agent_run_response_update_all_content_types():
                 ],
                 "role": {"type": "role", "value": "assistant"},
                 "message_id": "msg-123",
+                "conversation_id": "conv-123",
                 "response_id": "run-123",
                 "author_name": "Agent",
             },

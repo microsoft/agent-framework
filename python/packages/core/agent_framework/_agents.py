@@ -906,6 +906,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
         )
         return AgentRunResponse(
             messages=response.messages,
+            conversation_id=response.conversation_id,
             response_id=response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
@@ -1045,6 +1046,7 @@ class ChatAgent(BaseAgent):  # type: ignore[misc]
                 role=update.role,
                 author_name=update.author_name,
                 response_id=update.response_id,
+                conversation_id=update.conversation_id,
                 message_id=update.message_id,
                 created_at=update.created_at,
                 additional_properties=update.additional_properties,
