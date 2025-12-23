@@ -235,8 +235,10 @@ public class SpecializedExecutorSmokeTests
         // The format is "{TypeName}_{first8charsOfId}" for readability in workflow visualizations.
         agentA.GetDescriptiveId().Should().Contain(nameof(TestAIAgent));
         agentB.GetDescriptiveId().Should().Contain(nameof(TestAIAgent));
-        agentA.GetDescriptiveId().Should().Contain(agentA.Id.Substring(0, 8));
-        agentB.GetDescriptiveId().Should().Contain(agentB.Id.Substring(0, 8));
+        string agentAIdPrefix = agentA.Id.Length > 8 ? agentA.Id.Substring(0, 8) : agentA.Id;
+        string agentBIdPrefix = agentB.Id.Length > 8 ? agentB.Id.Substring(0, 8) : agentB.Id;
+        agentA.GetDescriptiveId().Should().Contain(agentAIdPrefix);
+        agentB.GetDescriptiveId().Should().Contain(agentBIdPrefix);
         definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
         definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
 
@@ -250,16 +252,17 @@ public class SpecializedExecutorSmokeTests
     public void Test_GetDescriptiveId_WithName_ReturnsNameWithGuidSuffix()
     {
         // Arrange
-        const string agentName = "MyPhysicist";
-        TestAIAgent agent = new(name: agentName);
+        const string AgentName = "MyPhysicist";
+        TestAIAgent agent = new(name: AgentName);
 
         // Act
         string descriptiveId = agent.GetDescriptiveId();
 
         // Assert
-        descriptiveId.Should().StartWith($"{agentName}_");
-        descriptiveId.Should().HaveLength(agentName.Length + 1 + 8); // name + underscore + 8 chars
-        descriptiveId.Should().Contain(agent.Id.Substring(0, 8));
+        descriptiveId.Should().StartWith($"{AgentName}_");
+        descriptiveId.Should().HaveLength(AgentName.Length + 1 + 8); // name + underscore + 8 chars
+        string idPrefix = agent.Id.Length > 8 ? agent.Id.Substring(0, 8) : agent.Id;
+        descriptiveId.Should().Contain(idPrefix);
     }
 
     [Fact]
@@ -274,15 +277,16 @@ public class SpecializedExecutorSmokeTests
         // Assert
         descriptiveId.Should().StartWith($"{nameof(TestAIAgent)}_");
         descriptiveId.Should().HaveLength(nameof(TestAIAgent).Length + 1 + 8); // typename + underscore + 8 chars
-        descriptiveId.Should().Contain(agent.Id.Substring(0, 8));
+        string idPrefix = agent.Id.Length > 8 ? agent.Id.Substring(0, 8) : agent.Id;
+        descriptiveId.Should().Contain(idPrefix);
     }
 
     [Fact]
     public void Test_GetDescriptiveId_SanitizesInvalidCharacters()
     {
         // Arrange
-        const string agentName = "My Agent-Name!@#";
-        TestAIAgent agent = new(name: agentName);
+        const string AgentName = "My Agent-Name!@#";
+        TestAIAgent agent = new(name: AgentName);
 
         // Act
         string descriptiveId = agent.GetDescriptiveId();
@@ -301,13 +305,13 @@ public class SpecializedExecutorSmokeTests
     {
         // Arrange
         TestAIAgent agent = new(name: "SomeAgent");
-        const string customId = "MyCustomExecutorId";
+        const string CustomId = "MyCustomExecutorId";
 
         // Act
-        ExecutorBinding binding = agent.BindAsExecutor(customId);
+        ExecutorBinding binding = agent.BindAsExecutor(CustomId);
 
         // Assert
-        binding.Id.Should().Be(customId);
+        binding.Id.Should().Be(CustomId);
     }
 
     [Fact]
@@ -315,14 +319,14 @@ public class SpecializedExecutorSmokeTests
     {
         // Arrange
         TestAIAgent agent = new(name: "SomeAgent");
-        const string customId = "MyCustomExecutorId";
+        const string CustomId = "MyCustomExecutorId";
 
         // Act
-        AIAgentBinding binding = (AIAgentBinding)agent.BindAsExecutor(customId);
+        AIAgentBinding binding = (AIAgentBinding)agent.BindAsExecutor(CustomId);
 
         // Assert
         binding.Agent.Should().BeSameAs(agent);
-        binding.DescriptiveId.Should().Be(customId);
+        binding.DescriptiveId.Should().Be(CustomId);
     }
 
     [Fact]
@@ -345,8 +349,12 @@ public class SpecializedExecutorSmokeTests
         // Assert - visualization should use custom IDs, not GUIDs
         mermaid.Should().Contain("Physicist");
         mermaid.Should().Contain("Chemist");
-        mermaid.Should().NotContain(agentA.Id.Substring(0, 8)); // Should not contain GUID suffix
-        mermaid.Should().NotContain(agentB.Id.Substring(0, 8));
+
+        // Use bounds checking for Substring to avoid ArgumentOutOfRangeException
+        string agentAIdPrefix = agentA.Id.Length > 8 ? agentA.Id.Substring(0, 8) : agentA.Id;
+        string agentBIdPrefix = agentB.Id.Length > 8 ? agentB.Id.Substring(0, 8) : agentB.Id;
+        mermaid.Should().NotContain(agentAIdPrefix); // Should not contain GUID suffix
+        mermaid.Should().NotContain(agentBIdPrefix);
 
         dot.Should().Contain("Physicist");
         dot.Should().Contain("Chemist");

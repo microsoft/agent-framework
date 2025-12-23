@@ -427,8 +427,7 @@ public static class ExecutorBindingExtensions
     /// </summary>
     /// <remarks>
     /// Use this overload when you want explicit control over the executor's ID as displayed in workflow
-    /// visualizations. The descriptive ID should be unique within the workflow and will have any invalid
-    /// characters (non-alphanumeric except underscore) replaced with underscores.
+    /// visualizations. The descriptive ID should be unique within the workflow.
     /// </remarks>
     /// <param name="agent">The agent instance.</param>
     /// <param name="descriptiveId">A custom descriptive ID for the executor. This ID will be used in workflow

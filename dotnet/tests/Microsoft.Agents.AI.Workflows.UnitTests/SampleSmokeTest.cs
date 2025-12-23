@@ -192,8 +192,6 @@ public class SampleSmokeTest
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
 
-        // Note: Executor IDs now include a GUID suffix for uniqueness (e.g., "HelloAgent_12345678")
-        // We check that the output contains the agent name and expected greeting
         Assert.Collection(lines,
             line =>
             {
@@ -221,8 +219,6 @@ public class SampleSmokeTest
         string result = writer.ToString();
         string[] lines = result.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries);
 
-        // Note: Executor IDs now include a GUID suffix for uniqueness (e.g., "HelloAgent_12345678")
-        // We check that the output contains the agent name and expected greeting
         Assert.Collection(lines,
             line =>
             {
