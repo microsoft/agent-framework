@@ -468,7 +468,12 @@ class GroupChatBuilder:
     GroupChat coordinates multi-agent conversations using an orchestrator that can dynamically
     select participants to speak at each turn based on the conversation state.
 
-    All participants can be a combination of agents and executors. If they are executors, they
+    Routing Pattern:
+
+    Agents respond in turns as directed by the orchestrator until termination conditions are met.
+    This provides a centralized approach to multi-agent collaboration, similar to a star topology.
+
+    Participants can be a combination of agents and executors. If they are executors, they
     must implement the expected handlers for receiving GroupChat messages and returning responses
     (Read our official documentation for details on implementing custom participant executors).
 
@@ -751,16 +756,16 @@ class GroupChatBuilder:
         return self
 
     def with_request_info(self, *, agents: Sequence[str | AgentProtocol] | None = None) -> "GroupChatBuilder":
-        """Enable request info before agent participant responses.
+        """Enable request info after agent participant responses.
 
         This enables human-in-the-loop (HIL) scenarios for the group chat orchestration.
-        When enabled, the workflow pauses before each agent participant runs, emitting
+        When enabled, the workflow pauses after each agent participant runs, emitting
         a RequestInfoEvent that allows the caller to review the conversation and optionally
-        inject guidance before the agent participant responds. The caller provides input via
+        inject guidance for the agent participant to iterate. The caller provides input via
         the standard response_handler/request_info pattern.
 
         Simulated flow with HIL:
-        Input -> Orchestrator -> Request Info -> Participant -> Orchestrator -> Request Info -> Participant -> ...
+        Input -> Orchestrator -> [Participant <-> Request Info] -> Orchestrator -> [Participant <-> Request Info] -> ...
 
         Note: This is only available for agent participants. Executor participants can incorporate
         request info handling in their own implementation if desired.

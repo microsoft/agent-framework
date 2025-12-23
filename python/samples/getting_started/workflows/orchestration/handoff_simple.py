@@ -8,9 +8,7 @@ from agent_framework import (
     ChatAgent,
     ChatMessage,
     HandoffBuilder,
-    HandoffUserInputRequest,
     RequestInfoEvent,
-    Role,
     WorkflowEvent,
     WorkflowOutputEvent,
     WorkflowRunState,
@@ -168,38 +166,38 @@ def _handle_events(events: list[WorkflowEvent]) -> list[RequestInfoEvent]:
                 print("===================================")
 
         # RequestInfoEvent: Workflow is requesting user input
-        elif isinstance(event, RequestInfoEvent):
-            if isinstance(event.data, HandoffUserInputRequest):
-                _print_agent_responses_since_last_user_message(event.data)
-            requests.append(event)
+        # elif isinstance(event, RequestInfoEvent):
+        #     if isinstance(event.data, HandoffUserInputRequest):
+        #         _print_agent_responses_since_last_user_message(event.data)
+        #     requests.append(event)
 
     return requests
 
 
-def _print_agent_responses_since_last_user_message(request: HandoffUserInputRequest) -> None:
-    """Display agent responses since the last user message in a handoff request.
+# def _print_agent_responses_since_last_user_message(request: HandoffUserInputRequest) -> None:
+#     """Display agent responses since the last user message in a handoff request.
 
-    The HandoffUserInputRequest contains the full conversation history so far,
-    allowing the user to see what's been discussed before providing their next input.
+#     The HandoffUserInputRequest contains the full conversation history so far,
+#     allowing the user to see what's been discussed before providing their next input.
 
-    Args:
-        request: The user input request containing conversation and prompt
-    """
-    if not request.conversation:
-        raise RuntimeError("HandoffUserInputRequest missing conversation history.")
+#     Args:
+#         request: The user input request containing conversation and prompt
+#     """
+#     if not request.conversation:
+#         raise RuntimeError("HandoffUserInputRequest missing conversation history.")
 
-    # Reverse iterate to collect agent responses since last user message
-    agent_responses: list[ChatMessage] = []
-    for message in request.conversation[::-1]:
-        if message.role == Role.USER:
-            break
-        agent_responses.append(message)
+#     # Reverse iterate to collect agent responses since last user message
+#     agent_responses: list[ChatMessage] = []
+#     for message in request.conversation[::-1]:
+#         if message.role == Role.USER:
+#             break
+#         agent_responses.append(message)
 
-    # Print agent responses in original order
-    agent_responses.reverse()
-    for message in agent_responses:
-        speaker = message.author_name or message.role.value
-        print(f"- {speaker}: {message.text}")
+#     # Print agent responses in original order
+#     agent_responses.reverse()
+#     for message in agent_responses:
+#         speaker = message.author_name or message.role.value
+#         print(f"- {speaker}: {message.text}")
 
 
 async def main() -> None:
@@ -234,7 +232,7 @@ async def main() -> None:
             name="customer_support_handoff",
             participants=[triage, refund, order, support],
         )
-        .set_coordinator(triage)
+        .with_start_agent(triage)
         .with_termination_condition(
             # Custom termination: Check if the triage agent has provided a closing message.
             # This looks for the last message being from triage_agent and containing "welcome",

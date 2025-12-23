@@ -60,8 +60,8 @@ from ._group_chat import (
     GroupChatBuilder,
     GroupChatState,
 )
+from ._handoff import HandoffBuilder
 
-# from ._handoff import HandoffBuilder, HandoffUserInputRequest
 # from ._magentic import (
 #     MAGENTIC_EVENT_TYPE_AGENT_DELTA,
 #     MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
@@ -137,6 +137,8 @@ __all__ = [
     "GroupChatRequestSentEvent",
     "GroupChatResponseReceivedEvent",
     "GroupChatState",
+    "HandoffBuilder",
+    "HandoffBuilder",
     "InMemoryCheckpointStorage",
     "InProcRunnerContext",
     # "MagenticBuilder",
