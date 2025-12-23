@@ -934,15 +934,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case "response.reasoning_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case "response.reasoning_text.done":
-                # Skip .done event - contains complete text already streamed via .delta events
-                pass
             case "response.reasoning_summary_text.delta":
                 contents.append(TextReasoningContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
-            case "response.reasoning_summary_text.done":
-                # Skip .done event - contains complete text already streamed via .delta events
-                pass
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, chat_options.store)
