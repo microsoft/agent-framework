@@ -42,15 +42,6 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
     Args:
         value: The value to check.
         log_value: Whether to log the full value on error or just a snippet.
-
-    Note:
-        The safe_mode behavior is controlled by the `_safe_mode_context` context variable.
-        When safe_mode is True (default), environment variables are not accessible.
-        You can still use those but through the constructors of the classes.
-        So in this case make sure you are using the standard env variable names
-        and not custom ones, and leave the values blank here.
-        Only when you trust the source of your yaml files, you can set safe_mode to False
-        via the AgentFactory constructor.
     """
     if value is None:
         return value

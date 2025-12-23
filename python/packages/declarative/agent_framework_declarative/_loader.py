@@ -119,8 +119,9 @@ class AgentFactory:
         client_kwargs: Mapping[str, Any] | None = None,
         additional_mappings: Mapping[str, ProviderTypeMapping] | None = None,
         default_provider: str = "AzureAIClient",
-        env_file: str | None = None,
         safe_mode: bool = True,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Create the agent factory, with bindings.
 
@@ -153,14 +154,15 @@ class AgentFactory:
                 that accepts the model.id value.
             default_provider: The default provider used when model.provider is not specified,
                 default is "AzureAIClient".
-            env_file: An optional path to a .env file to load environment variables from.
             safe_mode: Whether to run in safe mode, default is True.
-                When safe_mode is True, environment variables are not accessible.
-                You can still use those but through the constructors of the classes.
-                So in this case make sure you are using the standard env variable names
-                and not custom ones, and leave the values blank here.
+                When safe_mode is True, environment variables are not accessible in the powerfx expressions.
+                You can still use environment variables, but through the constructors of the classes.
+                Which means you must make sure you are using the standard env variable names of the classes
+                you are using and not custom ones and remove the powerfx statements that start with `=Env.`.
                 Only when you trust the source of your yaml files, you can set safe_mode to False
                 via the AgentFactory constructor.
+            env_file_path: The path to the .env file to load environment variables from.
+            env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
         """
         self.chat_client = chat_client
         self.bindings = bindings
@@ -169,7 +171,7 @@ class AgentFactory:
         self.additional_mappings = additional_mappings or {}
         self.default_provider: str = default_provider
         self.safe_mode = safe_mode
-        load_dotenv(dotenv_path=env_file)
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> ChatAgent:
         """Create a ChatAgent from a YAML file path.
