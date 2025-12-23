@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         # todo: add macos-latest when problems are resolved
         os: [ubuntu-latest, windows-latest]
     env:
@@ -27,7 +27,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup

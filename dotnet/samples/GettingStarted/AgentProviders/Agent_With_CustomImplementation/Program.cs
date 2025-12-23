@@ -39,11 +39,16 @@ namespace SampleApp
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
 
+            if (thread is not CustomAgentThread typedThread)
+            {
+                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+            }
+
             // Clone the input messages and turn them into response messages with upper case text.
-            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
+            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
+            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
 
             return new AgentRunResponse
             {
@@ -58,18 +63,23 @@ namespace SampleApp
             // Create a thread if the user didn't supply one.
             thread ??= this.GetNewThread();
 
+            if (thread is not CustomAgentThread typedThread)
+            {
+                throw new ArgumentException($"The provided thread is not of type {nameof(CustomAgentThread)}.", nameof(thread));
+            }
+
             // Clone the input messages and turn them into response messages with upper case text.
-            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.DisplayName).ToList();
+            List<ChatMessage> responseMessages = CloneAndToUpperCase(messages, this.Name).ToList();
 
             // Notify the thread of the input and output messages.
-            await NotifyThreadOfNewMessagesAsync(thread, messages.Concat(responseMessages), cancellationToken);
+            await typedThread.MessageStore.AddMessagesAsync(messages.Concat(responseMessages), cancellationToken);
 
             foreach (var message in responseMessages)
             {
                 yield return new AgentRunResponseUpdate
                 {
                     AgentId = this.Id,
-                    AuthorName = this.DisplayName,
+                    AuthorName = message.AuthorName,
                     Role = ChatRole.Assistant,
                     Contents = message.Contents,
                     ResponseId = Guid.NewGuid().ToString("N"),
@@ -78,7 +88,7 @@ namespace SampleApp
             }
         }
 
-        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string agentName) => messages.Select(x =>
+        private static IEnumerable<ChatMessage> CloneAndToUpperCase(IEnumerable<ChatMessage> messages, string? agentName) => messages.Select(x =>
             {
                 // Clone the message and update its author to be the agent.
                 var messageClone = x.Clone();

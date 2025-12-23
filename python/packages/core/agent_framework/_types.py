@@ -561,7 +561,7 @@ class BaseContent(SerializationMixin):
     def __init__(
         self,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -651,7 +651,7 @@ class TextContent(BaseContent):
         *,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextContent instance.
@@ -789,11 +789,12 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         **kwargs: Any,
     ):
         """Initializes a TextReasoningContent instance.
@@ -802,6 +803,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +825,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
@@ -846,13 +858,18 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -869,7 +886,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
@@ -888,6 +907,11 @@ class TextReasoningContent(BaseContent):
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
+
         # Merge annotations
         if other.annotations:
             if self.annotations is None:
@@ -895,6 +919,9 @@ class TextReasoningContent(BaseContent):
             self.annotations.extend(other.annotations)
 
         return self
+
+
+TDataContent = TypeVar("TDataContent", bound="DataContent")
 
 
 class DataContent(BaseContent):
@@ -922,6 +949,10 @@ class DataContent(BaseContent):
             image_data = b"raw image bytes"
             data_content = DataContent(data=image_data, media_type="image/png")
 
+            # Create from base64-encoded string
+            base64_string = "iVBORw0KGgoAAAANS..."
+            data_content = DataContent(data=base64_string, media_type="image/png")
+
             # Create from data URI
             data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
             data_content = DataContent(uri=data_uri)
@@ -936,7 +967,7 @@ class DataContent(BaseContent):
         self,
         *,
         uri: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -962,7 +993,7 @@ class DataContent(BaseContent):
         *,
         data: bytes,
         media_type: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -983,13 +1014,40 @@ class DataContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
 
+    @overload
+    def __init__(
+        self,
+        *,
+        data: str,
+        media_type: str,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a DataContent instance with base64-encoded string data.
+
+        Important:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use ``UriContent`` for online resources.
+
+        Keyword Args:
+            data: The base64-encoded string data represented by this instance.
+                The data is used directly to construct a data URI.
+            media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+
     def __init__(
         self,
         *,
         uri: str | None = None,
-        data: bytes | None = None,
+        data: bytes | str | None = None,
         media_type: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1003,8 +1061,9 @@ class DataContent(BaseContent):
         Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
+            data: The binary data or base64-encoded string represented by this instance.
+                If bytes, the data is transformed into a base64-encoded data URI.
+                If str, it is assumed to be already base64-encoded and used directly.
             media_type: The media type of the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1014,7 +1073,9 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+            uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
         validated_uri = self._validate_uri(uri)
@@ -1049,6 +1110,70 @@ class DataContent(BaseContent):
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
         return _has_top_level_media_type(self.media_type, top_level_media_type)
+
+    @staticmethod
+    def detect_image_format_from_base64(image_base64: str) -> str:
+        """Detect image format from base64 data by examining the binary header.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Image format as string (png, jpeg, webp, gif) with png as fallback
+        """
+        try:
+            # Constants for image format detection
+            # ~75 bytes of binary data should be enough to detect most image formats
+            FORMAT_DETECTION_BASE64_CHARS = 100
+
+            # Decode a small portion to detect format
+            decoded_data = base64.b64decode(image_base64[:FORMAT_DETECTION_BASE64_CHARS])
+            if decoded_data.startswith(b"\x89PNG"):
+                return "png"
+            if decoded_data.startswith(b"\xff\xd8\xff"):
+                return "jpeg"
+            if decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
+                return "webp"
+            if decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
+                return "gif"
+            return "png"  # Default fallback
+        except Exception:
+            return "png"  # Fallback if decoding fails
+
+    @staticmethod
+    def create_data_uri_from_base64(image_base64: str) -> tuple[str, str]:
+        """Create a data URI and media type from base64 image data.
+
+        Args:
+            image_base64: Base64 encoded image data
+
+        Returns:
+            Tuple of (data_uri, media_type)
+        """
+        format_type = DataContent.detect_image_format_from_base64(image_base64)
+        uri = f"data:image/{format_type};base64,{image_base64}"
+        media_type = f"image/{format_type}"
+        return uri, media_type
+
+    def get_data_bytes_as_str(self) -> str:
+        """Extracts and returns the base64-encoded data from the data URI.
+
+        Returns:
+            The binary data as str.
+        """
+        match = URI_PATTERN.match(self.uri)
+        if not match:
+            raise ValueError(f"Invalid data URI format: {self.uri}")
+        return match.group("base64_data")
+
+    def get_data_bytes(self) -> bytes:
+        """Extracts and returns the binary data from the data URI.
+
+        Returns:
+            The binary data as bytes.
+        """
+        base64_data = self.get_data_bytes_as_str()
+        return base64.b64decode(base64_data)
 
 
 class UriContent(BaseContent):
@@ -1093,7 +1218,7 @@ class UriContent(BaseContent):
         uri: str,
         media_type: str,
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1187,7 +1312,7 @@ class ErrorContent(BaseContent):
         message: str | None = None,
         error_code: str | None = None,
         details: str | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1271,7 +1396,7 @@ class FunctionCallContent(BaseContent):
         name: str,
         arguments: str | dict[str, Any | None] | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1380,7 +1505,7 @@ class FunctionResultContent(BaseContent):
         call_id: str,
         result: Any | None = None,
         exception: Exception | None = None,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1438,7 +1563,7 @@ class UsageContent(BaseContent):
         self,
         details: UsageDetails | MutableMapping[str, Any],
         *,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1556,7 +1681,7 @@ class BaseUserInputRequest(BaseContent):
         self,
         *,
         id: str,
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1610,7 +1735,7 @@ class FunctionApprovalResponseContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1674,7 +1799,7 @@ class FunctionApprovalRequestContent(BaseContent):
         *,
         id: str,
         function_call: FunctionCallContent | MutableMapping[str, Any],
-        annotations: list[Annotations | MutableMapping[str, Any]] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1738,6 +1863,8 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
     if isinstance(content, dict):
         return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if isinstance(content, BaseModel):
+        return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
     return content
@@ -1747,13 +1874,14 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
     """Prepare the values of the function call results."""
     if isinstance(content, Contents):
         # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+        # Use default=str to handle datetime and other non-JSON-serializable objects
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
-    # fallback
-    return json.dumps(dumpable)
+    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
+    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants
@@ -1906,6 +2034,7 @@ class ChatMessage(SerializationMixin):
         author_name: The name of the author of the message.
         message_id: The ID of the chat message.
         additional_properties: Any additional properties associated with the chat message.
+            Additional properties are used within Agent Framework, they are not sent to services.
         raw_representation: The raw representation of the chat message from an underlying implementation.
 
     Examples:
@@ -1966,6 +2095,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -1992,6 +2122,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             **kwargs: Additional keyword arguments.
         """
@@ -2019,6 +2150,7 @@ class ChatMessage(SerializationMixin):
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
+                Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
             kwargs: will be combined with additional_properties if provided.
         """
@@ -2050,6 +2182,38 @@ class ChatMessage(SerializationMixin):
             This property concatenates the text of all TextContent objects in Contents.
         """
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
+
+
+def prepare_messages(
+    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+) -> list[ChatMessage]:
+    """Convert various message input formats into a list of ChatMessage objects.
+
+    Args:
+        messages: The input messages in various supported formats.
+        system_instructions: The system instructions. They will be inserted to the start of the messages list.
+
+    Returns:
+        A list of ChatMessage objects.
+    """
+    if system_instructions is not None:
+        if isinstance(system_instructions, str):
+            system_instructions = [system_instructions]
+        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+    else:
+        system_instruction_messages = []
+
+    if isinstance(messages, str):
+        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
+    if isinstance(messages, ChatMessage):
+        return [*system_instruction_messages, messages]
+
+    return_messages: list[ChatMessage] = system_instruction_messages
+    for msg in messages:
+        if isinstance(msg, str):
+            msg = ChatMessage(role="user", text=msg)
+        return_messages.append(msg)
+    return return_messages
 
 
 # region ChatResponse
@@ -3085,6 +3249,40 @@ class ChatOptions(SerializationMixin):
         self.top_p = top_p
         self.user = user
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> "ChatOptions":
+        """Create a runtime-safe copy without deep-copying tool instances."""
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for key, value in self.__dict__.items():
+            if key == "_tools":
+                setattr(clone, key, list(value) if value is not None else None)
+                continue
+            if key in {"logit_bias", "metadata", "additional_properties"}:
+                setattr(clone, key, self._safe_deepcopy_mapping(value, memo))
+                continue
+            setattr(clone, key, self._safe_deepcopy_value(value, memo))
+        return clone
+
+    @staticmethod
+    def _safe_deepcopy_mapping(
+        value: MutableMapping[str, Any] | None, memo: dict[int, Any]
+    ) -> MutableMapping[str, Any] | None:
+        """Deep copy helper that falls back to a shallow copy for problematic mappings."""
+        if value is None:
+            return None
+        try:
+            return deepcopy(value, memo)  # type: ignore[arg-type]
+        except Exception:
+            return dict(value)
+
+    @staticmethod
+    def _safe_deepcopy_value(value: Any, memo: dict[int, Any]) -> Any:
+        """Deep copy helper that avoids failing on non-copyable instances."""
+        try:
+            return deepcopy(value, memo)
+        except Exception:
+            return value
+
     @property
     def tools(self) -> list[ToolProtocol | MutableMapping[str, Any]] | None:
         """Return the tools that are specified."""
@@ -3125,7 +3323,7 @@ class ChatOptions(SerializationMixin):
     @classmethod
     def _validate_tool_mode(
         cls, tool_choice: ToolMode | Literal["auto", "required", "none"] | Mapping[str, Any] | None
-    ) -> ToolMode | str | None:
+    ) -> ToolMode | None:
         """Validates the tool_choice field to ensure it is a valid ToolMode."""
         if not tool_choice:
             return None

@@ -8,8 +8,10 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 /// <summary>Executor used at the start of a handoffs workflow to accumulate messages and emit them as HandoffState upon receiving a turn token.</summary>
-internal sealed class HandoffsStartExecutor() : ChatProtocolExecutor("HandoffStart", DefaultOptions), IResettableExecutor
+internal sealed class HandoffsStartExecutor() : ChatProtocolExecutor(ExecutorId, DefaultOptions, declareCrossRunShareable: true), IResettableExecutor
 {
+    internal const string ExecutorId = "HandoffStart";
+
     private static ChatProtocolExecutorOptions DefaultOptions => new()
     {
         StringMessageChatRole = ChatRole.User

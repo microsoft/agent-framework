@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// <see cref="AIContext"/> serves as a container for contextual information that <see cref="AIContextProvider"/> instances
-/// can supply to enhance AI model interactions. This context is combined across multiple providers and merged with
+/// can supply to enhance AI model interactions. This context is merged with
 /// the agent's base configuration before being passed to the underlying AI model.
 /// </para>
 /// <para>
@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
-/// Context information is transient by default and applies only to the current invocation, though messages
+/// Context information is transient by default and applies only to the current invocation, however messages
 /// added through the <see cref="Messages"/> property will be permanently incorporated into the conversation history.
 /// </para>
 /// </remarks>

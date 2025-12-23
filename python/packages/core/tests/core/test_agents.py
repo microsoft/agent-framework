@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import contextlib
 from collections.abc import AsyncIterable, MutableSequence, Sequence
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from pytest import raises
@@ -19,10 +21,13 @@ from agent_framework import (
     ChatResponse,
     Context,
     ContextProvider,
+    FunctionCallContent,
     HostedCodeInterpreterTool,
     Role,
     TextContent,
+    ai_function,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework.exceptions import AgentExecutionException
 
 
@@ -110,6 +115,26 @@ async def test_chat_client_agent_prepare_thread_and_messages(chat_client: ChatCl
     assert len(result_messages) == 2
     assert result_messages[0] == message
     assert result_messages[1].text == "Test"
+
+
+async def test_prepare_thread_does_not_mutate_agent_chat_options(chat_client: ChatClientProtocol) -> None:
+    tool = HostedCodeInterpreterTool()
+    agent = ChatAgent(chat_client=chat_client, tools=[tool])
+
+    assert agent.chat_options.tools is not None
+    base_tools = agent.chat_options.tools
+    thread = agent.get_new_thread()
+
+    _, prepared_chat_options, _ = await agent._prepare_thread_and_messages(  # type: ignore[reportPrivateUsage]
+        thread=thread,
+        input_messages=[ChatMessage(role=Role.USER, text="Test")],
+    )
+
+    assert prepared_chat_options.tools is not None
+    assert base_tools is not prepared_chat_options.tools
+
+    prepared_chat_options.tools.append(HostedCodeInterpreterTool())  # type: ignore[arg-type]
+    assert len(agent.chat_options.tools) == 1
 
 
 async def test_chat_client_agent_update_thread_id(chat_client_base: ChatClientProtocol) -> None:
@@ -506,3 +531,104 @@ async def test_chat_agent_as_tool_with_async_stream_callback(chat_client: ChatCl
     # Result should be concatenation of all streaming updates
     expected_text = "".join(update.text for update in collected_updates)
     assert result == expected_text
+
+
+async def test_chat_agent_as_tool_name_sanitization(chat_client: ChatClientProtocol) -> None:
+    """Test as_tool name sanitization."""
+    test_cases = [
+        ("Invoice & Billing Agent", "Invoice_Billing_Agent"),
+        ("Travel & Logistics Agent", "Travel_Logistics_Agent"),
+        ("Agent@Company.com", "Agent_Company_com"),
+        ("Agent___Multiple___Underscores", "Agent_Multiple_Underscores"),
+        ("123Agent", "_123Agent"),  # Test digit prefix handling
+        ("9to5Helper", "_9to5Helper"),  # Another digit prefix case
+        ("@@@", "agent"),  # Test empty sanitization fallback
+    ]
+
+    for agent_name, expected_tool_name in test_cases:
+        agent = ChatAgent(chat_client=chat_client, name=agent_name, description="Test agent")
+        tool = agent.as_tool()
+        assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
+
+
+async def test_chat_agent_as_mcp_server_basic(chat_client: ChatClientProtocol) -> None:
+    """Test basic as_mcp_server functionality."""
+    agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent for MCP")
+
+    # Create MCP server with default parameters
+    server = agent.as_mcp_server()
+
+    # Verify server is created
+    assert server is not None
+    assert hasattr(server, "name")
+    assert hasattr(server, "version")
+
+
+async def test_chat_agent_run_with_mcp_tools(chat_client: ChatClientProtocol) -> None:
+    """Test run method with MCP tools to cover MCP tool handling code."""
+    agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent")
+
+    # Create a mock MCP tool
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.is_connected = False
+    mock_mcp_tool.functions = [MagicMock()]
+
+    # Mock the async context manager entry
+    mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
+    mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
+
+    # Test run with MCP tools - this should hit the MCP tool handling code
+    with contextlib.suppress(Exception):
+        # We expect this to fail since we're using mocks, but we want to exercise the code path
+        await agent.run(messages="Test message", tools=[mock_mcp_tool])
+
+
+async def test_chat_agent_with_local_mcp_tools(chat_client: ChatClientProtocol) -> None:
+    """Test agent initialization with local MCP tools."""
+    # Create a mock MCP tool
+    mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.is_connected = False
+    mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
+    mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
+
+    # Test agent with MCP tools in constructor
+    with contextlib.suppress(Exception):
+        agent = ChatAgent(chat_client=chat_client, name="TestAgent", description="Test agent", tools=[mock_mcp_tool])
+        # Test async context manager with MCP tools
+        async with agent:
+            pass
+
+
+async def test_agent_tool_receives_thread_in_kwargs(chat_client_base: Any) -> None:
+    """Verify tool execution receives 'thread' inside **kwargs when function is called by client."""
+
+    captured: dict[str, Any] = {}
+
+    @ai_function(name="echo_thread_info")
+    def echo_thread_info(text: str, **kwargs: Any) -> str:  # type: ignore[reportUnknownParameterType]
+        thread = kwargs.get("thread")
+        captured["has_thread"] = thread is not None
+        captured["has_message_store"] = thread.message_store is not None if isinstance(thread, AgentThread) else False
+        return f"echo: {text}"
+
+    # Make the base client emit a function call for our tool
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="echo_thread_info", arguments='{"text": "hello"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    agent = ChatAgent(
+        chat_client=chat_client_base, tools=[echo_thread_info], chat_message_store_factory=ChatMessageStore
+    )
+    thread = agent.get_new_thread()
+
+    result = await agent.run("hello", thread=thread)
+
+    assert result.text == "done"
+    assert captured.get("has_thread") is True
+    assert captured.get("has_message_store") is True

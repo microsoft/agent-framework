@@ -1,0 +1,6 @@
+{
+  "model": "gpt-4o-mini",
+  "input": "Tell me a short story about a robot.",
+  "max_output_tokens": 200,
+  "stream": true
+}

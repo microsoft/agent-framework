@@ -15,7 +15,7 @@ internal static class ExpandoObjectExtensions
 
         foreach (KeyValuePair<string, object?> property in value)
         {
-            recordType.Add(property.Key, property.Value.GetFormulaType());
+            recordType = recordType.Add(property.Key, property.Value.GetFormulaType());
         }
 
         return recordType;

@@ -1,0 +1,12 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short poem about AI."
+    }
+  ],
+  "max_completion_tokens": 150,
+  "temperature": 1.0,
+  "stream": true
+}

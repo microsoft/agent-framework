@@ -35,16 +35,38 @@ interface DialogFooterProps {
 export function Dialog({ open, onOpenChange, children }: DialogProps) {
   if (!open) return null;
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onClick={() => onOpenChange(false)}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50" />
+  const handleBackdropClick = () => {
+    // Close the modal when backdrop is clicked
+    onOpenChange(false);
+  };
 
-      {/* Modal content */}
-      <div onClick={(e) => e.stopPropagation()}>{children}</div>
+  const handleContentClick = (e: React.MouseEvent) => {
+    // Stop any clicks inside the content from bubbling to backdrop
+    e.stopPropagation();
+  };
+
+  const handleContentMouseDown = (e: React.MouseEvent) => {
+    // Prevent mousedown from bubbling during text selection
+    e.stopPropagation();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop - handles clicks to close */}
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={handleBackdropClick}
+      />
+
+      {/* Modal content - positioned above backdrop with z-index */}
+      <div
+        className="relative z-10"
+        onClick={handleContentClick}
+        onMouseDown={handleContentMouseDown}
+        onMouseUp={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
     </div>
   );
 }

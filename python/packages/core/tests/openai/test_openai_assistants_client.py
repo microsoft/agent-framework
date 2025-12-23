@@ -193,18 +193,6 @@ def test_openai_assistants_client_init_with_default_headers(openai_unit_test_env
         assert chat_client.client.default_headers[key] == value
 
 
-def test_openai_assistants_client_instructions_sent_once(mock_async_openai: MagicMock) -> None:
-    """Ensure instructions are only included once for OpenAI Assistants requests."""
-    chat_client = create_test_openai_assistants_client(mock_async_openai)
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = chat_client.prepare_messages([ChatMessage(role=Role.USER, text="Hello")], chat_options)
-    run_options, _ = chat_client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert run_options.get("instructions") == instructions
-
-
 async def test_openai_assistants_client_get_assistant_id_or_create_existing_assistant(
     mock_async_openai: MagicMock,
 ) -> None:
@@ -475,9 +463,9 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     """Test _process_stream_events with thread.run.requires_action event."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    # Mock the _create_function_call_contents method to return test content
+    # Mock the _parse_function_calls_from_assistants method to return test content
     test_function_content = FunctionCallContent(call_id="call-123", name="test_func", arguments={"arg": "value"})
-    chat_client._create_function_call_contents = MagicMock(return_value=[test_function_content])  # type: ignore
+    chat_client._parse_function_calls_from_assistants = MagicMock(return_value=[test_function_content])  # type: ignore
 
     # Create a mock Run object
     mock_run = MagicMock(spec=Run)
@@ -510,8 +498,8 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     assert update.contents[0] == test_function_content
     assert update.raw_representation == mock_run
 
-    # Verify _create_function_call_contents was called correctly
-    chat_client._create_function_call_contents.assert_called_once_with(mock_run, None)  # type: ignore
+    # Verify _parse_function_calls_from_assistants was called correctly
+    chat_client._parse_function_calls_from_assistants.assert_called_once_with(mock_run, None)  # type: ignore
 
 
 async def test_openai_assistants_client_process_stream_events_run_step_created(mock_async_openai: MagicMock) -> None:
@@ -597,8 +585,8 @@ async def test_openai_assistants_client_process_stream_events_run_completed_with
     assert update.raw_representation == mock_run
 
 
-def test_openai_assistants_client_create_function_call_contents_basic(mock_async_openai: MagicMock) -> None:
-    """Test _create_function_call_contents with a simple function call."""
+def test_openai_assistants_client_parse_function_calls_from_assistants_basic(mock_async_openai: MagicMock) -> None:
+    """Test _parse_function_calls_from_assistants with a simple function call."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
@@ -617,7 +605,7 @@ def test_openai_assistants_client_create_function_call_contents_basic(mock_async
 
     # Call the method
     response_id = "response_456"
-    contents = chat_client._create_function_call_contents(mock_run, response_id)  # type: ignore
+    contents = chat_client._parse_function_calls_from_assistants(mock_run, response_id)  # type: ignore
 
     # Test that one function call content was created
     assert len(contents) == 1
@@ -837,24 +825,24 @@ def test_openai_assistants_client_prepare_options_with_image_content(mock_async_
     assert message["content"][0]["image_url"]["url"] == "https://example.com/image.jpg"
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_empty(mock_async_openai: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with empty list."""
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_empty(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_tool_outputs_for_assistants with empty list."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([])  # type: ignore
 
     assert run_id is None
     assert tool_outputs is None
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_valid(mock_async_openai: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with valid function results."""
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_valid(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_tool_outputs_for_assistants with valid function results."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     call_id = json.dumps(["run-123", "call-456"])
     function_result = FunctionResultContent(call_id=call_id, result="Function executed successfully")
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([function_result])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result])  # type: ignore
 
     assert run_id == "run-123"
     assert tool_outputs is not None
@@ -863,10 +851,10 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_valid(
     assert tool_outputs[0].get("output") == "Function executed successfully"
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_mismatched_run_ids(
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_mismatched_run_ids(
     mock_async_openai: MagicMock,
 ) -> None:
-    """Test _convert_function_results_to_tool_output with mismatched run IDs."""
+    """Test _prepare_tool_outputs_for_assistants with mismatched run IDs."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create function results with different run IDs
@@ -875,7 +863,7 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_mismat
     function_result1 = FunctionResultContent(call_id=call_id1, result="Result 1")
     function_result2 = FunctionResultContent(call_id=call_id2, result="Result 2")
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([function_result1, function_result2])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result1, function_result2])  # type: ignore
 
     # Should only process the first one since run IDs don't match
     assert run_id == "run-123"
@@ -884,36 +872,36 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_mismat
     assert tool_outputs[0].get("tool_call_id") == "call-456"
 
 
-def test_openai_assistants_client_update_agent_name(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method updates assistant_name when not already set."""
+def test_openai_assistants_client_update_agent_name_and_description(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method updates assistant_name when not already set."""
     # Test updating agent name when assistant_name is None
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name=None)
 
     # Call the private method to update agent name
-    chat_client._update_agent_name("New Assistant Name")  # type: ignore
+    chat_client._update_agent_name_and_description("New Assistant Name")  # type: ignore
 
     assert chat_client.assistant_name == "New Assistant Name"
 
 
-def test_openai_assistants_client_update_agent_name_existing(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method doesn't override existing assistant_name."""
+def test_openai_assistants_client_update_agent_name_and_description_existing(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method doesn't override existing assistant_name."""
     # Test that existing assistant_name is not overridden
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name="Existing Assistant")
 
     # Call the private method to update agent name
-    chat_client._update_agent_name("New Assistant Name")  # type: ignore
+    chat_client._update_agent_name_and_description("New Assistant Name")  # type: ignore
 
     # Should keep the existing name
     assert chat_client.assistant_name == "Existing Assistant"
 
 
-def test_openai_assistants_client_update_agent_name_none(mock_async_openai: MagicMock) -> None:
-    """Test _update_agent_name method with None agent_name parameter."""
+def test_openai_assistants_client_update_agent_name_and_description_none(mock_async_openai: MagicMock) -> None:
+    """Test _update_agent_name_and_description method with None agent_name parameter."""
     # Test that None agent_name doesn't change anything
     chat_client = create_test_openai_assistants_client(mock_async_openai, assistant_name=None)
 
     # Call the private method with None
-    chat_client._update_agent_name(None)  # type: ignore
+    chat_client._update_agent_name_and_description(None)  # type: ignore
 
     # Should remain None
     assert chat_client.assistant_name is None

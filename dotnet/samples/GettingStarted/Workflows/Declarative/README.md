@@ -1,26 +1,26 @@
 ﻿# Summary
 
-This demo showcases the ability to parse a declarative Foundry Workflow file (YAML) to build a `Workflow<>`
-be executed using the same pattern as any code-based workflow.
+These samples showcases the ability to parse a declarative Foundry Workflow file (YAML) 
+to build a `Workflow` that may be executed using the same pattern as any code-based workflow.
 
 ## Configuration
 
-This demo requires configuration to access agents an [Azure Foundry Project](https://learn.microsoft.com/azure/ai-foundry).
+These samples must be configured to create and use agents your 
+[Azure Foundry Project](https://learn.microsoft.com/azure/ai-foundry).
 
-#### Settings
+### Settings
 
 We suggest using .NET [Secret Manager](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) 
 to avoid the risk of leaking secrets into the repository, branches and pull requests. 
 You can also use environment variables if you prefer.
 
-To set your secrets as an environment variable (PowerShell):
+The configuraton required by the samples is:
 
-```pwsh
-$env:FOUNDRY_PROJECT_ENDPOINT="https://..."
-```
-
-etc...
-
+|Setting Name| Description|
+|:--|:--|
+|FOUNDRY_PROJECT_ENDPOINT| The endpoint URL of your Azure Foundry Project.|
+|FOUNDRY_MODEL_DEPLOYMENT_NAME| The name of the model deployment to use
+|FOUNDRY_CONNECTION_GROUNDING_TOOL| The name of the Bing Grounding connection configured in your Azure Foundry Project.|
 
 To set your secrets with .NET Secret Manager:
 
@@ -51,7 +51,7 @@ To set your secrets with .NET Secret Manager:
 5. Define setting that identifies your Azure Foundry Model Deployment (endpoint):
 
     ```
-    dotnet user-secrets set "FOUNDRY_MODEL_DEPLOYMENT_NAME" "gpt-4.1"
+    dotnet user-secrets set "FOUNDRY_MODEL_DEPLOYMENT_NAME" "gpt-5"
     ```
 
 6. Define setting that identifies your Bing Grounding connection:
@@ -60,7 +60,15 @@ To set your secrets with .NET Secret Manager:
     dotnet user-secrets set "FOUNDRY_CONNECTION_GROUNDING_TOOL" "mybinggrounding"
     ```
 
-#### Authorization
+You may alternatively set your secrets as an environment variable (PowerShell):
+
+```pwsh
+$env:FOUNDRY_PROJECT_ENDPOINT="https://..."
+$env:FOUNDRY_MODEL_DEPLOYMENT_NAME="gpt-5"
+$env:FOUNDRY_CONNECTION_GROUNDING_TOOL="mybinggrounding"
+```
+
+### Authorization
 
 Use [_Azure CLI_](https://learn.microsoft.com/cli/azure/authenticate-azure-cli) to authorize access to your Azure Foundry Project:
 
@@ -69,34 +77,23 @@ az login
 az account get-access-token
 ```
 
-#### Agents
-
-The sample workflows rely on agents defined in your Azure Foundry Project.
-
-To create agents, run the [`Create.ps1`](../../../../../workflow-samples/setup/) script.
-This will create the agents used in the sample workflows in your Azure Foundry Project and format a script you can copy and use to configure your environment.
-
-> Note: `Create.ps1` relies upon the `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL_DEPLOYMENT_NAME`, and `FOUNDRY_CONNECTION_GROUNDING_TOOL` settings.
-
 ## Execution
 
-Run the demo from the console by specifying a path to a declarative (YAML) workflow file.  
-The repository has example workflows available in the root [`/workflow-samples`](../../../../../workflow-samples) folder.
+The samples may be executed within _Visual Studio_ or _VS Code_.
+
+To run the sampes from the command line:
 
 1. From the root of the repository, navigate the console to the project folder:
 
     ```sh
-    cd dotnet/samples/GettingStarted/Workflows/Declarative/DeclarativeWorkflow
+    cd dotnet/samples/GettingStarted/Workflows/Declarative/Marketing
+    dotnet run Marketing
     ```
 
-2. Run the demo referencing a sample workflow by name:
+2. Run the demo and optionally provided input:
 
     ```sh
-    dotnet run HelloWorld
+    dotnet run "An eco-friendly stainless steel water bottle that keeps drinks cold for 24 hours."
+    dotnet run c:/myworkflows/Marketing.yaml
     ```
-
-3. Run the demo with a path to any workflow file:
-
-    ```sh
-    dotnet run c:/myworkflows/HelloWorld.yaml
-    ```
+   >  The sample will allow for interactive input in the absence of an input argument.

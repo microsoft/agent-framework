@@ -7,9 +7,71 @@ import type {
 import type {
   ExtendedResponseStreamEvent,
   ResponseWorkflowEventComplete,
+  JSONSchemaProperty,
 } from "@/types";
 import type { Workflow } from "@/types/workflow";
 import { getTypedWorkflow } from "@/types/workflow";
+
+/**
+ * Detects if a JSON schema represents a ChatMessage input type.
+ * ChatMessage schemas typically have:
+ * - type: "object"
+ * - properties with "text" (required string) and "role" (optional string)
+ *
+ * This is used to determine whether to show the rich ChatMessageInput
+ * component for workflows that start with an AgentExecutor.
+ *
+ * @param schema - The JSON schema to check
+ * @returns true if the schema represents a ChatMessage-like input
+ */
+export function isChatMessageSchema(schema: JSONSchemaProperty | undefined): boolean {
+  if (!schema) return false;
+
+  // Must be an object type
+  if (schema.type !== "object") return false;
+
+  // Must have properties
+  if (!schema.properties) return false;
+
+  const props = schema.properties;
+
+  // ChatMessage has "text" property (the main content)
+  const hasText = "text" in props && props.text?.type === "string";
+
+  // ChatMessage has "role" property (user, assistant, system)
+  const hasRole = "role" in props && props.role?.type === "string";
+
+  // If it has both text and role, it's likely a ChatMessage
+  if (hasText && hasRole) {
+    return true;
+  }
+
+  // Also check for simpler chat-like schemas (just text field)
+  // This covers cases where the schema might be simplified
+  const propKeys = Object.keys(props);
+  if (propKeys.length === 1 && hasText) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Truncates text that exceeds the maximum length and appends ellipsis
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length before truncation (default: 50)
+ * @param ellipsis - String to append when truncated (default: '...')
+ * @returns Truncated text with ellipsis if it exceeds maxLength, otherwise original text
+ *
+ * @example
+ * truncateText('Hello World', 5) // 'Hello...'
+ * truncateText('Short', 10) // 'Short'
+ * truncateText('workflow_assistant_43ca50a006aa425e96e8fcf54206a7e3', 35) // 'workflow_assistant_43ca50a006aa4...'
+ */
+export function truncateText(text: string, maxLength: number = 50, ellipsis: string = '...'): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + ellipsis;
+}
 
 export interface WorkflowDumpExecutor {
   id: string;
@@ -160,17 +222,22 @@ export function convertWorkflowDumpToEdges(
     return [];
   }
 
-  const edges = connections.map((connection) => ({
-    id: `${connection.source}-${connection.target}`,
-    source: connection.source,
-    target: connection.target,
-    type: "default",
-    animated: false,
-    style: {
-      stroke: "#6b7280",
-      strokeWidth: 2,
-    },
-  }));
+  const edges = connections.map((connection) => {
+    const isSelfLoop = connection.source === connection.target;
+    return {
+      id: `${connection.source}-${connection.target}`,
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: "source",
+      targetHandle: "target",
+      type: isSelfLoop ? "selfLoop" : "default",
+      animated: false,
+      style: {
+        stroke: "#6b7280",
+        strokeWidth: 2,
+      },
+    };
+  });
 
   return edges;
 }
@@ -307,6 +374,7 @@ export function applyDagreLayout(
 
 /**
  * Process workflow events and extract node updates
+ * Handles both standard OpenAI events and fallback workflow_event format
  */
 export function processWorkflowEvents(
   events: ExtendedResponseStreamEvent[],
@@ -315,9 +383,62 @@ export function processWorkflowEvents(
   const nodeUpdates: Record<string, NodeUpdate> = {};
   let hasWorkflowStarted = false;
 
+  // Track the latest item ID for each executor to handle multiple runs
+  const latestItemIds: Record<string, string> = {};
+
   events.forEach((event) => {
-    if (
-      event.type === "response.workflow_event.complete" &&
+    // Handle new standard OpenAI events
+    if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
+      const item = (event as any).item;
+      if (item && item.type === "executor_action" && item.executor_id) {
+        const executorId = item.executor_id;
+        const itemId = item.id;
+
+        // Track the latest item ID for this executor
+        if (event.type === "response.output_item.added") {
+          latestItemIds[executorId] = itemId;
+        }
+
+        // Only process this event if it's for the latest item ID of this executor
+        // This prevents older "done" events from overwriting newer "added" events
+        const isLatestItem = latestItemIds[executorId] === itemId;
+
+        if (!isLatestItem && event.type === "response.output_item.done") {
+          return; // Skip this old completion event
+        }
+
+        let state: ExecutorState = "pending";
+        let error: string | undefined;
+
+        if (event.type === "response.output_item.added") {
+          state = "running";
+        } else if (event.type === "response.output_item.done") {
+          if (item.status === "completed") {
+            state = "completed";
+          } else if (item.status === "failed") {
+            state = "failed";
+            error = item.error ? (typeof item.error === "string" ? item.error : JSON.stringify(item.error)) : "Execution failed";
+          } else if (item.status === "cancelled") {
+            state = "cancelled";
+          }
+        }
+
+        nodeUpdates[executorId] = {
+          nodeId: executorId,
+          state,
+          data: item.result,
+          error,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+    // Handle workflow lifecycle events
+    else if (event.type === "response.created" || event.type === "response.in_progress") {
+      hasWorkflowStarted = true;
+    }
+    // Handle workflow event format
+    else if (
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {
@@ -363,16 +484,38 @@ export function processWorkflowEvents(
     }
   });
 
-  // If workflow has started and we have a start executor, set it to running
-  // (unless it already has a specific state from an ExecutorInvokedEvent)
+  // FALLBACK LOGIC: If workflow has started and we have a start executor, set it to running
+  // ONLY if it hasn't received any explicit executor events
+  // This prevents overwriting the actual state after the executor has run
   if (hasWorkflowStarted && startExecutorId && !nodeUpdates[startExecutorId]) {
-    nodeUpdates[startExecutorId] = {
-      nodeId: startExecutorId,
-      state: "running",
-      data: undefined,
-      error: undefined,
-      timestamp: new Date().toISOString(),
-    };
+    // Additional check: only set to running if we don't have completion/failure events for this executor
+    // This prevents setting to "running" after the executor has already completed
+    const hasCompletionEvent = events.some((event) => {
+      if (event.type === "response.output_item.done") {
+        const item = (event as any).item;
+        return item && item.type === "executor_action" && item.executor_id === startExecutorId;
+      }
+      if (event.type === "response.workflow_event.completed" && "data" in event && event.data) {
+        const data = event.data as any;
+        return data.executor_id === startExecutorId &&
+               (data.event_type === "ExecutorCompletedEvent" ||
+                data.event_type === "ExecutorFailedEvent" ||
+                data.event_type?.includes("Error") ||
+                data.event_type?.includes("Failed"));
+      }
+      return false;
+    });
+
+    // Only set to running if the executor hasn't completed yet
+    if (!hasCompletionEvent) {
+      nodeUpdates[startExecutorId] = {
+        nodeId: startExecutorId,
+        state: "running",
+        data: undefined,
+        error: undefined,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 
   return nodeUpdates;
@@ -383,7 +526,8 @@ export function processWorkflowEvents(
  */
 export function updateNodesWithEvents(
   nodes: Node<ExecutorNodeData>[],
-  nodeUpdates: Record<string, NodeUpdate>
+  nodeUpdates: Record<string, NodeUpdate>,
+  isStreaming: boolean = true
 ): Node<ExecutorNodeData>[] {
   return nodes.map((node) => {
     const update = nodeUpdates[node.id];
@@ -395,6 +539,8 @@ export function updateNodesWithEvents(
           state: update.state,
           outputData: update.data,
           error: update.error,
+          // Add isStreaming to control spinning animation
+          isStreaming: isStreaming,
           // Preserve layoutDirection
           layoutDirection: node.data.layoutDirection,
         },
@@ -417,8 +563,21 @@ export function getCurrentlyExecutingExecutors(
 
   // Process events to find the most recent event for each executor
   events.forEach((event) => {
-    if (
-      event.type === "response.workflow_event.complete" &&
+    // Handle new standard OpenAI events
+    if (event.type === "response.output_item.added" || event.type === "response.output_item.done") {
+      const item = (event as any).item;
+      if (item && item.type === "executor_action" && item.executor_id) {
+        const executorId = item.executor_id;
+
+        executorTimeline[executorId] = {
+          lastEvent: event.type === "response.output_item.added" ? "ExecutorInvokedEvent" : "ExecutorCompletedEvent",
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+    // Handle workflow event format
+    else if (
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {
@@ -465,7 +624,7 @@ export function updateEdgesWithSequenceAnalysis(
 
   events.forEach((event) => {
     if (
-      event.type === "response.workflow_event.complete" &&
+      event.type === "response.workflow_event.completed" &&
       "data" in event &&
       event.data
     ) {
@@ -533,4 +692,75 @@ export function updateEdgesWithSequenceAnalysis(
       animated,
     };
   });
+}
+
+/**
+ * Consolidate bidirectional edges into single edges with arrows on both ends
+ * This reduces visual clutter when edges go in both directions between nodes
+ *
+ * Smart handle selection algorithm:
+ * The current implementation keeps whichever edge was encountered first in the array.
+ * Since edges are typically created in workflow definition order (following the primary flow),
+ * this naturally keeps the "forward" edge and discards the "backward" one.
+ *
+ * For example, if the workflow defines:
+ * 1. coordinator → planner (primary flow)
+ * 2. planner → coordinator (feedback loop)
+ *
+ * We keep edge #1 and add bidirectional arrows. This ensures the edge follows
+ * the natural output→input handle connection of the primary flow direction.
+ *
+ * React Flow will automatically route the edge to avoid overlaps, and the
+ * bidirectional arrows indicate that communication flows both ways.
+ */
+export function consolidateBidirectionalEdges(edges: Edge[]): Edge[] {
+  const edgeMap = new Map<string, Edge>();
+  const bidirectionalKeys = new Set<string>();
+
+  edges.forEach(edge => {
+    const forwardKey = `${edge.source}-${edge.target}`;
+    const reverseKey = `${edge.target}-${edge.source}`;
+
+    // Self-loops (source === target) should always be preserved as-is
+    // They are not bidirectional edges, just a node pointing to itself
+    if (edge.source === edge.target) {
+      edgeMap.set(forwardKey, edge);
+      return;
+    }
+
+    // Check if we already have the reverse edge
+    if (edgeMap.has(reverseKey)) {
+      // Mark both keys as bidirectional
+      bidirectionalKeys.add(reverseKey);
+      bidirectionalKeys.add(forwardKey);
+
+      // Update the existing reverse edge to be bidirectional
+      const existingEdge = edgeMap.get(reverseKey)!;
+
+      // Keep the existing edge's handles (they follow the primary workflow direction)
+      // Add bidirectional arrows to show two-way communication
+      edgeMap.set(reverseKey, {
+        ...existingEdge,
+        markerStart: {
+          type: 'arrow' as const,
+          width: 20,
+          height: 20,
+        },
+        markerEnd: {
+          type: 'arrow' as const,
+          width: 20,
+          height: 20,
+        },
+        data: {
+          ...existingEdge.data,
+          isBidirectional: true,
+        },
+      });
+    } else if (!bidirectionalKeys.has(forwardKey)) {
+      // Only add if this isn't the reverse of a bidirectional pair
+      edgeMap.set(forwardKey, edge);
+    }
+  });
+
+  return Array.from(edgeMap.values());
 }

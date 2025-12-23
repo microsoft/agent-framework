@@ -6,7 +6,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
-namespace WorkflowAsAnAgentsSample;
+namespace WorkflowAsAnAgentSample;
 
 /// <summary>
 /// This sample introduces the concepts workflows as agents, where a workflow can be
@@ -35,7 +35,7 @@ public static class Program
         var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
 
         // Create the workflow and turn it into an agent
-        var workflow = await WorkflowHelper.GetWorkflowAsync(chatClient);
+        var workflow = WorkflowFactory.BuildWorkflow(chatClient);
         var agent = workflow.AsAgent("workflow-agent", "Workflow Agent");
         var thread = agent.GetNewThread();
 
@@ -61,9 +61,9 @@ public static class Program
             Dictionary<string, List<AgentRunResponseUpdate>> buffer = [];
             await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(input, thread))
             {
-                if (update.MessageId is null)
+                if (update.MessageId is null || string.IsNullOrEmpty(update.Text))
                 {
-                    // skip updates that don't have a message ID
+                    // skip updates that don't have a message ID or text
                     continue;
                 }
                 Console.Clear();

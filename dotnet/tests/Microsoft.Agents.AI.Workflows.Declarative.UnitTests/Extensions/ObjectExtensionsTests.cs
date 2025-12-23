@@ -107,7 +107,7 @@ public sealed class ObjectExtensionsTests
     private static void VerifyConversion(object? sourceValue, VariableType targetType, object? expectedValue)
     {
         object? actualValue = sourceValue.ConvertType(targetType);
-        if (expectedValue is IDictionary<string, object?> || expectedValue is DateTime)
+        if (expectedValue is IDictionary<string, object?> or DateTime)
         {
             Assert.Equivalent(expectedValue, actualValue);
         }

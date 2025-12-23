@@ -9,7 +9,8 @@
   "validation": {
     "conversation_count": 3,
     "min_action_count": 3,
-    "min_response_count": 2,
+    "min_response_count": 3,
+    "min_message_count": 4,
     "actions": {
       "start": [
         "invoke_inner1",

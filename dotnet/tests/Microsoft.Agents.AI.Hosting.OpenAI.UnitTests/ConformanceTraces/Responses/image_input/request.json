@@ -1,0 +1,20 @@
+{
+  "model": "gpt-4o-mini",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What's in this image?"
+        },
+        {
+          "type": "input_image",
+          "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 150
+}

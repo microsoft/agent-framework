@@ -6,7 +6,7 @@ using System.Text.Json;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI;
+using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -32,7 +32,7 @@ string tempFilePath = Path.GetTempFileName();
 await File.WriteAllTextAsync(tempFilePath, JsonSerializer.Serialize(serializedThread));
 
 // Load the serialized thread from the temporary file (for demonstration purposes).
-JsonElement reloadedSerializedThread = JsonSerializer.Deserialize<JsonElement>(await File.ReadAllTextAsync(tempFilePath));
+JsonElement reloadedSerializedThread = JsonElement.Parse(await File.ReadAllTextAsync(tempFilePath));
 
 // Deserialize the thread state after loading from storage.
 AgentThread resumedThread = agent.DeserializeThread(reloadedSerializedThread);

@@ -14,7 +14,7 @@ repos:
       - id: check-json
         name: Check JSON files
         files: \.json$
-        exclude: ^.*\.vscode\/.*
+        exclude: ^.*\.vscode\/.*|^python/demos/samples/chatkit-integration/frontend/(tsconfig.*\.json|package-lock\.json)$
       - id: end-of-file-fixer
         name: Fix End of File
         files: \.py$
@@ -47,7 +47,6 @@ repos:
         entry: uv --directory ./python run poe pre-commit-check
         language: system
         files: ^python/
-        pass_filenames: false
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
     rev: 0.7.18

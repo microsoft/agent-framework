@@ -22,10 +22,10 @@ public static class WorkflowBuilderExtensions
     /// <typeparam name="TMessage">The type of message to forward.</typeparam>
     /// <param name="builder">The <see cref="WorkflowBuilder"/> to which the edges will be added.</param>
     /// <param name="source">The source executor from which messages will be forwarded.</param>
-    /// <param name="executors">The target executors to which messages will be forwarded.</param>
+    /// <param name="target">The target executor to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
-        => builder.ForwardMessage<TMessage>(source, condition: null, executors);
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
+        => builder.ForwardMessage<TMessage>(source, [target], condition: null);
 
     /// <summary>
     /// Adds edges to the workflow that forward messages of the specified type from the source executor to
@@ -34,26 +34,38 @@ public static class WorkflowBuilderExtensions
     /// <typeparam name="TMessage">The type of message to forward.</typeparam>
     /// <param name="builder">The <see cref="WorkflowBuilder"/> to which the edges will be added.</param>
     /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="targets">The target executors to which messages will be forwarded.</param>
+    /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
+        => builder.ForwardMessage<TMessage>(source, targets, condition: null);
+
+    /// <summary>
+    /// Adds edges to the workflow that forward messages of the specified type from the source executor to
+    /// one or more target executors.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of message to forward.</typeparam>
+    /// <param name="builder">The <see cref="WorkflowBuilder"/> to which the edges will be added.</param>
+    /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="targets">The target executors to which messages will be forwarded.</param>
     /// <param name="condition">An optional condition that messages must satisfy to be forwarded. If <see langword="null"/>,
     /// all messages of type <typeparamref name="TMessage"/> will be forwarded.</param>
-    /// <param name="executors">The target executors to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
-    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, Func<TMessage, bool>? condition = null, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<TMessage, bool>? condition = null)
     {
-        Throw.IfNull(executors);
+        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
 
 #if NET
-        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
-        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+        if (targets is ICollection<ExecutorBinding> { Count: 1 })
 #endif
         {
-            return builder.AddEdge(source, executors.First(), predicate);
+            return builder.AddEdge(source, targets.First(), predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
@@ -66,24 +78,35 @@ public static class WorkflowBuilderExtensions
     /// <typeparam name="TMessage">The type of messages to exclude from being forwarded to the executors.</typeparam>
     /// <param name="builder">The <see cref="WorkflowBuilder"/> instance to which the edges will be added.</param>
     /// <param name="source">The source executor from which messages will be forwarded.</param>
-    /// <param name="executors">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
+    /// <param name="target">The target executor to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
-    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorIsh source, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
+        => builder.ForwardExcept<TMessage>(source, [target]);
+
+    /// <summary>
+    /// Adds edges from the specified source to the provided executors, excluding messages of a specified type.
+    /// </summary>
+    /// <typeparam name="TMessage">The type of messages to exclude from being forwarded to the executors.</typeparam>
+    /// <param name="builder">The <see cref="WorkflowBuilder"/> instance to which the edges will be added.</param>
+    /// <param name="source">The source executor from which messages will be forwarded.</param>
+    /// <param name="targets">The target executors to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
+    /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
+    public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
     {
-        Throw.IfNull(executors);
+        Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
 
 #if NET
-        if (executors.TryGetNonEnumeratedCount(out int count) && count == 1)
+        if (targets.TryGetNonEnumeratedCount(out int count) && count == 1)
 #else
-        if (executors is ICollection<ExecutorIsh> { Count: 1 })
+        if (targets is ICollection<ExecutorBinding> { Count: 1 })
 #endif
         {
-            return builder.AddEdge(source, executors.First(), predicate);
+            return builder.AddEdge(source, targets.First(), predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, executors));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
 
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
@@ -98,11 +121,11 @@ public static class WorkflowBuilderExtensions
     /// executor in the order provided.</remarks>
     /// <param name="builder">The workflow builder to which the executor chain will be added. </param>
     /// <param name="source">The initial executor in the chain. Cannot be null.</param>
-    /// <param name="allowRepetition">If set to <see langword="true"/>, the same executor can be added to the chain multiple times.</param>
-    /// <param name="executors">An ordered array of executors to be added to the chain after the source.</param>
+    /// <param name="executors">An ordered sequence of executors to be added to the chain after the source.</param>
     /// <returns>The original workflow builder instance with the specified executor chain added.</returns>
+    /// <param name="allowRepetition">If set to <see langword="true"/>, the same executor can be added to the chain multiple times.</param>
     /// <exception cref="ArgumentException">Thrown if there is a cycle in the chain.</exception>
-    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorIsh source, bool allowRepetition = false, params IEnumerable<ExecutorIsh> executors)
+    public static WorkflowBuilder AddChain(this WorkflowBuilder builder, ExecutorBinding source, IList<ExecutorBinding> executors, bool allowRepetition = false)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
@@ -139,7 +162,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor representing the external system or process to connect. Cannot be null.</param>
     /// <param name="portId">The unique identifier for the input port that will handle the external call. Cannot be null.</param>
     /// <returns>The original workflow builder instance with the external call added.</returns>
-    public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorIsh source, string portId)
+    public static WorkflowBuilder AddExternalCall<TRequest, TResponse>(this WorkflowBuilder builder, ExecutorBinding source, string portId)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
@@ -160,7 +183,7 @@ public static class WorkflowBuilderExtensions
     /// <param name="source">The source executor that determines the branching condition for the switch. Cannot be null.</param>
     /// <param name="configureSwitch">An action used to configure the switch builder, specifying the branches and their conditions. Cannot be null.</param>
     /// <returns>The workflow builder instance with the configured switch step added.</returns>
-    public static WorkflowBuilder AddSwitch(this WorkflowBuilder builder, ExecutorIsh source, Action<SwitchBuilder> configureSwitch)
+    public static WorkflowBuilder AddSwitch(this WorkflowBuilder builder, ExecutorBinding source, Action<SwitchBuilder> configureSwitch)
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);

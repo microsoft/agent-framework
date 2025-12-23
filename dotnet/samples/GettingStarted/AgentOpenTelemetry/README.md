@@ -22,7 +22,7 @@ graph TD
 
 ## Prerequisites
 
-- .NET 8.0 SDK or later
+- .NET 10 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - Docker installed (for running Aspire Dashboard)
@@ -71,7 +71,7 @@ If you prefer to run the components manually:
 #### Step 1: Start the Aspire Dashboard via Docker
 
 ```powershell
-docker run -d --name aspire-dashboard -p 4318:18888 -p 4317:18889 -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+docker run -d --name aspire-dashboard -p 4318:18888 -p 4317:18889 -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true mcr.microsoft.com/dotnet/aspire-dashboard:latest
 ```
 
 #### Step 2: Access the Dashboard
@@ -142,11 +142,11 @@ You:
 Besides the Aspire Dashboard and the Application Insights native UI, you can also use Grafana to visualize the telemetry data in Application Insights. There are two tailored dashboards for you to get started quickly:
 
 ### Agent Overview dashboard
-Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-agent>
+Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-agent>
 ![Agent Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-agent.gif)
 
 ### Workflow Overview dashboard
-Grafana Dashboard Gallery link: <https://aka.ms/amg/dash/af-workflow>
+Open dashboard in Azure portal: <https://aka.ms/amg/dash/af-workflow>
 ![Workflow Overview dashboard](https://github.com/Azure/azure-managed-grafana/raw/main/samples/assets/grafana-af-workflow.gif)
 
 ## Key Features Demonstrated
@@ -207,7 +207,7 @@ If you encounter port binding errors, try:
 - Ensure the Azure OpenAI deployment name matches your actual deployment
 
 ### Build Issues
-- Ensure you're using .NET 9.0 SDK
+- Ensure you're using .NET 10.0 SDK
 - Run `dotnet restore` if you encounter package restore issues
 - Check that all project references are correctly resolved
 

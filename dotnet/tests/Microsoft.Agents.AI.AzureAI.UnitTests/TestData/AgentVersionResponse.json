@@ -1,0 +1,9 @@
+{
+  "object": "agent.version",
+  "id": "agent_abc123:1",
+  "name": "agent_abc123",
+  "version": "1",
+  "description": "",
+  "created_at": 1761771936,
+  "definition": "agent-definition-placeholder"
+}

@@ -2,7 +2,7 @@
 
 import copy
 import sys
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -37,7 +37,7 @@ class DictConvertible:
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError("JSON payload must decode to a mapping")
-        return cls.from_dict(data)
+        return cls.from_dict(cast(dict[str, Any], data))
 
 
 def encode_value(value: Any) -> Any:

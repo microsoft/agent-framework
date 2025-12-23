@@ -1,0 +1,11 @@
+### Start the multi-agent concurrent orchestration
+POST http://localhost:7071/api/multiagent/run
+Content-Type: text/plain
+
+What is temperature?
+
+### Check the status of the orchestration
+
+@instanceId =<Enter the instance ID from the response above>
+
+GET http://localhost:7071/api/multiagent/status/{{instanceId}}

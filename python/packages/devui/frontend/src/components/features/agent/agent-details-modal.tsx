@@ -94,14 +94,14 @@ export function AgentDetailsModal({
           {/* Grid Layout for Metadata */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Model & Client */}
-            {(agent.model || agent.chat_client_type) && (
+            {(agent.model_id || agent.chat_client_type) && (
               <DetailCard
                 title="Model & Client"
                 icon={<Bot className="h-4 w-4 text-muted-foreground" />}
               >
                 <div className="space-y-1">
-                  {agent.model && (
-                    <div className="font-mono text-foreground">{agent.model}</div>
+                  {agent.model_id && (
+                    <div className="font-mono text-foreground">{agent.model_id}</div>
                   )}
                   {agent.chat_client_type && (
                     <div className="text-xs">({agent.chat_client_type})</div>
@@ -136,7 +136,9 @@ export function AgentDetailsModal({
             >
               <div
                 className={
-                  agent.has_env ? "text-orange-600 dark:text-orange-400" : "text-green-600 dark:text-green-400"
+                  agent.has_env
+                    ? "text-orange-600 dark:text-orange-400"
+                    : "text-green-600 dark:text-green-400"
                 }
               >
                 {agent.has_env
@@ -162,11 +164,11 @@ export function AgentDetailsModal({
           {/* Tools and Middleware Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Tools */}
-            <DetailCard
-              title={`Tools (${agent.tools.length})`}
-              icon={<Package className="h-4 w-4 text-muted-foreground" />}
-            >
-              {agent.tools.length > 0 ? (
+            {agent.tools && agent.tools.length > 0 && (
+              <DetailCard
+                title={`Tools (${agent.tools.length})`}
+                icon={<Package className="h-4 w-4 text-muted-foreground" />}
+              >
                 <ul className="space-y-1">
                   {agent.tools.map((tool, index) => (
                     <li key={index} className="font-mono text-xs text-foreground">
@@ -174,10 +176,8 @@ export function AgentDetailsModal({
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <div className="text-muted-foreground">No tools configured</div>
-              )}
-            </DetailCard>
+              </DetailCard>
+            )}
 
             {/* Middleware */}
             {agent.middleware && agent.middleware.length > 0 && (

@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
-using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Abstractions.UnitTests;
 
@@ -215,26 +214,29 @@ public class AIAgentTests
     [Fact]
     public void ValidateAgentIDIsIdempotent()
     {
+        // Arrange
         var agent = new MockAgent();
 
+        // Act
         string id = agent.Id;
+
+        // Assert
         Assert.NotNull(id);
         Assert.Equal(id, agent.Id);
     }
 
     [Fact]
-    public async Task NotifyThreadOfNewMessagesNotifiesThreadAsync()
+    public void ValidateAgentIDCanBeProvidedByDerivedAgentClass()
     {
-        var cancellationToken = default(CancellationToken);
+        // Arrange
+        var agent = new MockAgent(id: "test-agent-id");
 
-        var messages = new[] { new ChatMessage(ChatRole.User, "msg1"), new ChatMessage(ChatRole.User, "msg2") };
+        // Act
+        string id = agent.Id;
 
-        var threadMock = new Mock<TestAgentThread> { CallBase = true };
-        threadMock.SetupAllProperties();
-
-        await MockAgent.NotifyThreadOfNewMessagesAsync(threadMock.Object, messages, cancellationToken);
-
-        threadMock.Protected().Verify("MessagesReceivedAsync", Times.Once(), messages, cancellationToken);
+        // Assert
+        Assert.NotNull(id);
+        Assert.Equal("test-agent-id", id);
     }
 
     #region GetService Method Tests
@@ -360,8 +362,12 @@ public class AIAgentTests
 
     private sealed class MockAgent : AIAgent
     {
-        public static new Task NotifyThreadOfNewMessagesAsync(AgentThread thread, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken) =>
-            AIAgent.NotifyThreadOfNewMessagesAsync(thread, messages, cancellationToken);
+        public MockAgent(string? id = null)
+        {
+            this.IdCore = id;
+        }
+
+        protected override string? IdCore { get; }
 
         public override AgentThread GetNewThread()
             => throw new NotImplementedException();

@@ -42,7 +42,7 @@ internal sealed class Program
         Console.WriteLine(code);
     }
 
-    private const string DefaultWorkflow = "HelloWorld.yaml";
+    private const string DefaultWorkflow = "Marketing.yaml";
 
     private string WorkflowFile { get; }
 

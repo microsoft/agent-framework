@@ -46,8 +46,8 @@ async def test_resume_fails_when_graph_mismatch() -> None:
     with pytest.raises(ValueError, match="Workflow graph has changed"):
         _ = [
             event
-            async for event in mismatched_workflow.run_stream_from_checkpoint(
-                target_checkpoint.checkpoint_id,
+            async for event in mismatched_workflow.run_stream(
+                checkpoint_id=target_checkpoint.checkpoint_id,
                 checkpoint_storage=storage,
             )
         ]
@@ -65,8 +65,8 @@ async def test_resume_succeeds_when_graph_matches() -> None:
 
     events = [
         event
-        async for event in resumed_workflow.run_stream_from_checkpoint(
-            target_checkpoint.checkpoint_id,
+        async for event in resumed_workflow.run_stream(
+            checkpoint_id=target_checkpoint.checkpoint_id,
             checkpoint_storage=storage,
         )
     ]

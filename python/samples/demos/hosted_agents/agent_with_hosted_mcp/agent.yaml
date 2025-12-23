@@ -1,0 +1,30 @@
+# Unique identifier/name for this agent
+name: agent-with-hosted-mcp
+# Brief description of what this agent does
+description: >
+  An AI agent that uses Azure OpenAI with a Hosted Model Context Protocol (MCP) server.
+  The agent answers questions by searching Microsoft Learn documentation using MCP tools.
+metadata:
+  # Categorization tags for organizing and discovering agents
+  authors:
+    - Microsoft Agent Framework Team
+  tags:
+    - Azure AI AgentServer
+    - Microsoft Agent Framework
+    - Model Context Protocol
+    - MCP
+template:
+  name: agent-with-hosted-mcp
+  # The type of agent - "hosted" for HOBO, "container" for COBO
+  kind: hosted
+  protocols:
+    - protocol: responses
+  environment_variables:
+    - name: AZURE_OPENAI_ENDPOINT
+      value: ${AZURE_OPENAI_ENDPOINT}
+    - name: AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+      value: "{{chat}}"
+resources:
+  - kind: model
+    id: gpt-4o-mini
+    name: chat

@@ -23,7 +23,6 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     TextContent,
@@ -82,18 +81,6 @@ def test_init_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
     for key, value in default_headers.items():
         assert key in azure_chat_client.client.default_headers
         assert azure_chat_client.client.default_headers[key] == value
-
-
-def test_azure_openai_chat_client_instructions_sent_once(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Ensure instructions are only included once when preparing Azure OpenAI chat requests."""
-    client = AzureOpenAIChatClient()
-    instructions = "You are a helpful assistant."
-    chat_options = ChatOptions(instructions=instructions)
-
-    prepared_messages = client.prepare_messages([ChatMessage(role="user", text="Hello")], chat_options)
-    request_options = client._prepare_options(prepared_messages, chat_options)  # type: ignore[reportPrivateUsage]
-
-    assert json.dumps(request_options).count(instructions) == 1
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_BASE_URL"]], indirect=True)
@@ -206,7 +193,7 @@ async def test_cmc(
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=False,
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -229,7 +216,7 @@ async def test_cmc_with_logit_bias(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         stream=False,
         logit_bias=token_bias,
     )
@@ -254,7 +241,7 @@ async def test_cmc_with_stop(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         stream=False,
         stop=stop,
     )
@@ -324,7 +311,7 @@ async def test_azure_on_your_data(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -394,7 +381,7 @@ async def test_azure_on_your_data_string(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -451,7 +438,7 @@ async def test_azure_on_your_data_fail(
 
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        messages=azure_chat_client._prepare_chat_history_for_request(messages_out),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(messages_out),  # type: ignore
         stream=False,
         extra_body=expected_data_settings,
     )
@@ -597,7 +584,7 @@ async def test_get_streaming(
     mock_create.assert_awaited_once_with(
         model=azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
         stream=True,
-        messages=azure_chat_client._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=azure_chat_client._prepare_messages_for_openai(chat_history),  # type: ignore
         # NOTE: The `stream_options={"include_usage": True}` is explicitly enforced in
         # `OpenAIChatCompletionBase._inner_get_streaming_response`.
         # To ensure consistency, we align the arguments here accordingly.
@@ -744,12 +731,12 @@ async def test_azure_openai_chat_client_agent_basic_run():
         chat_client=AzureOpenAIChatClient(credential=AzureCliCredential()),
     ) as agent:
         # Test basic run
-        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
+        response = await agent.run("Please respond with exactly: 'This is a response test.'")
 
         assert isinstance(response, AgentRunResponse)
         assert response.text is not None
         assert len(response.text) > 0
-        assert "hello world" in response.text.lower()
+        assert "response test" in response.text.lower()
 
 
 @pytest.mark.flaky

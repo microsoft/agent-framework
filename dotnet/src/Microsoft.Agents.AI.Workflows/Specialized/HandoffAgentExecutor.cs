@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
 internal sealed class HandoffAgentExecutor(
     AIAgent agent,
-    string? handoffInstructions) : Executor(agent.GetDescriptiveId()), IResettableExecutor
+    string? handoffInstructions) : Executor(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor
 {
     private static readonly JsonElement s_handoffSchema = AIFunctionFactory.Create(
         ([Description("The reason for the handoff")] string? reasonForHandoff) => { }).JsonSchema;
@@ -43,9 +43,11 @@ internal sealed class HandoffAgentExecutor(
                     },
                 };
 
+                int index = 0;
                 foreach (HandoffTarget handoff in handoffs)
                 {
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{handoff.Target.GetDescriptiveId()}", handoff.Reason, s_handoffSchema);
+                    index++;
+                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                     this._handoffFunctionNames.Add(handoffFunc.Name);
 
@@ -65,12 +67,12 @@ internal sealed class HandoffAgentExecutor(
             List<AgentRunResponseUpdate> updates = [];
             List<ChatMessage> allMessages = handoffState.Messages;
 
-            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.DisplayName);
+            List<ChatMessage>? roleChanges = allMessages.ChangeAssistantToUserForOtherParticipants(this._agent.Name ?? this._agent.Id);
 
             await foreach (var update in this._agent.RunStreamingAsync(allMessages,
-                                                                           options: this._agentOptions,
-                                                                           cancellationToken: cancellationToken)
-                                                        .ConfigureAwait(false))
+                                                                       options: this._agentOptions,
+                                                                       cancellationToken: cancellationToken)
+                                                     .ConfigureAwait(false))
             {
                 await AddUpdateAsync(update, cancellationToken).ConfigureAwait(false);
 
@@ -83,7 +85,7 @@ internal sealed class HandoffAgentExecutor(
                                 new AgentRunResponseUpdate
                                 {
                                     AgentId = this._agent.Id,
-                                    AuthorName = this._agent.DisplayName,
+                                    AuthorName = this._agent.Name ?? this._agent.Id,
                                     Contents = [new FunctionResultContent(fcc.CallId, "Transferred.")],
                                     CreatedAt = DateTimeOffset.UtcNow,
                                     MessageId = Guid.NewGuid().ToString("N"),

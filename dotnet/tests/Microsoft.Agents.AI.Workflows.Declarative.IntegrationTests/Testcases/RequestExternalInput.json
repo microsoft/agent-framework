@@ -1,0 +1,29 @@
+﻿{
+  "description": "Human in the loop sample - RequestExternalInput.yaml.",
+  "setup": {
+    "input": {
+      "type": "String",
+      "value": "n/a"
+    },
+    "responses": [
+      {
+        "type": "String",
+        "value": "This is external input"
+      }
+    ]
+  },
+  "validation": {
+    "conversation_count": 1,
+    "min_action_count": 2,
+    "min_response_count": 0,
+    "min_message_count":  1,
+    "actions": {
+      "start": [
+        "get_input"
+      ],
+      "final": [
+        "show_input"
+      ]
+    }
+  }
+}

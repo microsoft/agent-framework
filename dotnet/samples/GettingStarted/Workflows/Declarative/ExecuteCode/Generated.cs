@@ -5,6 +5,7 @@
 // ------------------------------------------------------------------------------
 
 #nullable enable
+#pragma warning disable IDE0005 // Extra using directive is ok.
 
 using System;
 using System.Collections;
@@ -18,7 +19,7 @@ using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
 
-namespace Test.WorkflowProviders;
+namespace Demo.DeclarativeCode;
 
 /// <summary>
 /// This class provides a factory method to create a <see cref="Workflow" /> instance.
@@ -29,7 +30,7 @@ namespace Test.WorkflowProviders;
 /// To learn more about Power FX, see:
 /// https://learn.microsoft.com/power-platform/power-fx/formula-reference-copilot-studio
 /// </remarks>
-public static class TestWorkflowProvider
+public static class SampleWorkflowProvider
 {
     /// <summary>
     /// The root executor for a declarative workflow.
@@ -42,845 +43,26 @@ public static class TestWorkflowProvider
     {
         protected override async ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            // Set environment variables
-            await this.InitializeEnvironmentAsync(
-                context,
-                "FOUNDRY_AGENT_RESEARCHWEB",
-                "FOUNDRY_AGENT_RESEARCHANALYST",
-                "FOUNDRY_AGENT_RESEARCHCODER",
-                "FOUNDRY_AGENT_RESEARCHMANAGER",
-                "FOUNDRY_AGENT_RESEARCHWEATHER").ConfigureAwait(false);
-
-            // Initialize variables
-            await context.QueueStateUpdateAsync("AgentResponse", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("AgentResponseText", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("AvailableAgents", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("FinalResponse", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("InputTask", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("InternalConversationId", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("NextSpeaker", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("Plan", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("ProgressLedgerUpdate", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("RestartCount", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("SeedTask", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("StallCount", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("TaskFacts", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("TaskInstructions", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("TeamDescription", UnassignedValue.Instance, "Local");
-            await context.QueueStateUpdateAsync("TypedProgressLedger", UnassignedValue.Instance, "Local");
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.AvailableAgents" variable.
-    /// </summary>
-    internal sealed class SetvariableAaslmfExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_aASlmF", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
-    [
-        {
-            name: "WeatherAgent",
-            description: "Able to retrieve weather information",
-            agentid: Env.FOUNDRY_AGENT_RESEARCHWEATHER
-        },
-        {
-            name: "CoderAgent",
-            description: "Able to write and execute Python code",
-            agentid: Env.FOUNDRY_AGENT_RESEARCHCODER
-        },
-        {
-            name: "WebAgent",
-            description: "Able to perform generic websearches",
-            agentid: Env.FOUNDRY_AGENT_RESEARCHWEB
-        }
-    ]
-    """);
-            await context.QueueStateUpdateAsync(key: "AvailableAgents", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TeamDescription" variable.
-    /// </summary>
-    internal sealed class SetvariableV6yeboExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_V6yEbo", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
-    Concat(ForAll(Local.AvailableAgents, $"- " & name & $": " & description), Value, "
-    ")
-    """);
-            await context.QueueStateUpdateAsync(key: "TeamDescription", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.InputTask" variable.
-    /// </summary>
-    internal sealed class SetvariableNz2u0lExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_NZ2u0l", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("System.LastMessage.Text");
-            await context.QueueStateUpdateAsync(key: "InputTask", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.SeedTask" variable.
-    /// </summary>
-    internal sealed class Setvariable10U2znExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_10u2ZN", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("UserMessage(Local.InputTask)");
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityYfsbryExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_yFsbRy", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Analyzing facts...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Creates a new conversation and stores the identifier value to the "Local.InternalConversationId" variable.
-    /// </summary>
-    internal sealed class Conversation1A2b3cExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : ActionExecutor(id: "conversation_1a2b3c", session)
-    {
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string conversationId = await agentProvider.CreateConversationAsync(cancellationToken);
-            await context.QueueStateUpdateAsync(key: "InternalConversationId", value: conversationId, scopeName: "Local");
-
-            return default;
         }
     }
 
     /// <summary>
     /// Invokes an agent to process messages and return a response within a conversation context.
     /// </summary>
-    internal sealed class QuestionUdomuwExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_UDoMUw", session, agentProvider)
+    internal sealed class QuestionStudentExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_student", session, agentProvider)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env");
+            string? agentName = "StudentAgent";
 
             if (string.IsNullOrWhiteSpace(agentName))
             {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
+                throw new DeclarativeActionException($"Agent name must be defined: {this.Id}");
             }
 
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
             bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability.
-                    Keep in mind that you are Ken Jennings-level with trivia, and Mensa-level with puzzles, so there should be a deep well to draw from.
-    
-                    Here is the pre-survey:
-    
-                        1. Please list any specific facts or figures that are GIVEN in the request itself. It is possible that there are none.
-                        2. Please list any facts that may need to be looked up, and WHERE SPECIFICALLY they might be found. In some cases, authoritative sources are mentioned in the request itself.
-                        3. Please list any facts that may need to be derived (e.g., via logical deduction, simulation, or computation)
-                        4. Please list any facts that are recalled from memory, hunches, well-reasoned guesses, etc.
-    
-                    When answering this survey, keep in mind that 'facts' will typically be specific names, dates, statistics, etc. Your answer must only use the headings:
-    
-                        1. GIVEN OR VERIFIED FACTS
-                        2. FACTS TO LOOK UP
-                        3. FACTS TO DERIVE
-                        4. EDUCATED GUESSES
-    
-                    DO NOT include any other headings or sections in your response. DO NOT list next steps or plans until asked to do so.
-                    """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)");
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityYfsbrzExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_yFsbRz", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Creating a plan...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
-    /// </summary>
-    internal sealed class QuestionDsbajuExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_DsBaJU", session, agentProvider)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    Your only job is to devise an efficient plan that identifies (by name) how a team member may contribute to addressing the user request.
-    
-                    Only select the following team which is listed as "- [Name]: [Description]"
-    
-                    {Local.TeamDescription}
-    
-                    The plan must be a bullet point list must be in the form "- [AgentName]: [Specific action or task for that agent to perform]"
-    
-                    Remember, there is no requirement to involve the entire team -- only select team member's whose particular expertise is required for this task.
-                    """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.InputTask)");
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TaskInstructions" variable.
-    /// </summary>
-    internal sealed class SetvariableKk2ldlExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_Kk2LDL", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
-    "# TASK
-    Address the following user request:
-    
-    " & Local.InputTask & "
-    
-    
-    # TEAM
-    Use the following team to answer this request:
-    
-    " & Local.TeamDescription & "
-    
-    
-    # FACTS
-    Consider this initial fact sheet:
-    
-    " & Trim(Last(Local.TaskFacts).Text) & "
-    
-    
-    # PLAN
-    Here is the plan to follow as best as possible:
-    
-    " & Last(Local.Plan).Text
-    """);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityBwnzimExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_bwNZiM", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    {Local.TaskInstructions}
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
-    /// </summary>
-    internal sealed class QuestionO3bqkfExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_o3BQkf", session, agentProvider)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    Recall we are working on the following request:
-    
-                    {Local.InputTask}
-    
-                    And we have assembled the following team:
-    
-                    {Local.TeamDescription}
-    
-                    To make progress on the request, please answer the following questions, including necessary reasoning:
-    
-                        - Is the request fully satisfied? (True if complete, or False if the original request has yet to be SUCCESSFULLY and FULLY addressed)
-                        - Are we in a loop where we are repeating the same requests and / or getting the same responses from an agent multiple times? Loops can span multiple turns, and can include repeated actions like scrolling up or down more than a handful of times.
-                        - Are we making forward progress? (True if just starting, or recent messages are adding value. False if recent messages show evidence of being stuck in a loop or if there is evidence of significant barriers to success such as the inability to read from a required file)
-                        - Who should speak next? (select from: {Concat(Local.AvailableAgents, name, ",")})
-                        - What instruction or question would you give this team member? (Phrase as if speaking directly to them, and include any specific information they may need)
-    
-                    Please output an answer in pure JSON format according to the following schema. The JSON object must be parsable as-is. DO NOT OUTPUT ANYTHING OTHER THAN JSON, AND DO NOT DEVIATE FROM THIS SCHEMA:
-    
-                        {{
-                            "is_request_satisfied": {{
-                                "reason": string,
-                                "answer": boolean
-                            }},
-                            "is_in_loop": {{
-                                "reason": string,
-                                "answer": boolean
-                            }},
-                            "is_progress_being_made": {{
-                                "reason": string,
-                                "answer": boolean
-                            }},
-                            "next_speaker": {{
-                                "reason": string,
-                                "answer": string (select from: {Concat(Local.AvailableAgents, name, ",")})
-                            }},
-                            "instruction_or_question": {{
-                                "reason": string,
-                                "answer": string
-                            }}
-                        }}
-                    """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("UserMessage(Local.AgentResponseText)");
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "ProgressLedgerUpdate", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Parses a string or untyped value to the provided data type. When the input is a string, it will be treated as JSON.
-    /// </summary>
-    internal sealed class ParseRnztlvExecutor(FormulaSession session) : ActionExecutor(id: "parse_rNZtlV", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            VariableType targetType =
-    VariableType.Record(
-    ("is_progress_being_made",
-    VariableType.Record(
-    ("reason", typeof(string)),
-        ("answer", typeof(bool)))),
-        ("is_request_satisfied",
-    VariableType.Record(
-    ("reason", typeof(string)),
-        ("answer", typeof(bool)))),
-        ("is_in_loop",
-    VariableType.Record(
-    ("reason", typeof(string)),
-        ("answer", typeof(bool)))),
-        ("next_speaker",
-    VariableType.Record(
-    ("reason", typeof(string)),
-        ("answer", typeof(string)))),
-        ("instruction_or_question",
-    VariableType.Record(
-    ("reason", typeof(string)),
-        ("answer", typeof(string)))));
-            object? parsedValue = await context.ConvertValueAsync(targetType, "Last(Local.ProgressLedgerUpdate).Text", cancellationToken);
-            await context.QueueStateUpdateAsync(key: "TypedProgressLedger", value: parsedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Conditional branching similar to an if / elseif / elseif / else chain.
-    /// </summary>
-    internal sealed class ConditiongroupMvieccExecutor(FormulaSession session) : ActionExecutor(id: "conditionGroup_mVIecC", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_request_satisfied.answer");
-            if (condition0)
-            {
-                return "conditionItem_fj432c";
-            }
-
-            bool condition1 = await context.EvaluateValueAsync<bool>("Local.TypedProgressLedger.is_in_loop.answer || Not(Local.TypedProgressLedger.is_progress_being_made.answer)");
-            if (condition1)
-            {
-                return "conditionItem_yiqund";
-            }
-
-            return "conditionGroup_mVIecCElseActions";
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityKdl3mcExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_kdl3mC", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Completed! {Local.TypedProgressLedger.is_request_satisfied.reason}
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
-    /// </summary>
-    internal sealed class QuestionKe3l1dExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_Ke3l1d", session, agentProvider)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System");
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    We have completed the task.
-                    Based only on the conversation and without adding any new information, synthesize the result of the conversation as a complete response to the user task.
-                    The user will only every see this last response and not the entire conversation, so please ensure it is complete and self-contained.
-                    """);
-            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local");
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "FinalResponse", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
-    /// </summary>
-    internal sealed class SetvariableH5lxddExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_H5lXdD", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1");
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Conditional branching similar to an if / elseif / elseif / else chain.
-    /// </summary>
-    internal sealed class ConditiongroupVbtqd3Executor(FormulaSession session) : ActionExecutor(id: "conditionGroup_vBTQd3", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            bool condition0 = await context.EvaluateValueAsync<bool>(".TypedProgressLedger.is_in_loop.answer");
-            if (condition0)
-            {
-                return "conditionItem_fpaNL9";
-            }
-
-            bool condition1 = await context.EvaluateValueAsync<bool>("Not(Local.TypedProgressLedger.is_progress_being_made.answer)");
-            if (condition1)
-            {
-                return "conditionItem_NnqvXh";
-            }
-
-            return "conditionGroup_vBTQd3ElseActions";
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityFpanl9Executor(FormulaSession session) : ActionExecutor(id: "sendActivity_fpaNL9", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    {Local.TypedProgressLedger.is_in_loop.reason}
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityNnqvxhExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_NnqvXh", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    {Local.TypedProgressLedger.is_progress_being_made.reason}
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Conditional branching similar to an if / elseif / elseif / else chain.
-    /// </summary>
-    internal sealed class ConditiongroupXznrdmExecutor(FormulaSession session) : ActionExecutor(id: "conditionGroup_xzNrdM", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.StallCount > 2");
-            if (condition0)
-            {
-                return "conditionItem_NlQTBv";
-            }
-
-            return "conditionGroup_xzNrdMElseActions";
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityH5lxddExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_H5lXdD", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Unable to make sufficient progress...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Conditional branching similar to an if / elseif / elseif / else chain.
-    /// </summary>
-    internal sealed class Conditiongroup4S1z27Executor(FormulaSession session) : ActionExecutor(id: "conditionGroup_4s1Z27", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            bool condition0 = await context.EvaluateValueAsync<bool>("Local.RestartCount > 2");
-            if (condition0)
-            {
-                return "conditionItem_EXAlhZ";
-            }
-
-            return "conditionGroup_4s1Z27ElseActions";
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityXkxfuuExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_xKxFUU", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Stopping after attempting {Local.RestartCount} restarts...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityCwnzimExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_cwNZiM", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Re-analyzing facts...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
-    /// </summary>
-    internal sealed class QuestionWfj123Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_wFJ123", session, agentProvider)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHANALYST", scopeName: "Env");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    It's clear we aren't making as much progress as we would like, but we may have learned something new.
-                    Please rewrite the following fact sheet, updating it to include anything new we have learned that may be helpful.
-                    Example edits can include (but are not limited to) adding new guesses, moving educated guesses to verified facts if appropriate, etc.
-                    Updates may be made to any section of the fact sheet, and more than one section of the fact sheet can be edited.
-                    This is an especially good time to update educated guesses, so please at least add or update one educated guess or hunch, and explain your reasoning.
-    
-                    Here is the old fact sheet:
-    
-                    {Local.TaskFacts}
-                    """);
-            IList<ChatMessage>? inputMessages = await context.EvaluateListAsync<ChatMessage>("""
-    UserMessage(
-      "As a reminder, we are working to solve the following task:
-    
-      " & Local.InputTask)
-    """);
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "TaskFacts", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityDsbajuExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_dsBaJU", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    Re-analyzing plan...
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
-    /// </summary>
-    internal sealed class QuestionUej456Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_uEJ456", session, agentProvider)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string? agentName = await context.ReadStateAsync<string>(key: "FOUNDRY_AGENT_RESEARCHMANAGER", scopeName: "Env");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "InternalConversationId", scopeName: "Local");
-            bool autoSend = true;
-            string additionalInstructions =
-                await context.FormatTemplateAsync(
-                    """
-                    Please briefly explain what went wrong on this last run (the root cause of the failure),
-                    and then come up with a new plan that takes steps and/or includes hints to overcome prior challenges and especially avoids repeating the same mistakes.
-                    As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition
-                    (do not involve any other outside people since we cannot contact anyone else):
-    
-                    {Local.TeamDescription}
-                    """);
             IList<ChatMessage>? inputMessages = null;
 
             AgentRunResponse agentResponse =
@@ -889,137 +71,67 @@ public static class TestWorkflowProvider
                     agentName,
                     conversationId,
                     autoSend,
-                    additionalInstructions,
                     inputMessages,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
 
             if (autoSend)
             {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
             }
 
-            await context.QueueStateUpdateAsync(key: "Plan", value: agentResponse.Messages, scopeName: "Local");
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// </summary>
+    internal sealed class QuestionTeacherExecutor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_teacher", session, agentProvider)
+    {
+        // <inheritdoc />
+        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            string? agentName = "TeacherAgent";
+
+            if (string.IsNullOrWhiteSpace(agentName))
+            {
+                throw new DeclarativeActionException($"Agent name must be defined: {this.Id}");
+            }
+
+            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System").ConfigureAwait(false);
+            bool autoSend = false;
+            IList<ChatMessage>? inputMessages = null;
+
+            AgentRunResponse agentResponse =
+                await InvokeAgentAsync(
+                    context,
+                    agentName,
+                    conversationId,
+                    autoSend,
+                    inputMessages,
+                    cancellationToken).ConfigureAwait(false);
+
+            if (autoSend)
+            {
+                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+            }
+
+            await context.QueueStateUpdateAsync(key: "TeacherResponse", value: agentResponse.Messages, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
     }
 
     /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TaskInstructions" variable.
+    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.TurnCount" variable.
     /// </summary>
-    internal sealed class SetvariableJw7tmmExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_jW7tmM", session)
+    internal sealed class SetCountIncrementExecutor(FormulaSession session) : ActionExecutor(id: "set_count_increment", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("""
-    "# TASK
-    Address the following user request:
-    
-    " & Local.InputTask & "
-    
-    
-    # TEAM
-    Use the following team to answer this request:
-    
-    " & Local.TeamDescription & "
-    
-    
-    # FACTS
-    Consider this initial fact sheet:
-    
-    " & Local.TaskFacts.Text & "
-    
-    
-    # PLAN
-    Here is the plan to follow as best as possible:
-    
-    " & Local.Plan.Text
-    """);
-            await context.QueueStateUpdateAsync(key: "TaskInstructions", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
-    /// </summary>
-    internal sealed class Setvariable6J2snpExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_6J2snP", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.RestartCount" variable.
-    /// </summary>
-    internal sealed class SetvariableS6hcghExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_S6HCgh", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.RestartCount + 1");
-            await context.QueueStateUpdateAsync(key: "RestartCount", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Formats a message template and sends an activity event.
-    /// </summary>
-    internal sealed class SendactivityL7ooqoExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_L7ooQO", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            string activityText =
-                await context.FormatTemplateAsync(
-                    """
-                    ({Local.TypedProgressLedger.next_speaker.reason})
-    
-                    {Local.TypedProgressLedger.next_speaker.answer} - {Local.TypedProgressLedger.instruction_or_question.answer}
-                    """
-                );
-            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
-    /// </summary>
-    internal sealed class SetvariableL7ooqoExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_L7ooQO", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = 0;
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.NextSpeaker" variable.
-    /// </summary>
-    internal sealed class SetvariableNxn1meExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_nxN1mE", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Search(Local.AvailableAgents, Local.TypedProgressLedger.next_speaker.answer, name)");
-            await context.QueueStateUpdateAsync(key: "NextSpeaker", value: evaluatedValue, scopeName: "Local");
+            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.TurnCount + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateAsync(key: "TurnCount", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
 
             return default;
         }
@@ -1028,90 +140,43 @@ public static class TestWorkflowProvider
     /// <summary>
     /// Conditional branching similar to an if / elseif / elseif / else chain.
     /// </summary>
-    internal sealed class ConditiongroupQfpif5Executor(FormulaSession session) : ActionExecutor(id: "conditionGroup_QFPiF5", session)
+    internal sealed class CheckCompletionExecutor(FormulaSession session) : ActionExecutor(id: "check_completion", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            bool condition0 = await context.EvaluateValueAsync<bool>("CountRows(Local.NextSpeaker) = 1");
+            bool condition0 = await context.EvaluateValueAsync<bool>("""!IsBlank(Find("CONGRATULATIONS", Upper(Last(Local.TeacherResponse).Text)))""").ConfigureAwait(false);
             if (condition0)
             {
-                return "conditionItem_GmigcU";
+                return "check_turn_done";
             }
 
-            return "conditionGroup_QFPiF5ElseActions";
+            bool condition1 = await context.EvaluateValueAsync<bool>("Local.TurnCount < 4").ConfigureAwait(false);
+            if (condition1)
+            {
+                return "check_turn_count";
+            }
+
+            return "check_completionElseActions";
         }
     }
 
     /// <summary>
-    /// Invokes an agent to process messages and return a response within a conversation context.
+    /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class QuestionOrsbf06Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "question_orsBf06", session, agentProvider)
+    internal sealed class SendactivityDoneExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_done", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string? agentName = await context.EvaluateValueAsync<string>("First(Local.NextSpeaker).agentid");
-
-            if (string.IsNullOrWhiteSpace(agentName))
-            {
-                throw new InvalidOperationException($"Agent name must be defined: {this.Id}");
-            }
-
-            string? conversationId = await context.ReadStateAsync<string>(key: "ConversationId", scopeName: "System");
-            bool autoSend = true;
-            string additionalInstructions =
+            string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    {Local.TypedProgressLedger.instruction_or_question.answer}
-                    """);
-            IList<ChatMessage>? inputMessages = await context.ReadListAsync<ChatMessage>(key: "SeedTask", scopeName: "Local");
-
-            AgentRunResponse agentResponse =
-                await InvokeAgentAsync(
-                    context,
-                    agentName,
-                    conversationId,
-                    autoSend,
-                    additionalInstructions,
-                    inputMessages,
-                    cancellationToken);
-
-            if (autoSend)
-            {
-                await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse));
-            }
-
-            await context.QueueStateUpdateAsync(key: "AgentResponse", value: agentResponse.Messages, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.AgentResponseText" variable.
-    /// </summary>
-    internal sealed class SetvariableXznrdmExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_XzNrdM", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Last(Local.AgentResponse).Text");
-            await context.QueueStateUpdateAsync(key: "AgentResponseText", value: evaluatedValue, scopeName: "Local");
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Resets the value of the "Local.SeedTask" variable, potentially causing re-evaluation
-    /// of the default value, question or action that provides the value to this variable.
-    /// </summary>
-    internal sealed class Setvariable8Eix2aExecutor(FormulaSession session) : ActionExecutor(id: "setVariable_8eIx2A", session)
-    {
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            await context.QueueStateUpdateAsync(key: "SeedTask", value: UnassignedValue.Instance, scopeName: "Local");
+                    GOLD STAR!
+                    """
+                );
+            AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
@@ -1120,7 +185,7 @@ public static class TestWorkflowProvider
     /// <summary>
     /// Formats a message template and sends an activity event.
     /// </summary>
-    internal sealed class SendactivityBhcsi7Executor(FormulaSession session) : ActionExecutor(id: "sendActivity_BhcsI7", session)
+    internal sealed class SendactivityTiredExecutor(FormulaSession session) : ActionExecutor(id: "sendActivity_tired", session)
     {
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -1128,26 +193,11 @@ public static class TestWorkflowProvider
             string activityText =
                 await context.FormatTemplateAsync(
                     """
-                    Unable to choose next agent...
+                    Let's try again later...
                     """
                 );
             AgentRunResponse response = new([new ChatMessage(ChatRole.Assistant, activityText)]);
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response));
-
-            return default;
-        }
-    }
-
-    /// <summary>
-    /// Assigns an evaluated expression, other variable, or literal value to the  "Local.StallCount" variable.
-    /// </summary>
-    internal sealed class SetvariableBhcsi7Executor(FormulaSession session) : ActionExecutor(id: "setVariable_BhcsI7", session)
-    {
-        // <inheritdoc />
-        protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
-        {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.StallCount + 1");
-            await context.QueueStateUpdateAsync(key: "StallCount", value: evaluatedValue, scopeName: "Local");
+            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, response)).ConfigureAwait(false);
 
             return default;
         }
@@ -1162,189 +212,56 @@ public static class TestWorkflowProvider
         inputTransform ??= (message) => DeclarativeWorkflowBuilder.DefaultTransform(message);
         WorkflowDemoRootExecutor<TInput> workflowDemoRoot = new(options, inputTransform);
         DelegateExecutor workflowDemo = new(id: "workflow_demo", workflowDemoRoot.Session);
-        SetvariableAaslmfExecutor setVariableAaslmf = new(workflowDemoRoot.Session);
-        SetvariableV6yeboExecutor setVariableV6yebo = new(workflowDemoRoot.Session);
-        SetvariableNz2u0lExecutor setVariableNz2u0l = new(workflowDemoRoot.Session);
-        Setvariable10U2znExecutor setVariable10U2zn = new(workflowDemoRoot.Session);
-        SendactivityYfsbryExecutor sendActivityYfsbry = new(workflowDemoRoot.Session);
-        Conversation1A2b3cExecutor conversation1A2b3c = new(workflowDemoRoot.Session, options.AgentProvider);
-        QuestionUdomuwExecutor questionUdomuw = new(workflowDemoRoot.Session, options.AgentProvider);
-        SendactivityYfsbrzExecutor sendActivityYfsbrz = new(workflowDemoRoot.Session);
-        QuestionDsbajuExecutor questionDsbaju = new(workflowDemoRoot.Session, options.AgentProvider);
-        SetvariableKk2ldlExecutor setVariableKk2ldl = new(workflowDemoRoot.Session);
-        SendactivityBwnzimExecutor sendActivityBwnzim = new(workflowDemoRoot.Session);
-        QuestionO3bqkfExecutor questionO3bqkf = new(workflowDemoRoot.Session, options.AgentProvider);
-        ParseRnztlvExecutor parseRnztlv = new(workflowDemoRoot.Session);
-        ConditiongroupMvieccExecutor conditionGroupMviecc = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFj432c = new(id: "conditionItem_fj432c", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemYiqund = new(id: "conditionItem_yiqund", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupMvieccelseactions = new(id: "conditionGroup_mVIecCElseActions", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFj432cactions = new(id: "conditionItem_fj432cActions", workflowDemoRoot.Session);
-        SendactivityKdl3mcExecutor sendActivityKdl3mc = new(workflowDemoRoot.Session);
-        QuestionKe3l1dExecutor questionKe3l1d = new(workflowDemoRoot.Session, options.AgentProvider);
-        DelegateExecutor endSvonsv = new(id: "end_SVoNSV", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemYiqundactions = new(id: "conditionItem_yiqundActions", workflowDemoRoot.Session);
-        SetvariableH5lxddExecutor setVariableH5lxdd = new(workflowDemoRoot.Session);
-        ConditiongroupVbtqd3Executor conditionGroupVbtqd3 = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFpanl9 = new(id: "conditionItem_fpaNL9", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNnqvxh = new(id: "conditionItem_NnqvXh", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFpanl9actions = new(id: "conditionItem_fpaNL9Actions", workflowDemoRoot.Session);
-        SendactivityFpanl9Executor sendActivityFpanl9 = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNnqvxhactions = new(id: "conditionItem_NnqvXhActions", workflowDemoRoot.Session);
-        SendactivityNnqvxhExecutor sendActivityNnqvxh = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupVbtqd3Post = new(id: "conditionGroup_vBTQd3_Post", workflowDemoRoot.Session);
-        ConditiongroupXznrdmExecutor conditionGroupXznrdm = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNlqtbv = new(id: "conditionItem_NlQTBv", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNlqtbvactions = new(id: "conditionItem_NlQTBvActions", workflowDemoRoot.Session);
-        SendactivityH5lxddExecutor sendActivityH5lxdd = new(workflowDemoRoot.Session);
-        Conditiongroup4S1z27Executor conditionGroup4S1z27 = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemExalhz = new(id: "conditionItem_EXAlhZ", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemExalhzactions = new(id: "conditionItem_EXAlhZActions", workflowDemoRoot.Session);
-        SendactivityXkxfuuExecutor sendActivityXkxfuu = new(workflowDemoRoot.Session);
-        DelegateExecutor endGhvrfh = new(id: "end_GHVrFh", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroup4S1z27Post = new(id: "conditionGroup_4s1Z27_Post", workflowDemoRoot.Session);
-        SendactivityCwnzimExecutor sendActivityCwnzim = new(workflowDemoRoot.Session);
-        QuestionWfj123Executor questionWfj123 = new(workflowDemoRoot.Session, options.AgentProvider);
-        SendactivityDsbajuExecutor sendActivityDsbaju = new(workflowDemoRoot.Session);
-        QuestionUej456Executor questionUej456 = new(workflowDemoRoot.Session, options.AgentProvider);
-        SetvariableJw7tmmExecutor setVariableJw7tmm = new(workflowDemoRoot.Session);
-        Setvariable6J2snpExecutor setVariable6J2snp = new(workflowDemoRoot.Session);
-        SetvariableS6hcghExecutor setVariableS6hcgh = new(workflowDemoRoot.Session);
-        DelegateExecutor gotoLzfj8u = new(id: "goto_LzfJ8u", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemYiqundRestart = new(id: "conditionItem_yiqund_Restart", workflowDemoRoot.Session);
-        SendactivityL7ooqoExecutor sendActivityL7ooqo = new(workflowDemoRoot.Session);
-        SetvariableL7ooqoExecutor setVariableL7ooqo = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupMvieccPost = new(id: "conditionGroup_mVIecC_Post", workflowDemoRoot.Session);
-        SetvariableNxn1meExecutor setVariableNxn1me = new(workflowDemoRoot.Session);
-        ConditiongroupQfpif5Executor conditionGroupQfpif5 = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemGmigcu = new(id: "conditionItem_GmigcU", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupQfpif5elseactions = new(id: "conditionGroup_QFPiF5ElseActions", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemGmigcuactions = new(id: "conditionItem_GmigcUActions", workflowDemoRoot.Session);
-        QuestionOrsbf06Executor questionOrsbf06 = new(workflowDemoRoot.Session, options.AgentProvider);
-        SetvariableXznrdmExecutor setVariableXznrdm = new(workflowDemoRoot.Session);
-        Setvariable8Eix2aExecutor setVariable8Eix2a = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionItemGmigcuRestart = new(id: "conditionItem_GmigcU_Restart", workflowDemoRoot.Session);
-        SendactivityBhcsi7Executor sendActivityBhcsi7 = new(workflowDemoRoot.Session);
-        SetvariableBhcsi7Executor setVariableBhcsi7 = new(workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupQfpif5Post = new(id: "conditionGroup_QFPiF5_Post", workflowDemoRoot.Session);
-        DelegateExecutor goto76Hne8 = new(id: "goto_76Hne8", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFj432cPost = new(id: "conditionItem_fj432c_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemYiqundPost = new(id: "conditionItem_yiqund_Post", workflowDemoRoot.Session);
-        DelegateExecutor endSvonsvRestart = new(id: "end_SVoNSV_Restart", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFj432cactionsPost = new(id: "conditionItem_fj432cActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupXznrdmPost = new(id: "conditionGroup_xzNrdM_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemYiqundactionsPost = new(id: "conditionItem_yiqundActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFpanl9Post = new(id: "conditionItem_fpaNL9_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNnqvxhPost = new(id: "conditionItem_NnqvXh_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemFpanl9actionsPost = new(id: "conditionItem_fpaNL9Actions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNnqvxhactionsPost = new(id: "conditionItem_NnqvXhActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNlqtbvPost = new(id: "conditionItem_NlQTBv_Post", workflowDemoRoot.Session);
-        DelegateExecutor gotoLzfj8uRestart = new(id: "goto_LzfJ8u_Restart", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemNlqtbvactionsPost = new(id: "conditionItem_NlQTBvActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemExalhzPost = new(id: "conditionItem_EXAlhZ_Post", workflowDemoRoot.Session);
-        DelegateExecutor endGhvrfhRestart = new(id: "end_GHVrFh_Restart", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemExalhzactionsPost = new(id: "conditionItem_EXAlhZActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupMvieccelseactionsPost = new(id: "conditionGroup_mVIecCElseActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemGmigcuPost = new(id: "conditionItem_GmigcU_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionItemGmigcuactionsPost = new(id: "conditionItem_GmigcUActions_Post", workflowDemoRoot.Session);
-        DelegateExecutor conditionGroupQfpif5elseactionsPost = new(id: "conditionGroup_QFPiF5ElseActions_Post", workflowDemoRoot.Session);
+        QuestionStudentExecutor questionStudent = new(workflowDemoRoot.Session, options.AgentProvider);
+        QuestionTeacherExecutor questionTeacher = new(workflowDemoRoot.Session, options.AgentProvider);
+        SetCountIncrementExecutor setCountIncrement = new(workflowDemoRoot.Session);
+        CheckCompletionExecutor checkCompletion = new(workflowDemoRoot.Session);
+        DelegateExecutor checkTurnDone = new(id: "check_turn_done", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnCount = new(id: "check_turn_count", workflowDemoRoot.Session);
+        DelegateExecutor checkCompletionelseactions = new(id: "check_completionElseActions", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnDoneactions = new(id: "check_turn_doneActions", workflowDemoRoot.Session);
+        SendactivityDoneExecutor sendActivityDone = new(workflowDemoRoot.Session);
+        DelegateExecutor checkTurnCountactions = new(id: "check_turn_countActions", workflowDemoRoot.Session);
+        DelegateExecutor gotoStudentAgent = new(id: "goto_student_agent", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnCountRestart = new(id: "check_turn_count_Restart", workflowDemoRoot.Session);
+        SendactivityTiredExecutor sendActivityTired = new(workflowDemoRoot.Session);
+        DelegateExecutor checkTurnDonePost = new(id: "check_turn_done_Post", workflowDemoRoot.Session);
+        DelegateExecutor checkCompletionPost = new(id: "check_completion_Post", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnCountPost = new(id: "check_turn_count_Post", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnDoneactionsPost = new(id: "check_turn_doneActions_Post", workflowDemoRoot.Session);
+        DelegateExecutor gotoStudentAgentRestart = new(id: "goto_student_agent_Restart", workflowDemoRoot.Session);
+        DelegateExecutor checkTurnCountactionsPost = new(id: "check_turn_countActions_Post", workflowDemoRoot.Session);
+        DelegateExecutor checkCompletionelseactionsPost = new(id: "check_completionElseActions_Post", workflowDemoRoot.Session);
 
         // Define the workflow builder
         WorkflowBuilder builder = new(workflowDemoRoot);
 
         // Connect executors
         builder.AddEdge(workflowDemoRoot, workflowDemo);
-        builder.AddEdge(workflowDemo, setVariableAaslmf);
-        builder.AddEdge(setVariableAaslmf, setVariableV6yebo);
-        builder.AddEdge(setVariableV6yebo, setVariableNz2u0l);
-        builder.AddEdge(setVariableNz2u0l, setVariable10U2zn);
-        builder.AddEdge(setVariable10U2zn, sendActivityYfsbry);
-        builder.AddEdge(sendActivityYfsbry, conversation1A2b3c);
-        builder.AddEdge(conversation1A2b3c, questionUdomuw);
-        builder.AddEdge(questionUdomuw, sendActivityYfsbrz);
-        builder.AddEdge(sendActivityYfsbrz, questionDsbaju);
-        builder.AddEdge(questionDsbaju, setVariableKk2ldl);
-        builder.AddEdge(setVariableKk2ldl, sendActivityBwnzim);
-        builder.AddEdge(sendActivityBwnzim, questionO3bqkf);
-        builder.AddEdge(questionO3bqkf, parseRnztlv);
-        builder.AddEdge(parseRnztlv, conditionGroupMviecc);
-        builder.AddEdge(conditionGroupMviecc, conditionItemFj432c, (object? result) => ActionExecutor.IsMatch("conditionItem_fj432c", result));
-        builder.AddEdge(conditionGroupMviecc, conditionItemYiqund, (object? result) => ActionExecutor.IsMatch("conditionItem_yiqund", result));
-        builder.AddEdge(conditionGroupMviecc, conditionGroupMvieccelseactions, (object? result) => ActionExecutor.IsMatch("conditionGroup_mVIecCElseActions", result));
-        builder.AddEdge(conditionItemFj432c, conditionItemFj432cactions);
-        builder.AddEdge(conditionItemFj432cactions, sendActivityKdl3mc);
-        builder.AddEdge(sendActivityKdl3mc, questionKe3l1d);
-        builder.AddEdge(questionKe3l1d, endSvonsv);
-        builder.AddEdge(conditionItemYiqund, conditionItemYiqundactions);
-        builder.AddEdge(conditionItemYiqundactions, setVariableH5lxdd);
-        builder.AddEdge(setVariableH5lxdd, conditionGroupVbtqd3);
-        builder.AddEdge(conditionGroupVbtqd3, conditionItemFpanl9, (object? result) => ActionExecutor.IsMatch("conditionItem_fpaNL9", result));
-        builder.AddEdge(conditionGroupVbtqd3, conditionItemNnqvxh, (object? result) => ActionExecutor.IsMatch("conditionItem_NnqvXh", result));
-        builder.AddEdge(conditionItemFpanl9, conditionItemFpanl9actions);
-        builder.AddEdge(conditionItemFpanl9actions, sendActivityFpanl9);
-        builder.AddEdge(conditionItemNnqvxh, conditionItemNnqvxhactions);
-        builder.AddEdge(conditionItemNnqvxhactions, sendActivityNnqvxh);
-        builder.AddEdge(conditionGroupVbtqd3Post, conditionGroupXznrdm);
-        builder.AddEdge(conditionGroupXznrdm, conditionItemNlqtbv, (object? result) => ActionExecutor.IsMatch("conditionItem_NlQTBv", result));
-        builder.AddEdge(conditionItemNlqtbv, conditionItemNlqtbvactions);
-        builder.AddEdge(conditionItemNlqtbvactions, sendActivityH5lxdd);
-        builder.AddEdge(sendActivityH5lxdd, conditionGroup4S1z27);
-        builder.AddEdge(conditionGroup4S1z27, conditionItemExalhz, (object? result) => ActionExecutor.IsMatch("conditionItem_EXAlhZ", result));
-        builder.AddEdge(conditionItemExalhz, conditionItemExalhzactions);
-        builder.AddEdge(conditionItemExalhzactions, sendActivityXkxfuu);
-        builder.AddEdge(sendActivityXkxfuu, endGhvrfh);
-        builder.AddEdge(conditionGroup4S1z27Post, sendActivityCwnzim);
-        builder.AddEdge(sendActivityCwnzim, questionWfj123);
-        builder.AddEdge(questionWfj123, sendActivityDsbaju);
-        builder.AddEdge(sendActivityDsbaju, questionUej456);
-        builder.AddEdge(questionUej456, setVariableJw7tmm);
-        builder.AddEdge(setVariableJw7tmm, setVariable6J2snp);
-        builder.AddEdge(setVariable6J2snp, setVariableS6hcgh);
-        builder.AddEdge(setVariableS6hcgh, gotoLzfj8u);
-        builder.AddEdge(gotoLzfj8u, questionO3bqkf);
-        builder.AddEdge(conditionItemYiqundRestart, conditionGroupMvieccelseactions);
-        builder.AddEdge(conditionGroupMvieccelseactions, sendActivityL7ooqo);
-        builder.AddEdge(sendActivityL7ooqo, setVariableL7ooqo);
-        builder.AddEdge(conditionGroupMvieccPost, setVariableNxn1me);
-        builder.AddEdge(setVariableNxn1me, conditionGroupQfpif5);
-        builder.AddEdge(conditionGroupQfpif5, conditionItemGmigcu, (object? result) => ActionExecutor.IsMatch("conditionItem_GmigcU", result));
-        builder.AddEdge(conditionGroupQfpif5, conditionGroupQfpif5elseactions, (object? result) => ActionExecutor.IsMatch("conditionGroup_QFPiF5ElseActions", result));
-        builder.AddEdge(conditionItemGmigcu, conditionItemGmigcuactions);
-        builder.AddEdge(conditionItemGmigcuactions, questionOrsbf06);
-        builder.AddEdge(questionOrsbf06, setVariableXznrdm);
-        builder.AddEdge(setVariableXznrdm, setVariable8Eix2a);
-        builder.AddEdge(conditionItemGmigcuRestart, conditionGroupQfpif5elseactions);
-        builder.AddEdge(conditionGroupQfpif5elseactions, sendActivityBhcsi7);
-        builder.AddEdge(sendActivityBhcsi7, setVariableBhcsi7);
-        builder.AddEdge(conditionGroupQfpif5Post, goto76Hne8);
-        builder.AddEdge(goto76Hne8, questionO3bqkf);
-        builder.AddEdge(conditionItemFj432cPost, conditionGroupMvieccPost);
-        builder.AddEdge(conditionItemYiqundPost, conditionGroupMvieccPost);
-        builder.AddEdge(endSvonsvRestart, conditionItemFj432cactionsPost);
-        builder.AddEdge(conditionItemFj432cactionsPost, conditionItemFj432cPost);
-        builder.AddEdge(conditionGroupXznrdmPost, conditionItemYiqundactionsPost);
-        builder.AddEdge(conditionItemYiqundactionsPost, conditionItemYiqundPost);
-        builder.AddEdge(conditionItemFpanl9Post, conditionGroupVbtqd3Post);
-        builder.AddEdge(conditionItemNnqvxhPost, conditionGroupVbtqd3Post);
-        builder.AddEdge(sendActivityFpanl9, conditionItemFpanl9actionsPost);
-        builder.AddEdge(conditionItemFpanl9actionsPost, conditionItemFpanl9Post);
-        builder.AddEdge(sendActivityNnqvxh, conditionItemNnqvxhactionsPost);
-        builder.AddEdge(conditionItemNnqvxhactionsPost, conditionItemNnqvxhPost);
-        builder.AddEdge(conditionItemNlqtbvPost, conditionGroupXznrdmPost);
-        builder.AddEdge(gotoLzfj8uRestart, conditionItemNlqtbvactionsPost);
-        builder.AddEdge(conditionItemNlqtbvactionsPost, conditionItemNlqtbvPost);
-        builder.AddEdge(conditionItemExalhzPost, conditionGroup4S1z27Post);
-        builder.AddEdge(endGhvrfhRestart, conditionItemExalhzactionsPost);
-        builder.AddEdge(conditionItemExalhzactionsPost, conditionItemExalhzPost);
-        builder.AddEdge(setVariableL7ooqo, conditionGroupMvieccelseactionsPost);
-        builder.AddEdge(conditionGroupMvieccelseactionsPost, conditionGroupMvieccPost);
-        builder.AddEdge(conditionItemGmigcuPost, conditionGroupQfpif5Post);
-        builder.AddEdge(setVariable8Eix2a, conditionItemGmigcuactionsPost);
-        builder.AddEdge(conditionItemGmigcuactionsPost, conditionItemGmigcuPost);
-        builder.AddEdge(setVariableBhcsi7, conditionGroupQfpif5elseactionsPost);
-        builder.AddEdge(conditionGroupQfpif5elseactionsPost, conditionGroupQfpif5Post);
+        builder.AddEdge(workflowDemo, questionStudent);
+        builder.AddEdge(questionStudent, questionTeacher);
+        builder.AddEdge(questionTeacher, setCountIncrement);
+        builder.AddEdge(setCountIncrement, checkCompletion);
+        builder.AddEdge(checkCompletion, checkTurnDone, (object? result) => ActionExecutor.IsMatch("check_turn_done", result));
+        builder.AddEdge(checkCompletion, checkTurnCount, (object? result) => ActionExecutor.IsMatch("check_turn_count", result));
+        builder.AddEdge(checkCompletion, checkCompletionelseactions, (object? result) => ActionExecutor.IsMatch("check_completionElseActions", result));
+        builder.AddEdge(checkTurnDone, checkTurnDoneactions);
+        builder.AddEdge(checkTurnDoneactions, sendActivityDone);
+        builder.AddEdge(checkTurnCount, checkTurnCountactions);
+        builder.AddEdge(checkTurnCountactions, gotoStudentAgent);
+        builder.AddEdge(gotoStudentAgent, questionStudent);
+        builder.AddEdge(checkTurnCountRestart, checkCompletionelseactions);
+        builder.AddEdge(checkCompletionelseactions, sendActivityTired);
+        builder.AddEdge(checkTurnDonePost, checkCompletionPost);
+        builder.AddEdge(checkTurnCountPost, checkCompletionPost);
+        builder.AddEdge(sendActivityDone, checkTurnDoneactionsPost);
+        builder.AddEdge(checkTurnDoneactionsPost, checkTurnDonePost);
+        builder.AddEdge(gotoStudentAgentRestart, checkTurnCountactionsPost);
+        builder.AddEdge(checkTurnCountactionsPost, checkTurnCountPost);
+        builder.AddEdge(sendActivityTired, checkCompletionelseactionsPost);
+        builder.AddEdge(checkCompletionelseactionsPost, checkCompletionPost);
 
         // Build the workflow
-        return builder.Build();
+        return builder.Build(validateOrphans: false);
     }
 }

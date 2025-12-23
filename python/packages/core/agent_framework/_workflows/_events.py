@@ -6,12 +6,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 from agent_framework import AgentRunResponse, AgentRunResponseUpdate
 
-if TYPE_CHECKING:
-    from ._request_info_executor import RequestInfoMessage
+from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
+from ._typing_utils import deserialize_type, serialize_type
 
 
 class WorkflowEventSource(str, Enum):
@@ -210,21 +210,22 @@ class RequestInfoEvent(WorkflowEvent):
         self,
         request_id: str,
         source_executor_id: str,
-        request_type: type,
-        request_data: "RequestInfoMessage",
+        request_data: Any,
+        response_type: type[Any],
     ):
         """Initialize the request info event.
 
         Args:
             request_id: Unique identifier for the request.
             source_executor_id: ID of the executor that made the request.
-            request_type: Type of the request (e.g., a specific data type).
             request_data: The data associated with the request.
+            response_type: Expected type of the response.
         """
         super().__init__(request_data)
         self.request_id = request_id
         self.source_executor_id = source_executor_id
-        self.request_type = request_type
+        self.request_type: type[Any] = type(request_data)
+        self.response_type = response_type
 
     def __repr__(self) -> str:
         """Return a string representation of the request info event."""
@@ -233,8 +234,42 @@ class RequestInfoEvent(WorkflowEvent):
             f"request_id={self.request_id}, "
             f"source_executor_id={self.source_executor_id}, "
             f"request_type={self.request_type.__name__}, "
-            f"data={self.data})"
+            f"data={self.data}, "
+            f"response_type={self.response_type.__name__})"
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the request info event to a dictionary for serialization."""
+        return {
+            "data": encode_checkpoint_value(self.data),
+            "request_id": self.request_id,
+            "source_executor_id": self.source_executor_id,
+            "request_type": serialize_type(self.request_type),
+            "response_type": serialize_type(self.response_type),
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "RequestInfoEvent":
+        """Create a RequestInfoEvent from a dictionary."""
+        # Validation
+        for property in ["data", "request_id", "source_executor_id", "request_type", "response_type"]:
+            if property not in data:
+                raise KeyError(f"Missing '{property}' field in RequestInfoEvent dictionary.")
+
+        request_info_event = RequestInfoEvent(
+            request_id=data["request_id"],
+            source_executor_id=data["source_executor_id"],
+            request_data=decode_checkpoint_value(data["data"]),
+            response_type=deserialize_type(data["response_type"]),
+        )
+
+        # Verify that the deserialized request_data matches the declared request_type
+        if deserialize_type(data["request_type"]) is not type(request_info_event.data):
+            raise TypeError(
+                "Mismatch between deserialized request_data type and request_type field in RequestInfoEvent dictionary."
+            )
+
+        return request_info_event
 
 
 class WorkflowOutputEvent(WorkflowEvent):
@@ -259,6 +294,36 @@ class WorkflowOutputEvent(WorkflowEvent):
         return f"{self.__class__.__name__}(data={self.data}, source_executor_id={self.source_executor_id})"
 
 
+class SuperStepEvent(WorkflowEvent):
+    """Event triggered when a superstep starts or ends."""
+
+    def __init__(self, iteration: int, data: Any | None = None):
+        """Initialize the superstep event.
+
+        Args:
+            iteration: The number of the superstep (1-based index).
+            data: Optional data associated with the superstep event.
+        """
+        super().__init__(data)
+        self.iteration = iteration
+
+    def __repr__(self) -> str:
+        """Return a string representation of the superstep event."""
+        return f"{self.__class__.__name__}(iteration={self.iteration}, data={self.data})"
+
+
+class SuperStepStartedEvent(SuperStepEvent):
+    """Event triggered when a superstep starts."""
+
+    ...
+
+
+class SuperStepCompletedEvent(SuperStepEvent):
+    """Event triggered when a superstep ends."""
+
+    ...
+
+
 class ExecutorEvent(WorkflowEvent):
     """Base class for executor events."""
 
@@ -275,17 +340,13 @@ class ExecutorEvent(WorkflowEvent):
 class ExecutorInvokedEvent(ExecutorEvent):
     """Event triggered when an executor handler is invoked."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler invoke event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorCompletedEvent(ExecutorEvent):
     """Event triggered when an executor handler is completed."""
 
-    def __repr__(self) -> str:
-        """Return a string representation of the executor handler complete event."""
-        return f"{self.__class__.__name__}(executor_id={self.executor_id}, data={self.data})"
+    ...
 
 
 class ExecutorFailedEvent(ExecutorEvent):
@@ -306,6 +367,8 @@ class ExecutorFailedEvent(ExecutorEvent):
 class AgentRunUpdateEvent(ExecutorEvent):
     """Event triggered when an agent is streaming messages."""
 
+    data: AgentRunResponseUpdate | None
+
     def __init__(self, executor_id: str, data: AgentRunResponseUpdate | None = None):
         """Initialize the agent streaming event."""
         super().__init__(executor_id, data)
@@ -317,6 +380,8 @@ class AgentRunUpdateEvent(ExecutorEvent):
 
 class AgentRunEvent(ExecutorEvent):
     """Event triggered when an agent run is completed."""
+
+    data: AgentRunResponse | None
 
     def __init__(self, executor_id: str, data: AgentRunResponse | None = None):
         """Initialize the agent run event."""

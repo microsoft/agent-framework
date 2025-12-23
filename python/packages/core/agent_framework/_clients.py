@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, run
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
 from ._middleware import (
     ChatMiddleware,
@@ -19,14 +18,8 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._threads import ChatMessageStoreProtocol
-from ._tools import ToolProtocol
-from ._types import (
-    ChatMessage,
-    ChatOptions,
-    ChatResponse,
-    ChatResponseUpdate,
-    ToolMode,
-)
+from ._tools import FUNCTION_INVOKING_CHAT_CLIENT_MARKER, FunctionInvocationConfiguration, ToolProtocol
+from ._types import ChatMessage, ChatOptions, ChatResponse, ChatResponseUpdate, ToolMode, prepare_messages
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
@@ -216,31 +209,11 @@ class ChatClientProtocol(Protocol):
 # region ChatClientBase
 
 
-def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
-    """Convert various message input formats into a list of ChatMessage objects.
-
-    Args:
-        messages: The input messages in various supported formats.
-
-    Returns:
-        A list of ChatMessage objects.
-    """
-    if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
-    if isinstance(messages, ChatMessage):
-        return [messages]
-    return_messages: list[ChatMessage] = []
-    for msg in messages:
-        if isinstance(msg, str):
-            msg = ChatMessage(role="user", text=msg)
-        return_messages.append(msg)
-    return return_messages
-
-
-def merge_chat_options(
+def _merge_chat_options(
     *,
     base_chat_options: ChatOptions | Any | None,
     model_id: str | None = None,
+    allow_multiple_tool_calls: bool | None = None,
     frequency_penalty: float | None = None,
     logit_bias: dict[str | int, float] | None = None,
     max_tokens: int | None = None,
@@ -251,7 +224,7 @@ def merge_chat_options(
     stop: str | Sequence[str] | None = None,
     store: bool | None = None,
     temperature: float | None = None,
-    tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
+    tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
     tools: list[ToolProtocol | dict[str, Any] | Callable[..., Any]] | None = None,
     top_p: float | None = None,
     user: str | None = None,
@@ -266,6 +239,7 @@ def merge_chat_options(
     Keyword Args:
         base_chat_options: Optional base ChatOptions to merge with direct parameters.
         model_id: The model_id to use for the agent.
+        allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
         frequency_penalty: The frequency penalty to use.
         logit_bias: The logit bias to use.
         max_tokens: The maximum number of tokens to generate.
@@ -297,6 +271,7 @@ def merge_chat_options(
 
     return base_chat_options & ChatOptions(
         model_id=model_id,
+        allow_multiple_tool_calls=allow_multiple_tool_calls,
         frequency_penalty=frequency_penalty,
         logit_bias=logit_bias,
         max_tokens=max_tokens,
@@ -384,6 +359,10 @@ class BaseChatClient(SerializationMixin, ABC):
 
         self.middleware = middleware
 
+        self.function_invocation_configuration = (
+            FunctionInvocationConfiguration() if hasattr(self.__class__, FUNCTION_INVOKING_CHAT_CLIENT_MARKER) else None
+        )
+
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance to a dictionary.
 
@@ -404,25 +383,6 @@ class BaseChatClient(SerializationMixin, ABC):
             result.update(self.additional_properties)
 
         return result
-
-    def prepare_messages(
-        self, messages: str | ChatMessage | list[str] | list[ChatMessage], chat_options: ChatOptions
-    ) -> MutableSequence[ChatMessage]:
-        """Convert various message input formats into a list of ChatMessage objects.
-
-        Prepends system instructions if present in chat_options.
-
-        Args:
-            messages: The input messages in various supported formats.
-            chat_options: The chat options containing instructions and other settings.
-
-        Returns:
-            A mutable sequence of ChatMessage objects.
-        """
-        if chat_options.instructions:
-            system_msg = ChatMessage(role="system", text=chat_options.instructions)
-            return [system_msg, *prepare_messages(messages)]
-        return prepare_messages(messages)
 
     def _filter_internal_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Filter out internal framework parameters that shouldn't be passed to chat client implementations.
@@ -465,6 +425,8 @@ class BaseChatClient(SerializationMixin, ABC):
             else [tools]
         )
         for tool in tools_list:  # type: ignore[reportUnknownType]
+            from ._mcp import MCPTool
+
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
                     await tool.connect()
@@ -527,6 +489,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -559,6 +522,7 @@ class BaseChatClient(SerializationMixin, ABC):
             messages: The message or messages to send to the model.
 
         Keyword Args:
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -571,6 +535,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -584,9 +549,10 @@ class BaseChatClient(SerializationMixin, ABC):
         """
         # Normalize tools and merge with base chat_options
         normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
+        chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -604,15 +570,11 @@ class BaseChatClient(SerializationMixin, ABC):
             additional_properties=additional_properties,
         )
 
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
-            chat_options.store = True
-
-        prepped_messages = self.prepare_messages(messages, chat_options)
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            prepped_messages = [system_msg, *prepare_messages(messages)]
+        else:
+            prepped_messages = prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)
@@ -622,6 +584,7 @@ class BaseChatClient(SerializationMixin, ABC):
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage],
         *,
+        allow_multiple_tool_calls: bool | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -654,6 +617,7 @@ class BaseChatClient(SerializationMixin, ABC):
             messages: The message or messages to send to the model.
 
         Keyword Args:
+            allow_multiple_tool_calls: Whether to allow multiple tool calls in a single response.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -666,6 +630,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -679,9 +644,10 @@ class BaseChatClient(SerializationMixin, ABC):
         """
         # Normalize tools and merge with base chat_options
         normalized_tools = await self._normalize_tools(tools)
-        chat_options = merge_chat_options(
+        chat_options = _merge_chat_options(
             base_chat_options=kwargs.pop("chat_options", None),
             model_id=model_id,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,
@@ -699,15 +665,11 @@ class BaseChatClient(SerializationMixin, ABC):
             additional_properties=additional_properties,
         )
 
-        # Validate that store is True when conversation_id is set
-        if chat_options.conversation_id is not None and chat_options.store is not True:
-            logger.warning(
-                "When conversation_id is set, store must be True for service-managed threads. "
-                "Automatically setting store=True."
-            )
-            chat_options.store = True
-
-        prepped_messages = self.prepare_messages(messages, chat_options)
+        if chat_options.instructions:
+            system_msg = ChatMessage(role="system", text=chat_options.instructions)
+            prepped_messages = [system_msg, *prepare_messages(messages)]
+        else:
+            prepped_messages = prepare_messages(messages)
         self._prepare_tool_choice(chat_options=chat_options)
 
         filtered_kwargs = self._filter_internal_kwargs(kwargs)
@@ -728,12 +690,12 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_tool_mode = chat_options.tool_choice
         if chat_tool_mode is None or chat_tool_mode == ToolMode.NONE or chat_tool_mode == "none":
             chat_options.tools = None
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
             return
         if not chat_options.tools:
-            chat_options.tool_choice = ToolMode.NONE.mode
+            chat_options.tool_choice = ToolMode.NONE
         else:
-            chat_options.tool_choice = chat_tool_mode.mode if isinstance(chat_tool_mode, ToolMode) else chat_tool_mode
+            chat_options.tool_choice = chat_tool_mode
 
     def service_url(self) -> str:
         """Get the URL of the service.
@@ -756,6 +718,8 @@ class BaseChatClient(SerializationMixin, ABC):
         chat_message_store_factory: Callable[[], ChatMessageStoreProtocol] | None = None,
         context_providers: ContextProvider | list[ContextProvider] | AggregateContextProvider | None = None,
         middleware: Middleware | list[Middleware] | None = None,
+        allow_multiple_tool_calls: bool | None = None,
+        conversation_id: str | None = None,
         frequency_penalty: float | None = None,
         logit_bias: dict[str | int, float] | None = None,
         max_tokens: int | None = None,
@@ -793,6 +757,8 @@ class BaseChatClient(SerializationMixin, ABC):
                 If not provided, the default in-memory store will be used.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            allow_multiple_tool_calls: Whether to allow multiple tool calls per agent turn.
+            conversation_id: The conversation ID to associate with the agent's messages.
             frequency_penalty: The frequency penalty to use.
             logit_bias: The logit bias to use.
             max_tokens: The maximum number of tokens to generate.
@@ -843,6 +809,8 @@ class BaseChatClient(SerializationMixin, ABC):
             chat_message_store_factory=chat_message_store_factory,
             context_providers=context_providers,
             middleware=middleware,
+            allow_multiple_tool_calls=allow_multiple_tool_calls,
+            conversation_id=conversation_id,
             frequency_penalty=frequency_penalty,
             logit_bias=logit_bias,
             max_tokens=max_tokens,

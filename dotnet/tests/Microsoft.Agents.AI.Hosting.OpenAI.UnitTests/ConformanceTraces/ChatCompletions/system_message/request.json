@@ -1,0 +1,14 @@
+{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that speaks like a pirate."
+    },
+    {
+      "role": "user",
+      "content": "Tell me about the ocean."
+ }
+  ],
+  "max_completion_tokens": 100
+}

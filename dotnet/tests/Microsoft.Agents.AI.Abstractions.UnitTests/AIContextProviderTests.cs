@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.ObjectModel;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -16,7 +15,7 @@ public class AIContextProviderTests
     {
         var provider = new TestAIContextProvider();
         var messages = new ReadOnlyCollection<ChatMessage>([]);
-        var task = provider.InvokedAsync(new(messages));
+        var task = provider.InvokedAsync(new(messages, aiContextProviderMessages: null));
         Assert.Equal(default, task);
     }
 
@@ -37,7 +36,7 @@ public class AIContextProviderTests
     [Fact]
     public void InvokedContext_Constructor_ThrowsForNullMessages()
     {
-        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!));
+        Assert.Throws<ArgumentNullException>(() => new AIContextProvider.InvokedContext(null!, aiContextProviderMessages: null));
     }
 
     #region GetService Method Tests
@@ -161,11 +160,6 @@ public class AIContextProviderTests
         public override ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
             return default;
-        }
-
-        public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        {
-            return base.Serialize(jsonSerializerOptions);
         }
     }
 }

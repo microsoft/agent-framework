@@ -24,6 +24,18 @@ if TYPE_CHECKING:
     from agent_framework._workflows._runner_context import InProcRunnerContext
 
 
+class MockExecutor(Executor):
+    """Mock executor for testing."""
+
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+
+    @handler
+    async def handle_message(self, message: str, ctx: WorkflowContext[str]) -> None:
+        """Handle string messages."""
+        ...
+
+
 @asynccontextmanager
 async def make_context(
     executor_id: str = "exec",
@@ -31,10 +43,11 @@ async def make_context(
     from agent_framework._workflows._runner_context import InProcRunnerContext
     from agent_framework._workflows._shared_state import SharedState
 
+    mock_executor = MockExecutor(executor_id)
     runner_ctx = InProcRunnerContext()
     shared_state = SharedState()
     workflow_ctx: WorkflowContext[object] = WorkflowContext(
-        executor_id,
+        mock_executor,
         ["source"],
         shared_state,
         runner_ctx,

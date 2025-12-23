@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
@@ -64,7 +64,7 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_observability
+from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
@@ -89,24 +89,16 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> ChatResponse:
-        options_dict = self._prepare_options(messages, chat_options)
+        client = await self._ensure_client()
+        # prepare
+        run_options = await self._prepare_options(messages, chat_options, **kwargs)
         try:
-            if not chat_options.response_format:
-                response = await self.client.responses.create(
-                    stream=False,
-                    **options_dict,
-                )
-                chat_options.conversation_id = response.id if chat_options.store is True else None
-                return self._create_response_content(response, chat_options=chat_options)
-            # create call does not support response_format, so we need to handle it via parse call
-            resp_format = chat_options.response_format
-            parsed_response: ParsedResponse[BaseModel] = await self.client.responses.parse(
-                text_format=resp_format,
-                stream=False,
-                **options_dict,
-            )
-            chat_options.conversation_id = parsed_response.id if chat_options.store is True else None
-            return self._create_response_content(parsed_response, chat_options=chat_options)
+            # execute and process
+            if "text_format" in run_options:
+                response = await client.responses.parse(stream=False, **run_options)
+            else:
+                response = await client.responses.create(stream=False, **run_options)
+            return self._parse_response_from_openai(response, chat_options=chat_options)
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -130,30 +122,23 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        options_dict = self._prepare_options(messages, chat_options)
+        client = await self._ensure_client()
+        # prepare
+        run_options = await self._prepare_options(messages, chat_options, **kwargs)
         function_call_ids: dict[int, tuple[str, str]] = {}  # output_index: (call_id, name)
         try:
-            if not chat_options.response_format:
-                response = await self.client.responses.create(
-                    stream=True,
-                    **options_dict,
-                )
-                async for chunk in response:
-                    update = self._create_streaming_response_content(
+            # execute and process
+            if "text_format" not in run_options:
+                async for chunk in await client.responses.create(stream=True, **run_options):
+                    yield self._parse_chunk_from_openai(
                         chunk, chat_options=chat_options, function_call_ids=function_call_ids
                     )
-                    yield update
                 return
-            # create call does not support response_format, so we need to handle it via stream call
-            async with self.client.responses.stream(
-                text_format=chat_options.response_format,
-                **options_dict,
-            ) as response:
+            async with client.responses.stream(**run_options) as response:
                 async for chunk in response:
-                    update = self._create_streaming_response_content(
+                    yield self._parse_chunk_from_openai(
                         chunk, chat_options=chat_options, function_call_ids=function_call_ids
                     )
-                    yield update
         except BadRequestError as ex:
             if ex.code == "content_filter":
                 raise OpenAIContentFilterException(
@@ -170,41 +155,99 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 inner_exception=ex,
             ) from ex
 
+    def _prepare_response_and_text_format(
+        self,
+        *,
+        response_format: Any,
+        text_config: MutableMapping[str, Any] | None,
+    ) -> tuple[type[BaseModel] | None, dict[str, Any] | None]:
+        """Normalize response_format into Responses text configuration and parse target."""
+        if text_config is not None and not isinstance(text_config, MutableMapping):
+            raise ServiceInvalidRequestError("text must be a mapping when provided.")
+        text_config = cast(dict[str, Any], text_config) if isinstance(text_config, MutableMapping) else None
+
+        if response_format is None:
+            return None, text_config
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            if text_config and "format" in text_config:
+                raise ServiceInvalidRequestError("response_format cannot be combined with explicit text.format.")
+            return response_format, text_config
+
+        if isinstance(response_format, Mapping):
+            format_config = self._convert_response_format(cast("Mapping[str, Any]", response_format))
+            if text_config is None:
+                text_config = {}
+            elif "format" in text_config and text_config["format"] != format_config:
+                raise ServiceInvalidRequestError("Conflicting response_format definitions detected.")
+            text_config["format"] = format_config
+            return None, text_config
+
+        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+
+    def _convert_response_format(self, response_format: Mapping[str, Any]) -> dict[str, Any]:
+        """Convert Chat style response_format into Responses text format config."""
+        if "format" in response_format and isinstance(response_format["format"], Mapping):
+            return dict(cast("Mapping[str, Any]", response_format["format"]))
+
+        format_type = response_format.get("type")
+        if format_type == "json_schema":
+            schema_section = response_format.get("json_schema", response_format)
+            if not isinstance(schema_section, Mapping):
+                raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+            schema_section_typed = cast("Mapping[str, Any]", schema_section)
+            schema: Any = schema_section_typed.get("schema")
+            if schema is None:
+                raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+            name: str = str(
+                schema_section_typed.get("name")
+                or schema_section_typed.get("title")
+                or (cast("Mapping[str, Any]", schema).get("title") if isinstance(schema, Mapping) else None)
+                or "response"
+            )
+            format_config: dict[str, Any] = {
+                "type": "json_schema",
+                "name": name,
+                "schema": schema,
+            }
+            if "strict" in schema_section:
+                format_config["strict"] = schema_section["strict"]
+            if "description" in schema_section and schema_section["description"] is not None:
+                format_config["description"] = schema_section["description"]
+            return format_config
+
+        if format_type in {"json_object", "text"}:
+            return {"type": format_type}
+
+        raise ServiceInvalidRequestError("Unsupported response_format provided for Responses client.")
+
+    def _get_conversation_id(
+        self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
+    ) -> str | None:
+        """Get the conversation ID from the response if store is True."""
+        if store is False:
+            return None
+        # If conversation ID exists, it means that we operate with conversation
+        # so we use conversation ID as input and output.
+        if response.conversation and response.conversation.id:
+            return response.conversation.id
+        # If conversation ID doesn't exist, we operate with responses
+        # so we use response ID as input and output.
+        return response.id
+
     # region Prep methods
 
-    def _tools_to_response_tools(
-        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]]
+    def _prepare_tools_for_openai(
+        self, tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None
     ) -> list[ToolParam | dict[str, Any]]:
         response_tools: list[ToolParam | dict[str, Any]] = []
+        if not tools:
+            return response_tools
         for tool in tools:
             if isinstance(tool, ToolProtocol):
                 match tool:
                     case HostedMCPTool():
-                        mcp: Mcp = {
-                            "type": "mcp",
-                            "server_label": tool.name.replace(" ", "_"),
-                            "server_url": str(tool.url),
-                            "server_description": tool.description,
-                            "headers": tool.headers,
-                        }
-                        if tool.allowed_tools:
-                            mcp["allowed_tools"] = list(tool.allowed_tools)
-                        if tool.approval_mode:
-                            match tool.approval_mode:
-                                case str():
-                                    mcp["require_approval"] = (
-                                        "always" if tool.approval_mode == "always_require" else "never"
-                                    )
-                                case _:
-                                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
-                                        mcp["require_approval"] = {
-                                            "always": {"tool_names": list(always_require_approvals)}
-                                        }
-                                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
-                                        mcp["require_approval"] = {
-                                            "never": {"tool_names": list(never_require_approvals)}
-                                        }
-                        response_tools.append(mcp)
+                        response_tools.append(self._prepare_mcp_tool(tool))
                     case HostedCodeInterpreterTool():
                         tool_args: CodeInterpreterContainerCodeInterpreterToolAuto = {"type": "auto"}
                         if tool.inputs:
@@ -293,25 +336,77 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             # Map the parameter name and remove the old one
                             mapped_tool[api_param] = mapped_tool.pop(user_param)
 
+                    # Validate partial_images parameter for streaming image generation
+                    # OpenAI API requires partial_images to be between 0-3 (inclusive) for image_generation tool
+                    # Reference: https://platform.openai.com/docs/api-reference/responses/create#responses_create-tools-image_generation_tool-partial_images
+                    if "partial_images" in mapped_tool:
+                        partial_images = mapped_tool["partial_images"]
+                        if not isinstance(partial_images, int) or partial_images < 0 or partial_images > 3:
+                            raise ValueError("partial_images must be an integer between 0 and 3 (inclusive).")
+
                     response_tools.append(mapped_tool)
                 else:
                     response_tools.append(tool_dict)
         return response_tools
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+    @staticmethod
+    def _prepare_mcp_tool(tool: HostedMCPTool) -> Mcp:
+        """Get MCP tool from HostedMCPTool."""
+        mcp: Mcp = {
+            "type": "mcp",
+            "server_label": tool.name.replace(" ", "_"),
+            "server_url": str(tool.url),
+            "server_description": tool.description,
+            "headers": tool.headers,
+        }
+        if tool.allowed_tools:
+            mcp["allowed_tools"] = list(tool.allowed_tools)
+        if tool.approval_mode:
+            match tool.approval_mode:
+                case str():
+                    mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
+                case _:
+                    if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                        mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
+                    if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                        mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+
+        return mcp
+
+    async def _prepare_options(
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Responses API."""
-        options_dict: dict[str, Any] = chat_options.to_dict(
+        run_options: dict[str, Any] = chat_options.to_dict(
             exclude={
                 "type",
-                "response_format",  # handled in inner get methods
                 "presence_penalty",  # not supported
                 "frequency_penalty",  # not supported
                 "logit_bias",  # not supported
                 "seed",  # not supported
                 "stop",  # not supported
                 "instructions",  # already added as system message
+                "response_format",  # handled separately
+                "conversation_id",  # handled separately
+                "additional_properties",  # handled separately
             }
         )
+        # messages
+        request_input = self._prepare_messages_for_openai(messages)
+        if not request_input:
+            raise ServiceInvalidRequestError("Messages are required for chat completions")
+        run_options["input"] = request_input
+
+        # model id
+        if not run_options.get("model"):
+            if not self.model_id:
+                raise ValueError("model_id must be a non-empty string")
+            run_options["model"] = self.model_id
+
+        # translations between ChatOptions and Responses API
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",
@@ -319,35 +414,56 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             "max_tokens": "max_output_tokens",
         }
         for old_key, new_key in translations.items():
-            if old_key in options_dict and old_key != new_key:
-                options_dict[new_key] = options_dict.pop(old_key)
+            if old_key in run_options and old_key != new_key:
+                run_options[new_key] = run_options.pop(old_key)
+
+        # Handle different conversation ID formats
+        if conversation_id := self._get_current_conversation_id(chat_options, **kwargs):
+            if conversation_id.startswith("resp_"):
+                # For response IDs, set previous_response_id and remove conversation property
+                run_options["previous_response_id"] = conversation_id
+            elif conversation_id.startswith("conv_"):
+                # For conversation IDs, set conversation and remove previous_response_id property
+                run_options["conversation"] = conversation_id
+            else:
+                # If the format is unrecognized, default to previous_response_id
+                run_options["previous_response_id"] = conversation_id
 
         # tools
-        if chat_options.tools is None:
-            options_dict.pop("parallel_tool_calls", None)
+        if tools := self._prepare_tools_for_openai(chat_options.tools):
+            run_options["tools"] = tools
         else:
-            options_dict["tools"] = self._tools_to_response_tools(chat_options.tools)
+            run_options.pop("parallel_tool_calls", None)
+            run_options.pop("tool_choice", None)
+        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
+        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+            run_options["tool_choice"] = tool_choice["mode"]
 
-        # model id
-        if not options_dict.get("model"):
-            options_dict["model"] = self.model_id
+        # additional properties
+        additional_options = {
+            key: value for key, value in chat_options.additional_properties.items() if value is not None
+        }
+        if additional_options:
+            run_options.update(additional_options)
 
-        # messages
-        request_input = self._prepare_chat_messages_for_request(messages)
-        if not request_input:
-            raise ServiceInvalidRequestError("Messages are required for chat completions")
-        options_dict["input"] = request_input
+        # response format and text config (after additional_properties so user can pass text via additional_properties)
+        response_format = chat_options.response_format
+        text_config = run_options.pop("text", None)
+        response_format, text_config = self._prepare_response_and_text_format(
+            response_format=response_format, text_config=text_config
+        )
+        if text_config:
+            run_options["text"] = text_config
+        if response_format:
+            run_options["text_format"] = response_format
 
-        # additional provider specific settings
-        if additional_properties := options_dict.pop("additional_properties", None):
-            for key, value in additional_properties.items():
-                if value is not None:
-                    options_dict[key] = value
-        if "store" not in options_dict:
-            options_dict["store"] = False
-        return options_dict
+        return run_options
 
-    def _prepare_chat_messages_for_request(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
+    def _get_current_conversation_id(self, chat_options: ChatOptions, **kwargs: Any) -> str | None:
+        """Get the current conversation ID from chat options or kwargs."""
+        return chat_options.conversation_id or kwargs.get("conversation_id")
+
+    def _prepare_messages_for_openai(self, chat_messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
 
         Allowing customization of the key names for role/author, and optionally overriding the role.
@@ -373,22 +489,20 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     and "fc_id" in content.additional_properties
                 ):
                     call_id_to_id[content.call_id] = content.additional_properties["fc_id"]
-        list_of_list = [self._openai_chat_message_parser(message, call_id_to_id) for message in chat_messages]
+        list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
 
-    def _openai_chat_message_parser(
+    def _prepare_message_for_openai(
         self,
         message: ChatMessage,
         call_id_to_id: dict[str, str],
     ) -> list[dict[str, Any]]:
-        """Parse a chat message into the openai format."""
+        """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
         args: dict[str, Any] = {
             "role": message.role.value if isinstance(message.role, Role) else message.role,
         }
-        if message.additional_properties:
-            args["metadata"] = message.additional_properties
         for content in message.contents:
             match content:
                 case TextReasoningContent():
@@ -396,28 +510,28 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     continue
                 case FunctionResultContent():
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._openai_content_parser(message.role, content, call_id_to_id))
+                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))
                     all_messages.append(new_args)
                 case FunctionCallContent():
-                    function_call = self._openai_content_parser(message.role, content, call_id_to_id)
+                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)
                     all_messages.append(function_call)  # type: ignore
                 case FunctionApprovalResponseContent() | FunctionApprovalRequestContent() | TextReasoningContent():
-                    all_messages.append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+                    all_messages.append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
                 case _:
                     if "content" not in args:
                         args["content"] = []
-                    args["content"].append(self._openai_content_parser(message.role, content, call_id_to_id))  # type: ignore
+                    args["content"].append(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
 
-    def _openai_content_parser(
+    def _prepare_content_for_openai(
         self,
         role: Role,
         content: Contents,
         call_id_to_id: dict[str, str],
     ) -> dict[str, Any]:
-        """Parse contents into the openai format."""
+        """Prepare content for the OpenAI Responses API format."""
         match content:
             case TextContent():
                 return {
@@ -434,12 +548,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         }
                     ],
                 }
-                if content.additional_properties is not None:
-                    if status := content.additional_properties.get("status"):
+                props: dict[str, Any] | None = getattr(content, "additional_properties", None)
+                if props:
+                    if status := props.get("status"):
                         ret["status"] = status
-                    if reasoning_text := content.additional_properties.get("reasoning_text"):
+                    if reasoning_text := props.get("reasoning_text"):
                         ret["content"] = {"type": "reasoning_text", "text": reasoning_text}
-                    if encrypted_content := content.additional_properties.get("encrypted_content"):
+                    if encrypted_content := props.get("encrypted_content"):
                         ret["encrypted_content"] = encrypted_content
                 return ret
             case DataContent() | UriContent():
@@ -496,13 +611,9 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 # call_id for the result needs to be the same as the call_id for the function call
                 args: dict[str, Any] = {
                     "call_id": content.call_id,
-                    "id": call_id_to_id.get(content.call_id),
                     "type": "function_call_output",
+                    "output": prepare_function_call_results(content.result),
                 }
-                if content.result:
-                    args["output"] = prepare_function_call_results(content.result)
-                if content.exception:
-                    args["output"] = "Error: " + str(content.exception)
                 return args
             case FunctionApprovalRequestContent():
                 return {
@@ -529,14 +640,13 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 logger.debug("Unsupported content type passed (type: %s)", type(content))
                 return {}
 
-    # region Response creation methods
-
-    def _create_response_content(
+    # region Parse methods
+    def _parse_response_from_openai(
         self,
         response: OpenAIResponse | ParsedResponse[BaseModel],
         chat_options: ChatOptions,
     ) -> "ChatResponse":
-        """Create a chat message content object from a choice."""
+        """Parse an OpenAI Responses API response into a ChatResponse."""
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
@@ -697,29 +807,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         uri = item.result
                         media_type = None
                         if not uri.startswith("data:"):
-                            # Raw base64 string - convert to proper data URI format
-                            # Detect format from base64 data
-                            import base64
-
-                            try:
-                                # Decode a small portion to detect format
-                                decoded_data = base64.b64decode(uri[:100])  # First ~75 bytes should be enough
-                                if decoded_data.startswith(b"\x89PNG"):
-                                    format_type = "png"
-                                elif decoded_data.startswith(b"\xff\xd8\xff"):
-                                    format_type = "jpeg"
-                                elif decoded_data.startswith(b"RIFF") and b"WEBP" in decoded_data[:12]:
-                                    format_type = "webp"
-                                elif decoded_data.startswith(b"GIF87a") or decoded_data.startswith(b"GIF89a"):
-                                    format_type = "gif"
-                                else:
-                                    # Default to png if format cannot be detected
-                                    format_type = "png"
-                            except Exception:
-                                # Fallback to png if decoding fails
-                                format_type = "png"
-                            uri = f"data:image/{format_type};base64,{uri}"
-                            media_type = f"image/{format_type}"
+                            # Raw base64 string - convert to proper data URI format using helper
+                            uri, media_type = DataContent.create_data_uri_from_base64(uri)
                         else:
                             # Parse media type from existing data URI
                             try:
@@ -742,15 +831,18 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         response_message = ChatMessage(role="assistant", contents=contents)
         args: dict[str, Any] = {
             "response_id": response.id,
-            "created_at": datetime.fromtimestamp(response.created_at).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            ),
             "messages": response_message,
             "model_id": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
         }
-        if chat_options.store:
-            args["conversation_id"] = response.id
-        if response.usage and (usage_details := self._usage_details_from_openai(response.usage)):
+
+        if conversation_id := self._get_conversation_id(response, chat_options.store):
+            args["conversation_id"] = conversation_id
+        if response.usage and (usage_details := self._parse_usage_from_openai(response.usage)):
             args["usage_details"] = usage_details
         if structured_response:
             args["value"] = structured_response
@@ -758,16 +850,17 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             args["response_format"] = chat_options.response_format
         return ChatResponse(**args)
 
-    def _create_streaming_response_content(
+    def _parse_chunk_from_openai(
         self,
         event: OpenAIResponseStreamEvent,
         chat_options: ChatOptions,
         function_call_ids: dict[int, tuple[str, str]],
     ) -> ChatResponseUpdate:
-        """Create a streaming chat message content object from a choice."""
+        """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
         contents: list[Contents] = []
         conversation_id: str | None = None
+        response_id: str | None = None
         model = self.model_id
         # TODO(peterychang): Add support for other content types
         match event.type:
@@ -833,6 +926,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
                         contents.append(TextContent(text=event_part.refusal, raw_representation=event))
+                    case _:
+                        pass
             case "response.output_text.delta":
                 contents.append(TextContent(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
@@ -848,11 +943,18 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
             case "response.reasoning_summary_text.done":
                 # Skip .done event - contains complete text already streamed via .delta events
                 pass
+            case "response.created":
+                response_id = event.response.id
+                conversation_id = self._get_conversation_id(event.response, chat_options.store)
+            case "response.in_progress":
+                response_id = event.response.id
+                conversation_id = self._get_conversation_id(event.response, chat_options.store)
             case "response.completed":
-                conversation_id = event.response.id if chat_options.store is True else None
+                response_id = event.response.id
+                conversation_id = self._get_conversation_id(event.response, chat_options.store)
                 model = event.response.model
                 if event.response.usage:
-                    usage = self._usage_details_from_openai(event.response.usage)
+                    usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:
                         contents.append(UsageContent(details=usage, raw_representation=event))
             case "response.output_item.added":
@@ -935,19 +1037,93 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                             raw_representation=event,
                         )
                     )
+            case "response.image_generation_call.partial_image":
+                # Handle streaming partial image generation
+                image_base64 = event.partial_image_b64
+                partial_index = event.partial_image_index
+
+                # Use helper function to create data URI from base64
+                uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
+
+                contents.append(
+                    DataContent(
+                        uri=uri,
+                        media_type=media_type,
+                        additional_properties={
+                            "partial_image_index": partial_index,
+                            "is_partial_image": True,
+                        },
+                        raw_representation=event,
+                    )
+                )
+            case "response.output_text.annotation.added":
+                # Handle streaming text annotations (file citations, file paths, etc.)
+                annotation: Any = event.annotation
+
+                def _get_ann_value(key: str) -> Any:
+                    """Extract value from annotation (dict or object)."""
+                    if isinstance(annotation, dict):
+                        return cast("dict[str, Any]", annotation).get(key)
+                    return getattr(annotation, key, None)
+
+                ann_type = _get_ann_value("type")
+                ann_file_id = _get_ann_value("file_id")
+                if ann_type == "file_path":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "index": _get_ann_value("index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                elif ann_type == "file_citation":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "filename": _get_ann_value("filename"),
+                                    "index": _get_ann_value("index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                elif ann_type == "container_file_citation":
+                    if ann_file_id:
+                        contents.append(
+                            HostedFileContent(
+                                file_id=str(ann_file_id),
+                                additional_properties={
+                                    "annotation_index": event.annotation_index,
+                                    "container_id": _get_ann_value("container_id"),
+                                    "filename": _get_ann_value("filename"),
+                                    "start_index": _get_ann_value("start_index"),
+                                    "end_index": _get_ann_value("end_index"),
+                                },
+                                raw_representation=event,
+                            )
+                        )
+                else:
+                    logger.debug("Unparsed annotation type in streaming: %s", ann_type)
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
         return ChatResponseUpdate(
             contents=contents,
             conversation_id=conversation_id,
+            response_id=response_id,
             role=Role.ASSISTANT,
             model_id=model,
             additional_properties=metadata,
             raw_representation=event,
         )
 
-    def _usage_details_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
+    def _parse_usage_from_openai(self, usage: ResponseUsage) -> UsageDetails | None:
         details = UsageDetails(
             input_token_count=usage.input_tokens,
             output_token_count=usage.output_tokens,
@@ -972,7 +1148,7 @@ TOpenAIResponsesClient = TypeVar("TOpenAIResponsesClient", bound="OpenAIResponse
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OpenAIResponsesClient(OpenAIConfigMixin, OpenAIBaseResponsesClient):
     """OpenAI Responses client class."""

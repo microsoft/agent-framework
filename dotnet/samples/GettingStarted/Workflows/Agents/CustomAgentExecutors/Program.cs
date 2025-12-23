@@ -48,7 +48,7 @@ public static class Program
             .Build();
 
         // Execute the workflow
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, "Create a slogan for a new electric SUV that is affordable and fun to drive.");
+        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, input: "Create a slogan for a new electric SUV that is affordable and fun to drive.");
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SloganGeneratedEvent or FeedbackEvent)
@@ -118,10 +118,11 @@ internal sealed class SloganWriterExecutor : Executor
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
     public SloganWriterExecutor(string id, IChatClient chatClient) : base(id)
     {
-        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional slogan writer. You will be given a task to create a slogan.")
+        ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                Instructions = "You are a professional slogan writer. You will be given a task to create a slogan.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<SloganResult>()
             }
         };
@@ -193,10 +194,11 @@ internal sealed class FeedbackExecutor : Executor<SloganResult>
     /// <param name="chatClient">The chat client to use for the AI agent.</param>
     public FeedbackExecutor(string id, IChatClient chatClient) : base(id)
     {
-        ChatClientAgentOptions agentOptions = new(instructions: "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.")
+        ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                Instructions = "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<FeedbackResult>()
             }
         };

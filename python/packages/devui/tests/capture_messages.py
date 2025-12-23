@@ -89,7 +89,7 @@ def capture_agent_stream_with_tracing(client: OpenAI, agent_id: str, scenario: s
 
     try:
         stream = client.responses.create(
-            model=agent_id,  # DevUI uses model field as entity_id
+            metadata={"entity_id": agent_id},
             input="Tell me about the weather in Tokyo. I want details.",
             stream=True,
         )
@@ -130,7 +130,7 @@ def capture_workflow_stream_with_tracing(
 
     try:
         stream = client.responses.create(
-            model=workflow_id,  # DevUI uses model field as entity_id
+            metadata={"entity_id": workflow_id},
             input=(
                 "Process this spam detection workflow with multiple emails: "
                 "'Buy now!', 'Hello mom', 'URGENT: Click here!'"

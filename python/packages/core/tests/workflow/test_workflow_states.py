@@ -1,7 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from dataclasses import dataclass
-
 import pytest
 from typing_extensions import Never
 
@@ -10,8 +8,6 @@ from agent_framework import (
     ExecutorFailedEvent,
     InProcRunnerContext,
     RequestInfoEvent,
-    RequestInfoExecutor,
-    RequestInfoMessage,
     SharedState,
     Workflow,
     WorkflowBuilder,
@@ -43,6 +39,12 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
         async for ev in wf.run_stream(0):
             events.append(ev)
 
+    # ExecutorFailedEvent should be emitted before WorkflowFailedEvent
+    executor_failed_events = [e for e in events if isinstance(e, ExecutorFailedEvent)]
+    assert executor_failed_events, "ExecutorFailedEvent should be emitted when start executor fails"
+    assert executor_failed_events[0].executor_id == "f"
+    assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK
+
     # Workflow-level failure and FAILED status should be surfaced
     failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
     assert failed_events
@@ -50,6 +52,11 @@ async def test_executor_failed_and_workflow_failed_events_streaming():
     status = [e for e in events if isinstance(e, WorkflowStatusEvent)]
     assert status and status[-1].state == WorkflowRunState.FAILED
     assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in status)
+
+    # Verify ExecutorFailedEvent comes before WorkflowFailedEvent
+    executor_failed_idx = events.index(executor_failed_events[0])
+    workflow_failed_idx = events.index(failed_events[0])
+    assert executor_failed_idx < workflow_failed_idx, "ExecutorFailedEvent should be emitted before WorkflowFailedEvent"
 
 
 async def test_executor_failed_event_emitted_on_direct_execute():
@@ -69,18 +76,62 @@ async def test_executor_failed_event_emitted_on_direct_execute():
     assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed)
 
 
+class PassthroughExecutor(Executor):
+    """Executor that passes message to the next executor."""
+
+    @handler
+    async def passthrough(self, msg: int, ctx: WorkflowContext[int]) -> None:
+        await ctx.send_message(msg)
+
+
+async def test_executor_failed_event_from_second_executor_in_chain():
+    """Test that ExecutorFailedEvent is emitted when a non-start executor fails."""
+    passthrough = PassthroughExecutor(id="passthrough")
+    failing = FailingExecutor(id="failing")
+    wf: Workflow = WorkflowBuilder().set_start_executor(passthrough).add_edge(passthrough, failing).build()
+
+    events: list[object] = []
+    with pytest.raises(RuntimeError, match="boom"):
+        async for ev in wf.run_stream(0):
+            events.append(ev)
+
+    # ExecutorFailedEvent should be emitted for the failing executor
+    executor_failed_events = [e for e in events if isinstance(e, ExecutorFailedEvent)]
+    assert executor_failed_events, "ExecutorFailedEvent should be emitted when second executor fails"
+    assert executor_failed_events[0].executor_id == "failing"
+    assert executor_failed_events[0].origin is WorkflowEventSource.FRAMEWORK
+
+    # Workflow-level failure should also be surfaced
+    failed_events = [e for e in events if isinstance(e, WorkflowFailedEvent)]
+    assert failed_events
+    assert all(e.origin is WorkflowEventSource.FRAMEWORK for e in failed_events)
+
+    # Verify ExecutorFailedEvent comes before WorkflowFailedEvent
+    executor_failed_idx = events.index(executor_failed_events[0])
+    workflow_failed_idx = events.index(failed_events[0])
+    assert executor_failed_idx < workflow_failed_idx, "ExecutorFailedEvent should be emitted before WorkflowFailedEvent"
+
+
+class SimpleExecutor(Executor):
+    """Executor that does nothing, for testing."""
+
+    @handler
+    async def run(self, msg: str, ctx: WorkflowContext[str]) -> None:  # pragma: no cover
+        await ctx.send_message(msg)
+
+
 class Requester(Executor):
     """Executor that always requests external info to test idle-with-requests state."""
 
     @handler
-    async def ask(self, _: str, ctx: WorkflowContext[RequestInfoMessage]) -> None:  # pragma: no cover
-        await ctx.send_message(RequestInfoMessage())
+    async def ask(self, _: str, ctx: WorkflowContext) -> None:  # pragma: no cover
+        await ctx.request_info("Mock request data", str)
 
 
 async def test_idle_with_pending_requests_status_streaming():
-    req = Requester(id="req")
-    rie = RequestInfoExecutor(id="rie")
-    wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+    simple_executor = SimpleExecutor(id="simple")
+    requester = Requester(id="req")
+    wf = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
 
     events = [ev async for ev in wf.run_stream("start")]  # Consume stream fully
 
@@ -134,9 +185,9 @@ async def test_non_streaming_final_state_helpers():
     assert result1.get_final_state() == WorkflowRunState.IDLE
 
     # Idle-with-pending-request case
-    req = Requester(id="req")
-    rie = RequestInfoExecutor(id="rie")
-    wf2 = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+    simple_executor = SimpleExecutor(id="simple")
+    requester = Requester(id="req")
+    wf2 = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
     result2: WorkflowRunResult = await wf2.run("start")
     assert result2.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
@@ -151,32 +202,12 @@ async def test_run_includes_status_events_completed():
 
 
 async def test_run_includes_status_events_idle_with_requests():
-    req = Requester(id="req2")
-    rie = RequestInfoExecutor(id="rie2")
-    wf = WorkflowBuilder().set_start_executor(req).add_edge(req, rie).build()
+    simple_executor = SimpleExecutor(id="simple")
+    requester = Requester(id="req2")
+    wf = WorkflowBuilder().set_start_executor(simple_executor).add_edge(simple_executor, requester).build()
     result: WorkflowRunResult = await wf.run("start")
     timeline = result.status_timeline()
     assert timeline, "Expected status timeline in non-streaming run() results"
     assert len(timeline) >= 3
     assert timeline[-2].state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
     assert timeline[-1].state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
-
-
-@dataclass
-class SnapshotRequest(RequestInfoMessage):
-    prompt: str = ""
-    draft: str = ""
-    iteration: int = 0
-
-
-class SnapshotRequester(Executor):
-    """Executor that emits a rich RequestInfoMessage for persistence tests."""
-
-    def __init__(self, id: str, prompt: str, draft: str) -> None:
-        super().__init__(id=id)
-        self._prompt = prompt
-        self._draft = draft
-
-    @handler
-    async def ask(self, _: str, ctx: WorkflowContext[SnapshotRequest]) -> None:  # pragma: no cover - simple helper
-        await ctx.send_message(SnapshotRequest(prompt=self._prompt, draft=self._draft, iteration=1))

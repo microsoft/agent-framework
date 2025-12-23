@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -16,8 +18,8 @@ public abstract class WorkflowAgentProvider
     /// <summary>
     /// Gets or sets a collection of additional tools an agent is able to automatically invoke.
     /// If an agent is configured with a function tool that is not available, a <see cref="RequestPort"/> is executed
-    /// that provides an <see cref="AgentToolRequest"/> that describes the function calls requested.  The caller may
-    /// then respond with a corrsponding <see cref="AgentToolResponse"/> that includes the results of the function calls.
+    /// that provides an <see cref="ExternalInputRequest"/> that describes the function calls requested.  The caller may
+    /// then respond with a corrsponding <see cref="ExternalInputResponse"/> that includes the results of the function calls.
     /// </summary>
     /// <remarks>
     /// These will not impact the requests sent to the model by the <see cref="FunctionInvokingChatClient"/>.
@@ -57,14 +59,6 @@ public abstract class WorkflowAgentProvider
     public bool AllowMultipleToolCalls { get; init; }
 
     /// <summary>
-    /// Asynchronously retrieves an AI agent by its unique identifier.
-    /// </summary>
-    /// <param name="agentId">The unique identifier of the AI agent to retrieve. Cannot be null or empty.</param>
-    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
-    /// <returns>The task result contains the <see cref="AIAgent"/> associated.</returns>
-    public abstract Task<AIAgent> GetAgentAsync(string agentId, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Asynchronously creates a new conversation and returns its unique identifier.
     /// </summary>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
@@ -89,6 +83,24 @@ public abstract class WorkflowAgentProvider
     public abstract Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Asynchronously retrieves an AI agent by its unique identifier.
+    /// </summary>
+    /// <param name="agentId">The unique identifier of the AI agent to retrieve. Cannot be null or empty.</param>
+    /// <param name="agentVersion">An optional agent version.</param>
+    /// <param name="conversationId">Optional identifier of the target conversation.</param>
+    /// <param name="messages">The messages to include in the invocation.</param>
+    /// <param name="inputArguments">Optional input arguments for agents that provide support.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>Asynchronous set of <see cref="AgentRunResponseUpdate"/>.</returns>
+    public abstract IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+        string agentId,
+        string? agentVersion,
+        string? conversationId,
+        IEnumerable<ChatMessage>? messages,
+        IDictionary<string, object?>? inputArguments,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves a set of messages from a conversation.
     /// </summary>
     /// <param name="conversationId">The identifier of the target conversation.</param>
@@ -105,4 +117,14 @@ public abstract class WorkflowAgentProvider
         string? before = null,
         bool newestFirst = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Utility method to convert a dictionary of input arguments to a JsonNode.
+    /// </summary>
+    /// <param name="inputArguments">The dictionary of input arguments.</param>
+    /// <returns>A JsonNode representing the input arguments.</returns>
+    protected static JsonNode ConvertDictionaryToJson(IDictionary<string, object?> inputArguments)
+    {
+        return inputArguments.ToFormula().ToJson();
+    }
 }

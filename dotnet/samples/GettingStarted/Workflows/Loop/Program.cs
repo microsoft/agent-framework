@@ -25,11 +25,11 @@ public static class Program
         JudgeExecutor judgeExecutor = new("Judge", 42);
 
         // Build the workflow by connecting executors in a loop
-        var workflow = await new WorkflowBuilder(guessNumberExecutor)
+        var workflow = new WorkflowBuilder(guessNumberExecutor)
             .AddEdge(guessNumberExecutor, judgeExecutor)
             .AddEdge(judgeExecutor, guessNumberExecutor)
             .WithOutputFrom(judgeExecutor)
-            .BuildAsync<NumberSignal>();
+            .Build();
 
         // Execute the workflow
         await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, NumberSignal.Init);

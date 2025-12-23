@@ -140,6 +140,7 @@ class ChatMessageStoreState(SerializationMixin):
         """
         if not messages:
             self.messages: list[ChatMessage] = []
+            return
         if not isinstance(messages, list):
             raise TypeError("Messages should be a list")
         new_messages: list[ChatMessage] = []

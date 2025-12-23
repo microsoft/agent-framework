@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterable, Sequence
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -38,6 +38,7 @@ from agent_framework import (
     UriContent,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework.observability import use_agent_instrumentation
 
 __all__ = ["A2AAgent"]
 
@@ -58,6 +59,7 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
+@use_agent_instrumentation
 class A2AAgent(BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
@@ -68,6 +70,8 @@ class A2AAgent(BaseAgent):
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
     """
+
+    AGENT_PROVIDER_NAME: Final[str] = "A2A"
 
     def __init__(
         self,
@@ -80,6 +84,7 @@ class A2AAgent(BaseAgent):
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         auth_interceptor: AuthInterceptor | None = None,
+        timeout: float | httpx.Timeout | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
@@ -93,10 +98,14 @@ class A2AAgent(BaseAgent):
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
+            timeout: Request timeout configuration. Can be a float (applied to all timeout components),
+                httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
+                10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
+        self._timeout_config = self._create_timeout_config(timeout)
         if client is not None:
             self.client = client
             self._close_http_client = True
@@ -109,14 +118,8 @@ class A2AAgent(BaseAgent):
 
         # Create or use provided httpx client
         if http_client is None:
-            timeout = httpx.Timeout(
-                connect=10.0,  # 10 seconds to establish connection
-                read=60.0,  # 60 seconds to read response (A2A operations can take time)
-                write=10.0,  # 10 seconds to send request
-                pool=5.0,  # 5 seconds to get connection from pool
-            )
             headers = prepend_agent_framework_to_user_agent()
-            http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
+            http_client = httpx.AsyncClient(timeout=self._timeout_config, headers=headers)
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
@@ -127,7 +130,47 @@ class A2AAgent(BaseAgent):
         )
         factory = ClientFactory(config)
         interceptors = [auth_interceptor] if auth_interceptor is not None else None
-        self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+
+        # Attempt transport negotiation with the provided agent card
+        try:
+            self.client = factory.create(agent_card, interceptors=interceptors)  # type: ignore
+        except Exception as transport_error:
+            # Transport negotiation failed - fall back to minimal agent card with JSONRPC
+            fallback_card = minimal_agent_card(agent_card.url, [TransportProtocol.jsonrpc])
+            try:
+                self.client = factory.create(fallback_card, interceptors=interceptors)  # type: ignore
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"A2A transport negotiation failed. "
+                    f"Primary error: {transport_error}. "
+                    f"Fallback error: {fallback_error}"
+                ) from transport_error
+
+    def _create_timeout_config(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
+        """Create httpx.Timeout configuration from user input.
+
+        Args:
+            timeout: User-provided timeout configuration
+
+        Returns:
+            Configured httpx.Timeout object
+        """
+        if timeout is None:
+            # Default timeout configuration (preserving original values)
+            return httpx.Timeout(
+                connect=10.0,  # 10 seconds to establish connection
+                read=60.0,  # 60 seconds to read response (A2A operations can take time)
+                write=10.0,  # 10 seconds to send request
+                pool=5.0,  # 5 seconds to get connection from pool
+            )
+        if isinstance(timeout, float):
+            # Simple timeout
+            return httpx.Timeout(timeout)
+        if isinstance(timeout, httpx.Timeout):
+            # Full timeout configuration provided by user
+            return timeout
+        msg = f"Invalid timeout type: {type(timeout)}. Expected float, httpx.Timeout, or None."
+        raise TypeError(msg)
 
     async def __aenter__(self) -> "A2AAgent":
         """Async context manager entry."""
@@ -194,14 +237,14 @@ class A2AAgent(BaseAgent):
             An agent response item.
         """
         messages = self._normalize_messages(messages)
-        a2a_message = self._chat_message_to_a2a_message(messages[-1])
+        a2a_message = self._prepare_message_for_a2a(messages[-1])
 
         response_stream = self.client.send_message(a2a_message)
 
         async for item in response_stream:
             if isinstance(item, Message):
                 # Process A2A Message
-                contents = self._a2a_parts_to_contents(item.parts)
+                contents = self._parse_contents_from_a2a(item.parts)
                 yield AgentRunResponseUpdate(
                     contents=contents,
                     role=Role.ASSISTANT if item.role == A2ARole.agent else Role.USER,
@@ -212,7 +255,7 @@ class A2AAgent(BaseAgent):
                 task, _update_event = item
                 if isinstance(task, Task) and task.status.state in TERMINAL_TASK_STATES:
                     # Convert Task artifacts to ChatMessages and yield as separate updates
-                    task_messages = self._task_to_chat_messages(task)
+                    task_messages = self._parse_messages_from_task(task)
                     if task_messages:
                         for message in task_messages:
                             # Use the artifact's ID from raw_representation as message_id for unique identification
@@ -237,8 +280,8 @@ class A2AAgent(BaseAgent):
                 msg = f"Only Message and Task responses are supported from A2A agents. Received: {type(item)}"
                 raise NotImplementedError(msg)
 
-    def _chat_message_to_a2a_message(self, message: ChatMessage) -> A2AMessage:
-        """Convert a ChatMessage to an A2A Message.
+    def _prepare_message_for_a2a(self, message: ChatMessage) -> A2AMessage:
+        """Prepare a ChatMessage for the A2A protocol.
 
         Transforms Agent Framework ChatMessage objects into A2A protocol Messages by:
         - Converting all message contents to appropriate A2A Part types
@@ -318,8 +361,8 @@ class A2AAgent(BaseAgent):
             metadata=cast(dict[str, Any], message.additional_properties),
         )
 
-    def _a2a_parts_to_contents(self, parts: Sequence[A2APart]) -> list[Contents]:
-        """Convert A2A Parts to Agent Framework Contents.
+    def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Contents]:
+        """Parse A2A Parts into Agent Framework Contents.
 
         Transforms A2A protocol Parts into framework-native Content objects,
         handling text, file (URI/bytes), and data parts with metadata preservation.
@@ -367,19 +410,30 @@ class A2AAgent(BaseAgent):
                     raise ValueError(f"Unknown Part kind: {inner_part.kind}")
         return contents
 
-    def _task_to_chat_messages(self, task: Task) -> list[ChatMessage]:
-        """Convert A2A Task artifacts to ChatMessages with ASSISTANT role."""
+    def _parse_messages_from_task(self, task: Task) -> list[ChatMessage]:
+        """Parse A2A Task artifacts into ChatMessages with ASSISTANT role."""
         messages: list[ChatMessage] = []
 
         if task.artifacts is not None:
             for artifact in task.artifacts:
-                messages.append(self._artifact_to_chat_message(artifact))
+                messages.append(self._parse_message_from_artifact(artifact))
+        elif task.history is not None and len(task.history) > 0:
+            # Include the last history item as the agent response
+            history_item = task.history[-1]
+            contents = self._parse_contents_from_a2a(history_item.parts)
+            messages.append(
+                ChatMessage(
+                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
+                    contents=contents,
+                    raw_representation=history_item,
+                )
+            )
 
         return messages
 
-    def _artifact_to_chat_message(self, artifact: Artifact) -> ChatMessage:
-        """Convert A2A Artifact to ChatMessage using part contents."""
-        contents = self._a2a_parts_to_contents(artifact.parts)
+    def _parse_message_from_artifact(self, artifact: Artifact) -> ChatMessage:
+        """Parse A2A Artifact into ChatMessage using part contents."""
+        contents = self._parse_contents_from_a2a(artifact.parts)
         return ChatMessage(
             role=Role.ASSISTANT,
             contents=contents,

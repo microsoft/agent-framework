@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import HostedWebSearchTool
+from agent_framework import ChatAgent, HostedWebSearchTool
 from agent_framework.openai import OpenAIChatClient
 
 """
@@ -14,34 +14,32 @@ for real-time information retrieval and current data access.
 
 
 async def main() -> None:
-    client = OpenAIChatClient(model_id="gpt-4o-search-preview")
-
-    message = "What is the current weather? Do not ask for my current location."
-    # Test that the client will use the web search tool with location
+    # Test that the agent will use the web search tool with location
     additional_properties = {
         "user_location": {
             "country": "US",
             "city": "Seattle",
         }
     }
+
+    agent = ChatAgent(
+        chat_client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        instructions="You are a helpful assistant that can search the web for current information.",
+        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
+    )
+
+    message = "What is the current weather? Do not ask for my current location."
     stream = False
     print(f"User: {message}")
+
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_streaming_response(
-            message,
-            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-            tool_choice="auto",
-        ):
+        async for chunk in agent.run_stream(message):
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
-        response = await client.get_response(
-            message,
-            tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-            tool_choice="auto",
-        )
+        response = await agent.run(message)
         print(f"Assistant: {response}")
 
 

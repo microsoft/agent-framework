@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "test_type": "create_with_initial_items"
+  },
+  "items": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What is the capital of France?"
+        }
+      ]
+    }
+  ]
+}

@@ -8,6 +8,14 @@ from agent_framework import AgentThread
 from agent_framework.openai import OpenAIChatClient
 from agent_framework.redis import RedisChatMessageStore
 
+"""
+Redis Chat Message Store Thread Example
+
+This sample demonstrates how to use Redis as a chat message store for thread
+management, enabling persistent conversation history storage across sessions
+with Redis as the backend data store.
+"""
+
 
 async def example_manual_memory_store() -> None:
     """Basic example of using Redis chat message store."""

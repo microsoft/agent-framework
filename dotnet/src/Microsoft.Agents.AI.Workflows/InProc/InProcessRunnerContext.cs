@@ -73,7 +73,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         async Task<Executor> CreateExecutorAsync(string id)
         {
-            if (!this._workflow.Registrations.TryGetValue(executorId, out var registration))
+            if (!this._workflow.ExecutorBindings.TryGetValue(executorId, out var registration))
             {
                 throw new InvalidOperationException($"Executor with ID '{executorId}' is not registered.");
             }

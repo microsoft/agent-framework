@@ -38,7 +38,9 @@ public class FunctionExecutor<TInput>(string id,
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(string id, Action<TInput, IWorkflowContext, CancellationToken> handlerSync) : this(id, WrapAction(handlerSync))
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+    public FunctionExecutor(string id, Action<TInput, IWorkflowContext, CancellationToken> handlerSync, ExecutorOptions? options = null, bool declareCrossRunShareable = false) : this(id, WrapAction(handlerSync), options, declareCrossRunShareable)
     {
     }
 }
@@ -76,7 +78,9 @@ public class FunctionExecutor<TInput, TOutput>(string id,
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
     /// <param name="handlerSync">A synchronous function to execute for each input message and workflow context.</param>
-    public FunctionExecutor(string id, Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync) : this(id, WrapFunc(handlerSync))
+    /// <param name="options">Configuration options for the executor. If <c>null</c>, default options will be used.</param>
+    /// <param name="declareCrossRunShareable">Declare that this executor may be used simultaneously by multiple runs safely.</param>
+    public FunctionExecutor(string id, Func<TInput, IWorkflowContext, CancellationToken, TOutput> handlerSync, ExecutorOptions? options = null, bool declareCrossRunShareable = false) : this(id, WrapFunc(handlerSync), options, declareCrossRunShareable)
     {
     }
 }

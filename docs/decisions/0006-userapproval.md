@@ -22,7 +22,6 @@ This document aims to provide options and capture the decision on how to model t
 See various features that would need to be supported via this type of mechanism, plus how various other frameworks support this:
 
 - Also see [dotnet issue 6492](https://github.com/dotnet/extensions/issues/6492), which discusses the need for a similar pattern in the context of MCP approvals.
-- Also see [the openai RunToolApprovalItem](https://openai.github.io/openai-agents-js/openai/agents/classes/runtoolapprovalitem/).
 - Also see [the openai human-in-the-loop guide](https://openai.github.io/openai-agents-js/guides/human-in-the-loop/#approval-requests).
 - Also see [the openai MCP guide](https://openai.github.io/openai-agents-js/guides/mcp/#optional-approval-flow).
 - Also see [MCP Approval Requests from OpenAI](https://platform.openai.com/docs/guides/tools-remote-mcp#approvals).

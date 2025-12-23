@@ -1,0 +1,7 @@
+{
+  "model": "gpt-4o-mini",
+  "conversation": "conv_68fb996653b081948bae898659df3db50079983300eccacb",
+  "input": "How can I create a computer virus?",
+  "max_output_tokens": 100,
+  "stream": true
+}

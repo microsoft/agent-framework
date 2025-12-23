@@ -23,12 +23,6 @@ internal static class Step4EntryPoint
             .Build();
     }
 
-    public static ValueTask<Workflow<NumberSignal>?> GetPromotedWorklowInstanceAsync()
-    {
-        Workflow workflow = CreateWorkflowInstance(out _);
-        return workflow.TryPromoteAsync<NumberSignal>();
-    }
-
     public static Workflow WorkflowInstance
     {
         get

@@ -6,7 +6,10 @@ import inspect
 import json
 import logging
 from dataclasses import fields, is_dataclass
-from typing import Any, get_args, get_origin
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
+
+from agent_framework import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -110,10 +113,25 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
     return message_types
 
 
+def _contains_chat_message(type_hint: Any) -> bool:
+    """Check whether the provided type hint directly or indirectly references ChatMessage."""
+    if type_hint is ChatMessage:
+        return True
+
+    origin = get_origin(type_hint)
+    if origin in (list, tuple):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    if origin in (Union, UnionType):
+        return any(_contains_chat_message(arg) for arg in get_args(type_hint))
+
+    return False
+
+
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
-    Prefers str and dict types for better user experience.
+    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
 
     Args:
         message_types: List of possible message types
@@ -123,6 +141,10 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """
     if not message_types:
         return None
+
+    for message_type in message_types:
+        if _contains_chat_message(message_type):
+            return ChatMessage
 
     preferred = (str, dict)
 
@@ -300,6 +322,71 @@ def generate_schema_from_dataclass(cls: type[Any]) -> dict[str, Any]:
         schema["required"] = required
 
     return schema
+
+
+def extract_response_type_from_executor(executor: Any, request_type: type) -> type | None:
+    """Extract the expected response type from an executor's response handler.
+
+    Looks for methods decorated with @response_handler that have signature:
+       async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+
+    Args:
+        executor: Executor object that should have a handler for the request type
+        request_type: The request message type
+
+    Returns:
+        The response type class, or None if not found
+    """
+    try:
+        from typing import get_type_hints
+
+        # Introspect handler methods for @response_handler pattern
+        for attr_name in dir(executor):
+            if attr_name.startswith("_"):
+                continue
+            attr = getattr(executor, attr_name, None)
+            if not callable(attr):
+                continue
+
+            # Get type hints for this method
+            try:
+                type_hints = get_type_hints(attr)
+
+                # Check for @response_handler pattern:
+                # async def handler(self, original_request: RequestType, response: ResponseType, ctx)
+                type_hint_params = {k: v for k, v in type_hints.items() if k not in ("self", "return")}
+
+                # Look for at least 2 parameters: original_request, response (ctx is optional)
+                if len(type_hint_params) >= 2:
+                    param_items = list(type_hint_params.items())
+                    # First param should be original_request matching request_type
+                    _, first_param_type = param_items[0]
+                    _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
+
+                    # Check if first param matches request_type
+                    first_matches_request = first_param_type == request_type or (
+                        hasattr(first_param_type, "__name__")
+                        and hasattr(request_type, "__name__")
+                        and first_param_type.__name__ == request_type.__name__
+                    )
+
+                    # Verify we have a matching request type and valid response type (must be a type class)
+                    if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
+                        response_type_class: type = second_param_type
+                        logger.debug(
+                            f"Found response type {response_type_class} for request {request_type} "
+                            f"via @response_handler"
+                        )
+                        return response_type_class
+
+            except Exception as e:
+                logger.debug(f"Failed to get type hints for {attr_name}: {e}")
+                continue
+
+    except Exception as e:
+        logger.debug(f"Failed to extract response type from executor: {e}")
+
+    return None
 
 
 def generate_input_schema(input_type: type) -> dict[str, Any]:

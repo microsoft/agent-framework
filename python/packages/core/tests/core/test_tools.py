@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-from typing import Any
+from typing import Annotated, Any, Literal
 from unittest.mock import Mock
 
 import pytest
@@ -14,7 +14,7 @@ from agent_framework import (
     ToolProtocol,
     ai_function,
 )
-from agent_framework._tools import _parse_inputs
+from agent_framework._tools import _parse_annotation, _parse_inputs
 from agent_framework.exceptions import ToolException
 from agent_framework.observability import OtelAttr
 
@@ -63,6 +63,26 @@ def test_ai_function_decorator_without_args():
     assert test_tool(1, 2) == 3
 
 
+def test_ai_function_without_args():
+    """Test the ai_function decorator."""
+
+    @ai_function
+    def test_tool() -> int:
+        """A simple function that adds two numbers."""
+        return 1 + 2
+
+    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, AIFunction)
+    assert test_tool.name == "test_tool"
+    assert test_tool.description == "A simple function that adds two numbers."
+    assert test_tool.parameters() == {
+        "properties": {},
+        "title": "test_tool_input",
+        "type": "object",
+    }
+    assert test_tool() == 3
+
+
 async def test_ai_function_decorator_with_async():
     """Test the ai_function decorator with an async function."""
 
@@ -82,6 +102,225 @@ async def test_ai_function_decorator_with_async():
         "type": "object",
     }
     assert (await async_test_tool(1, 2)) == 3
+
+
+def test_ai_function_decorator_in_class():
+    """Test the ai_function decorator."""
+
+    class my_tools:
+        @ai_function(name="test_tool", description="A test tool")
+        def test_tool(self, x: int, y: int) -> int:
+            """A simple function that adds two numbers."""
+            return x + y
+
+    test_tool = my_tools().test_tool
+
+    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, AIFunction)
+    assert test_tool.name == "test_tool"
+    assert test_tool.description == "A test tool"
+    assert test_tool.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "test_tool_input",
+        "type": "object",
+    }
+    assert test_tool(1, 2) == 3
+
+
+def test_ai_function_with_literal_type_parameter():
+    """Test ai_function decorator with Literal type parameter (issue #2891)."""
+
+    @ai_function
+    def search_flows(category: Literal["Data", "Security", "Network"], issue: str) -> str:
+        """Search flows by category."""
+        return f"{category}: {issue}"
+
+    assert isinstance(search_flows, AIFunction)
+    schema = search_flows.parameters()
+    assert schema == {
+        "properties": {
+            "category": {"enum": ["Data", "Security", "Network"], "title": "Category", "type": "string"},
+            "issue": {"title": "Issue", "type": "string"},
+        },
+        "required": ["category", "issue"],
+        "title": "search_flows_input",
+        "type": "object",
+    }
+    # Verify invocation works
+    assert search_flows("Data", "test issue") == "Data: test issue"
+
+
+def test_ai_function_with_literal_type_in_class_method():
+    """Test ai_function decorator with Literal type parameter in a class method (issue #2891)."""
+
+    class MyTools:
+        @ai_function
+        def search_flows(self, category: Literal["Data", "Security", "Network"], issue: str) -> str:
+            """Search flows by category."""
+            return f"{category}: {issue}"
+
+    tools = MyTools()
+    search_tool = tools.search_flows
+    assert isinstance(search_tool, AIFunction)
+    schema = search_tool.parameters()
+    assert schema == {
+        "properties": {
+            "category": {"enum": ["Data", "Security", "Network"], "title": "Category", "type": "string"},
+            "issue": {"title": "Issue", "type": "string"},
+        },
+        "required": ["category", "issue"],
+        "title": "search_flows_input",
+        "type": "object",
+    }
+    # Verify invocation works
+    assert search_tool("Security", "test issue") == "Security: test issue"
+
+
+def test_ai_function_with_literal_int_type():
+    """Test ai_function decorator with Literal int type parameter."""
+
+    @ai_function
+    def set_priority(priority: Literal[1, 2, 3], task: str) -> str:
+        """Set priority for a task."""
+        return f"Priority {priority}: {task}"
+
+    assert isinstance(set_priority, AIFunction)
+    schema = set_priority.parameters()
+    assert schema == {
+        "properties": {
+            "priority": {"enum": [1, 2, 3], "title": "Priority", "type": "integer"},
+            "task": {"title": "Task", "type": "string"},
+        },
+        "required": ["priority", "task"],
+        "title": "set_priority_input",
+        "type": "object",
+    }
+    assert set_priority(1, "important task") == "Priority 1: important task"
+
+
+def test_ai_function_with_literal_and_annotated():
+    """Test ai_function decorator with Literal type combined with Annotated for description."""
+
+    @ai_function
+    def categorize(
+        category: Annotated[Literal["A", "B", "C"], "The category to assign"],
+        name: str,
+    ) -> str:
+        """Categorize an item."""
+        return f"{category}: {name}"
+
+    assert isinstance(categorize, AIFunction)
+    schema = categorize.parameters()
+    # Literal type inside Annotated should preserve enum values
+    assert schema["properties"]["category"]["enum"] == ["A", "B", "C"]
+    assert categorize("A", "test") == "A: test"
+
+
+async def test_ai_function_decorator_shared_state():
+    """Test that decorated methods maintain shared state across multiple calls and tool usage."""
+
+    class StatefulCounter:
+        """A class that maintains a counter and provides decorated methods to interact with it."""
+
+        def __init__(self, initial_value: int = 0):
+            self.counter = initial_value
+            self.operation_log: list[str] = []
+
+        @ai_function(name="increment", description="Increment the counter")
+        def increment(self, amount: int) -> str:
+            """Increment the counter by the given amount."""
+            self.counter += amount
+            self.operation_log.append(f"increment({amount})")
+            return f"Counter incremented by {amount}. New value: {self.counter}"
+
+        @ai_function(name="get_value", description="Get the current counter value")
+        def get_value(self) -> str:
+            """Get the current counter value."""
+            self.operation_log.append("get_value()")
+            return f"Current counter value: {self.counter}"
+
+        @ai_function(name="multiply", description="Multiply the counter")
+        def multiply(self, factor: int) -> str:
+            """Multiply the counter by the given factor."""
+            self.counter *= factor
+            self.operation_log.append(f"multiply({factor})")
+            return f"Counter multiplied by {factor}. New value: {self.counter}"
+
+    # Create a single instance with shared state
+    counter_instance = StatefulCounter(initial_value=10)
+
+    # Get the decorated methods - these will be used by different "agents" or tools
+    increment_tool = counter_instance.increment
+    get_value_tool = counter_instance.get_value
+    multiply_tool = counter_instance.multiply
+
+    # Verify they are AIFunction instances
+    assert isinstance(increment_tool, AIFunction)
+    assert isinstance(get_value_tool, AIFunction)
+    assert isinstance(multiply_tool, AIFunction)
+
+    # Tool 1 (increment) is used
+    result1 = increment_tool(5)
+    assert result1 == "Counter incremented by 5. New value: 15"
+    assert counter_instance.counter == 15
+
+    # Tool 2 (get_value) sees the state change from tool 1
+    result2 = get_value_tool()
+    assert result2 == "Current counter value: 15"
+    assert counter_instance.counter == 15
+
+    # Tool 3 (multiply) modifies the shared state
+    result3 = multiply_tool(3)
+    assert result3 == "Counter multiplied by 3. New value: 45"
+    assert counter_instance.counter == 45
+
+    # Tool 2 (get_value) sees the state change from tool 3
+    result4 = get_value_tool()
+    assert result4 == "Current counter value: 45"
+    assert counter_instance.counter == 45
+
+    # Tool 1 (increment) sees the current state and modifies it
+    result5 = increment_tool(10)
+    assert result5 == "Counter incremented by 10. New value: 55"
+    assert counter_instance.counter == 55
+
+    # Verify the operation log shows all operations in order
+    assert counter_instance.operation_log == [
+        "increment(5)",
+        "get_value()",
+        "multiply(3)",
+        "get_value()",
+        "increment(10)",
+    ]
+
+    # Verify the parameters don't include 'self'
+    assert increment_tool.parameters() == {
+        "properties": {"amount": {"title": "Amount", "type": "integer"}},
+        "required": ["amount"],
+        "title": "increment_input",
+        "type": "object",
+    }
+    assert multiply_tool.parameters() == {
+        "properties": {"factor": {"title": "Factor", "type": "integer"}},
+        "required": ["factor"],
+        "title": "multiply_input",
+        "type": "object",
+    }
+    assert get_value_tool.parameters() == {
+        "properties": {},
+        "title": "get_value_input",
+        "type": "object",
+    }
+
+    # Test with invoke method as well (simulating agent execution)
+    result6 = await increment_tool.invoke(amount=5)
+    assert result6 == "Counter incremented by 5. New value: 60"
+    assert counter_instance.counter == 60
+
+    result7 = await get_value_tool.invoke()
+    assert result7 == "Current counter value: 60"
+    assert counter_instance.counter == 60
 
 
 async def test_ai_function_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter):
@@ -169,6 +408,26 @@ async def test_ai_function_invoke_telemetry_sensitive_disabled(span_exporter: In
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+
+
+async def test_ai_function_invoke_ignores_additional_kwargs() -> None:
+    """Ensure ai_function tools drop unknown kwargs when invoked with validated arguments."""
+
+    @ai_function
+    async def simple_tool(message: str) -> str:
+        """Echo tool."""
+        return message.upper()
+
+    args = simple_tool.input_model(message="hello world")
+
+    # These kwargs simulate runtime context passed through function invocation.
+    result = await simple_tool.invoke(
+        arguments=args,
+        api_token="secret-token",
+        chat_options={"model_id": "dummy"},
+    )
+
+    assert result == "HELLO WORLD"
 
 
 async def test_ai_function_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -1164,3 +1423,104 @@ async def test_streaming_two_functions_mixed_approval():
     assert updates[2].role == Role.ASSISTANT
     assert len(updates[2].contents) == 2
     assert all(isinstance(c, FunctionApprovalRequestContent) for c in updates[2].contents)
+
+
+async def test_ai_function_with_kwargs_injection():
+    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
+
+    @ai_function
+    def tool_with_kwargs(x: int, **kwargs: Any) -> str:
+        """A tool that accepts kwargs."""
+        user_id = kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    # Verify schema does not include kwargs
+    assert tool_with_kwargs.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_kwargs_input",
+        "type": "object",
+    }
+
+    # Verify direct invocation works
+    assert tool_with_kwargs(1, user_id="user1") == "x=1, user=user1"
+
+    # Verify invoke works with injected args
+    result = await tool_with_kwargs.invoke(
+        arguments=tool_with_kwargs.input_model(x=5),
+        user_id="user2",
+    )
+    assert result == "x=5, user=user2"
+
+    # Verify invoke works without injected args (uses default)
+    result_default = await tool_with_kwargs.invoke(
+        arguments=tool_with_kwargs.input_model(x=10),
+    )
+    assert result_default == "x=10, user=unknown"
+
+
+# region _parse_annotation tests
+
+
+def test_parse_annotation_with_literal_type():
+    """Test that _parse_annotation returns Literal types unchanged (issue #2891)."""
+    from typing import get_args, get_origin
+
+    # Literal with string values
+    literal_annotation = Literal["Data", "Security", "Network"]
+    result = _parse_annotation(literal_annotation)
+    assert result is literal_annotation
+    assert get_origin(result) is Literal
+    assert get_args(result) == ("Data", "Security", "Network")
+
+
+def test_parse_annotation_with_literal_int_type():
+    """Test that _parse_annotation returns Literal int types unchanged."""
+    from typing import get_args, get_origin
+
+    literal_annotation = Literal[1, 2, 3]
+    result = _parse_annotation(literal_annotation)
+    assert result is literal_annotation
+    assert get_origin(result) is Literal
+    assert get_args(result) == (1, 2, 3)
+
+
+def test_parse_annotation_with_literal_bool_type():
+    """Test that _parse_annotation returns Literal bool types unchanged."""
+    from typing import get_args, get_origin
+
+    literal_annotation = Literal[True, False]
+    result = _parse_annotation(literal_annotation)
+    assert result is literal_annotation
+    assert get_origin(result) is Literal
+    assert get_args(result) == (True, False)
+
+
+def test_parse_annotation_with_simple_types():
+    """Test that _parse_annotation returns simple types unchanged."""
+    assert _parse_annotation(str) is str
+    assert _parse_annotation(int) is int
+    assert _parse_annotation(float) is float
+    assert _parse_annotation(bool) is bool
+
+
+def test_parse_annotation_with_annotated_and_literal():
+    """Test that Annotated[Literal[...], description] works correctly."""
+    from typing import get_args, get_origin
+
+    # When Literal is inside Annotated, it should still be preserved
+    annotated_literal = Annotated[Literal["A", "B", "C"], "The category"]
+    result = _parse_annotation(annotated_literal)
+
+    # The Annotated type should be preserved
+    origin = get_origin(result)
+    assert origin is Annotated
+
+    args = get_args(result)
+    # First arg is the Literal type
+    literal_type = args[0]
+    assert get_origin(literal_type) is Literal
+    assert get_args(literal_type) == ("A", "B", "C")
+
+
+# endregion

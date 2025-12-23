@@ -4,6 +4,7 @@
 
 import argparse
 from enum import Enum
+import glob
 import logging
 import tempfile
 import subprocess  # nosec
@@ -30,6 +31,23 @@ class Colors(str, Enum):
 def with_color(text: str, color: Colors) -> str:
     """Prints a string with the specified color."""
     return f"{color.value}{text}{Colors.CEND.value}"
+
+
+def expand_file_patterns(patterns: list[str], skip_glob: bool = False) -> list[str]:
+    """Expand glob patterns to actual file paths."""
+    all_files: list[str] = []
+    for pattern in patterns:
+        if skip_glob:
+            # When skip_glob is True, treat patterns as literal file paths
+            # Only include if it's a markdown file
+            if pattern.endswith('.md'):
+                matches = glob.glob(pattern, recursive=False)
+                all_files.extend(matches)
+        else:
+            # Handle both relative and absolute paths with glob expansion
+            matches = glob.glob(pattern, recursive=True)
+            all_files.extend(matches)
+    return sorted(set(all_files))  # Remove duplicates and sort
 
 
 def extract_python_code_blocks(markdown_file_path: str) -> list[tuple[str, int]]:
@@ -113,7 +131,11 @@ def check_code_blocks(markdown_file_paths: list[str], exclude_patterns: list[str
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check code blocks in Markdown files for syntax errors.")
     # Argument is a list of markdown files containing glob patterns
-    parser.add_argument("markdown_files", nargs="+", help="Markdown files to check.")
+    parser.add_argument("markdown_files", nargs="+", help="Markdown files to check (supports glob patterns).")
     parser.add_argument("--exclude", action="append", help="Exclude files containing this pattern.")
+    parser.add_argument("--no-glob", action="store_true", help="Treat file arguments as literal paths (no glob expansion).")
     args = parser.parse_args()
-    check_code_blocks(args.markdown_files, args.exclude)
+
+    # Expand glob patterns to actual file paths (or skip if --no-glob)
+    expanded_files = expand_file_patterns(args.markdown_files, skip_glob=args.no_glob)
+    check_code_blocks(expanded_files, args.exclude)

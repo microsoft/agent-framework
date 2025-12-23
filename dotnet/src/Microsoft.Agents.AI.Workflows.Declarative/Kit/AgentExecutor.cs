@@ -23,7 +23,6 @@ public abstract class AgentExecutor(string id, FormulaSession session, WorkflowA
     /// <param name="agentName">The name or identifier of the agent.</param>
     /// <param name="conversationId">The identifier of the conversation.</param>
     /// <param name="autoSend">Send the agent's response as workflow output. (default: true).</param>
-    /// <param name="additionalInstructions">Optional additional instructions to the agent.</param>
     /// <param name="inputMessages">Optional messages to add to the conversation prior to invocation.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns></returns>
@@ -32,8 +31,7 @@ public abstract class AgentExecutor(string id, FormulaSession session, WorkflowA
         string agentName,
         string? conversationId,
         bool autoSend,
-        string? additionalInstructions = null,
         IEnumerable<ChatMessage>? inputMessages = null,
         CancellationToken cancellationToken = default)
-        => agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, additionalInstructions, inputMessages, cancellationToken);
+        => agentProvider.InvokeAgentAsync(this.Id, context, agentName, conversationId, autoSend, inputMessages, inputArguments: null, cancellationToken);
 }

@@ -243,4 +243,4 @@ class AzureOpenAIConfigMixin(OpenAIBase):
             def_headers = None
         self.default_headers = def_headers
 
-        super().__init__(model_id=deployment_name, client=client)
+        super().__init__(model_id=deployment_name, client=client, **kwargs)

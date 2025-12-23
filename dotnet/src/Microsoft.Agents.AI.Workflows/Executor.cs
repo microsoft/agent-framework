@@ -27,6 +27,8 @@ public abstract class Executor : IIdentified
     private static readonly string s_namespace = typeof(Executor).Namespace!;
     private static readonly ActivitySource s_activitySource = new(s_namespace);
 
+    // TODO: Add overloads for binding with a configuration/options object once the Configured<T> hierarchy goes away.
+
     /// <summary>
     /// Initialize the executor with a unique identifier
     /// </summary>
@@ -91,18 +93,17 @@ public abstract class Executor : IIdentified
         return new HashSet<Type>();
     }
 
-    private MessageRouter? _router;
     internal MessageRouter Router
     {
         get
         {
-            if (this._router is null)
+            if (field is null)
             {
                 RouteBuilder routeBuilder = this.ConfigureRoutes(new RouteBuilder());
-                this._router = routeBuilder.Build();
+                field = routeBuilder.Build();
             }
 
-            return this._router;
+            return field;
         }
     }
 
@@ -199,6 +200,18 @@ public abstract class Executor : IIdentified
     /// A set of <see cref="Type"/>s, representing the messages this executor can produce as output.
     /// </summary>
     public ISet<Type> OutputTypes { get; } = new HashSet<Type>([typeof(object)]);
+
+    /// <summary>
+    /// Describes the protocol for communication with this <see cref="Executor"/>.
+    /// </summary>
+    /// <returns></returns>
+    public ProtocolDescriptor DescribeProtocol()
+    {
+        // TODO: Once burden of annotating yield/output messages becomes easier for the non-Auto case,
+        // we should (1) start checking for validity on output/send side, and (2) add the Yield/Send
+        // types to the ProtocolDescriptor.
+        return new(this.InputTypes);
+    }
 
     /// <summary>
     /// Checks if the executor can handle a specific message type.
