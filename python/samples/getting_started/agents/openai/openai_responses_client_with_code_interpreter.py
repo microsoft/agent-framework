@@ -2,10 +2,14 @@
 
 import asyncio
 
-from agent_framework import ChatAgent, ChatResponse, HostedCodeInterpreterTool
+from agent_framework import (
+    ChatAgent,
+    CodeInterpreterToolCallContent,
+    CodeInterpreterToolResultContent,
+    HostedCodeInterpreterTool,
+    TextContent,
+)
 from agent_framework.openai import OpenAIResponsesClient
-from openai.types.responses.response import Response as OpenAIResponse
-from openai.types.responses.response_code_interpreter_tool_call import ResponseCodeInterpreterToolCall
 
 """
 OpenAI Responses Client with Code Interpreter Example
@@ -30,15 +34,20 @@ async def main() -> None:
     result = await agent.run(query)
     print(f"Result: {result}\n")
 
-    if (
-        isinstance(result.raw_representation, ChatResponse)
-        and isinstance(result.raw_representation.raw_representation, OpenAIResponse)
-        and len(result.raw_representation.raw_representation.output) > 0
-        and isinstance(result.raw_representation.raw_representation.output[0], ResponseCodeInterpreterToolCall)
-    ):
-        generated_code = result.raw_representation.raw_representation.output[0].code
-
-        print(f"Generated code:\n{generated_code}")
+    for message in result.messages:
+        code_blocks = [c for c in message.contents if isinstance(c, CodeInterpreterToolCallContent)]
+        outputs = [c for c in message.contents if isinstance(c, CodeInterpreterToolResultContent)]
+        if code_blocks:
+            code_inputs = code_blocks[0].inputs or []
+            for content in code_inputs:
+                if isinstance(content, TextContent):
+                    print(f"Generated code:\n{content.text}")
+                    break
+        if outputs:
+            print("Execution outputs:")
+            for out in outputs[0].outputs or []:
+                if isinstance(out, TextContent):
+                    print(out.text)
 
 
 if __name__ == "__main__":
