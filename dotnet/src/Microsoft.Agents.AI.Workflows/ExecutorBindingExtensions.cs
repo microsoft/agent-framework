@@ -428,12 +428,20 @@ public static class ExecutorBindingExtensions
     /// <remarks>
     /// Use this overload when you want explicit control over the executor's ID as displayed in workflow
     /// visualizations. The descriptive ID should be unique within the workflow.
+    /// <para>
+    /// Note: The <paramref name="descriptiveId"/> parameter is validated to ensure it is not null or whitespace
+    /// before being passed to the <see cref="AIAgentBinding"/> constructor. The constructor accepts a nullable
+    /// parameter to support scenarios where no custom ID is provided (in which case it auto-generates one),
+    /// but this overload requires an explicit non-null value by design.
+    /// </para>
     /// </remarks>
     /// <param name="agent">The agent instance.</param>
     /// <param name="descriptiveId">A custom descriptive ID for the executor. This ID will be used in workflow
-    /// visualizations and must be unique within the workflow.</param>
+    /// visualizations and must be unique within the workflow. Cannot be null or whitespace.</param>
     /// <param name="emitEvents">Specifies whether the agent should emit streaming events.</param>
     /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent with the custom ID.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="agent"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="descriptiveId"/> is null or whitespace.</exception>
     public static ExecutorBinding BindAsExecutor(this AIAgent agent, string descriptiveId, bool emitEvents = false)
         => new AIAgentBinding(Throw.IfNull(agent), emitEvents, Throw.IfNullOrWhitespace(descriptiveId));
 
