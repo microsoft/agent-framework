@@ -101,7 +101,7 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
     Raises:
         ContentError if parsing fails
     """
-    content_type = str(content_data.get("type"))
+    content_type: str | None = content_data.get("type", None)
     match content_type:
         case "text":
             return TextContent.from_dict(content_data)
@@ -127,6 +127,8 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
             return FunctionApprovalResponseContent.from_dict(content_data)
         case "text_reasoning":
             return TextReasoningContent.from_dict(content_data)
+        case None:
+            raise ContentError("Content type is missing")
         case _:
             raise ContentError(f"Unknown content type '{content_type}'")
 
@@ -2248,31 +2250,30 @@ def _process_update(
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        # Use type attribute check first (fast string comparison) before isinstance (slower)
+        # Fast path: get type attribute (most content will have it)
         content_type = getattr(content, "type", None)
-        if content_type == "function_call":
-            if len(message.contents) > 0 and getattr(message.contents[-1], "type", None) == "function_call":
+        # Slow path: only check for dict if type is None
+        if content_type is None and isinstance(content, (dict, MutableMapping)):
+            try:
+                content = _parse_content(content)
+                content_type = content.type
+            except ContentError as exc:
+                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
+                continue
+        match content_type:
+            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
+            case "function_call" if message.contents and message.contents[-1].type == "function_call":
                 try:
-                    # mypy doesn't narrow type based on string attribute check,
-                    # but we know these are FunctionCallContent
                     message.contents[-1] += content  # type: ignore[operator]
                 except AdditionItemMismatch:
                     message.contents.append(content)
-            else:
+            case "usage":
+                if response.usage_details is None:
+                    response.usage_details = UsageDetails()
+                # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                response.usage_details += content.details  # type: ignore[union-attr, arg-type]
+            case _:
                 message.contents.append(content)
-        elif content_type == "usage":
-            if response.usage_details is None:
-                response.usage_details = UsageDetails()
-            # mypy doesn't narrow type based on string attribute check, but we know this is UsageContent
-            response.usage_details += content.details  # type: ignore[union-attr, arg-type]
-        elif content_type is None and isinstance(content, (dict, MutableMapping)):
-            try:
-                cont = _parse_content(content)
-                message.contents.append(cont)
-            except ContentError as exc:
-                logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-        else:
-            message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id
