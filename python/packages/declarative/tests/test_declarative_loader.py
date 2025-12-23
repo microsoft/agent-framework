@@ -549,11 +549,14 @@ model:
 
         from agent_framework_declarative._models import agent_schema_dispatch
 
-        _safe_mode_context.set(True)  # Ensure we're in safe mode
-        result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+        token = _safe_mode_context.set(True)  # Ensure we're in safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
 
-        # The API key should NOT be resolved (still has the PowerFx expression)
-        assert result.model.connection.apiKey == "=Env.MY_API_KEY"
+            # The API key should NOT be resolved (still has the PowerFx expression)
+            assert result.model.connection.apiKey == "=Env.MY_API_KEY"
+        finally:
+            _safe_mode_context.reset(token)
 
     def test_agent_factory_safe_mode_false_resolves_api_key(self, monkeypatch):
         """Test safe_mode=False resolves API key from environment."""
@@ -580,8 +583,11 @@ model:
 
         from agent_framework_declarative._models import agent_schema_dispatch
 
-        _safe_mode_context.set(False)  # Disable safe mode
-        result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+        token = _safe_mode_context.set(False)  # Disable safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
 
-        # The API key should be resolved from environment
-        assert result.model.connection.apiKey == "secret-key-123"
+            # The API key should be resolved from environment
+            assert result.model.connection.apiKey == "secret-key-123"
+        finally:
+            _safe_mode_context.reset(token)
