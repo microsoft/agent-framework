@@ -101,7 +101,7 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
     Raises:
         ContentError if parsing fails
     """
-    content_type = str(content_data.get("type"))
+    content_type: str | None = content_data.get("type", None)
     match content_type:
         case "text":
             return TextContent.from_dict(content_data)
@@ -127,6 +127,8 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
             return FunctionApprovalResponseContent.from_dict(content_data)
         case "text_reasoning":
             return TextReasoningContent.from_dict(content_data)
+        case None:
+            raise ContentError("Content type is missing")
         case _:
             raise ContentError(f"Unknown content type '{content_type}'")
 
@@ -2248,27 +2250,30 @@ def _process_update(
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        if (
-            isinstance(content, FunctionCallContent)
-            and len(message.contents) > 0
-            and isinstance(message.contents[-1], FunctionCallContent)
-        ):
+        # Fast path: get type attribute (most content will have it)
+        content_type = getattr(content, "type", None)
+        # Slow path: only check for dict if type is None
+        if content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
-                message.contents[-1] += content
-            except AdditionItemMismatch:
-                message.contents.append(content)
-        elif isinstance(content, UsageContent):
-            if response.usage_details is None:
-                response.usage_details = UsageDetails()
-            response.usage_details += content.details
-        elif isinstance(content, (dict, MutableMapping)):
-            try:
-                cont = _parse_content(content)
-                message.contents.append(cont)
+                content = _parse_content(content)
+                content_type = content.type
             except ContentError as exc:
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-        else:
-            message.contents.append(content)
+                continue
+        match content_type:
+            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
+            case "function_call" if message.contents and message.contents[-1].type == "function_call":
+                try:
+                    message.contents[-1] += content  # type: ignore[operator]
+                except AdditionItemMismatch:
+                    message.contents.append(content)
+            case "usage":
+                if response.usage_details is None:
+                    response.usage_details = UsageDetails()
+                # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                response.usage_details += content.details  # type: ignore[union-attr, arg-type]
+            case _:
+                message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id

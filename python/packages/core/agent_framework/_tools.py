@@ -573,7 +573,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram", "_cached_parameters"}
 
     def __init__(
         self,
@@ -615,6 +615,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
+        self._cached_parameters: dict[str, Any] | None = None  # Cache for model_json_schema()
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
@@ -802,8 +803,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         Returns:
             A dictionary containing the JSON schema for the function's parameters.
+            The result is cached after the first call for performance.
         """
-        return self.input_model.model_json_schema()
+        if self._cached_parameters is None:
+            self._cached_parameters = self.input_model.model_json_schema()
+        return self._cached_parameters
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a AIFunction to the JSON Schema function specification format.
@@ -825,7 +829,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
-        as_dict["input_model"] = self.input_model.model_json_schema()
+        as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict
 
 
