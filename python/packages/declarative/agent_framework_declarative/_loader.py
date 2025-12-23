@@ -37,6 +37,7 @@ from ._models import (
     RemoteConnection,
     Tool,
     WebSearchTool,
+    _safe_mode_context,
     agent_schema_dispatch,
 )
 
@@ -119,6 +120,7 @@ class AgentFactory:
         additional_mappings: Mapping[str, ProviderTypeMapping] | None = None,
         default_provider: str = "AzureAIClient",
         env_file: str | None = None,
+        safe_mode: bool = True,
     ) -> None:
         """Create the agent factory, with bindings.
 
@@ -152,6 +154,13 @@ class AgentFactory:
             default_provider: The default provider used when model.provider is not specified,
                 default is "AzureAIClient".
             env_file: An optional path to a .env file to load environment variables from.
+            safe_mode: Whether to run in safe mode, default is True.
+                When safe_mode is True, environment variables are not accessible.
+                You can still use those but through the constructors of the classes.
+                So in this case make sure you are using the standard env variable names
+                and not custom ones, and leave the values blank here.
+                Only when you trust the source of your yaml files, you can set safe_mode to False
+                via the AgentFactory constructor.
         """
         self.chat_client = chat_client
         self.bindings = bindings
@@ -159,6 +168,7 @@ class AgentFactory:
         self.client_kwargs = client_kwargs or {}
         self.additional_mappings = additional_mappings or {}
         self.default_provider: str = default_provider
+        self.safe_mode = safe_mode
         load_dotenv(dotenv_path=env_file)
 
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> ChatAgent:
@@ -215,6 +225,8 @@ class AgentFactory:
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
         """
+        # Set safe_mode context before parsing YAML to control PowerFx environment variable access
+        _safe_mode_context.set(self.safe_mode)
         prompt_agent = agent_schema_dispatch(yaml.safe_load(yaml_str))
         if not isinstance(prompt_agent, PromptAgent):
             raise DeclarativeLoaderError("Only yaml definitions for a PromptAgent are supported for agent creation.")

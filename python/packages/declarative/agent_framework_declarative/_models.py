@@ -2,6 +2,7 @@
 import os
 import sys
 from collections.abc import MutableMapping
+from contextvars import ContextVar
 from typing import Any, Literal, TypeVar, Union
 
 from agent_framework import get_logger
@@ -21,6 +22,11 @@ else:
 
 logger = get_logger("agent_framework.declarative")
 
+# Context variable for safe_mode setting.
+# When True (default), environment variables are NOT accessible in PowerFx expressions.
+# When False, environment variables CAN be accessed via Env symbol in PowerFx.
+_safe_mode_context: ContextVar[bool] = ContextVar("safe_mode", default=True)
+
 
 @overload
 def _try_powerfx_eval(value: None, log_value: bool = True) -> None: ...
@@ -36,6 +42,15 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
     Args:
         value: The value to check.
         log_value: Whether to log the full value on error or just a snippet.
+
+    Note:
+        The safe_mode behavior is controlled by the `_safe_mode_context` context variable.
+        When safe_mode is True (default), environment variables are not accessible.
+        You can still use those but through the constructors of the classes.
+        So in this case make sure you are using the standard env variable names
+        and not custom ones, and leave the values blank here.
+        Only when you trust the source of your yaml files, you can set safe_mode to False
+        via the AgentFactory constructor.
     """
     if value is None:
         return value
@@ -49,6 +64,9 @@ def _try_powerfx_eval(value: str | None, log_value: bool = True) -> str | None:
         )
         return value
     try:
+        safe_mode = _safe_mode_context.get()
+        if safe_mode:
+            return engine.eval(value[1:])
         return engine.eval(value[1:], symbols={"Env": dict(os.environ)})
     except Exception as exc:
         if log_value:
