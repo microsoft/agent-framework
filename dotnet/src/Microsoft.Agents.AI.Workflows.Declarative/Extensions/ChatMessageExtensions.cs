@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
@@ -83,7 +84,8 @@ internal static class ChatMessageExtensions
     public static ChatMessage ToChatMessage(this RecordDataValue message) =>
         new(message.GetRole(), [.. message.GetContent()])
         {
-            AdditionalProperties = message.GetProperty<RecordDataValue>("metadata").ToMetadata()
+            MessageId = message.GetProperty<StringDataValue>(TypeSchema.Message.Fields.Id)?.Value,
+            AdditionalProperties = message.GetProperty<RecordDataValue>(TypeSchema.Message.Fields.Metadata).ToMetadata()
         };
 
     public static ChatMessage ToChatMessage(this StringDataValue message) => new(ChatRole.User, message.Value);
@@ -118,7 +120,7 @@ internal static class ChatMessageExtensions
 
     public static ChatRole ToChatRole(this AgentMessageRole? role) => role?.ToChatRole() ?? ChatRole.User;
 
-    public static AIContent? ToContent(this AgentMessageContentType contentType, string? contentValue)
+    public static AIContent? ToContent(this AgentMessageContentType contentType, string? contentValue, string? mediaType = null)
     {
         if (string.IsNullOrEmpty(contentValue))
         {
@@ -128,7 +130,7 @@ internal static class ChatMessageExtensions
         return
             contentType switch
             {
-                AgentMessageContentType.ImageUrl => GetImageContent(contentValue),
+                AgentMessageContentType.ImageUrl => GetImageContent(contentValue, mediaType ?? InferMediaType(contentValue)),
                 AgentMessageContentType.ImageFile => new HostedFileContent(contentValue),
                 _ => new TextContent(contentValue)
             };
@@ -159,14 +161,16 @@ internal static class ChatMessageExtensions
             foreach (RecordDataValue contentItem in content.Values)
             {
                 StringDataValue? contentValue = contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Value);
+                StringDataValue? mediaTypeValue = contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.MediaType);
                 if (contentValue is null || string.IsNullOrWhiteSpace(contentValue.Value))
                 {
                     continue;
                 }
+
                 yield return
                     contentItem.GetProperty<StringDataValue>(TypeSchema.MessageContent.Fields.Type)?.Value switch
                     {
-                        TypeSchema.MessageContent.ContentTypes.ImageUrl => GetImageContent(contentValue.Value),
+                        TypeSchema.MessageContent.ContentTypes.ImageUrl => GetImageContent(contentValue.Value, mediaTypeValue?.Value ?? InferMediaType(contentValue.Value)),
                         TypeSchema.MessageContent.ContentTypes.ImageFile => new HostedFileContent(contentValue.Value),
                         _ => new TextContent(contentValue.Value)
                     };
@@ -174,10 +178,35 @@ internal static class ChatMessageExtensions
         }
     }
 
-    private static AIContent GetImageContent(string uriText) =>
+    private static string InferMediaType(string value)
+    {
+        // Base64 encoded content includes media type
+        if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            int semicolonIndex = value.IndexOf(';');
+            if (semicolonIndex > 5)
+            {
+                return value.Substring(5, semicolonIndex - 5);
+            }
+        }
+
+        // URL based input only supports image
+        string fileExtension = Path.GetExtension(value);
+        return
+            fileExtension.ToUpperInvariant() switch
+            {
+                ".JPG" or ".JPEG" => "image/jpeg",
+                ".PNG" => "image/png",
+                ".GIF" => "image/gif",
+                ".WEBP" => "image/webp",
+                _ => "image/*"
+            };
+    }
+
+    private static AIContent GetImageContent(string uriText, string mediaType) =>
         uriText.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ?
-            new DataContent(uriText, "image/*") :
-            new UriContent(uriText, "image/*");
+            new DataContent(uriText, mediaType) :
+            new UriContent(uriText, mediaType);
 
     private static TValue? GetProperty<TValue>(this RecordDataValue record, string name)
         where TValue : DataValue
