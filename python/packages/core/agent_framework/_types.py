@@ -2253,7 +2253,9 @@ def _process_update(
         if content_type == "function_call":
             if len(message.contents) > 0 and getattr(message.contents[-1], "type", None) == "function_call":
                 try:
-                    message.contents[-1] += content
+                    # mypy doesn't narrow type based on string attribute check,
+                    # but we know these are FunctionCallContent
+                    message.contents[-1] += content  # type: ignore[operator]
                 except AdditionItemMismatch:
                     message.contents.append(content)
             else:
@@ -2261,7 +2263,8 @@ def _process_update(
         elif content_type == "usage":
             if response.usage_details is None:
                 response.usage_details = UsageDetails()
-            response.usage_details += content.details
+            # mypy doesn't narrow type based on string attribute check, but we know this is UsageContent
+            response.usage_details += content.details  # type: ignore[union-attr, arg-type]
         elif content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
                 cont = _parse_content(content)

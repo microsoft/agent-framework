@@ -83,6 +83,13 @@ include = "../../shared_tasks.toml"
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_ai"
 test = "pytest --cov=agent_framework_azure_ai --cov-report=term-missing:skip-covered tests"
 
+[tool.poe.tasks.integration-tests]
+cmd = """
+pytest --import-mode=importlib
+-n logical --dist loadfile --dist worksteal
+tests
+"""
+
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
