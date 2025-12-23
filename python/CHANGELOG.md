@@ -7,9 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b251223] - 2025-12-23
+
+### Added
+
+- **agent-framework-bedrock**: Introducing support for Bedrock-hosted models (Anthropic, Cohere, etc.) ([#2610](https://github.com/microsoft/agent-framework/pull/2610))
+- **agent-framework-core**: Added `response.created` and `response.in_progress` event process to `OpenAIBaseResponseClient` ([#2975](https://github.com/microsoft/agent-framework/pull/2975))
+- **agent-framework-foundry-local**: Introducing Foundry Local Chat Clients ([#2915](https://github.com/microsoft/agent-framework/pull/2915))
+- **samples**: Added GitHub MCP sample with PAT ([#2967](https://github.com/microsoft/agent-framework/pull/2967))
+
 ### Changed
 
-- **agent-framework-azurefunctions**: Durable Agents: platforms should use consistent entity method names (#2234)
+- **agent-framework-core**: Preserve reasoning blocks with OpenRouter ([#2950](https://github.com/microsoft/agent-framework/pull/2950))
 
 ## [1.0.0b251218] - 2025-12-18
 
@@ -417,7 +426,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251218...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251223...HEAD
+[1.0.0b251223]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251218...python-1.0.0b251223
 [1.0.0b251218]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...python-1.0.0b251218
 [1.0.0b251216]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...python-1.0.0b251216
 [1.0.0b251211]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251209...python-1.0.0b251211
