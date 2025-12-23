@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure;
-using Azure.AI.OpenAI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI.DurableTask.IntegrationTests.Logging;
 using Microsoft.DurableTask;
@@ -13,6 +13,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpenAI;
 using OpenAI.Chat;
 using Xunit.Abstractions;
 
@@ -124,10 +125,13 @@ internal sealed class TestHelper : IDisposable
         // Check if AZURE_OPENAI_KEY is provided for key-based authentication.
         // NOTE: This is not used for automated tests, but can be useful for local development.
         string? azureOpenAiKey = configuration["AZURE_OPENAI_KEY"];
+        OpenAIClientOptions clientOptions = new() { Endpoint = new Uri($"{azureOpenAiEndpoint.TrimEnd('/')}/openai/v1") };
 
-        AzureOpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
-            ? new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureKeyCredential(azureOpenAiKey))
-            : new AzureOpenAIClient(new Uri(azureOpenAiEndpoint), new AzureCliCredential());
+        OpenAIClient client = !string.IsNullOrEmpty(azureOpenAiKey)
+            ? new OpenAIClient(new ApiKeyCredential(azureOpenAiKey), clientOptions)
+            : new OpenAIClient(
+                new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+                clientOptions);
 
         return client.GetChatClient(azureOpenAiDeploymentName);
     }

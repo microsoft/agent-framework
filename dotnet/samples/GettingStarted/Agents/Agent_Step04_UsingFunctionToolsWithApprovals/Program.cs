@@ -5,11 +5,12 @@
 // If the agent is hosted in a service, with a remote user, combine this sample with the Persisted Conversations sample to persist the chat history
 // while the agent is waiting for user input.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI;
 using OpenAI.Chat;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
@@ -23,9 +24,9 @@ static string GetWeather([Description("The location to get the weather for.")] s
 
 // Create the chat client and agent.
 // Note that we are wrapping the function tool with ApprovalRequiredAIFunction to require user approval before invoking it.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(instructions: "You are a helpful assistant", tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather))]);
 
