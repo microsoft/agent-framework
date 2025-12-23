@@ -1,0 +1,47 @@
+kind: workflow
+trigger:
+  kind: OnConversationStart
+  id: trigger_wf
+  actions:
+    - kind: SetVariable
+      id: init_latest
+      variable: Local.LatestMessage
+      value: =UserMessage(System.LastMessageText)
+    - kind: InvokeAzureAgent
+      id: invoke_developer
+      agent:
+        name: DeveloperAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: =Local.LatestMessage
+      output:
+        messages: Local.LatestMessage
+        autoSend: true
+    - kind: InvokeAzureAgent
+      id: invoke_reviewer
+      agent:
+        name: ReviewerAgent
+      conversationId: =System.ConversationId
+      input:
+        messages: =Local.LatestMessage
+      output:
+        messages: Local.LatestMessage
+        autoSend: true
+    - kind: ConditionGroup
+      id: check_approved
+      conditions:
+        - id: if_approved
+          condition: =!IsBlank(Find("approved", Lower(Last(Local.LatestMessage).Text)))
+          actions:
+            - kind: SendActivity
+              id: send_final
+              activity: "{Last(Local.LatestMessage).Text}"
+            - kind: EndConversation
+              id: end_conversation
+      elseActions:
+        - kind: GotoAction
+          id: loop_back
+          actionId: invoke_developer
+id: ""
+name: CodeReviewWorkflow
+description: The developer writes code and the reviewer provides feedback until the code is approved.
