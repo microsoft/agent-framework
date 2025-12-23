@@ -666,4 +666,73 @@ public sealed class ChatMessageExtensionsTests
         RecordValue metadataRecord = Assert.IsType<RecordValue>(metadataField, exactMatch: false);
         Assert.Equal(2, metadataRecord.Fields.Count());
     }
+
+    [Fact]
+    public void RoundTripChatMessageAsRecord()
+    {
+        // Arrange
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new TextContent("Test message"),
+                    new UriContent("https://example.com/image.jpg", "image/jpeg"),
+                    new HostedFileContent("file_123abc"),
+                    new DataContent(new byte[] { 1, 2, 3, 4, 5 }, "application/pdf"),
+                ])
+            {
+                MessageId = "msg-001"
+            };
+
+        // Act
+        RecordValue result = message.ToRecord();
+        DataValue resultValue = result.ToDataValue();
+        ChatMessage? messageCopy = resultValue.ToChatMessage();
+
+        // Assert
+        Assert.NotNull(messageCopy);
+        Assert.Equal(message.Role, messageCopy.Role);
+        Assert.Equal(message.MessageId, messageCopy.MessageId);
+        Assert.Equal(message.Contents.Count, messageCopy.Contents.Count);
+        foreach (AIContent contentCopy in messageCopy.Contents)
+        {
+            AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
+            Assert.Equivalent(sourceContent, contentCopy);
+        }
+    }
+
+    [Fact]
+    public void RoundTripChatMessageAsTable()
+    {
+        // Arrange
+        ChatMessage message =
+            new(ChatRole.User,
+                [
+                    new TextContent("Test message"),
+                    new UriContent("https://example.com/image.jpg", "image/jpeg"),
+                    new HostedFileContent("file_123abc"),
+                    new DataContent(new byte[] { 1, 2, 3, 4, 5 }, "application/pdf"),
+                ])
+            {
+                MessageId = "msg-001"
+            };
+
+        IEnumerable<ChatMessage> messages = [message];
+
+        // Act
+        TableValue result = messages.ToTable();
+        TableDataValue resultValue = result.ToTable();
+        ChatMessage[] messagesCopy = resultValue.ToChatMessages().ToArray();
+
+        // Assert
+        Assert.NotNull(messagesCopy);
+        ChatMessage messageCopy = Assert.Single(messagesCopy);
+        Assert.Equal(message.Role, messageCopy.Role);
+        Assert.Equal(message.MessageId, messageCopy.MessageId);
+        Assert.Equal(message.Contents.Count, messageCopy.Contents.Count);
+        foreach (AIContent contentCopy in messageCopy.Contents)
+        {
+            AIContent sourceContent = Assert.Single(message.Contents, c => c.GetType() == contentCopy.GetType());
+            Assert.Equivalent(sourceContent, contentCopy);
+        }
+    }
 }
