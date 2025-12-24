@@ -13,6 +13,7 @@ namespace Microsoft.Agents.AI.Workflows;
 public sealed class HandoffsWorkflowBuilder
 {
     internal const string FunctionPrefix = "handoff_to_";
+    private string _name = string.Empty;
     private readonly AIAgent _initialAgent;
     private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
@@ -41,6 +42,20 @@ public sealed class HandoffsWorkflowBuilder
               target agent of that handoff. Handoffs between agents are handled seamlessly in the background; never mention or narrate these handoffs
               in your conversation with the user.
               """;
+
+    /// <summary>
+    /// Sets the human-readable name for the handoffs workflow.
+    /// </summary>
+    /// <param name="name">The name of the workflow.</param>
+    /// <returns>The current <see cref="HandoffsWorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    /// <remarks>
+    /// This is required to test the workflow using DevUI.
+    /// </remarks>
+    public HandoffsWorkflowBuilder WithName(string name)
+    {
+        this._name = name;
+        return this;
+    }
 
     /// <summary>
     /// Adds handoff relationships from a source agent to one or more target agents.
@@ -148,6 +163,8 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsStartExecutor start = new();
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
+
+        builder.WithName(this._name);
 
         // Create an AgentExecutor for each again.
         Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, this.HandoffInstructions));
