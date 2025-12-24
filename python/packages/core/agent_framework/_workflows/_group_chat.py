@@ -308,6 +308,14 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         self._agent = agent
         self._retry_attempts = retry_attempts
         self._thread = thread or agent.get_new_thread()
+        # Cache for messages since last agent invocation
+        # This is different from the full conversation history maintained by the base orchestrator
+        self._cache: list[ChatMessage] = []
+
+    @override
+    def _append_messages(self, messages: Sequence[ChatMessage]) -> None:
+        self._cache.extend(messages)
+        return super()._append_messages(messages)
 
     @override
     async def _handle_messages(
@@ -397,8 +405,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             return agent_orchestration_output
 
         # We only need the last message for context since history is maintained in the thread
-        current_conversation = self._get_conversation()
-        current_conversation = current_conversation[-1:] if current_conversation else []
+        current_conversation = self._cache.copy()
+        self._cache.clear()
         instruction = (
             "Decide what to do next. Respond with a JSON object of the following format:\n"
             "{\n"
@@ -469,7 +477,6 @@ class GroupChatBuilder:
     select participants to speak at each turn based on the conversation state.
 
     Routing Pattern:
-
     Agents respond in turns as directed by the orchestrator until termination conditions are met.
     This provides a centralized approach to multi-agent collaboration, similar to a star topology.
 
@@ -480,6 +487,9 @@ class GroupChatBuilder:
     The orchestrator can be provided directly, or a simple selection function can be defined
     to choose the next speaker based on the current state. The builder wires everything together
     into a complete workflow graph that can be executed.
+
+    Outputs:
+    The final conversation history as a list of ChatMessage once the group chat completes.
     """
 
     DEFAULT_ORCHESTRATOR_ID: ClassVar[str] = "group_chat_orchestrator"
@@ -711,13 +721,13 @@ class GroupChatBuilder:
         return self
 
     def with_max_rounds(self, max_rounds: int | None) -> "GroupChatBuilder":
-        """Set a maximum number of manager rounds to prevent infinite conversations.
+        """Set a maximum number of orchestrator rounds to prevent infinite conversations.
 
         When the round limit is reached, the workflow automatically completes with
         a default completion message. Setting to None allows unlimited rounds.
 
         Args:
-            max_rounds: Maximum number of manager selection rounds, or None for unlimited
+            max_rounds: Maximum number of orchestrator selection rounds, or None for unlimited
 
         Returns:
             Self for fluent chaining

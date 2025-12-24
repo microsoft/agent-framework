@@ -13,6 +13,7 @@ from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_val
 from ._const import INTERNAL_SOURCE_ID
 from ._events import RequestInfoEvent, WorkflowEvent
 from ._shared_state import SharedState
+from ._typing_utils import is_instance_of
 
 logger = logging.getLogger(__name__)
 
@@ -493,7 +494,7 @@ class InProcRunnerContext:
             raise ValueError(f"No pending request found for request_id: {request_id}")
 
         # Validate response type if specified
-        if event.response_type and not isinstance(response, event.response_type):
+        if event.response_type and not is_instance_of(response, event.response_type):
             raise TypeError(
                 f"Response type mismatch for request_id {request_id}: "
                 f"expected {event.response_type.__name__}, got {type(response).__name__}"

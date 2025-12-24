@@ -360,7 +360,17 @@ class Executor(RequestInfoMixin, DictConvertible):
             True if the executor can handle the message type, False otherwise.
         """
         if message.type == MessageType.RESPONSE:
-            return any(is_instance_of(message.data, message_type) for message_type in self._response_handlers)
+            if message.original_request_info_event is None:
+                logger.warning(
+                    f"Executor {self.__class__.__name__} received a response message without an original request event."
+                )
+                return False
+
+            return any(
+                is_instance_of(message.original_request_info_event.data, message_type[0])
+                and is_instance_of(message.data, message_type[1])
+                for message_type in self._response_handlers
+            )
 
         return any(is_instance_of(message.data, message_type) for message_type in self._handlers)
 
