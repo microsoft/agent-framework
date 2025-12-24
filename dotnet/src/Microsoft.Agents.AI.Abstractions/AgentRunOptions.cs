@@ -33,8 +33,14 @@ public class AgentRunOptions
         _ = Throw.IfNull(options);
         this.ContinuationToken = options.ContinuationToken;
         this.AllowBackgroundResponses = options.AllowBackgroundResponses;
+        this.ContextId = options.ContextId;
         this.AdditionalProperties = options.AdditionalProperties?.Clone();
     }
+
+    /// <summary>
+    /// Gets or sets the context identifier (e.g., session ID, correlation ID) for the agent run.
+    /// </summary>
+    public string? ContextId { get; set; }
 
     /// <summary>
     /// Gets or sets the continuation token for resuming and getting the result of the agent response identified by this token.
@@ -88,6 +94,14 @@ public class AgentRunOptions
     /// Additional properties provide a way to include custom metadata or provider-specific
     /// information that doesn't fit into the standard options schema. This is useful for
     /// preserving implementation-specific details or extending the options with custom data.
+    /// <para>
+    /// <b>Note on A2A Protocol Usage:</b>
+    /// When communicating via the A2A protocol, this dictionary maps to the <c>Metadata</c> field of A2A messages.
+    /// Use this for "out-of-band" information like Trace IDs, Tenant IDs, or routing hints.
+    /// Do <b>not</b> use this for core message content or data payloads; those should be passed as
+    /// <see cref="ChatMessage"/> parts (e.g., TextPart, DataPart) in the message body.
+    /// Use <see cref="ContextId"/> for session or correlation grouping.
+    /// </para>
     /// </remarks>
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
