@@ -209,7 +209,7 @@ export function DeploymentModal({
         setCopiedTemplate(null);
         timeoutRef.current = null;
       }, 2000);
-    } catch (err) {
+    } catch {
       // Reset state on error - clipboard write failed
       setCopiedTemplate(null);
     }

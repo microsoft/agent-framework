@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/services/api";
-import type { CheckpointItem, WorkflowSession } from "@/types";
+import type { CheckpointItem, WorkflowSession, FullCheckpoint, PendingRequestInfoEvent } from "@/types";
 
 interface CheckpointInfoModalProps {
   session: WorkflowSession | null;
@@ -39,7 +39,7 @@ export function CheckpointInfoModal({
   onOpenChange,
 }: CheckpointInfoModalProps) {
   const [selectedCheckpointId, setSelectedCheckpointId] = useState<string | null>(null);
-  const [fullCheckpoint, setFullCheckpoint] = useState<any>(null);
+  const [fullCheckpoint, setFullCheckpoint] = useState<FullCheckpoint | null>(null);
   const [loading, setLoading] = useState(false);
   const [jsonExpanded, setJsonExpanded] = useState(true);
 
@@ -68,7 +68,7 @@ export function CheckpointInfoModal({
           session.conversation_id,
           `checkpoint_${selectedCheckpointId}`
         );
-        setFullCheckpoint((item as CheckpointItem).metadata?.full_checkpoint);
+        setFullCheckpoint((item as CheckpointItem).metadata?.full_checkpoint ?? null);
       } catch (error) {
         console.error("Failed to load checkpoint:", error);
         setFullCheckpoint(null);
@@ -276,7 +276,7 @@ export function CheckpointInfoModal({
                   )}
 
                   {/* Messages */}
-                  {messageExecutors.length > 0 && (
+                  {messageExecutors.length > 0 && fullCheckpoint && (
                     <div>
                       <div className="text-sm font-medium mb-3 flex items-center gap-2">
                         <MessageSquare className="h-4 w-4" />
@@ -311,7 +311,7 @@ export function CheckpointInfoModal({
                         </div>
                         <div className="space-y-2">
                           {Object.entries(fullCheckpoint.pending_request_info_events).map(
-                            ([reqId, reqData]: [string, any]) => (
+                            ([reqId, reqData]: [string, PendingRequestInfoEvent]) => (
                               <div
                                 key={reqId}
                                 className="bg-muted/50 border border-border p-3 rounded-lg"

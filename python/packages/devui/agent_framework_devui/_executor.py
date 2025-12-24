@@ -89,16 +89,90 @@ class AgentFrameworkExecutor:
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Run the configure_otel_providers
-                    # This ensures OTLP exporters are created even if env vars were set late
-                    configure_otel_providers(enable_sensitive_data=True)
-                    logger.info("Enabled Agent Framework observability")
+                    # Get OTLP endpoint from standard env vars
+                    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+                    if otlp_endpoint:
+                        # User provided an OTLP endpoint - use it
+                        configure_otel_providers(enable_sensitive_data=True)
+                        logger.info(f"Enabled Agent Framework observability with OTLP endpoint: {otlp_endpoint}")
+                    else:
+                        # No OTLP endpoint - use NoOp exporters to enable tracing without
+                        # console spam or failed connection attempts.
+                        # DevUI's SimpleTraceCollector will still capture spans via the
+                        # TracerProvider's span processors.
+                        from ._tracing import NoOpLogExporter, NoOpMetricExporter, NoOpSpanExporter
+
+                        configure_otel_providers(
+                            enable_sensitive_data=True,
+                            exporters=[NoOpSpanExporter(), NoOpLogExporter(), NoOpMetricExporter()],  # type: ignore[list-item]
+                        )
+                        logger.info("Enabled Agent Framework observability with local-only tracing")
                 else:
                     logger.debug("Agent Framework observability already configured")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
             logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
+
+    async def _ensure_mcp_connections(self, agent: Any) -> None:
+        """Ensure MCP tool connections are healthy before agent execution.
+
+        This is a workaround for an Agent Framework bug where MCP tool connections
+        can become stale (underlying streams closed) but is_connected remains True.
+        This happens when HTTP streaming responses end and GeneratorExit propagates.
+
+        This method detects stale connections and reconnects them. It's designed to
+        be a no-op once the Agent Framework fixes this issue upstream.
+
+        Args:
+            agent: Agent object that may have MCP tools
+        """
+        if not hasattr(agent, "_local_mcp_tools"):
+            return
+
+        for mcp_tool in agent._local_mcp_tools:
+            if not getattr(mcp_tool, "is_connected", False):
+                continue
+
+            tool_name = getattr(mcp_tool, "name", "unknown")
+
+            try:
+                # Check if underlying write stream is closed
+                session = getattr(mcp_tool, "session", None)
+                if session is None:
+                    continue
+
+                write_stream = getattr(session, "_write_stream", None)
+                if write_stream is None:
+                    continue
+
+                # Detect stale connection: is_connected=True but stream is closed
+                is_closed = getattr(write_stream, "_closed", False)
+                if not is_closed:
+                    continue  # Connection is healthy
+
+                # Stale connection detected - reconnect
+                logger.warning(f"MCP tool '{tool_name}' has stale connection (stream closed), reconnecting...")
+
+                # Clean up old connection
+                try:
+                    if hasattr(mcp_tool, "close"):
+                        await mcp_tool.close()
+                except Exception as close_err:
+                    logger.debug(f"Error closing stale MCP tool '{tool_name}': {close_err}")
+                    # Force reset state
+                    mcp_tool.is_connected = False
+                    mcp_tool.session = None
+
+                # Reconnect
+                if hasattr(mcp_tool, "connect"):
+                    await mcp_tool.connect()
+                    logger.info(f"MCP tool '{tool_name}' reconnected successfully")
+
+            except Exception as e:
+                # If detection fails, log and continue - let it fail naturally during execution
+                logger.debug(f"Error checking MCP tool '{tool_name}' connection: {e}")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -192,11 +266,11 @@ class AgentFrameworkExecutor:
 
             logger.info(f"Executing {entity_info.type}: {entity_id}")
 
-            # Extract session_id from request for trace context
-            session_id = getattr(request.extra_body, "session_id", None) if request.extra_body else None
+            # Extract response_id from request for trace context (added by _server.py)
+            response_id = request.extra_body.get("response_id") if request.extra_body else None
 
             # Use simplified trace capture
-            with capture_traces(session_id=session_id, entity_id=entity_id) as trace_collector:
+            with capture_traces(response_id=response_id, entity_id=entity_id) as trace_collector:
                 if entity_info.type == "agent":
                     async for event in self._execute_agent(entity_obj, request, trace_collector):
                         yield event
@@ -260,6 +334,12 @@ class AgentFrameworkExecutor:
                 logger.debug(f"Executing agent with text input: {user_message[:100]}...")
             else:
                 logger.debug(f"Executing agent with multimodal ChatMessage: {type(user_message)}")
+
+            # Workaround for MCP tool stale connection bug (GitHub issue pending)
+            # When HTTP streaming ends, GeneratorExit can close MCP stdio streams
+            # but is_connected stays True. Detect and reconnect before execution.
+            await self._ensure_mcp_connections(agent)
+
             # Check if agent supports streaming
             if hasattr(agent, "run_stream") and callable(agent.run_stream):
                 # Use Agent Framework's native streaming with optional thread
