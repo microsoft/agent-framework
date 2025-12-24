@@ -1,8 +1,20 @@
-# What this sample demonstrates
+---
+page_type: sample
+languages:
+- csharp
+products:
+- agent-framework
+- dotnet
+name: Agent with text-search RAG
+urlFragment: agent-with-text-search-rag
+---
+
+# Agent with text-search RAG
 
 This sample demonstrates how to use TextSearchProvider to add retrieval augmented generation (RAG) capabilities to an AI agent. The provider runs a search against an external knowledge base before each model invocation and injects the results into the model context.
 
 Key features:
+
 - Configuring TextSearchProvider with custom search behavior
 - Running searches before AI invocations to provide relevant context
 - Managing conversation memory with a rolling window approach
