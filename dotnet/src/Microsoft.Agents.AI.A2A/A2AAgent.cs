@@ -68,7 +68,7 @@ internal sealed class A2AAgent : AIAgent
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -131,7 +131,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
+using Moq.Protected;
 
 namespace Microsoft.Agents.AI.UnitTests;
 
@@ -35,18 +36,22 @@ public class AnonymousDelegatingAIAgentTests
             new AgentRunResponseUpdate(ChatRole.Assistant, "Response 2")
         ];
 
-        this._innerAgentMock.Setup(x => x.RunAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
+        this._innerAgentMock
+            .Protected()
+            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(this._testResponse);
 
-        this._innerAgentMock.Setup(x => x.RunStreamingAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
+        this._innerAgentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentRunResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .Returns(ToAsyncEnumerableAsync(this._testStreamingResponses));
     }
 
@@ -184,11 +189,14 @@ public class AnonymousDelegatingAIAgentTests
         Assert.Same(this._testOptions, capturedOptions);
         Assert.Equal(expectedCancellationToken, capturedCancellationToken);
 
-        this._innerAgentMock.Verify(x => x.RunAsync(
-            this._testMessages,
-            this._testThread,
-            this._testOptions,
-            expectedCancellationToken), Times.Once);
+        this._innerAgentMock
+            .Protected()
+            .Verify<Task<AgentRunResponse>>("RunCoreAsync",
+                Times.Once(),
+                ItExpr.Is<IEnumerable<ChatMessage>>(m => m == this._testMessages),
+                ItExpr.Is<AgentThread?>(t => t == this._testThread),
+                ItExpr.Is<AgentRunOptions?>(o => o == this._testOptions),
+                ItExpr.Is<CancellationToken>(ct => ct == expectedCancellationToken));
     }
 
     /// <summary>
@@ -458,11 +466,13 @@ public class AnonymousDelegatingAIAgentTests
                 capturedValue = asyncLocal.Value;
             });
 
-        this._innerAgentMock.Setup(x => x.RunAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.IsAny<CancellationToken>()))
+        this._innerAgentMock
+            .Protected()
+            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
             .Returns(() =>
             {
                 // Verify AsyncLocal value is available in inner agent call
@@ -926,11 +936,13 @@ public class AnonymousDelegatingAIAgentTests
         var capturedTokens = new List<CancellationToken>();
 
         // Setup mock to throw OperationCanceledException when cancelled token is used
-        this._innerAgentMock.Setup(x => x.RunAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<AgentThread?>(),
-                It.IsAny<AgentRunOptions?>(),
-                It.Is<CancellationToken>(ct => ct.IsCancellationRequested)))
+        this._innerAgentMock
+            .Protected()
+            .Setup<Task<AgentRunResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.Is<CancellationToken>(ct => ct.IsCancellationRequested))
             .ThrowsAsync(new OperationCanceledException());
 
         var agent = new AIAgentBuilder(this._innerAgentMock.Object)
@@ -993,11 +1005,14 @@ public class AnonymousDelegatingAIAgentTests
         Assert.Equal(expectedOrder, executionOrder);
 
         // Verify inner agent was never called
-        this._innerAgentMock.Verify(x => x.RunAsync(
-            It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<AgentThread?>(),
-            It.IsAny<AgentRunOptions?>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        this._innerAgentMock
+            .Protected()
+            .Verify<Task<AgentRunResponse>>("RunCoreAsync",
+                Times.Never(),
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentThread?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>());
     }
 
     #endregion
