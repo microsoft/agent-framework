@@ -238,6 +238,36 @@ async def test_openai_chat_completion_response() -> None:
 
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
+async def test_openai_chat_completion_response_params() -> None:
+    """Test OpenAI chat completion responses."""
+    openai_chat_client = OpenAIChatClient()
+
+    assert isinstance(openai_chat_client, ChatClientProtocol)
+
+    messages: list[ChatMessage] = []
+    messages.append(
+        ChatMessage(
+            role="user",
+            text="Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+            "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+            "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+            "of climate change.",
+        )
+    )
+    messages.append(ChatMessage(role="user", text="who are Emily and David?"))
+
+    # Test that the client can be used to get a response
+    response = await openai_chat_client.get_response(
+        messages=messages, chat_options=ChatOptions(max_tokens=150, temperature=0.7, top_p=0.9)
+    )
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert "scientists" in response.text
+
+
+@pytest.mark.flaky
+@skip_if_openai_integration_tests_disabled
 async def test_openai_chat_completion_response_tools() -> None:
     """Test OpenAI chat completion responses."""
     openai_chat_client = OpenAIChatClient()
