@@ -4,9 +4,9 @@ using System;
 using System.Collections.Immutable;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
-using Microsoft.Bot.ObjectModel.Abstractions;
-using Microsoft.Bot.ObjectModel.Exceptions;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx.Types;
 using Xunit.Abstractions;
 
