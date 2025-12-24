@@ -6,13 +6,29 @@ namespace Microsoft.Agents.AI.Workflows;
 
 internal static partial class AIAgentExtensions
 {
+    private const int GuidSuffixLength = 8;
+
     /// <summary>
     /// Derives from an agent a unique but also hopefully descriptive name that can be used as an executor's
     /// name or in a function name.
     /// </summary>
+    /// <remarks>
+    /// The ID format is "{Name}_{GuidSuffix}" where Name is the agent's name if provided,
+    /// otherwise the agent's type name. GuidSuffix is the first 8 characters of the agent's unique ID
+    /// to ensure uniqueness while maintaining readability.
+    /// </remarks>
     public static string GetDescriptiveId(this AIAgent agent)
     {
-        string id = string.IsNullOrEmpty(agent.Name) ? agent.Id : $"{agent.Name}_{agent.Id}";
+        string name = string.IsNullOrEmpty(agent.Name)
+            ? agent.GetType().Name
+            : agent.Name;
+
+        // Use first 8 characters of the GUID for uniqueness while keeping the ID readable
+        string guidSuffix = agent.Id.Length > GuidSuffixLength
+            ? agent.Id.Substring(0, GuidSuffixLength)
+            : agent.Id;
+
+        string id = $"{name}_{guidSuffix}";
         return InvalidNameCharsRegex().Replace(id, "_");
     }
 
