@@ -28,14 +28,15 @@ from agent_framework_durabletask import (
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
     AgentResponseCallbackProtocol,
+    AgentSessionId,
     DurableAgentState,
+    DurableAIAgent,
     RunRequest,
 )
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._models import AgentSessionId
-from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
+from ._orchestration import AgentOrchestrationContextType, AzureFunctionsAgentExecutor
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -314,7 +315,8 @@ class AgentFunctionApp(DFAppBase):
         if normalized_name not in self._agent_metadata:
             raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
 
-        return DurableAIAgent(context, normalized_name)
+        executor = AzureFunctionsAgentExecutor(context)
+        return DurableAIAgent(executor, normalized_name)
 
     def _setup_agent_functions(
         self,
@@ -407,7 +409,10 @@ class AgentFunctionApp(DFAppBase):
                 logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlation_id}")
                 logger.debug("[HTTP Trigger] Calling entity to run agent...")
 
-                entity_instance_id = session_id.to_entity_id()
+                entity_instance_id = df.EntityId(
+                    name=session_id.entity_name,
+                    key=session_id.key,
+                )
                 run_request = self._build_request_data(
                     req_body,
                     message,
@@ -624,7 +629,10 @@ class AgentFunctionApp(DFAppBase):
             session_id = AgentSessionId.with_random_key(agent_name)
 
         # Build entity instance ID
-        entity_instance_id = session_id.to_entity_id()
+        entity_instance_id = df.EntityId(
+            name=session_id.entity_name,
+            key=session_id.key,
+        )
 
         # Create run request
         correlation_id = self._generate_unique_id()

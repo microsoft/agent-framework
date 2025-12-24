@@ -871,8 +871,10 @@ class HandoffBuilder:
             HandoffBuilder(participants=[coordinator, refund, shipping])
             .set_coordinator(coordinator)
             .with_termination_condition(
-                lambda conv: sum(1 for msg in conv if msg.role.value == "user") >= 5
-                or any("goodbye" in msg.text.lower() for msg in conv[-2:])
+                lambda conv: (
+                    sum(1 for msg in conv if msg.role.value == "user") >= 5
+                    or any("goodbye" in msg.text.lower() for msg in conv[-2:])
+                )
             )
             .build()
         )

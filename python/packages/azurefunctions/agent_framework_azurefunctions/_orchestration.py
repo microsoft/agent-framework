@@ -5,24 +5,19 @@
 This module provides support for using agents inside Durable Function orchestrations.
 """
 
-import uuid
-from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
+import azure.durable_functions as df
 from agent_framework import (
-    AgentProtocol,
     AgentRunResponse,
-    AgentRunResponseUpdate,
     AgentThread,
-    ChatMessage,
     get_logger,
 )
-from agent_framework_durabletask import RunRequest
+from agent_framework_durabletask import AgentSessionId, DurableAgentExecutor, DurableAgentThread, RunRequest
 from azure.durable_functions.models import TaskBase
 from azure.durable_functions.models.Task import CompoundTask, TaskState
 from pydantic import BaseModel
-
-from ._models import AgentSessionId, DurableAgentThread
 
 logger = get_logger("agent_framework.azurefunctions.orchestration")
 
@@ -151,217 +146,64 @@ class AgentTask(_TypedCompoundTask):
             )
 
 
-class DurableAIAgent(AgentProtocol):
-    """A durable agent implementation that uses entity methods to interact with agent entities.
+class AzureFunctionsAgentExecutor(DurableAgentExecutor):
+    """Executor that executes durable agents inside Azure Functions orchestrations."""
 
-    This class implements AgentProtocol and provides methods to work with Azure Durable Functions
-    orchestrations, which use generators and yield instead of async/await.
-
-    Key methods:
-    - get_new_thread(): Create a new conversation thread
-    - run(): Execute the agent and return a Task for yielding in orchestrations
-
-    Note: The run() method is NOT async. It returns a Task directly that must be
-    yielded in orchestrations to wait for the entity call to complete.
-
-    Example usage in orchestration:
-        writer = app.get_agent(context, "WriterAgent")
-        thread = writer.get_new_thread()  # NOT yielded - returns immediately
-
-        response = yield writer.run(  # Yielded - waits for entity call
-            message="Write a haiku about coding",
-            thread=thread
-        )
-    """
-
-    def __init__(self, context: AgentOrchestrationContextType, agent_name: str):
-        """Initialize the DurableAIAgent.
-
-        Args:
-            context: The orchestration context
-            agent_name: Name of the agent (used to construct entity ID)
-        """
+    def __init__(self, context: AgentOrchestrationContextType):
         self.context = context
-        self.agent_name = agent_name
-        self._id = str(uuid.uuid4())
-        self._name = agent_name
-        self._display_name = agent_name
-        self._description = f"Durable agent proxy for {agent_name}"
-        logger.debug("[DurableAIAgent] Initialized for agent: %s", agent_name)
 
-    @property
-    def id(self) -> str:
-        """Get the unique identifier for this agent."""
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        """Get the name of the agent."""
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        """Get the display name of the agent."""
-        return self._display_name
-
-    @property
-    def description(self) -> str | None:
-        """Get the description of the agent."""
-        return self._description
-
-    # We return an AgentTask here which is a TaskBase subclass.
-    # This is an intentional deviation from AgentProtocol which defines run() as async.
-    # The AgentTask can be yielded in Durable Functions orchestrations and will provide
-    # a typed AgentRunResponse result.
-    def run(  # type: ignore[override]
+    def run_durable_agent(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
+        agent_name: str,
+        message: str,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
+        enable_tool_calls: bool | None = None,
         **kwargs: Any,
     ) -> AgentTask:
-        """Execute the agent with messages and return an AgentTask for orchestrations.
+        # Extract optional parameters
+        enable_tools = True if enable_tool_calls is None else enable_tool_calls
 
-        This method implements AgentProtocol and returns an AgentTask (subclass of TaskBase)
-        that can be yielded in Durable Functions orchestrations. The task's result will be
-        a typed AgentRunResponse.
-
-        Args:
-            messages: The message(s) to send to the agent
-            thread: Optional agent thread for conversation context
-            response_format: Optional Pydantic model for response parsing
-            **kwargs: Additional arguments (enable_tool_calls)
-
-        Returns:
-            An AgentTask that resolves to an AgentRunResponse when yielded
-
-        Example:
-            @app.orchestration_trigger(context_name="context")
-            def my_orchestration(context):
-                agent = app.get_agent(context, "MyAgent")
-                thread = agent.get_new_thread()
-                response = yield agent.run("Hello", thread=thread)
-                # response is typed as AgentRunResponse
-        """
-        message_str = self._normalize_messages(messages)
-
-        # Extract optional parameters from kwargs
-        enable_tool_calls = kwargs.get("enable_tool_calls", True)
-
-        # Get the session ID for the entity
+        # Resolve session
         if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
             session_id = thread.session_id
         else:
-            # Create a unique session ID for each call when no thread is provided
-            # This ensures each call gets its own conversation context
             session_key = str(self.context.new_uuid())
-            session_id = AgentSessionId(name=self.agent_name, key=session_key)
-            logger.debug("[DurableAIAgent] No thread provided, created unique session_id: %s", session_id)
+            session_id = AgentSessionId(name=agent_name, key=session_key)
+            logger.debug(
+                "[AzureFunctionsAgentProvider] No thread provided, created session_id: %s",
+                session_id,
+            )
 
-        # Create entity ID from session ID
-        entity_id = session_id.to_entity_id()
-
-        # Generate a deterministic correlation ID for this call
-        # This is required by the entity and must be unique per call
+        entity_id = df.EntityId(
+            name=session_id.entity_name,
+            key=session_id.key,
+        )
         correlation_id = str(self.context.new_uuid())
         logger.debug(
-            "[DurableAIAgent] Using correlation_id: %s for entity_id: %s for session_id: %s",
+            "[AzureFunctionsAgentProvider] correlation_id: %s entity_id: %s session_id: %s",
             correlation_id,
             entity_id,
             session_id,
         )
 
-        # Prepare the request using RunRequest model
-        # Include the orchestration's instance_id so it can be stored in the agent's entity state
         run_request = RunRequest(
-            message=message_str,
-            enable_tool_calls=enable_tool_calls,
+            message=message,
+            enable_tool_calls=enable_tools,
             correlation_id=correlation_id,
             response_format=response_format,
             orchestration_id=self.context.instance_id,
             created_at=self.context.current_utc_datetime,
         )
 
-        logger.debug("[DurableAIAgent] Calling entity %s with message: %s", entity_id, message_str[:100])
-
-        # Call the entity to get the underlying task
         entity_task = self.context.call_entity(entity_id, "run", run_request.to_dict())
-
-        # Wrap it in an AgentTask that will convert the result to AgentRunResponse
-        agent_task = AgentTask(
+        return AgentTask(
             entity_task=entity_task,
             response_format=response_format,
             correlation_id=correlation_id,
         )
 
-        logger.debug(
-            "[DurableAIAgent] Created AgentTask for correlation_id %s",
-            correlation_id,
-        )
-
-        return agent_task
-
-    def run_stream(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
-        *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[AgentRunResponseUpdate]:
-        """Run the agent with streaming (not supported for durable agents).
-
-        Raises:
-            NotImplementedError: Streaming is not supported for durable agents.
-        """
-        raise NotImplementedError("Streaming is not supported for durable agents in orchestrations.")
-
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
-        """Create a new agent thread for this orchestration instance.
-
-        Each call creates a unique thread with its own conversation context.
-        The session ID is deterministic (uses context.new_uuid()) to ensure
-        orchestration replay works correctly.
-
-        Returns:
-            A new AgentThread instance with a unique session ID
-        """
-        # Generate a deterministic unique key for this thread
-        # Using context.new_uuid() ensures the same GUID is generated during replay
+    def get_new_thread(self, agent_name: str, **kwargs: Any) -> DurableAgentThread:
         session_key = str(self.context.new_uuid())
-
-        # Create AgentSessionId with agent name and session key
-        session_id = AgentSessionId(name=self.agent_name, key=session_key)
-
-        thread = DurableAgentThread.from_session_id(session_id, **kwargs)
-
-        logger.debug("[DurableAIAgent] Created new thread with session_id: %s", session_id)
-        return thread
-
-    def _messages_to_string(self, messages: list[ChatMessage]) -> str:
-        """Convert a list of ChatMessage objects to a single string.
-
-        Args:
-            messages: List of ChatMessage objects
-
-        Returns:
-            Concatenated string of message contents
-        """
-        return "\n".join([msg.text or "" for msg in messages])
-
-    def _normalize_messages(self, messages: str | ChatMessage | list[str] | list[ChatMessage] | None) -> str:
-        """Convert supported message inputs to a single string."""
-        if messages is None:
-            return ""
-        if isinstance(messages, str):
-            return messages
-        if isinstance(messages, ChatMessage):
-            return messages.text or ""
-        if isinstance(messages, list):
-            if not messages:
-                return ""
-            first_item = messages[0]
-            if isinstance(first_item, str):
-                return "\n".join(cast(list[str], messages))
-            return self._messages_to_string(cast(list[ChatMessage], messages))
-        return str(messages)
+        session_id = AgentSessionId(name=agent_name, key=session_key)
+        return DurableAgentThread.from_session_id(session_id, **kwargs)

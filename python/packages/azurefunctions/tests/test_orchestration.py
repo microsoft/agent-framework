@@ -6,12 +6,34 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import AgentRunResponse, AgentThread, ChatMessage
+from agent_framework import AgentRunResponse, ChatMessage
+from agent_framework_durabletask import AgentSessionId, DurableAgentThread, DurableAIAgent
 from azure.durable_functions.models.Task import TaskBase, TaskState
 
-from agent_framework_azurefunctions import AgentFunctionApp, DurableAIAgent
-from agent_framework_azurefunctions._models import AgentSessionId, DurableAgentThread
+from agent_framework_azurefunctions import AgentFunctionApp
 from agent_framework_azurefunctions._orchestration import AgentTask
+
+
+def _create_mock_context(instance_id: str = "test-instance", uuid_values: list[str] | None = None) -> Mock:
+    """Create a mock orchestration context with common attributes.
+
+    Args:
+        instance_id: The orchestration instance ID
+        uuid_values: List of UUIDs to return from new_uuid() calls (if None, returns "test-guid")
+
+    Returns:
+        Mock context object configured for testing
+    """
+    mock_context = Mock()
+    mock_context.instance_id = instance_id
+    mock_context.current_utc_datetime = Mock()
+
+    if uuid_values:
+        mock_context.new_uuid = Mock(side_effect=uuid_values)
+    else:
+        mock_context.new_uuid = Mock(return_value="test-guid")
+
+    return mock_context
 
 
 def _app_with_registered_agents(*agent_names: str) -> AgentFunctionApp:
@@ -189,16 +211,6 @@ class TestAgentResponseHelpers:
 class TestDurableAIAgent:
     """Test suite for DurableAIAgent wrapper."""
 
-    def test_init(self) -> None:
-        """Test DurableAIAgent initialization."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-123"
-
-        agent = DurableAIAgent(mock_context, "TestAgent")
-
-        assert agent.context == mock_context
-        assert agent.agent_name == "TestAgent"
-
     def test_implements_agent_protocol(self) -> None:
         """Test that DurableAIAgent implements AgentProtocol."""
         from agent_framework import AgentProtocol
@@ -228,11 +240,12 @@ class TestDurableAIAgent:
 
     def test_get_new_thread(self) -> None:
         """Test creating a new agent thread."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-456"
-        mock_context.new_uuid = Mock(return_value="test-guid-456")
+        mock_context = _create_mock_context("test-instance-456", ["test-guid-456"])
 
-        agent = DurableAIAgent(mock_context, "WriterAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "WriterAgent")
         thread = agent.get_new_thread()
 
         assert isinstance(thread, DurableAgentThread)
@@ -245,12 +258,12 @@ class TestDurableAIAgent:
 
     def test_get_new_thread_deterministic(self) -> None:
         """Test that get_new_thread creates deterministic session IDs."""
+        mock_context = _create_mock_context("test-instance-789", ["session-guid-1", "session-guid-2"])
 
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-789"
-        mock_context.new_uuid = Mock(side_effect=["session-guid-1", "session-guid-2"])
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
 
-        agent = DurableAIAgent(mock_context, "EditorAgent")
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "EditorAgent")
 
         # Create multiple threads - they should have unique session IDs
         thread1 = agent.get_new_thread()
@@ -272,14 +285,15 @@ class TestDurableAIAgent:
 
     def test_run_creates_entity_call(self) -> None:
         """Test that run() creates proper entity call and returns a Task."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-001"
-        mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
+        mock_context = _create_mock_context("test-instance-001", ["thread-guid", "correlation-guid"])
 
         entity_task = _create_entity_task()
         mock_context.call_entity = Mock(return_value=entity_task)
 
-        agent = DurableAIAgent(mock_context, "TestAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "TestAgent")
 
         # Create thread
         thread = agent.get_new_thread()
@@ -293,7 +307,7 @@ class TestDurableAIAgent:
         # Verify call_entity was called with correct parameters
         assert mock_context.call_entity.called
         call_args = mock_context.call_entity.call_args
-        entity_id, operation, request = call_args[0]
+        _, operation, request = call_args[0]
 
         assert operation == "run"
         assert request["message"] == "Test message"
@@ -307,14 +321,15 @@ class TestDurableAIAgent:
 
     def test_run_sets_orchestration_id(self) -> None:
         """Test that run() sets the orchestration_id from context.instance_id."""
-        mock_context = Mock()
-        mock_context.instance_id = "my-orchestration-123"
-        mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
+        mock_context = _create_mock_context("my-orchestration-123", ["thread-guid", "correlation-guid"])
 
         entity_task = _create_entity_task()
         mock_context.call_entity = Mock(return_value=entity_task)
 
-        agent = DurableAIAgent(mock_context, "TestAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
         agent.run(messages="Test", thread=thread)
@@ -326,14 +341,15 @@ class TestDurableAIAgent:
 
     def test_run_without_thread(self) -> None:
         """Test that run() works without explicit thread (creates unique session key)."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-002"
-        mock_context.new_uuid = Mock(side_effect=["auto-generated-guid", "correlation-guid"])
+        mock_context = _create_mock_context("test-instance-002", ["auto-generated-guid", "correlation-guid"])
 
         entity_task = _create_entity_task()
         mock_context.call_entity = Mock(return_value=entity_task)
 
-        agent = DurableAIAgent(mock_context, "TestAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "TestAgent")
 
         # Call without thread
         task = agent.run(messages="Test message")
@@ -346,18 +362,20 @@ class TestDurableAIAgent:
         entity_id = call_args[0][0]
         assert entity_id.name == "dafx-TestAgent"
         assert entity_id.key == "auto-generated-guid"
-        # Should be called twice: once for session_key, once for correlationId
+        # Should be called twice: once for session_key, once for correlation_id
         assert mock_context.new_uuid.call_count == 2
 
     def test_run_with_response_format(self) -> None:
         """Test that run() passes response format correctly."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-003"
+        mock_context = _create_mock_context("test-instance-003", ["thread-guid", "correlation-guid"])
 
         entity_task = _create_entity_task()
         mock_context.call_entity = Mock(return_value=entity_task)
 
-        agent = DurableAIAgent(mock_context, "TestAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "TestAgent")
 
         from pydantic import BaseModel
 
@@ -380,33 +398,18 @@ class TestDurableAIAgent:
         assert input_data["response_format"]["module"] == SampleSchema.__module__
         assert input_data["response_format"]["qualname"] == SampleSchema.__qualname__
 
-    def test_messages_to_string(self) -> None:
-        """Test converting ChatMessage list to string."""
-        from agent_framework import ChatMessage
-
-        mock_context = Mock()
-        agent = DurableAIAgent(mock_context, "TestAgent")
-
-        messages = [
-            ChatMessage(role="user", text="Hello"),
-            ChatMessage(role="assistant", text="Hi there"),
-            ChatMessage(role="user", text="How are you?"),
-        ]
-
-        result = agent._messages_to_string(messages)
-
-        assert result == "Hello\nHi there\nHow are you?"
-
     def test_run_with_chat_message(self) -> None:
         """Test that run() handles ChatMessage input."""
         from agent_framework import ChatMessage
 
-        mock_context = Mock()
-        mock_context.new_uuid = Mock(side_effect=["thread-guid", "correlation-guid"])
+        mock_context = _create_mock_context(uuid_values=["thread-guid", "correlation-guid"])
         entity_task = _create_entity_task()
         mock_context.call_entity = Mock(return_value=entity_task)
 
-        agent = DurableAIAgent(mock_context, "TestAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "TestAgent")
         thread = agent.get_new_thread()
 
         # Call with ChatMessage
@@ -436,11 +439,13 @@ class TestDurableAIAgent:
         """Test that EntityId is created with correct format (name, key)."""
         from azure.durable_functions import EntityId
 
-        mock_context = Mock()
-        mock_context.new_uuid = Mock(return_value="test-guid-789")
+        mock_context = _create_mock_context(uuid_values=["test-guid-789", "correlation-guid"])
         mock_context.call_entity = Mock(return_value=_create_entity_task())
 
-        agent = DurableAIAgent(mock_context, "WriterAgent")
+        from agent_framework_azurefunctions._orchestration import AzureFunctionsAgentExecutor
+
+        executor = AzureFunctionsAgentExecutor(mock_context)
+        agent = DurableAIAgent(executor, "WriterAgent")
         thread = agent.get_new_thread()
 
         # Call run() to trigger entity ID creation
@@ -461,18 +466,6 @@ class TestDurableAIAgent:
 class TestAgentFunctionAppGetAgent:
     """Test suite for AgentFunctionApp.get_agent."""
 
-    def test_get_agent_method(self) -> None:
-        """Test get_agent method creates DurableAIAgent for registered agent."""
-        app = _app_with_registered_agents("MyAgent")
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-100"
-
-        agent = app.get_agent(mock_context, "MyAgent")
-
-        assert isinstance(agent, DurableAIAgent)
-        assert agent.agent_name == "MyAgent"
-        assert agent.context == mock_context
-
     def test_get_agent_raises_for_unregistered_agent(self) -> None:
         """Test get_agent raises ValueError when agent is not registered."""
         app = _app_with_registered_agents("KnownAgent")
@@ -486,13 +479,11 @@ class TestOrchestrationIntegration:
 
     def test_sequential_agent_calls_simulation(self) -> None:
         """Simulate sequential agent calls in an orchestration."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-orchestration-001"
         # new_uuid will be called 3 times:
         # 1. thread creation
-        # 2. correlationId for first call
-        # 3. correlationId for second call
-        mock_context.new_uuid = Mock(side_effect=["deterministic-guid-001", "corr-1", "corr-2"])
+        # 2. correlation_id for first call
+        # 3. correlation_id for second call
+        mock_context = _create_mock_context("test-orchestration-001", ["deterministic-guid-001", "corr-1", "corr-2"])
 
         # Track entity calls
         entity_calls: list[dict[str, Any]] = []
@@ -527,11 +518,11 @@ class TestOrchestrationIntegration:
 
     def test_multiple_agents_in_orchestration(self) -> None:
         """Test using multiple different agents in one orchestration."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-orchestration-002"
         # Mock new_uuid to return different GUIDs for each call
         # Order: writer thread, editor thread, writer correlation, editor correlation
-        mock_context.new_uuid = Mock(side_effect=["writer-guid-001", "editor-guid-002", "writer-corr", "editor-corr"])
+        mock_context = _create_mock_context(
+            "test-orchestration-002", ["writer-guid-001", "editor-guid-002", "writer-corr", "editor-corr"]
+        )
 
         entity_calls: list[str] = []
 
@@ -560,59 +551,6 @@ class TestOrchestrationIntegration:
         # EntityId format is @dafx-agentname@guid (lowercased agent name with dafx- prefix)
         assert entity_calls[0] == "@dafx-writeragent@writer-guid-001"
         assert entity_calls[1] == "@dafx-editoragent@editor-guid-002"
-
-
-class TestAgentThreadSerialization:
-    """Test that AgentThread can be serialized for orchestration state."""
-
-    async def test_agent_thread_serialize(self) -> None:
-        """Test that AgentThread can be serialized."""
-        thread = AgentThread()
-
-        # Serialize
-        serialized = await thread.serialize()
-
-        assert isinstance(serialized, dict)
-        assert "service_thread_id" in serialized
-
-    async def test_agent_thread_deserialize(self) -> None:
-        """Test that AgentThread can be deserialized."""
-        thread = AgentThread()
-        serialized = await thread.serialize()
-
-        # Deserialize
-        restored = await AgentThread.deserialize(serialized)
-
-        assert isinstance(restored, AgentThread)
-        assert restored.service_thread_id == thread.service_thread_id
-
-    async def test_durable_agent_thread_serialization(self) -> None:
-        """Test that DurableAgentThread persists session metadata during serialization."""
-        mock_context = Mock()
-        mock_context.instance_id = "test-instance-999"
-        mock_context.new_uuid = Mock(return_value="test-guid-999")
-
-        agent = DurableAIAgent(mock_context, "TestAgent")
-        thread = agent.get_new_thread()
-
-        assert isinstance(thread, DurableAgentThread)
-        # Verify custom attribute and property exist
-        assert thread.session_id is not None
-        session_id = thread.session_id
-        assert isinstance(session_id, AgentSessionId)
-        assert session_id.name == "TestAgent"
-        assert session_id.key == "test-guid-999"
-
-        # Standard serialization should still work
-        serialized = await thread.serialize()
-        assert isinstance(serialized, dict)
-        assert serialized.get("durable_session_id") == str(session_id)
-
-        # After deserialization, we'd need to restore the custom attribute
-        # This would be handled by the orchestration framework
-        restored = await DurableAgentThread.deserialize(serialized)
-        assert isinstance(restored, DurableAgentThread)
-        assert restored.session_id == session_id
 
 
 if __name__ == "__main__":
