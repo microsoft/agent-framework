@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -72,7 +72,7 @@ internal static class Step12EntryPoint
         AgentThread thread = hostAgent.GetNewThread();
         foreach (string input in inputs)
         {
-            AgentRunResponse response;
+            AgentResponse response;
             ResponseContinuationToken? continuationToken = null;
             do
             {

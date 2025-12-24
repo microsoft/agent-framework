@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -18,8 +18,8 @@ public class AIAgentTests
 {
     private readonly Mock<AIAgent> _agentMock;
     private readonly Mock<AgentThread> _agentThreadMock;
-    private readonly AgentRunResponse _invokeResponse;
-    private readonly List<AgentRunResponseUpdate> _invokeStreamingResponses = [];
+    private readonly AgentResponse _invokeResponse;
+    private readonly List<AgentResponseUpdate> _invokeStreamingResponses = [];
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgentTests"/> class.
@@ -28,8 +28,8 @@ public class AIAgentTests
     {
         this._agentThreadMock = new Mock<AgentThread>(MockBehavior.Strict);
 
-        this._invokeResponse = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
-        this._invokeStreamingResponses.Add(new AgentRunResponseUpdate(ChatRole.Assistant, "Hi"));
+        this._invokeResponse = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hi"));
+        this._invokeStreamingResponses.Add(new AgentResponseUpdate(ChatRole.Assistant, "Hi"));
 
         this._agentMock = new Mock<AIAgent> { CallBase = true };
         this._agentMock
@@ -375,14 +375,14 @@ public class AIAgentTests
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
             => throw new NotImplementedException();
 
-        public override Task<AgentRunResponse> RunAsync(
+        public override Task<AgentResponse> RunAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,

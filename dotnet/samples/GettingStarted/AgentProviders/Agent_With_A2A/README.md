@@ -29,6 +29,6 @@ A2AClient a2aClient = new(new Uri("https://your-a2a-agent-host/echo"));
 AIAgent agent = a2aClient.GetAIAgent();
 
 // Run the agent
-AgentRunResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
+AgentResponse response = await agent.RunAsync("Tell me a joke about a pirate.");
 Console.WriteLine(response);
 ```

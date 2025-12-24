@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use an agent with function tools.
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
@@ -42,7 +42,7 @@ Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amst
 
 // Streaming agent interaction with function tools.
 thread = existingAgent.GetNewThread();
-await foreach (AgentRunResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
+await foreach (AgentResponseUpdate update in existingAgent.RunStreamingAsync("What is the weather like in Amsterdam?", thread))
 {
     Console.WriteLine(update);
 }

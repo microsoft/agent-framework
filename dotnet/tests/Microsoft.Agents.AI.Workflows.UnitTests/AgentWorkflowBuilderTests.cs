@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -141,20 +141,20 @@ public class AgentWorkflowBuilderTests
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
             => new DoubleEchoAgentThread();
 
-        public override Task<AgentRunResponse> RunAsync(
+        public override Task<AgentResponse> RunAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
 
             var contents = messages.SelectMany(m => m.Contents).ToList();
             string id = Guid.NewGuid().ToString("N");
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
-            yield return new AgentRunResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, this.Name) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
+            yield return new AgentResponseUpdate(ChatRole.Assistant, contents) { AuthorName = this.Name, MessageId = id };
         }
     }
 
@@ -409,7 +409,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (Interlocked.Decrement(ref remaining.Value) == 0)

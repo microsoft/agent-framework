@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use background responses with ChatClientAgent and Azure OpenAI Responses.
 
@@ -22,7 +22,7 @@ AgentRunOptions options = new() { AllowBackgroundResponses = true };
 AgentThread thread = agent.GetNewThread();
 
 // Start the initial run.
-AgentRunResponse response = await agent.RunAsync("Write a very long novel about otters in space.", thread, options);
+AgentResponse response = await agent.RunAsync("Write a very long novel about otters in space.", thread, options);
 
 // Poll until the response is complete.
 while (response.ContinuationToken is { } token)
@@ -43,9 +43,9 @@ Console.WriteLine(response.Text);
 options = new() { AllowBackgroundResponses = true };
 thread = agent.GetNewThread();
 
-AgentRunResponseUpdate? lastReceivedUpdate = null;
+AgentResponseUpdate? lastReceivedUpdate = null;
 // Start streaming.
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync("Write a very long novel about otters in space.", thread, options))
 {
     // Output each update.
     Console.Write(update.Text);
@@ -63,7 +63,7 @@ await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync("Write a
 // Resume from interruption point.
 options.ContinuationToken = lastReceivedUpdate?.ContinuationToken;
 
-await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread, options))
+await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(thread, options))
 {
     // Output each update.
     Console.Write(update.Text);

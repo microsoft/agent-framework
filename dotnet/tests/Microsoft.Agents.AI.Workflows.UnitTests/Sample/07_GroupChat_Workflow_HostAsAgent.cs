@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.IO;
 using System.Threading.Tasks;
@@ -20,7 +20,7 @@ internal static class Step7EntryPoint
         for (int i = 0; i < numIterations; i++)
         {
             AgentThread thread = agent.GetNewThread();
-            await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
+            await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(thread).ConfigureAwait(false))
             {
                 if (update.RawRepresentation is WorkflowEvent)
                 {

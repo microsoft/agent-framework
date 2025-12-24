@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -78,25 +78,25 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
 
         var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
-        return response.RawRepresentation as AgentRunResponse ?? new AgentRunResponse(response);
+        return response.RawRepresentation as AgentResponse ?? new AgentResponse(response);
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
 
         await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
-            yield return update.RawRepresentation as AgentRunResponseUpdate ?? new AgentRunResponseUpdate(update);
+            yield return update.RawRepresentation as AgentResponseUpdate ?? new AgentResponseUpdate(update);
         }
     }
 

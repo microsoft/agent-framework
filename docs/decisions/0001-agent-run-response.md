@@ -163,8 +163,8 @@ foreach (var update in response.Messages)
 ### Option 2 Run: Container with Primary and Secondary Properties, RunStreaming: Stream of Primary + Secondary
 
 Run returns a new response type that has separate properties for the Primary Content and the Secondary Updates leading up to it.
-The Primary content is available in the `AgentRunResponse.Messages` property while Secondary updates are in a new `AgentRunResponse.Updates` property.
-`AgentRunResponse.Text` returns the Primary content text.
+The Primary content is available in the `AgentResponse.Messages` property while Secondary updates are in a new `AgentResponse.Updates` property.
+`AgentResponse.Text` returns the Primary content text.
 
 Since streaming would still need to return an `IAsyncEnumerable` of updates, the design would differ from non-streaming.
 With non-streaming Primary and Secondary content is split into separate lists, while with streaming it's combined in one stream.
@@ -232,24 +232,24 @@ await foreach (var update in responses)
 ```csharp
 class Agent
 {
-    public abstract Task<AgentRunResponse> RunAsync(
+    public abstract Task<AgentResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 }
 
-class AgentRunResponse : ChatResponse
+class AgentResponse : ChatResponse
 {
 }
 
-public class AgentRunResponseUpdate : ChatResponseUpdate
+public class AgentResponseUpdate : ChatResponseUpdate
 {
 }
 ```
@@ -265,20 +265,20 @@ The new types could also exclude properties that make less sense for agents, lik
 ```csharp
 class Agent
 {
-    public abstract Task<AgentRunResponse> RunAsync(
+    public abstract Task<AgentResponse> RunAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 
-    public abstract IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public abstract IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IReadOnlyCollection<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default);
 }
 
-class AgentRunResponse // Compare with ChatResponse
+class AgentResponse // Compare with ChatResponse
 {
     public string Text { get; } // Aggregation of TextContent from messages.
 
@@ -294,12 +294,12 @@ class AgentRunResponse // Compare with ChatResponse
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
 
-// Not Included in AgentRunResponse compared to ChatResponse
+// Not Included in AgentResponse compared to ChatResponse
 public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
 
-public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
+public class AgentResponseUpdate // Compare with ChatResponseUpdate
 {
     public string Text { get; } // Aggregation of TextContent from Contents.
 
@@ -317,7 +317,7 @@ public class AgentRunResponseUpdate // Compare with ChatResponseUpdate
     public AdditionalPropertiesDictionary? AdditionalProperties { get; set; }
 }
 
-// Not Included in AgentRunResponseUpdate compared to ChatResponseUpdate
+// Not Included in AgentResponseUpdate compared to ChatResponseUpdate
 public ChatFinishReason? FinishReason { get; set; }
 public string? ConversationId { get; set; }
 public string? ModelId { get; set; }
@@ -360,7 +360,7 @@ public class ChatFinishReason
 ### Option 2: Add another property on responses for AgentRun
 
 ```csharp
-class AgentRunResponse
+class AgentResponse
 {
     ...
     public AgentRun RunReference { get; set; } // Reference to long running process
@@ -368,7 +368,7 @@ class AgentRunResponse
 }
 
 
-public class AgentRunResponseUpdate
+public class AgentResponseUpdate
 {
     ...
     public AgentRun RunReference { get; set; } // Reference to long running process
@@ -424,7 +424,7 @@ Note that where an agent doesn't support structured output, it may also be possi
 See [Structured Outputs Support](#structured-outputs-support) for a comparison on what other agent frameworks and protocols support.
 
 To support a good user experience for structured outputs, I'm proposing that we follow the pattern used by MEAI.
-We would add a generic version of `AgentRunResponse<T>`, that allows us to get the agent result already deserialized into our preferred type.
+We would add a generic version of `AgentResponse<T>`, that allows us to get the agent result already deserialized into our preferred type.
 This would be coupled with generic overload extension methods for Run that automatically builds a schema from the supplied type and updates
 the run options.
 
@@ -438,14 +438,14 @@ class Movie
     public int ReleaseYear { get; set; }
 }
 
-AgentRunResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3 children's movies of the 80s.");
+AgentResponse<Movie[]> response = agent.RunAsync<Movie[]>("What are the top 3 children's movies of the 80s.");
 Movie[] movies = response.Result
 ```
 
 If we only support requesting a schema at agent creation time or where an agent has a built in schema, the following would be the preferred approach:
 
 ```csharp
-AgentRunResponse response = agent.RunAsync("What are the top 3 children's movies of the 80s.");
+AgentResponse response = agent.RunAsync("What are the top 3 children's movies of the 80s.");
 Movie[] movies = response.TryParseStructuredOutput<Movie[]>();
 ```
 
@@ -463,7 +463,7 @@ Option 2 chosen so that we can vary Agent responses independently of Chat Client
 ### StructuredOutputs Decision
 
 We will not support structured output per run request, but individual agents are free to allow this on the concrete implementation or at construction time.
-We will however add support for easily extracting a structured output type from the `AgentRunResponse`.
+We will however add support for easily extracting a structured output type from the `AgentResponse`.
 
 ## Addendum 1: AIContext Derived Types for different response types / Gap Analysis (Work in progress)
 

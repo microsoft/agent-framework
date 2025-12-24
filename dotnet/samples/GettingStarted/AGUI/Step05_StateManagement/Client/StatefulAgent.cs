@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -35,18 +35,18 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
     }
 
     /// <inheritdoc />
-    public override Task<AgentRunResponse> RunAsync(
+    public override Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         return this.RunStreamingAsync(messages, thread, options, cancellationToken)
-            .ToAgentRunResponseAsync(cancellationToken);
+            .ToAgentResponseAsync(cancellationToken);
     }
 
     /// <inheritdoc />
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -64,7 +64,7 @@ internal sealed class StatefulAgent<TState> : DelegatingAIAgent
         messagesWithState.Add(stateMessage);
 
         // Stream the response and update state when received
-        await foreach (AgentRunResponseUpdate update in this.InnerAgent.RunStreamingAsync(messagesWithState, thread, options, cancellationToken))
+        await foreach (AgentResponseUpdate update in this.InnerAgent.RunStreamingAsync(messagesWithState, thread, options, cancellationToken))
         {
             // Check if this update contains a state snapshot
             foreach (AIContent content in update.Contents)

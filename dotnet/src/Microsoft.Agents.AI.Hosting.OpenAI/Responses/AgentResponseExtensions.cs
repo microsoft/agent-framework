@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -13,19 +13,19 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// <summary>
 /// Extension methods for converting agent responses to Response models.
 /// </summary>
-internal static class AgentRunResponseExtensions
+internal static class AgentResponseExtensions
 {
     private static ChatRole s_DeveloperRole => new("developer");
 
     /// <summary>
-    /// Converts an AgentRunResponse to a Response model.
+    /// Converts an AgentResponse to a Response model.
     /// </summary>
-    /// <param name="agentRunResponse">The agent run response to convert.</param>
+    /// <param name="AgentResponse">The agent run response to convert.</param>
     /// <param name="request">The original create response request.</param>
     /// <param name="context">The agent invocation context.</param>
     /// <returns>A Response model.</returns>
     public static Response ToResponse(
-        this AgentRunResponse agentRunResponse,
+        this AgentResponse AgentResponse,
         CreateResponse request,
         AgentInvocationContext context)
     {
@@ -41,7 +41,7 @@ internal static class AgentRunResponseExtensions
             });
         }
 
-        output.AddRange(agentRunResponse.Messages
+        output.AddRange(AgentResponse.Messages
             .SelectMany(msg => msg.ToItemResource(context.IdGenerator, context.JsonSerializerOptions)));
 
         return new Response
@@ -49,7 +49,7 @@ internal static class AgentRunResponseExtensions
             Agent = request.Agent?.ToAgentId(),
             Background = request.Background,
             Conversation = request.Conversation ?? (context.ConversationId != null ? new ConversationReference { Id = context.ConversationId } : null),
-            CreatedAt = (agentRunResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
+            CreatedAt = (AgentResponse.CreatedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds(),
             Error = null,
             Id = context.ResponseId,
             Instructions = request.Instructions,
@@ -74,7 +74,7 @@ internal static class AgentRunResponseExtensions
             TopLogprobs = request.TopLogprobs,
             TopP = request.TopP ?? 1.0,
             Truncation = request.Truncation,
-            Usage = agentRunResponse.Usage.ToResponseUsage(),
+            Usage = AgentResponse.Usage.ToResponseUsage(),
 #pragma warning disable CS0618 // Type or member is obsolete
             User = request.User,
 #pragma warning restore CS0618 // Type or member is obsolete

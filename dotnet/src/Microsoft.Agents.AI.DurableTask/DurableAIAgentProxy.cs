@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -23,7 +23,7 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         return new DurableAgentThread(AgentSessionId.WithRandomKey(this.Name!));
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -64,13 +64,13 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         if (isFireAndForget)
         {
             // If the request is fire and forget, return an empty response.
-            return new AgentRunResponse();
+            return new AgentResponse();
         }
 
         return await agentRunHandle.ReadAgentResponseAsync(cancellationToken);
     }
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

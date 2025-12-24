@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -55,7 +55,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    public override async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -72,7 +72,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponse response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            AgentResponse response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
 
             if (this._logger.IsEnabled(LogLevel.Debug))
             {
@@ -101,7 +101,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -116,7 +116,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
             }
         }
 
-        IAsyncEnumerator<AgentRunResponseUpdate> e;
+        IAsyncEnumerator<AgentResponseUpdate> e;
         try
         {
             e = base.RunStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
@@ -134,7 +134,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponseUpdate? update = null;
+            AgentResponseUpdate? update = null;
             while (true)
             {
                 try

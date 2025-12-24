@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -16,8 +16,8 @@ internal sealed class TestAIAgent : AIAgent
 
     public Func<JsonElement, JsonSerializerOptions?, AgentThread> DeserializeThreadFunc = delegate { throw new NotSupportedException(); };
     public Func<AgentThread> GetNewThreadFunc = delegate { throw new NotSupportedException(); };
-    public Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task<AgentRunResponse>> RunAsyncFunc = delegate { throw new NotSupportedException(); };
-    public Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, IAsyncEnumerable<AgentRunResponseUpdate>> RunStreamingAsyncFunc = delegate { throw new NotSupportedException(); };
+    public Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, Task<AgentResponse>> RunAsyncFunc = delegate { throw new NotSupportedException(); };
+    public Func<IEnumerable<ChatMessage>, AgentThread?, AgentRunOptions?, CancellationToken, IAsyncEnumerable<AgentResponseUpdate>> RunStreamingAsyncFunc = delegate { throw new NotSupportedException(); };
     public Func<Type, object?, object?>? GetServiceFunc;
 
     public override string? Name => this.NameFunc?.Invoke() ?? base.Name;
@@ -30,10 +30,10 @@ internal sealed class TestAIAgent : AIAgent
     public override AgentThread GetNewThread() =>
         this.GetNewThreadFunc();
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    public override Task<AgentResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         this.RunAsyncFunc(messages, thread, options, cancellationToken);
 
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         this.RunStreamingAsyncFunc(messages, thread, options, cancellationToken);
 
     public override object? GetService(Type serviceType, object? serviceKey = null) =>

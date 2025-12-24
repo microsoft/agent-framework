@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -87,10 +87,10 @@ public class OpenAIChatClientAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override Task<AgentRunResponse> RunAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    public sealed override Task<AgentResponse> RunAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         base.RunAsync(messages, thread, options, cancellationToken);
 
     /// <inheritdoc/>
-    public override IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+    public override IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
         base.RunStreamingAsync(messages, thread, options, cancellationToken);
 }

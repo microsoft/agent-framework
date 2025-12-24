@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net;
 using System.Text.Json;
@@ -30,7 +30,7 @@ public static class FunctionTriggers
         context.SetCustomStatus($"Starting content generation for topic: {input.Topic}");
 
         // Step 1: Generate initial content
-        AgentRunResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
+        AgentResponse<GeneratedContent> writerResponse = await writerAgent.RunAsync<GeneratedContent>(
             message: $"Write a short article about '{input.Topic}'.",
             thread: writerThread);
         GeneratedContent content = writerResponse.Result;

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use the AG-UI client to connect to a remote AG-UI server
 // and display streaming updates including conversation/response metadata, text content, and errors.
@@ -114,7 +114,7 @@ public static class Program
                 bool isFirstUpdate = true;
                 string? threadId = null;
                 var updates = new List<ChatResponseUpdate>();
-                await foreach (AgentRunResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, thread, cancellationToken: cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
