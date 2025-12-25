@@ -44,7 +44,6 @@ from .._types import ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse, AgentRunResponse
 from ._base_group_chat_orchestrator import TerminationCondition
 from ._checkpoint import CheckpointStorage
-from ._conversation_state import decode_chat_messages, encode_chat_messages
 from ._events import WorkflowEvent
 from ._orchestrator_helpers import clean_conversation_for_handoff
 from ._request_info_mixin import response_handler
@@ -232,11 +231,6 @@ class HandoffAgentExecutor(AgentExecutor):
         self._autonomous_mode_turn_limit = autonomous_mode_turn_limit or _DEFAULT_AUTONOMOUS_TURN_LIMIT
         self._autonomous_mode_turns = 0
 
-        # Store all conversation messages for output. This list removes
-        # function call related content such that the result stays consistent
-        # regardless of which agent yields the final output.
-        self._full_conversation: list[ChatMessage] = []
-
     def _prepare_agent_with_handoffs(
         self,
         agent: AgentProtocol,
@@ -391,7 +385,9 @@ class HandoffAgentExecutor(AgentExecutor):
 
         # Remove function call related content from the agent response for full conversation history
         cleaned_response = clean_conversation_for_handoff(response.messages)
-        # Append the agent response to the full conversation history
+        # Append the agent response to the full conversation history. This list removes
+        # function call related content such that the result stays consistent regardless
+        # of which agent yields the final output.
         self._full_conversation.extend(cleaned_response)
         # Broadcast the cleaned response to all other agents
         await self._broadcast_messages(cleaned_response, cast(WorkflowContext[AgentExecutorRequest], ctx))
@@ -520,7 +516,6 @@ class HandoffAgentExecutor(AgentExecutor):
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Serialize the executor state for checkpointing."""
         state = await super().on_checkpoint_save()
-        state["_full_conversation"] = encode_chat_messages(self._cache)
         state["_autonomous_mode_turns"] = self._autonomous_mode_turns
         return state
 
@@ -528,8 +523,6 @@ class HandoffAgentExecutor(AgentExecutor):
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore the executor state from a checkpoint."""
         await super().on_checkpoint_restore(state)
-        if "_full_conversation" in state:
-            self._full_conversation = decode_chat_messages(state["_full_conversation"])
         if "_autonomous_mode_turns" in state:
             self._autonomous_mode_turns = state["_autonomous_mode_turns"]
 

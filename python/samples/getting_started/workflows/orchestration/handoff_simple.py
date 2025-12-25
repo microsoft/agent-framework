@@ -219,7 +219,7 @@ async def main() -> None:
 
     # Build the handoff workflow
     # - participants: All agents that can participate in the workflow
-    # - set_coordinator: The triage agent is designated as the coordinator, which means
+    # - with_start_agent: The triage agent is designated as the start agent, which means
     #   it receives all user input first and orchestrates handoffs to specialists
     # - with_termination_condition: Custom logic to stop the request/response loop.
     #   Without this, the default behavior continues requesting user input until max_turns
@@ -262,7 +262,7 @@ async def main() -> None:
 
     # Process the request/response cycle
     # The workflow will continue requesting input until:
-    # 1. The termination condition is met (4 user messages in this case), OR
+    # 1. The termination condition is met (triage agent's message contains "welcome"), OR
     # 2. We run out of scripted responses
     while pending_requests:
         if not scripted_responses:
@@ -280,8 +280,8 @@ async def main() -> None:
             }
 
         # Send responses and get new events
-        # We use send_responses_streaming() to get events as they occur, allowing us to
-        # display agent responses in real-time and handle new requests as they arrive
+        # We use send_responses() to get events from the workflow, allowing us to
+        # display agent responses and handle new requests as they arrive
         events = await workflow.send_responses(responses)
         pending_requests = _handle_events(events)
 

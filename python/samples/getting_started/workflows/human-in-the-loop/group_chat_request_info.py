@@ -148,7 +148,7 @@ async def main() -> None:
                     print("-" * 40)
 
                     # Get human input to steer the agent
-                    user_input = input(f"Feedback for {event.source_executor_id} (or 'skip' to continue): ")  # noqa: ASYNC250
+                    user_input = input(f"Feedback for {event.source_executor_id} (or 'skip' to approve): ")  # noqa: ASYNC250
                     if user_input.lower() == "skip":
                         pending_responses = {event.request_id: AgentRequestInfoResponse.approve()}
                     else:

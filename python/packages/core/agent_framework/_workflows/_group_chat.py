@@ -839,7 +839,7 @@ class GroupChatBuilder:
                 executors.append(participant)
             elif isinstance(participant, AgentProtocol):
                 if self._request_info_enabled and (
-                    not self._request_info_filter or participant.name in self._request_info_filter
+                    not self._request_info_filter or participant.display_name in self._request_info_filter
                 ):
                     # Handle request info enabled agents
                     executors.append(AgentApprovalExecutor(participant))
