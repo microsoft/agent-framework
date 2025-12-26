@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -7,11 +8,16 @@ namespace Microsoft.Agents.AI.Hosting;
 internal sealed class HostedWorkflowBuilder : IHostedWorkflowBuilder
 {
     public string Name { get; }
-    public IHostApplicationBuilder HostApplicationBuilder { get; }
+    public IServiceCollection Services { get; }
 
-    public HostedWorkflowBuilder(string name, IHostApplicationBuilder hostApplicationBuilder)
+    public HostedWorkflowBuilder(string name, IHostApplicationBuilder builder)
+        : this(name, builder.Services)
+    {
+    }
+
+    public HostedWorkflowBuilder(string name, IServiceCollection services)
     {
         this.Name = name;
-        this.HostApplicationBuilder = hostApplicationBuilder;
+        this.Services = services;
     }
 }

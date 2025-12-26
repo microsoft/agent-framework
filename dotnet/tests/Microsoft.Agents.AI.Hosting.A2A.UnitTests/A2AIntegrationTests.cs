@@ -27,7 +27,7 @@ public sealed class A2AIntegrationTests
 
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("test-agent", "Test instructions", chatClientServiceKey: "chat-client");
+        IHostedAgentBuilder agentBuilder = builder.Services.AddAIAgent("test-agent", "Test instructions", chatClientServiceKey: "chat-client");
         builder.Services.AddLogging();
 
         using WebApplication app = builder.Build();
