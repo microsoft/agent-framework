@@ -5,7 +5,6 @@ import functools
 import hashlib
 import json
 import logging
-import sys
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
@@ -34,12 +33,7 @@ from ._model_utils import DictConvertible
 from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._shared_state import SharedState
-
-if sys.version_info >= (3, 11):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
-
+from ._typing_utils import is_instance_of
 
 logger = logging.getLogger(__name__)
 
@@ -734,7 +728,7 @@ class Workflow(DictConvertible):
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
-            if not isinstance(response, pending_request.response_type):
+            if not is_instance_of(response, pending_request.response_type):
                 raise ValueError(
                     f"Response type mismatch for request ID {request_id}: "
                     f"expected {pending_request.response_type}, got {type(response)}"

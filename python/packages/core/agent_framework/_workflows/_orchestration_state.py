@@ -47,6 +47,7 @@ class OrchestrationState:
 
     conversation: list[ChatMessage] = field(default_factory=_new_chat_message_list)
     round_index: int = 0
+    orchestrator_name: str = ""
     metadata: dict[str, Any] = field(default_factory=_new_metadata_dict)
     task: ChatMessage | None = None
 

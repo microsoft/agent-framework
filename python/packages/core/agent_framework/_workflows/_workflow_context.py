@@ -268,6 +268,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         runner_context: RunnerContext,
         trace_contexts: list[dict[str, str]] | None = None,
         source_span_ids: list[str] | None = None,
+        request_id: str | None = None,
     ):
         """Initialize the executor context with the given workflow context.
 
@@ -280,6 +281,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking (not for nesting).
+            request_id: Optional request ID if this context is for a `handle_response` handler.
         """
         self._executor = executor
         self._executor_id = executor.id
@@ -294,8 +296,20 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         self._trace_contexts = trace_contexts or []
         self._source_span_ids = source_span_ids or []
 
+        # request info related
+        self._request_id: str | None = request_id
+
         if not self._source_executor_ids:
             raise ValueError("source_executor_ids cannot be empty. At least one source executor ID is required.")
+
+    @property
+    def request_id(self) -> str | None:
+        """Get the request ID if this context is for a `handle_response` handler.
+
+        Returns:
+            The request ID string or None if not applicable.
+        """
+        return self._request_id
 
     async def send_message(self, message: T_Out, target_id: str | None = None) -> None:
         """Send a message to the workflow context.
@@ -354,7 +368,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             return
         await self._runner_context.add_event(event)
 
-    async def request_info(self, request_data: object, response_type: type) -> None:
+    async def request_info(self, request_data: object, response_type: type, *, request_id: str | None = None) -> None:
         """Request information from outside of the workflow.
 
         Calling this method will cause the workflow to emit a RequestInfoEvent, carrying the
@@ -367,6 +381,8 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
         Args:
             request_data: The data associated with the information request.
             response_type: The expected type of the response, used for validation.
+            request_id: Optional unique identifier for the request. If not provided,
+                a new UUID will be generated. This allows executors to track requests and responses.
         """
         request_type: type = type(request_data)
         if not self._executor.is_request_supported(request_type, response_type):
@@ -378,7 +394,7 @@ class WorkflowContext(Generic[T_Out, T_W_Out]):
             )
 
         request_info_event = RequestInfoEvent(
-            request_id=str(uuid.uuid4()),
+            request_id=request_id or str(uuid.uuid4()),
             source_executor_id=self._executor_id,
             request_data=request_data,
             response_type=response_type,

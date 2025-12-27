@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from agent_framework import (
+    AgentExecutorResponse,
     ChatMessage,
     Executor,
     Role,
@@ -20,17 +21,12 @@ Sample: Sequential workflow mixing agents and a custom summarizer executor
 This demonstrates how SequentialBuilder chains participants with a shared
 conversation context (list[ChatMessage]). An agent produces content; a custom
 executor appends a compact summary to the conversation. The workflow completes
-when idle, and the final output contains the complete conversation.
+after all participants have executed in sequence, and the final output contains
+the complete conversation.
 
 Custom executor contract:
-- Provide at least one @handler accepting list[ChatMessage] and a WorkflowContext[list[ChatMessage]]
+- Provide at least one @handler accepting AgentExecutorResponse and a WorkflowContext[list[ChatMessage]]
 - Emit the updated conversation via ctx.send_message([...])
-
-Note on internal adapters:
-- You may see adapter nodes in the event stream such as "input-conversation",
-  "to-conversation:<participant>", and "complete". These provide consistent typing,
-  conversion of agent responses into the shared conversation, and a single point
-  for completion—similar to concurrent's dispatcher/aggregator.
 
 Prerequisites:
 - Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
@@ -41,11 +37,23 @@ class Summarizer(Executor):
     """Simple summarizer: consumes full conversation and appends an assistant summary."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
-        users = sum(1 for m in conversation if m.role == Role.USER)
-        assistants = sum(1 for m in conversation if m.role == Role.ASSISTANT)
+    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        """Append a summary message to a copy of the full conversation.
+
+        Note: A custom executor must be able to handle the message type from the prior participant, and produce
+        the message type expected by the next participant. In this case, the prior participant is an agent thus
+        the input is AgentExecutorResponse (an agent will be wrapped in an AgentExecutor, which produces
+        `AgentExecutorResponse`). If the next participant is also an agent or this is the final participant,
+        the output must be `list[ChatMessage]`.
+        """
+        if not agent_response.full_conversation:
+            await ctx.send_message([ChatMessage(role=Role.ASSISTANT, text="No conversation to summarize.")])
+            return
+
+        users = sum(1 for m in agent_response.full_conversation if m.role == Role.USER)
+        assistants = sum(1 for m in agent_response.full_conversation if m.role == Role.ASSISTANT)
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary -> users:{users} assistants:{assistants}")
-        final_conversation = list(conversation) + [summary]
+        final_conversation = list(agent_response.full_conversation) + [summary]
         await ctx.send_message(final_conversation)
 
 
@@ -61,7 +69,7 @@ async def main() -> None:
     summarizer = Summarizer(id="summarizer")
     workflow = SequentialBuilder().participants([content, summarizer]).build()
 
-    # 3) Run and print final conversation
+    # 3) Run workflow and extract final conversation
     events = await workflow.run("Explain the benefits of budget eBikes for commuters.")
     outputs = events.get_outputs()
 

@@ -97,7 +97,11 @@ class AgentExecutor(Executor):
         self._pending_agent_requests: dict[str, FunctionApprovalRequestContent] = {}
         self._pending_responses_to_agent: list[FunctionApprovalResponseContent] = []
         self._output_response = output_response
+
+        # AgentExecutor maintains an internal cache of messages in between runs
         self._cache: list[ChatMessage] = []
+        # This tracks the full conversation after each run
+        self._full_conversation: list[ChatMessage] = []
 
     @property
     def output_response(self) -> bool:
@@ -227,6 +231,7 @@ class AgentExecutor(Executor):
 
         return {
             "cache": encode_chat_messages(self._cache),
+            "full_conversation": encode_chat_messages(self._full_conversation),
             "agent_thread": serialized_thread,
             "pending_agent_requests": encode_checkpoint_value(self._pending_agent_requests),
             "pending_responses_to_agent": encode_checkpoint_value(self._pending_responses_to_agent),
@@ -250,6 +255,16 @@ class AgentExecutor(Executor):
                 self._cache = []
         else:
             self._cache = []
+
+        full_conversation_payload = state.get("full_conversation")
+        if full_conversation_payload:
+            try:
+                self._full_conversation = decode_chat_messages(full_conversation_payload)
+            except Exception as exc:
+                logger.warning("Failed to restore full conversation: %s", exc)
+                self._full_conversation = []
+        else:
+            self._full_conversation = []
 
         thread_payload = state.get("agent_thread")
         if thread_payload:
@@ -289,6 +304,12 @@ class AgentExecutor(Executor):
             # Non-streaming mode: use run() and emit single event
             response = await self._run_agent(cast(WorkflowContext, ctx))
 
+        # Always extend full conversation with cached messages plus agent outputs
+        # (agent_run_response.messages) after each run. This is to avoid losing context
+        # when agent did not complete and the cache is cleared when responses come back.
+        # Do not mutate response.messages so AgentRunEvent remains faithful to the raw output.
+        self._full_conversation.extend(list(self._cache) + (list(response.messages) if response else []))
+
         if response is None:
             # Agent did not complete (e.g., waiting for user input); do not emit response
             logger.info("AgentExecutor %s: Agent did not complete, awaiting user input", self.id)
@@ -297,12 +318,7 @@ class AgentExecutor(Executor):
         if self._output_response:
             await ctx.yield_output(response)
 
-        # Always construct a full conversation snapshot from inputs (cache)
-        # plus agent outputs (agent_run_response.messages). Do not mutate
-        # response.messages so AgentRunEvent remains faithful to the raw output.
-        full_conversation: list[ChatMessage] = list(self._cache) + list(response.messages)
-
-        agent_response = AgentExecutorResponse(self.id, response, full_conversation=full_conversation)
+        agent_response = AgentExecutorResponse(self.id, response, full_conversation=self._full_conversation)
         await ctx.send_message(agent_response)
         self._cache.clear()
 
