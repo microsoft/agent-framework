@@ -109,6 +109,10 @@ class HandoffConfiguration:
 
         return self.target_id == other.target_id
 
+    def __hash__(self):
+        """Compute hash based on source_id and target_id."""
+        return hash(self.target_id)
+
 
 def get_handoff_tool_name(target_id: str) -> str:
     """Get the standardized handoff tool name for a given target agent ID."""
@@ -1064,13 +1068,17 @@ class HandoffBuilder:
         # broadcast updates to all others via edges. Handoffs are controlled internally by the
         # `HandoffAgentExecutor` instances using handoff tools and middleware.
         for executor in executors.values():
-            builder = builder.add_fan_out_edges(executor, [e for e in executors.values() if e.id != executor.id])
+            targets = [e for e in executors.values() if e.id != executor.id]
+            # Fan-out requires at least 2 targets. Just in case there are only 2 agents total,
+            # we add a direct edge if there's only 1 target.
+            if len(targets) > 1:
+                builder = builder.add_fan_out_edges(executor, targets)
+            elif len(targets) == 1:
+                builder = builder.add_edge(executor, targets[0])
 
         # Configure checkpointing if enabled
         if self._checkpoint_storage:
             builder.with_checkpointing(self._checkpoint_storage)
-
-        # TODO(@taochen): handle termination condition, request info
 
         return builder.build()
 
