@@ -67,7 +67,7 @@ class Message:
             "type": self.type.value,
             "trace_contexts": self.trace_contexts,
             "source_span_ids": self.source_span_ids,
-            "original_request_info_event": self.original_request_info_event,
+            "original_request_info_event": encode_checkpoint_value(self.original_request_info_event),
         }
 
     @staticmethod
@@ -87,7 +87,7 @@ class Message:
             type=MessageType(data.get("type", "standard")),
             trace_contexts=data.get("trace_contexts"),
             source_span_ids=data.get("source_span_ids"),
-            original_request_info_event=data.get("original_request_info_event"),
+            original_request_info_event=decode_checkpoint_value(data.get("original_request_info_event")),
         )
 
 

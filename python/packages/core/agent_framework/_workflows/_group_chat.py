@@ -24,7 +24,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Never, cast
+from typing import Any, ClassVar, Never, cast
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,7 @@ from ._base_group_chat_orchestrator import (
     TerminationCondition,
 )
 from ._checkpoint import CheckpointStorage
+from ._conversation_state import decode_chat_messages, encode_chat_messages
 from ._executor import Executor
 from ._orchestration_request_info import AgentApprovalExecutor
 from ._workflow import Workflow
@@ -463,6 +464,25 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             return True
 
         return False
+
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Capture current orchestrator state for checkpointing."""
+        state = await super().on_checkpoint_save()
+        state["cache"] = encode_chat_messages(self._cache)
+        serialized_thread = await self._agent_thread.serialize()
+        state["agent_thread"] = serialized_thread
+
+        return state
+
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Restore executor state from checkpoint."""
+        await super().on_checkpoint_restore(state)
+        self._cache = decode_chat_messages(state.get("cache", []))
+        serialized_thread = state.get("agent_thread")
+        if serialized_thread:
+            self._thread = await self._agent.deserialize_thread(serialized_thread)
 
 
 # endregion

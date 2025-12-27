@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Never, TypeVar, cast
-from uuid import uuid4
 
 from agent_framework import (
     AgentProtocol,
@@ -23,14 +22,17 @@ from agent_framework import (
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
+    GroupChatParticipantMessage,
     GroupChatRequestMessage,
     GroupChatResponseMessage,
     GroupChatWorkflowContext_T_Out,
     ParticipantRegistry,
 )
 from ._checkpoint import CheckpointStorage
+from ._events import ExecutorEvent
 from ._executor import Executor, handler
 from ._model_utils import DictConvertible, encode_value
+from ._request_info_mixin import response_handler
 from ._workflow import Workflow
 from ._workflow_builder import WorkflowBuilder
 from ._workflow_context import WorkflowContext
@@ -266,147 +268,6 @@ def _new_chat_history() -> list[ChatMessage]:
 def _new_participant_descriptions() -> dict[str, str]:
     """Typed default factory for participant descriptions dict to satisfy type checkers."""
     return {}
-
-
-# region Request info related types
-
-
-@dataclass
-class MagenticPlanReviewResponse:
-    """Response to a human plan review request.
-
-    Attributes:
-        review: List of messages containing feedback and suggested revisions. If empty,
-            the plan is considered approved.
-    """
-
-    review: list[ChatMessage]
-
-    @staticmethod
-    def approve() -> "MagenticPlanReviewResponse":
-        """Create an approval response."""
-        return MagenticPlanReviewResponse(review=[])
-
-    @staticmethod
-    def revise(feedback: str | list[str] | ChatMessage | list[ChatMessage]) -> "MagenticPlanReviewResponse":
-        """Create a revision response with feedback."""
-        if isinstance(feedback, str):
-            feedback = [ChatMessage(role=Role.USER, text=feedback)]
-        elif isinstance(feedback, ChatMessage):
-            feedback = [feedback]
-        elif isinstance(feedback, list):
-            feedback = [ChatMessage(role=Role.USER, text=item) if isinstance(item, str) else item for item in feedback]
-
-        return MagenticPlanReviewResponse(review=feedback)
-
-
-@dataclass
-class MagenticPlanReviewRequest:
-    """Request for human review of a proposed plan."""
-
-    plan: ChatMessage
-
-    def approve(self) -> MagenticPlanReviewResponse:
-        """Create an approval response."""
-        return MagenticPlanReviewResponse.approve()
-
-    def revise(self, feedback: str | list[str] | ChatMessage | list[ChatMessage]) -> MagenticPlanReviewResponse:
-        """Create a revision response with feedback."""
-        return MagenticPlanReviewResponse.revise(feedback)
-
-
-class MagenticHumanInterventionKind(str, Enum):
-    """The kind of human intervention being requested."""
-
-    PLAN_REVIEW = "plan_review"  # Review and approve/revise the initial plan
-    TOOL_APPROVAL = "tool_approval"  # Approve a tool/function call
-    STALL = "stall"  # Workflow has stalled and needs guidance
-
-
-class MagenticHumanInterventionDecision(str, Enum):
-    """Decision options for human intervention responses."""
-
-    APPROVE = "approve"  # Approve (plan review, tool approval)
-    REVISE = "revise"  # Request revision with feedback (plan review)
-    REJECT = "reject"  # Reject/deny (tool approval)
-    CONTINUE = "continue"  # Continue with current state (stall)
-    REPLAN = "replan"  # Trigger replanning (stall)
-    GUIDANCE = "guidance"  # Provide guidance text (stall, tool approval)
-
-
-@dataclass
-class MagenticHumanInterventionRequest:
-    """Unified request for human intervention in a Magentic workflow.
-
-    This request is emitted when the workflow needs human input. The `kind` field
-    indicates what type of intervention is needed, and the relevant fields are
-    populated based on the kind.
-
-    Attributes:
-        request_id: Unique identifier for correlating responses
-        kind: The type of intervention needed (plan_review, tool_approval, stall)
-
-        # Plan review fields
-        task_text: The task description (plan_review)
-        facts_text: Extracted facts from the task (plan_review)
-        plan_text: The proposed or current plan (plan_review, stall)
-        round_index: Number of review rounds so far (plan_review)
-
-        # Tool approval fields
-        agent_id: The agent requesting input (tool_approval)
-        prompt: Description of what input is needed (tool_approval)
-        context: Additional context (tool_approval)
-        conversation_snapshot: Recent conversation history (tool_approval)
-
-        # Stall intervention fields
-        stall_count: Number of consecutive stall rounds (stall)
-        max_stall_count: Threshold that triggered intervention (stall)
-        stall_reason: Description of why progress stalled (stall)
-        last_agent: Last active agent (stall)
-    """
-
-    request_id: str = field(default_factory=lambda: str(uuid4()))
-    kind: MagenticHumanInterventionKind = MagenticHumanInterventionKind.PLAN_REVIEW
-
-    # Plan review fields
-    task_text: str = ""
-    facts_text: str = ""
-    plan_text: str = ""
-    round_index: int = 0
-
-    # Tool approval fields
-    agent_id: str = ""
-    prompt: str = ""
-    context: str | None = None
-    conversation_snapshot: list[ChatMessage] = field(default_factory=list)  # type: ignore
-
-    # Stall intervention fields
-    stall_count: int = 0
-    max_stall_count: int = 3
-    stall_reason: str = ""
-    last_agent: str = ""
-
-
-@dataclass
-class _MagenticHumanInterventionReply:
-    """Unified reply to a human intervention request.
-
-    The relevant fields depend on the original request kind and the decision made.
-
-    Attributes:
-        decision: The human's decision (approve, revise, continue, replan, guidance)
-        edited_plan_text: New plan text if directly editing (plan_review with approve/revise)
-        comments: Feedback for revision or guidance text (plan_review, stall with guidance)
-        response_text: Free-form response text (tool_approval)
-    """
-
-    decision: MagenticHumanInterventionDecision
-    edited_plan_text: str | None = None
-    comments: str | None = None
-    response_text: str | None = None
-
-
-# endregion Human Intervention Types
 
 
 @dataclass
@@ -910,6 +771,93 @@ class MagenticResetSignal:
     pass
 
 
+class MagenticOrchestratorEventType(str, Enum):
+    """Types of Magentic orchestrator events."""
+
+    PLAN_CREATED = "plan_created"
+    REPLANNED = "replanned"
+    PROGRESS_LEDGER_UPDATED = "progress_ledger_updated"
+
+
+@dataclass
+class MagenticOrchestratorEvent(ExecutorEvent):
+    """Base class for Magentic orchestrator events."""
+
+    def __init__(
+        self,
+        executor_id: str,
+        event_type: MagenticOrchestratorEventType,
+        data: ChatMessage | MagenticProgressLedger,
+    ) -> None:
+        super().__init__(executor_id, data)
+        self.event_type = event_type
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(executor_id={self.executor_id}, event_type={self.event_type})"
+
+
+# region Request info related types
+
+
+@dataclass
+class MagenticPlanReviewResponse:
+    """Response to a human plan review request.
+
+    Attributes:
+        review: List of messages containing feedback and suggested revisions. If empty,
+            the plan is considered approved.
+    """
+
+    review: list[ChatMessage]
+
+    @staticmethod
+    def approve() -> "MagenticPlanReviewResponse":
+        """Create an approval response."""
+        return MagenticPlanReviewResponse(review=[])
+
+    @staticmethod
+    def revise(feedback: str | list[str] | ChatMessage | list[ChatMessage]) -> "MagenticPlanReviewResponse":
+        """Create a revision response with feedback."""
+        if isinstance(feedback, str):
+            feedback = [ChatMessage(role=Role.USER, text=feedback)]
+        elif isinstance(feedback, ChatMessage):
+            feedback = [feedback]
+        elif isinstance(feedback, list):
+            feedback = [ChatMessage(role=Role.USER, text=item) if isinstance(item, str) else item for item in feedback]
+
+        return MagenticPlanReviewResponse(review=feedback)
+
+
+@dataclass
+class MagenticPlanReviewRequest:
+    """Request for human review of a proposed plan.
+
+    Attributes:
+        plan: The proposed plan message.
+        current_progress: The current progress ledger, if available.
+            During the initial plan review, this will be None. In subsequent
+            reviews after replanning (due to stalls), this will contain the
+            latest progress ledger that determined no progress had been made
+            or the workflow was in a loop.
+        is_stalled: Whether the workflow is currently stalled.
+    """
+
+    plan: ChatMessage
+    current_progress: MagenticProgressLedger | None
+    is_stalled: bool
+
+    def approve(self) -> MagenticPlanReviewResponse:
+        """Create an approval response."""
+        return MagenticPlanReviewResponse.approve()
+
+    def revise(self, feedback: str | list[str] | ChatMessage | list[ChatMessage]) -> MagenticPlanReviewResponse:
+        """Create a revision response with feedback."""
+        return MagenticPlanReviewResponse.revise(feedback)
+
+
+# endregion Human Intervention Types
+
+
 class MagenticOrchestrator(BaseGroupChatOrchestrator):
     """Magentic orchestrator that defines the workflow structure.
 
@@ -935,7 +883,6 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         participant_registry: ParticipantRegistry,
         *,
         require_plan_signoff: bool = False,
-        enable_stall_intervention: bool = False,
     ) -> None:
         """Initialize the Magentic orchestrator.
 
@@ -945,19 +892,19 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         Keyword Args:
             require_plan_signoff: If True, requires human approval of the initial plan before proceeding.
-            enable_stall_intervention: If True, enables human intervention requests when stalling is detected.
         """
         super().__init__("magentic_orchestrator", participant_registry)
         self._manager = manager
         self._require_plan_signoff = require_plan_signoff
-        self._enable_stall_intervention = enable_stall_intervention
 
         # Task related state
         self._magentic_context: MagenticContext | None = None
         self._task_ledger: ChatMessage | None = None
+        self._progress_ledger: MagenticProgressLedger | None = None
 
         # Termination related state
         self._terminated: bool = False
+        self._max_rounds = manager.max_round_count
 
     @override
     async def _handle_messages(
@@ -989,6 +936,13 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         # Initial planning using the manager with real model calls
         self._task_ledger = await self._manager.plan(self._magentic_context.clone(deep=True))
+        await ctx.add_event(
+            MagenticOrchestratorEvent(
+                executor_id=self.id,
+                event_type=MagenticOrchestratorEventType.PLAN_CREATED,
+                data=self._task_ledger,
+            )
+        )
 
         # If a human must sign off, ask now and return. The response handler will resume.
         if self._require_plan_signoff:
@@ -1003,6 +957,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Start the inner loop
         await self._run_inner_loop(ctx)
 
+    @override
     async def _handle_response(
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
@@ -1012,16 +967,81 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         if self._magentic_context is None or self._task_ledger is None:
             raise RuntimeError("Context or task ledger not initialized")
 
-        self._magentic_context.chat_history.extend(self._process_participant_response(response))
+        messages = self._process_participant_response(response)
+
+        self._magentic_context.chat_history.extend(messages)
+
+        # Broadcast participant messages to all participants for context, except
+        # the participant that just responded
+        participant = ctx.get_source_executor_id()
+        await self._broadcast_messages_to_participants(
+            messages,
+            cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
+            participants=[p for p in self._participant_registry.participants if p != participant],
+        )
 
         await self._run_inner_loop(ctx)
 
-    async def _send_plan_review_request(self, ctx: WorkflowContext) -> None:
-        """Send a human intervention request for plan review."""
+    @response_handler
+    async def handle_plan_review_response(
+        self,
+        original_request: MagenticPlanReviewRequest,
+        response: MagenticPlanReviewResponse,
+        ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
+    ) -> None:
+        """Handle the human response to the plan review request.
+
+        Logic:
+        There are code paths which will trigger a plan review request to the human:
+        - Initial plan creation if `require_plan_signoff` is True.
+        - Potentially during the inner loop if stalling is detected (resetting and replanning).
+
+        The human can either approve the plan or request revisions with comments.
+        - If approved, proceed to run the outer loop, which simply adds the task ledger
+          to the conversation and enters the inner loop.
+        - If revision requested, append the review comments to the chat history,
+          trigger replanning via the manager, emit a REPLANNED event, then run the outer loop.
+        """
+        if self._magentic_context is None or self._task_ledger is None:
+            raise RuntimeError("Context or task ledger not initialized")
+
+        # Case 1: Approved
+        if len(response.review) == 0:
+            logger.debug("Magentic Orchestrator: Plan review approved by human.")
+            await self._run_outer_loop(ctx)
+            return
+        # Case 2: Revision requested
+        logger.debug("Magentic Orchestrator: Plan review revision requested by human.")
+        self._magentic_context.chat_history.extend(response.review)
+        self._task_ledger = await self._manager.replan(self._magentic_context.clone(deep=True))
+        await ctx.add_event(
+            MagenticOrchestratorEvent(
+                executor_id=self.id,
+                event_type=MagenticOrchestratorEventType.REPLANNED,
+                data=self._task_ledger,
+            )
+        )
+        # Continue the review process by sending the new plan for review again until approved
+        # We don't need to check if `_require_plan_signoff` is True here, since we are already
+        # in the review process.
+        await self._send_plan_review_request(cast(WorkflowContext, ctx), is_stalled=original_request.is_stalled)
+
+    async def _send_plan_review_request(self, ctx: WorkflowContext, is_stalled: bool = False) -> None:
+        """Send a human intervention request for plan review.
+
+        The response will be handled in the response handler `handle_plan_review_response`.
+        """
         if self._task_ledger is None:
             raise RuntimeError("No task ledger available for plan review request.")
 
-        await ctx.request_info(MagenticPlanReviewRequest(self._task_ledger), MagenticPlanReviewResponse)
+        await ctx.request_info(
+            MagenticPlanReviewRequest(
+                plan=self._task_ledger,
+                current_progress=self._progress_ledger,
+                is_stalled=is_stalled,
+            ),
+            MagenticPlanReviewResponse,
+        )
 
     async def _run_inner_loop(
         self,
@@ -1049,75 +1069,54 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
             return
 
         self._magentic_context.round_count += 1
-        logger.debug(f"Magentic Orchestrator: Inner loop - round {self._magentic_context.round_count}")
+        self._increment_round()
+        logger.debug(f"Magentic Orchestrator: Inner loop - round {self._round_index}")
 
         # Create progress ledger using the manager
         try:
-            current_progress_ledger = await self._manager.create_progress_ledger(
-                self._magentic_context.clone(deep=True)
-            )
+            self._progress_ledger = await self._manager.create_progress_ledger(self._magentic_context.clone(deep=True))
         except Exception as ex:
             logger.warning(f"Magentic Orchestrator: Progress ledger creation failed, triggering reset: {ex}")
             await self._reset_and_replan(ctx)
             return
 
+        await ctx.add_event(
+            MagenticOrchestratorEvent(
+                executor_id=self.id,
+                event_type=MagenticOrchestratorEventType.PROGRESS_LEDGER_UPDATED,
+                data=self._progress_ledger,
+            )
+        )
+
         logger.debug(
-            f"Progress evaluation: satisfied={current_progress_ledger.is_request_satisfied.answer}, "
-            f"next={current_progress_ledger.next_speaker.answer}"
+            f"Progress evaluation: satisfied={self._progress_ledger.is_request_satisfied.answer}, "
+            f"next={self._progress_ledger.next_speaker.answer}"
         )
 
         # Check for task completion
-        if current_progress_ledger.is_request_satisfied.answer:
+        if self._progress_ledger.is_request_satisfied.answer:
             logger.info("Magentic Orchestrator: Task completed")
             await self._prepare_final_answer(cast(WorkflowContext[Never, list[ChatMessage]], ctx))
             return
 
         # Check for stalling or looping
-        if not current_progress_ledger.is_progress_being_made.answer or current_progress_ledger.is_in_loop.answer:
+        if not self._progress_ledger.is_progress_being_made.answer or self._progress_ledger.is_in_loop.answer:
             self._magentic_context.stall_count += 1
         else:
             self._magentic_context.stall_count = max(0, self._magentic_context.stall_count - 1)
 
         if self._magentic_context.stall_count > self._manager.max_stall_count:
             logger.debug(f"Magentic Orchestrator: Stalling detected after {self._magentic_context.stall_count} rounds")
-            if self._enable_stall_intervention:
-                # Request human intervention instead of auto-replan
-                is_progress = current_progress_ledger.is_progress_being_made.answer
-                is_loop = current_progress_ledger.is_in_loop.answer
-                stall_reason = "No progress being made" if not is_progress else ""
-                if is_loop:
-                    loop_msg = "Agents appear to be in a loop"
-                    stall_reason = f"{stall_reason}; {loop_msg}" if stall_reason else loop_msg
-                next_speaker_val = current_progress_ledger.next_speaker.answer
-                last_agent = next_speaker_val if isinstance(next_speaker_val, str) else ""
-                # Get facts and plan from manager's task ledger
-                mgr_ledger = getattr(self._manager, "task_ledger", None)
-                facts_text = mgr_ledger.facts.text if mgr_ledger else ""
-                plan_text = mgr_ledger.plan.text if mgr_ledger else ""
-                request = MagenticHumanInterventionRequest(
-                    kind=MagenticHumanInterventionKind.STALL,
-                    stall_count=self._magentic_context.stall_count,
-                    max_stall_count=self._manager.max_stall_count,
-                    task_text=self._magentic_context.task,
-                    facts_text=facts_text,
-                    plan_text=plan_text,
-                    last_agent=last_agent,
-                    stall_reason=stall_reason,
-                )
-                await ctx.request_info(request, _MagenticHumanInterventionReply)
-                return
-
-            # Default behavior: auto-replan
             await self._reset_and_replan(ctx)
             return
 
         # Determine the next speaker and instruction
-        next_speaker = current_progress_ledger.next_speaker.answer
+        next_speaker = self._progress_ledger.next_speaker.answer
         if not isinstance(next_speaker, str):
             # Fallback to first participant if ledger returns non-string
             logger.warning("Next speaker answer was not a string; selecting first participant as fallback")
             next_speaker = next(iter(self._participant_registry.participants.keys()))
-        instruction = current_progress_ledger.instruction_or_question.answer
+        instruction = self._progress_ledger.instruction_or_question.answer
 
         if next_speaker not in self._participant_registry.participants:
             logger.warning(f"Invalid next speaker: {next_speaker}")
@@ -1153,12 +1152,24 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Reset context
         self._magentic_context.reset()
 
-        # Replan
-        self._task_ledger = await self._manager.replan(self._magentic_context.clone(deep=True))
-        self._magentic_context.chat_history.append(self._task_ledger)
-
         # Reset all participant states
         await self._reset_participants(cast(WorkflowContext[MagenticResetSignal], ctx))
+
+        # Replan
+        self._task_ledger = await self._manager.replan(self._magentic_context.clone(deep=True))
+        await ctx.add_event(
+            MagenticOrchestratorEvent(
+                executor_id=self.id,
+                event_type=MagenticOrchestratorEventType.REPLANNED,
+                data=self._task_ledger,
+            )
+        )
+        # If a human must sign off, ask now and return. The response handler will resume.
+        if self._require_plan_signoff:
+            await self._send_plan_review_request(cast(WorkflowContext, ctx), is_stalled=True)
+            return
+
+        self._magentic_context.chat_history.append(self._task_ledger)
 
         # Restart outer loop
         await self._run_outer_loop(ctx)
@@ -1209,10 +1220,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         if self._magentic_context is None:
             raise RuntimeError("Context not initialized")
 
-        hit_round_limit = (
-            self._manager.max_round_count is not None
-            and self._magentic_context.round_count >= self._manager.max_round_count
-        )
+        hit_round_limit = self._max_rounds is not None and self._round_index >= self._max_rounds
         hit_reset_limit = (
             self._manager.max_reset_count is not None
             and self._magentic_context.reset_count >= self._manager.max_reset_count
@@ -1242,6 +1250,63 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Orchestrator is connected to all participants. Sending the message without specifying
         # a target will broadcast to all.
         await ctx.send_message(MagenticResetSignal())
+
+    @override
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        """Capture current orchestrator state for checkpointing."""
+        state = await super().on_checkpoint_save()
+        state["terminated"] = self._terminated
+
+        if self._magentic_context is not None:
+            state["magentic_context"] = self._magentic_context.to_dict()
+        if self._task_ledger is not None:
+            state["task_ledger"] = _message_to_payload(self._task_ledger)
+        if self._progress_ledger is not None:
+            state["progress_ledger"] = self._progress_ledger.to_dict()
+
+        try:
+            state["manager_state"] = self._manager.on_checkpoint_save()
+        except Exception as exc:
+            logger.warning(f"Failed to save manager state for checkpoint: {exc}\nSkipping...")
+
+        return state
+
+    @override
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        """Restore executor state from checkpoint."""
+        await super().on_checkpoint_restore(state)
+        self._terminated = state.get("terminated", False)
+
+        magentic_context_data = state.get("magentic_context")
+        if magentic_context_data is not None:
+            try:
+                self._magentic_context = MagenticContext.from_dict(magentic_context_data)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore Magentic context from checkpoint data")
+                self._magentic_context = None
+
+        task_ledger_data = state.get("task_ledger")
+        if task_ledger_data is not None:
+            try:
+                self._task_ledger = _message_from_payload(task_ledger_data)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore task ledger from checkpoint data")
+                self._task_ledger = None
+
+        progress_ledger_data = state.get("progress_ledger")
+        if progress_ledger_data is not None:
+            try:
+                self._progress_ledger = MagenticProgressLedger.from_dict(progress_ledger_data)
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("Failed to restore progress ledger from checkpoint data")
+                self._progress_ledger = None
+
+        manager_state = state.get("manager_state")
+        if manager_state is not None:
+            try:
+                self._manager.on_checkpoint_restore(manager_state)
+            except Exception as exc:
+                logger.warning(f"Failed to restore manager state from checkpoint: {exc}\nSkipping...")
 
 
 # endregion Magentic Orchestrator
@@ -1321,7 +1386,6 @@ class MagenticBuilder:
         self._manager: MagenticManagerBase | None = None
         self._enable_plan_review: bool = False
         self._checkpoint_storage: CheckpointStorage | None = None
-        self._enable_stall_intervention: bool = False
 
     def participants(self, participants: Sequence[AgentProtocol | Executor]) -> Self:
         """Define participants for this Magentic workflow.
@@ -1642,7 +1706,6 @@ class MagenticBuilder:
             manager=self._manager,
             participant_registry=ParticipantRegistry(participants),
             require_plan_signoff=self._enable_plan_review,
-            enable_stall_intervention=self._enable_stall_intervention,
         )
 
     def _resolve_participants(self) -> list[Executor]:

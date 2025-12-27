@@ -159,7 +159,7 @@ async def main() -> None:
                 last_response_id = response_id
             print(event.data, end="", flush=True)
         elif isinstance(event, GroupChatRequestSentEvent):
-            print(f"\n[REQUEST SENT ({event.round_index})] To agent: {event.participant_name}")
+            print(f"\n[REQUEST SENT ({event.round_index})] to agent: {event.participant_name}")
 
     # 6. Handle approval requests
     if request_info_events:
