@@ -62,8 +62,6 @@ from ._group_chat import (
 )
 from ._handoff import HandoffAgentUserRequest, HandoffBuilder, HandoffSentEvent
 from ._magentic import (
-    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
-    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
     ORCH_MSG_KIND_INSTRUCTION,
     ORCH_MSG_KIND_NOTICE,
     ORCH_MSG_KIND_TASK_LEDGER,
@@ -76,6 +74,7 @@ from ._magentic import (
     MagenticPlanReviewRequest,
     MagenticPlanReviewResponse,
     MagenticProgressLedger,
+    MagenticProgressLedgerItem,
     MagenticResetSignal,
     StandardMagenticManager,
 )
@@ -106,8 +105,6 @@ from ._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMe
 
 __all__ = [
     "DEFAULT_MAX_ITERATIONS",
-    "MAGENTIC_EVENT_TYPE_AGENT_DELTA",
-    "MAGENTIC_EVENT_TYPE_ORCHESTRATOR",
     "ORCH_MSG_KIND_INSTRUCTION",
     "ORCH_MSG_KIND_NOTICE",
     "ORCH_MSG_KIND_TASK_LEDGER",
@@ -153,6 +150,7 @@ __all__ = [
     "MagenticPlanReviewRequest",
     "MagenticPlanReviewResponse",
     "MagenticProgressLedger",
+    "MagenticProgressLedgerItem",
     "MagenticResetSignal",
     "Message",
     "OrchestrationState",

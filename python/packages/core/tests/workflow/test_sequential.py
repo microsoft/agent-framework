@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from agent_framework import (
+    AgentExecutorResponse,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentThread,
@@ -52,7 +53,8 @@ class _SummarizerExec(Executor):
     """Custom executor that summarizes by appending a short assistant message."""
 
     @handler
-    async def summarize(self, conversation: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+    async def summarize(self, agent_response: AgentExecutorResponse, ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        conversation = agent_response.full_conversation or []
         user_texts = [m.text for m in conversation if m.role == Role.USER]
         agents = [m.author_name or m.role for m in conversation if m.role == Role.ASSISTANT]
         summary = ChatMessage(role=Role.ASSISTANT, text=f"Summary of users:{len(user_texts)} agents:{len(agents)}")

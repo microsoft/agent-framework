@@ -97,14 +97,6 @@ def _message_from_payload(payload: Any) -> ChatMessage:
     raise TypeError("Unable to reconstruct ChatMessage from payload")
 
 
-# region Magentic event metadata constants
-
-# Event type identifiers for magentic_event_type in additional_properties
-MAGENTIC_EVENT_TYPE_ORCHESTRATOR = "orchestrator_message"
-MAGENTIC_EVENT_TYPE_AGENT_DELTA = "agent_delta"
-
-# endregion Magentic event metadata constants
-
 # region Magentic One Prompts
 
 ORCHESTRATOR_TASK_LEDGER_FACTS_PROMPT = """Below I will present you a request.

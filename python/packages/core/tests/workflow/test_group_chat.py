@@ -7,21 +7,19 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import (
-    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
-    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
     AgentRunResponse,
     AgentRunResponseUpdate,
-    AgentRunUpdateEvent,
     AgentThread,
     BaseAgent,
     ChatMessage,
     Executor,
     GroupChatBuilder,
-    GroupChatDirective,
-    GroupChatStateSnapshot,
+    GroupChatState,
     MagenticBuilder,
     MagenticContext,
     MagenticManagerBase,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
     Role,
     TextContent,
     Workflow,
@@ -30,20 +28,6 @@ from agent_framework import (
     handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._group_chat import (
-    GroupChatOrchestratorExecutor,
-    ManagerSelectionResponse,
-    _default_orchestrator_factory,  # type: ignore
-    _default_participant_factory,  # type: ignore
-    _GroupChatConfig,  # type: ignore
-    _SpeakerSelectorAdapter,  # type: ignore
-    assemble_group_chat_workflow,
-)
-from agent_framework._workflows._magentic import (
-    _MagenticProgressLedger,  # type: ignore
-    _MagenticProgressLedgerItem,  # type: ignore
-    _MagenticStartMessage,  # type: ignore
-)
 from agent_framework._workflows._participant_utils import GroupChatParticipantSpec
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 
@@ -145,11 +129,11 @@ class StubManagerAgent(BaseAgent):
         return _stream_final()
 
 
-def make_sequence_selector() -> Callable[[GroupChatStateSnapshot], Any]:
+def make_sequence_selector() -> Callable[[GroupChatState], str]:
     state_counter = {"value": 0}
 
-    async def _selector(state: GroupChatStateSnapshot) -> str | None:
-        participants = list(state["participants"].keys())
+    def _selector(state: GroupChatState) -> str:
+        participants = list(state.participants.keys())
         step = state_counter["value"]
         if step == 0:
             state_counter["value"] = step + 1
@@ -157,9 +141,8 @@ def make_sequence_selector() -> Callable[[GroupChatStateSnapshot], Any]:
         if step == 1 and len(participants) > 1:
             state_counter["value"] = step + 1
             return participants[1]
-        return None
+        raise RuntimeError("No more participants in sequence")
 
-    _selector.name = "manager"  # type: ignore[attr-defined]
     return _selector
 
 
@@ -174,24 +157,24 @@ class StubMagenticManager(MagenticManagerBase):
     async def replan(self, magentic_context: MagenticContext) -> ChatMessage:
         return await self.plan(magentic_context)
 
-    async def create_progress_ledger(self, magentic_context: MagenticContext) -> _MagenticProgressLedger:
+    async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
         participants = list(magentic_context.participant_descriptions.keys())
         target = participants[0] if participants else "agent"
         if self._round == 0:
             self._round += 1
-            return _MagenticProgressLedger(
-                is_request_satisfied=_MagenticProgressLedgerItem(reason="", answer=False),
-                is_in_loop=_MagenticProgressLedgerItem(reason="", answer=False),
-                is_progress_being_made=_MagenticProgressLedgerItem(reason="", answer=True),
-                next_speaker=_MagenticProgressLedgerItem(reason="", answer=target),
-                instruction_or_question=_MagenticProgressLedgerItem(reason="", answer="respond"),
+            return MagenticProgressLedger(
+                is_request_satisfied=MagenticProgressLedgerItem(reason="", answer=False),
+                is_in_loop=MagenticProgressLedgerItem(reason="", answer=False),
+                is_progress_being_made=MagenticProgressLedgerItem(reason="", answer=True),
+                next_speaker=MagenticProgressLedgerItem(reason="", answer=target),
+                instruction_or_question=MagenticProgressLedgerItem(reason="", answer="respond"),
             )
-        return _MagenticProgressLedger(
-            is_request_satisfied=_MagenticProgressLedgerItem(reason="", answer=True),
-            is_in_loop=_MagenticProgressLedgerItem(reason="", answer=False),
-            is_progress_being_made=_MagenticProgressLedgerItem(reason="", answer=True),
-            next_speaker=_MagenticProgressLedgerItem(reason="", answer=target),
-            instruction_or_question=_MagenticProgressLedgerItem(reason="", answer=""),
+        return MagenticProgressLedger(
+            is_request_satisfied=MagenticProgressLedgerItem(reason="", answer=True),
+            is_in_loop=MagenticProgressLedgerItem(reason="", answer=False),
+            is_progress_being_made=MagenticProgressLedgerItem(reason="", answer=True),
+            next_speaker=MagenticProgressLedgerItem(reason="", answer=target),
+            instruction_or_question=MagenticProgressLedgerItem(reason="", answer=""),
         )
 
     async def prepare_final_answer(self, magentic_context: MagenticContext) -> ChatMessage:
@@ -221,8 +204,8 @@ async def test_group_chat_builder_basic_flow() -> None:
 
     workflow = (
         GroupChatBuilder()
-        .set_select_speakers_func(selector, display_name="manager", final_message="done")
-        .participants(alpha=alpha, beta=beta)
+        .with_select_speaker_func(selector, orchestrator_name="manager")
+        .participants([alpha, beta])
         .build()
     )
 
@@ -244,31 +227,22 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
     manager = StubMagenticManager()
     agent = StubAgent("writer", "first draft")
 
-    workflow = MagenticBuilder().participants(writer=agent).with_standard_manager(manager=manager).build()
+    workflow = MagenticBuilder().participants([agent]).with_standard_manager(manager).build()
 
     assert isinstance(workflow, Workflow)
 
     outputs: list[ChatMessage] = []
     orchestrator_event_count = 0
     agent_event_count = 0
-    start_message = _MagenticStartMessage.from_string("compose summary")
-    async for event in workflow.run_stream(start_message):
-        if isinstance(event, AgentRunUpdateEvent):
-            props = event.data.additional_properties if event.data else None
-            event_type = props.get("magentic_event_type") if props else None
-            if event_type == MAGENTIC_EVENT_TYPE_ORCHESTRATOR:
-                orchestrator_event_count += 1
-            elif event_type == MAGENTIC_EVENT_TYPE_AGENT_DELTA:
-                agent_event_count += 1
+    async for event in workflow.run_stream("compose summary"):
         if isinstance(event, WorkflowOutputEvent):
             msg = event.data
             if isinstance(msg, list):
-                outputs.append(cast(list[ChatMessage], msg))
+                outputs.extend(cast(list[ChatMessage], msg))
 
     assert outputs, "Expected a final output message"
-    conversation = outputs[-1]
-    assert len(conversation) >= 1
-    final = conversation[-1]
+    assert len(outputs) >= 1
+    final = outputs[-1]
     assert final.text == "final"
     assert final.author_name == "magentic_manager"
     assert orchestrator_event_count > 0, "Expected orchestrator events to be emitted"
@@ -331,7 +305,7 @@ class TestGroupChatBuilder:
     def test_build_without_participants_raises_error(self) -> None:
         """Test that building without participants raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -342,7 +316,7 @@ class TestGroupChatBuilder:
     def test_duplicate_manager_configuration_raises_error(self) -> None:
         """Test that configuring multiple managers raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -353,7 +327,7 @@ class TestGroupChatBuilder:
     def test_empty_participants_raises_error(self) -> None:
         """Test that empty participants list raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -366,7 +340,7 @@ class TestGroupChatBuilder:
         agent1 = StubAgent("test", "response1")
         agent2 = StubAgent("test", "response2")
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -394,7 +368,7 @@ class TestGroupChatBuilder:
 
         agent = AgentWithoutName()
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -406,7 +380,7 @@ class TestGroupChatBuilder:
         """Test that empty participant name raises ValueError."""
         agent = StubAgent("test", "response")
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         builder = GroupChatBuilder().set_select_speakers_func(selector)
@@ -417,7 +391,7 @@ class TestGroupChatBuilder:
     def test_assemble_group_chat_respects_existing_start_executor(self) -> None:
         """Ensure assemble_group_chat_workflow does not override preconfigured start executor."""
 
-        async def manager(_: GroupChatStateSnapshot) -> GroupChatDirective:
+        async def manager(_: GroupChatState) -> GroupChatDirective:
             return GroupChatDirective(finish=True)
 
         builder = CountingWorkflowBuilder()
@@ -464,7 +438,7 @@ class TestGroupChatOrchestrator:
         """Test that max_rounds properly limits conversation rounds."""
         call_count = {"value": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             call_count["value"] += 1
             # Always return the agent name to try to continue indefinitely
             return "agent"
@@ -497,7 +471,7 @@ class TestGroupChatOrchestrator:
     async def test_termination_condition_halts_conversation(self) -> None:
         """Test that a custom termination condition stops the workflow."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return "agent"
 
         def termination_condition(conversation: list[ChatMessage]) -> bool:
@@ -532,7 +506,7 @@ class TestGroupChatOrchestrator:
     async def test_termination_condition_uses_manager_final_message(self) -> None:
         """Test that manager-provided final message is used on termination."""
 
-        async def selector(state: GroupChatStateSnapshot) -> str | None:
+        async def selector(state: GroupChatState) -> str | None:
             return None
 
         agent = StubAgent("agent", "response")
@@ -586,7 +560,7 @@ class TestGroupChatOrchestrator:
     async def test_unknown_participant_error(self) -> None:
         """Test that _apply_directive raises error for unknown participants."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return "unknown_agent"  # Return non-existent participant
 
         agent = StubAgent("agent", "response")
@@ -600,7 +574,7 @@ class TestGroupChatOrchestrator:
     async def test_directive_without_agent_name_raises_error(self) -> None:
         """Test that directive without agent_name raises error when finish=False."""
 
-        def bad_selector(state: GroupChatStateSnapshot) -> GroupChatDirective:
+        def bad_selector(state: GroupChatState) -> GroupChatDirective:
             # Return a GroupChatDirective object instead of string to trigger error
             return GroupChatDirective(finish=False, agent_name=None)  # type: ignore
 
@@ -617,7 +591,7 @@ class TestGroupChatOrchestrator:
     async def test_handle_empty_conversation_raises_error(self) -> None:
         """Test that empty conversation list raises ValueError."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         agent = StubAgent("agent", "response")
@@ -631,7 +605,7 @@ class TestGroupChatOrchestrator:
     async def test_unknown_participant_response_raises_error(self) -> None:
         """Test that responses from unknown participants raise errors."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return "agent"
 
         # Create orchestrator to test _ingest_participant_message directly
@@ -664,7 +638,7 @@ class TestGroupChatOrchestrator:
     async def test_state_build_before_initialization_raises_error(self) -> None:
         """Test that _build_state raises error before task message initialization."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             return None
 
         orchestrator = GroupChatOrchestratorExecutor(
@@ -683,7 +657,7 @@ class TestSpeakerSelectorAdapter:
     async def test_selector_returning_list_with_multiple_items_raises_error(self) -> None:
         """Test that selector returning list with multiple items raises error."""
 
-        def bad_selector(state: GroupChatStateSnapshot) -> list[str]:
+        def bad_selector(state: GroupChatState) -> list[str]:
             return ["agent1", "agent2"]  # Multiple items
 
         adapter = _SpeakerSelectorAdapter(bad_selector, manager_name="manager")
@@ -703,7 +677,7 @@ class TestSpeakerSelectorAdapter:
     async def test_selector_returning_non_string_raises_error(self) -> None:
         """Test that selector returning non-string raises TypeError."""
 
-        def bad_selector(state: GroupChatStateSnapshot) -> int:
+        def bad_selector(state: GroupChatState) -> int:
             return 42  # Not a string
 
         adapter = _SpeakerSelectorAdapter(bad_selector, manager_name="manager")
@@ -723,7 +697,7 @@ class TestSpeakerSelectorAdapter:
     async def test_selector_returning_empty_list_finishes(self) -> None:
         """Test that selector returning empty list finishes conversation."""
 
-        def empty_selector(state: GroupChatStateSnapshot) -> list[str]:
+        def empty_selector(state: GroupChatState) -> list[str]:
             return []  # Empty list should finish
 
         adapter = _SpeakerSelectorAdapter(empty_selector, manager_name="manager")
@@ -748,7 +722,7 @@ class TestCheckpointing:
     async def test_workflow_with_checkpointing(self) -> None:
         """Test that workflow works with checkpointing enabled."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             if state["round_index"] >= 1:
                 return None
             return "agent"
@@ -846,7 +820,7 @@ class TestConversationHandling:
     async def test_handle_string_input(self) -> None:
         """Test handling string input creates proper ChatMessage."""
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             # Verify the task was properly converted
             assert state["task"].role == Role.USER
             assert state["task"].text == "test string"
@@ -869,7 +843,7 @@ class TestConversationHandling:
         """Test handling ChatMessage input directly."""
         task_message = ChatMessage(role=Role.USER, text="test message")
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             # Verify the task message was preserved
             assert state["task"] == task_message
             return None
@@ -894,7 +868,7 @@ class TestConversationHandling:
             ChatMessage(role=Role.USER, text="user message"),
         ]
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             # Verify conversation context is preserved
             assert len(state["conversation"]) == 2
             assert state["task"].text == "user message"
@@ -921,7 +895,7 @@ class TestRoundLimitEnforcement:
         """Test round limit enforcement in _apply_directive."""
         rounds_called = {"count": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             rounds_called["count"] += 1
             # Keep trying to select agent to test limit enforcement
             return "agent"
@@ -955,7 +929,7 @@ class TestRoundLimitEnforcement:
         """Test round limit enforcement after participant response."""
         responses_received = {"count": 0}
 
-        def selector(state: GroupChatStateSnapshot) -> str | None:
+        def selector(state: GroupChatState) -> str | None:
             responses_received["count"] += 1
             if responses_received["count"] == 1:
                 return "agent"  # First call selects agent
@@ -1095,7 +1069,7 @@ async def test_group_chat_with_request_info_filtering():
     # Manager that selects alpha first, then beta, then finishes
     call_count = 0
 
-    async def selector(state: GroupChatStateSnapshot) -> str | None:
+    async def selector(state: GroupChatState) -> str | None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -1147,7 +1121,7 @@ async def test_group_chat_with_request_info_no_filter_pauses_all():
     # Manager selects alpha then finishes
     call_count = 0
 
-    async def selector(state: GroupChatStateSnapshot) -> str | None:
+    async def selector(state: GroupChatState) -> str | None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:

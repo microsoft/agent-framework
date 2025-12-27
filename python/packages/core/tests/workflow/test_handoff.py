@@ -15,7 +15,6 @@ from agent_framework import (
     ChatMessage,
     FunctionCallContent,
     HandoffBuilder,
-    HandoffUserInputRequest,
     RequestInfoEvent,
     Role,
     TextContent,
@@ -26,11 +25,6 @@ from agent_framework._mcp import MCPTool
 from agent_framework._workflows import AgentRunEvent
 from agent_framework._workflows import _handoff as handoff_module  # type: ignore
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-from agent_framework._workflows._handoff import (
-    _clone_chat_agent,  # type: ignore[reportPrivateUsage]
-    _ConversationWithUserInput,
-    _UserInputGateway,
-)
 from agent_framework._workflows._workflow_builder import WorkflowBuilder
 
 
@@ -180,17 +174,17 @@ async def _drain(stream: AsyncIterable[WorkflowEvent]) -> list[WorkflowEvent]:
     return [event async for event in stream]
 
 
-async def test_specialist_to_specialist_handoff():
-    """Test that specialists can hand off to other specialists via .add_handoff() configuration."""
+async def test_handoff():
+    """Test that agents can hand off to other agents via .add_handoff() configuration."""
     triage = _RecordingAgent(name="triage", handoff_to="specialist")
     specialist = _RecordingAgent(name="specialist", handoff_to="escalation")
     escalation = _RecordingAgent(name="escalation")
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist, escalation])
-        .set_coordinator(triage)
+        .with_start_agent(triage)
         .add_handoff(triage, [specialist, escalation])
-        .add_handoff(specialist, escalation)
+        .add_handoff(specialist, [escalation])
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
         .build()
     )
@@ -223,7 +217,7 @@ async def test_handoff_preserves_complex_additional_properties(complex_metadata:
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator(triage)
+        .with_start_agent(triage)
         .with_termination_condition(lambda conv: sum(1 for msg in conv if msg.role == Role.USER) >= 2)
         .build()
     )
@@ -286,7 +280,7 @@ async def test_tool_call_handoff_detection_with_text_hint():
     triage = _RecordingAgent(name="triage", handoff_to="specialist", text_handoff=True)
     specialist = _RecordingAgent(name="specialist")
 
-    workflow = HandoffBuilder(participants=[triage, specialist]).set_coordinator(triage).build()
+    workflow = HandoffBuilder(participants=[triage, specialist]).with_start_agent(triage).build()
 
     await _drain(workflow.run_stream("Package arrived broken"))
 
@@ -301,8 +295,8 @@ async def test_autonomous_interaction_mode_yields_output_without_user_request():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator(triage)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=1)
+        .with_start_agent(triage)
+        .with_autonomous_mode(turn_limits={triage.display_name: 1, specialist.display_name: 1})
         .build()
     )
 
@@ -329,8 +323,8 @@ async def test_autonomous_continues_without_handoff_until_termination():
 
     workflow = (
         HandoffBuilder(participants=[worker])
-        .set_coordinator(worker)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_start_agent(worker)
+        .with_autonomous_mode(turn_limits={worker.display_name: 3})
         .with_termination_condition(lambda conv: False)
         .build()
     )
@@ -349,8 +343,8 @@ async def test_autonomous_turn_limit_stops_loop():
 
     workflow = (
         HandoffBuilder(participants=[worker])
-        .set_coordinator(worker)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_start_agent(worker)
+        .with_autonomous_mode(turn_limits={worker.display_name: 2})
         .with_termination_condition(lambda conv: False)
         .build()
     )
@@ -370,9 +364,9 @@ async def test_autonomous_routes_back_to_coordinator_when_specialist_stops():
 
     workflow = (
         HandoffBuilder(participants=[triage, specialist])
-        .set_coordinator(triage)
-        .add_handoff(triage, specialist)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=3)
+        .with_start_agent(triage)
+        .add_handoff(triage, [specialist])
+        .with_autonomous_mode(turn_limits={triage.display_name: 3, specialist.display_name: 3})
         .with_termination_condition(lambda conv: len(conv) >= 4)
         .build()
     )
@@ -389,8 +383,8 @@ async def test_autonomous_mode_with_inline_turn_limit():
 
     workflow = (
         HandoffBuilder(participants=[worker])
-        .set_coordinator(worker)
-        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_start_agent(worker)
+        .with_autonomous_mode(turn_limits={worker.display_name: 2})
         .with_termination_condition(lambda conv: False)
         .build()
     )
@@ -401,39 +395,27 @@ async def test_autonomous_mode_with_inline_turn_limit():
     assert len(worker.calls) == 2, "Worker should stop after reaching the inline turn limit"
 
 
-def test_autonomous_turn_limit_ignored_in_human_in_loop_mode(caplog):
-    """Verify that autonomous_turn_limit logs a warning when mode is human_in_loop."""
-    worker = _RecordingAgent(name="worker")
-
-    # Should not raise, but should log a warning
-    HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
-        "human_in_loop", autonomous_turn_limit=10
-    )
-
-    assert "autonomous_turn_limit=10 was provided but interaction_mode is 'human_in_loop'; ignoring." in caplog.text
-
-
 def test_autonomous_turn_limit_must_be_positive():
     """Verify that autonomous_turn_limit raises an error when <= 0."""
     worker = _RecordingAgent(name="worker")
 
     with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
-        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
-            "autonomous", autonomous_turn_limit=0
+        HandoffBuilder(participants=[worker]).with_start_agent(worker).with_autonomous_mode(
+            turn_limits={worker.display_name: 0}
         )
 
     with pytest.raises(ValueError, match="autonomous_turn_limit must be positive"):
-        HandoffBuilder(participants=[worker]).set_coordinator(worker).with_interaction_mode(
-            "autonomous", autonomous_turn_limit=-5
+        HandoffBuilder(participants=[worker]).with_start_agent(worker).with_autonomous_mode(
+            turn_limits={worker.display_name: -5}
         )
 
 
-def test_build_fails_without_coordinator():
-    """Verify that build() raises ValueError when set_coordinator() was not called."""
+def test_build_fails_without_start_agent():
+    """Verify that build() raises ValueError when with_start_agent() was not called."""
     triage = _RecordingAgent(name="triage")
     specialist = _RecordingAgent(name="specialist")
 
-    with pytest.raises(ValueError, match=r"Must call set_coordinator\(...\) before building the workflow."):
+    with pytest.raises(ValueError, match=r"Must call with_start_agent\(...\) before building the workflow."):
         HandoffBuilder(participants=[triage, specialist]).build()
 
 
@@ -457,7 +439,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     workflow = (
         HandoffBuilder(participants=[coordinator])
-        .set_coordinator(coordinator)
+        .with_start_agent(coordinator)
         .with_termination_condition(async_termination)
         .build()
     )
@@ -508,131 +490,6 @@ async def test_clone_chat_agent_preserves_mcp_tools() -> None:
     assert len(cloned_agent.chat_options.tools) == 1
 
 
-async def test_return_to_previous_routing():
-    """Test that return-to-previous routes back to the current specialist handling the conversation."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
-    specialist_a = _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
-    specialist_b = _RecordingAgent(name="specialist_b")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator(triage)
-        .add_handoff(triage, [specialist_a, specialist_b])
-        .add_handoff(specialist_a, specialist_b)
-        .enable_return_to_previous(True)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 4)
-        .build()
-    )
-
-    # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    assert len(specialist_a.calls) > 0
-
-    # Specialist_a should have been called with initial request
-    initial_specialist_a_calls = len(specialist_a.calls)
-
-    # Second user message - specialist_a hands off to specialist_b
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need more help"}))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-
-    # Specialist_b should have been called
-    assert len(specialist_b.calls) > 0
-    initial_specialist_b_calls = len(specialist_b.calls)
-
-    # Third user message - with return_to_previous, should route back to specialist_b (current agent)
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
-    third_requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-
-    # Specialist_b should have been called again (return-to-previous routes to current agent)
-    assert len(specialist_b.calls) > initial_specialist_b_calls, (
-        "Specialist B should be called again due to return-to-previous routing to current agent"
-    )
-
-    # Specialist_a should NOT be called again (it's no longer the current agent)
-    assert len(specialist_a.calls) == initial_specialist_a_calls, (
-        "Specialist A should not be called again - specialist_b is the current agent"
-    )
-
-    # Triage should only have been called once at the start
-    assert len(triage.calls) == 1, "Triage should only be called once (initial routing)"
-
-    # Verify awaiting_agent_id is set to specialist_b (the agent that just responded)
-    if third_requests:
-        user_input_req = third_requests[-1].data
-        assert isinstance(user_input_req, HandoffUserInputRequest)
-        assert user_input_req.awaiting_agent_id == "specialist_b", (
-            f"Expected awaiting_agent_id 'specialist_b' but got '{user_input_req.awaiting_agent_id}'"
-        )
-
-
-async def test_return_to_previous_disabled_routes_to_coordinator():
-    """Test that with return-to-previous disabled, routing goes back to coordinator."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
-    specialist_a = _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
-    specialist_b = _RecordingAgent(name="specialist_b")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator(triage)
-        .add_handoff(triage, [specialist_a, specialist_b])
-        .add_handoff(specialist_a, specialist_b)
-        .enable_return_to_previous(False)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
-        .build()
-    )
-
-    # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    assert len(triage.calls) == 1
-
-    # Second user message - specialist_a hands off to specialist_b
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need more help"}))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-
-    # Third user message - without return_to_previous, should route back to triage
-    await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
-
-    # Triage should have been called twice total: initial + after specialist_b responds
-    assert len(triage.calls) == 2, "Triage should be called twice (initial + default routing to coordinator)"
-
-
-async def test_return_to_previous_enabled():
-    """Verify that enable_return_to_previous() keeps control with the current specialist."""
-    triage = _RecordingAgent(name="triage", handoff_to="specialist_a")
-    specialist_a = _RecordingAgent(name="specialist_a")
-    specialist_b = _RecordingAgent(name="specialist_b")
-
-    workflow = (
-        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator(triage)
-        .enable_return_to_previous(True)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
-        .build()
-    )
-
-    # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-    assert len(triage.calls) == 1
-    assert len(specialist_a.calls) == 1
-
-    # Second user message - with return_to_previous, should route to specialist_a (not triage)
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up question"}))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-
-    # Triage should only have been called once (initial) - specialist_a handles follow-up
-    assert len(triage.calls) == 1, "Triage should only be called once (initial)"
-    assert len(specialist_a.calls) == 2, "Specialist A should handle follow-up with return_to_previous enabled"
-
-
 def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure HandoffBuilder.build sets the start executor only once when assembling the workflow."""
     _CountingWorkflowBuilder.created.clear()
@@ -643,7 +500,7 @@ def test_handoff_builder_sets_start_executor_once(monkeypatch: pytest.MonkeyPatc
 
     workflow = (
         HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator(coordinator)
+        .with_start_agent(coordinator)
         .with_termination_condition(lambda conv: len(conv) > 0)
         .build()
     )
@@ -690,96 +547,6 @@ async def test_tool_choice_preserved_from_agent_config():
     last_tool_choice = recorded_tool_choices[-1]
     assert last_tool_choice is not None, "tool_choice should not be None"
     assert str(last_tool_choice) == "required", f"Expected 'required', got {last_tool_choice}"
-
-
-async def test_handoff_builder_with_request_info():
-    """Test that HandoffBuilder supports request info via with_request_info()."""
-    from agent_framework import AgentInputRequest, RequestInfoEvent
-
-    # Create test agents
-    coordinator = _RecordingAgent(name="coordinator")
-    specialist = _RecordingAgent(name="specialist")
-
-    # Build workflow with request info enabled
-    workflow = (
-        HandoffBuilder(participants=[coordinator, specialist])
-        .set_coordinator(coordinator)
-        .with_termination_condition(lambda conv: len([m for m in conv if m.role == Role.USER]) >= 1)
-        .with_request_info()
-        .build()
-    )
-
-    # Run workflow until it pauses for request info
-    request_event: RequestInfoEvent | None = None
-    async for event in workflow.run_stream("Hello"):
-        if isinstance(event, RequestInfoEvent) and isinstance(event.data, AgentInputRequest):
-            request_event = event
-
-    # Verify request info was emitted
-    assert request_event is not None, "Request info should have been emitted"
-    assert isinstance(request_event.data, AgentInputRequest)
-
-    # Provide response and continue
-    output_events: list[WorkflowOutputEvent] = []
-    async for event in workflow.send_responses_streaming({request_event.request_id: "approved"}):
-        if isinstance(event, WorkflowOutputEvent):
-            output_events.append(event)
-
-    # Verify we got output events
-    assert len(output_events) > 0, "Should produce output events after response"
-
-
-async def test_handoff_builder_with_request_info_method_chaining():
-    """Test that with_request_info returns self for method chaining."""
-    coordinator = _RecordingAgent(name="coordinator")
-
-    builder = HandoffBuilder(participants=[coordinator])
-    result = builder.with_request_info()
-
-    assert result is builder, "with_request_info should return self for chaining"
-    assert builder._request_info_enabled is True  # type: ignore
-
-
-async def test_return_to_previous_state_serialization():
-    """Test that return_to_previous state is properly serialized/deserialized for checkpointing."""
-    from agent_framework._workflows._handoff import _HandoffCoordinator  # type: ignore[reportPrivateUsage]
-
-    # Create a coordinator with return_to_previous enabled
-    coordinator = _HandoffCoordinator(
-        starting_agent_id="triage",
-        specialist_ids={"specialist_a": "specialist_a", "specialist_b": "specialist_b"},
-        input_gateway_id="gateway",
-        termination_condition=lambda conv: False,
-        id="test-coordinator",
-        return_to_previous=True,
-    )
-
-    # Set the current agent (simulating a handoff scenario)
-    coordinator._current_agent_id = "specialist_a"  # type: ignore[reportPrivateUsage]
-
-    # Snapshot the state
-    state = await coordinator.on_checkpoint_save()
-
-    # Verify pattern metadata includes current_agent_id
-    assert "metadata" in state
-    assert "current_agent_id" in state["metadata"]
-    assert state["metadata"]["current_agent_id"] == "specialist_a"
-
-    # Create a new coordinator and restore state
-    coordinator2 = _HandoffCoordinator(
-        starting_agent_id="triage",
-        specialist_ids={"specialist_a": "specialist_a", "specialist_b": "specialist_b"},
-        input_gateway_id="gateway",
-        termination_condition=lambda conv: False,
-        id="test-coordinator",
-        return_to_previous=True,
-    )
-
-    # Restore state
-    await coordinator2.on_checkpoint_restore(state)
-
-    # Verify current_agent_id was restored
-    assert coordinator2._current_agent_id == "specialist_a", "Current agent should be restored from checkpoint"  # type: ignore[reportPrivateUsage]
 
 
 # region Participant Factory Tests
@@ -882,7 +649,7 @@ def test_handoff_builder_rejects_instance_coordinator_with_factories():
         (
             HandoffBuilder(
                 participant_factories={"triage": create_triage, "specialist": create_specialist}
-            ).set_coordinator(coordinator_instance)  # Instance, not factory name
+            ).with_start_agent(coordinator_instance)  # Instance, not factory name
         )
 
 
@@ -895,7 +662,7 @@ def test_handoff_builder_rejects_factory_name_coordinator_with_instances():
         ValueError, match="coordinator factory name 'triage' is not part of the participant_factories list"
     ):
         (
-            HandoffBuilder(participants=[triage, specialist]).set_coordinator(
+            HandoffBuilder(participants=[triage, specialist]).with_start_agent(
                 "triage"
             )  # String factory name, not instance
         )
@@ -909,7 +676,7 @@ def test_handoff_builder_rejects_mixed_types_in_add_handoff_source():
     with pytest.raises(TypeError, match="Cannot mix factory names \\(str\\) and AgentProtocol/Executor instances"):
         (
             HandoffBuilder(participants=[triage, specialist])
-            .set_coordinator(triage)
+            .with_start_agent(triage)
             .add_handoff("triage", specialist)  # String source with instance participants
         )
 
@@ -935,7 +702,7 @@ def test_handoff_builder_accepts_all_factory_names_in_add_handoff():
                 "specialist_b": create_specialist_b,
             }
         )
-        .set_coordinator("triage")
+        .with_start_agent("triage")
         .add_handoff("triage", ["specialist_a", "specialist_b"])
     )
 
@@ -954,7 +721,7 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
     # This should work - all instances with participants
     builder = (
         HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .set_coordinator(triage)
+        .with_start_agent(triage)
         .add_handoff(triage, [specialist_a, specialist_b])
     )
 
@@ -980,7 +747,7 @@ async def test_handoff_with_participant_factories():
 
     workflow = (
         HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-        .set_coordinator("triage")
+        .with_start_agent("triage")
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
         .build()
     )
@@ -1014,7 +781,7 @@ async def test_handoff_participant_factories_reusable_builder():
 
     builder = HandoffBuilder(
         participant_factories={"triage": create_triage, "specialist": create_specialist}
-    ).set_coordinator("triage")
+    ).with_start_agent("triage")
 
     # Build first workflow
     wf1 = builder.build()
@@ -1049,7 +816,7 @@ async def test_handoff_with_participant_factories_and_add_handoff():
                 "specialist_b": create_specialist_b,
             }
         )
-        .set_coordinator("triage")
+        .with_start_agent("triage")
         .add_handoff("triage", ["specialist_a", "specialist_b"])
         .add_handoff("specialist_a", "specialist_b")
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
@@ -1087,7 +854,7 @@ async def test_handoff_participant_factories_with_checkpointing():
 
     workflow = (
         HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-        .set_coordinator("triage")
+        .with_start_agent("triage")
         .with_checkpointing(storage)
         .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 2)
         .build()
@@ -1118,7 +885,7 @@ def test_handoff_set_coordinator_with_factory_name():
 
     builder = HandoffBuilder(
         participant_factories={"triage": create_triage, "specialist": create_specialist}
-    ).set_coordinator("triage")
+    ).with_start_agent("triage")
 
     workflow = builder.build()
     assert "triage" in workflow.executors
@@ -1144,7 +911,7 @@ def test_handoff_add_handoff_with_factory_names():
                 "specialist_b": create_specialist_b,
             }
         )
-        .set_coordinator("triage")
+        .with_start_agent("triage")
         .add_handoff("triage", ["specialist_a", "specialist_b"])
     )
 
@@ -1165,8 +932,8 @@ async def test_handoff_participant_factories_autonomous_mode():
 
     workflow = (
         HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-        .set_coordinator("triage")
-        .with_interaction_mode("autonomous", autonomous_turn_limit=2)
+        .with_start_agent("triage")
+        .with_autonomous_mode(turn_limits={"triage": 1, "specialist": 1})
         .build()
     )
 
@@ -1175,25 +942,6 @@ async def test_handoff_participant_factories_autonomous_mode():
     assert outputs, "Autonomous mode should yield output"
     requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
     assert not requests, "Autonomous mode should not request user input"
-
-
-async def test_handoff_participant_factories_with_request_info():
-    """Test that .with_request_info() works with participant_factories."""
-
-    def create_triage() -> _RecordingAgent:
-        return _RecordingAgent(name="triage")
-
-    def create_specialist() -> _RecordingAgent:
-        return _RecordingAgent(name="specialist")
-
-    builder = (
-        HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-        .set_coordinator("triage")
-        .with_request_info(agents=["triage"])
-    )
-
-    workflow = builder.build()
-    assert "triage" in workflow.executors
 
 
 def test_handoff_participant_factories_invalid_coordinator_name():
@@ -1205,7 +953,7 @@ def test_handoff_participant_factories_invalid_coordinator_name():
     with pytest.raises(
         ValueError, match="coordinator factory name 'nonexistent' is not part of the participant_factories list"
     ):
-        (HandoffBuilder(participant_factories={"triage": create_triage}).set_coordinator("nonexistent").build())
+        (HandoffBuilder(participant_factories={"triage": create_triage}).with_start_agent("nonexistent").build())
 
 
 def test_handoff_participant_factories_invalid_handoff_target():
@@ -1220,54 +968,10 @@ def test_handoff_participant_factories_invalid_handoff_target():
     with pytest.raises(ValueError, match="Target factory name 'nonexistent' is not in the participant_factories list"):
         (
             HandoffBuilder(participant_factories={"triage": create_triage, "specialist": create_specialist})
-            .set_coordinator("triage")
+            .with_start_agent("triage")
             .add_handoff("triage", "nonexistent")
             .build()
         )
-
-
-async def test_handoff_participant_factories_enable_return_to_previous():
-    """Test return_to_previous works with participant_factories."""
-
-    def create_triage() -> _RecordingAgent:
-        return _RecordingAgent(name="triage", handoff_to="specialist_a")
-
-    def create_specialist_a() -> _RecordingAgent:
-        return _RecordingAgent(name="specialist_a", handoff_to="specialist_b")
-
-    def create_specialist_b() -> _RecordingAgent:
-        return _RecordingAgent(name="specialist_b")
-
-    workflow = (
-        HandoffBuilder(
-            participant_factories={
-                "triage": create_triage,
-                "specialist_a": create_specialist_a,
-                "specialist_b": create_specialist_b,
-            }
-        )
-        .set_coordinator("triage")
-        .add_handoff("triage", ["specialist_a", "specialist_b"])
-        .add_handoff("specialist_a", "specialist_b")
-        .enable_return_to_previous(True)
-        .with_termination_condition(lambda conv: sum(1 for m in conv if m.role == Role.USER) >= 3)
-        .build()
-    )
-
-    # Start conversation - triage hands off to specialist_a
-    events = await _drain(workflow.run_stream("Initial request"))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-
-    # Second user message - specialist_a hands off to specialist_b
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Need escalation"}))
-    requests = [ev for ev in events if isinstance(ev, RequestInfoEvent)]
-    assert requests
-
-    # Third user message - should route back to specialist_b (return to previous)
-    events = await _drain(workflow.send_responses_streaming({requests[-1].request_id: "Follow up"}))
-    outputs = [ev for ev in events if isinstance(ev, WorkflowOutputEvent)]
-    assert outputs or [ev for ev in events if isinstance(ev, RequestInfoEvent)]
 
 
 # endregion Participant Factory Tests
