@@ -20,8 +20,8 @@ services.AddLogging(loggingBuilder =>
       "Logging": {
         "LogLevel": {
           "Default": "Information",
-          "Microsoft.AspNetCore": "Warning"
-          "System.ClientModel.Primitives.MessageLoggingPolicy"": "Debug"
+          "Microsoft.AspNetCore": "Warning",
+          "System.ClientModel.Primitives.MessageLoggingPolicy": "Debug"
         }
       }
     }
