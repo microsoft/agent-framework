@@ -18,7 +18,6 @@ using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
 using ReliableStreaming;
 using StackExchange.Redis;
-using Environment = System.Environment;
 
 // Get the Azure OpenAI endpoint and deployment name from environment variables.
 string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")

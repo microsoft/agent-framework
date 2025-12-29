@@ -1,17 +1,9 @@
 <Project>
-  <PropertyGroup>
-    <!--
-        Default target frameworks for all projects in this directory.
-        Projects can override this by setting their own TargetFrameworks property.
-        We have to set both TargetFrameworks and TargetFramework to the same value in
-        order to make dotnet run work.
-    -->
-    <TargetFrameworks>net10.0</TargetFrameworks>
-    <TargetFramework>net10.0</TargetFramework>
 
-    <!-- Other common settings for all projects in this directory. -->
-    <OutputType>Exe</OutputType>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+  <Import Project="../Directory.Build.props" />
+
+  <!-- Remove the Environment alias from parent Directory.Build.props to allow System.Environment usage -->
+  <ItemGroup>
+    <Using Remove="SampleHelpers.SampleEnvironment" />
+  </ItemGroup>
 </Project>

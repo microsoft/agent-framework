@@ -19,7 +19,7 @@ With the environment setup, you can run the sample:
 
 ```bash
 cd dotnet/samples/DurableAgents/ConsoleApps/05_AgentOrchestration_HITL
-dotnet run
+dotnet run --framework net10.0
 ```
 
 The app will prompt you for input:

@@ -19,7 +19,7 @@ With the environment setup, you can run the sample:
 
 ```bash
 cd dotnet/samples/DurableAgents/ConsoleApps/02_AgentOrchestration_Chaining
-dotnet run
+dotnet run --framework net10.0
 ```
 
 The app will start the orchestration, wait for it to complete, and display the result:

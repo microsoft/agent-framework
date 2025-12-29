@@ -94,8 +94,11 @@ Navigate to the sample directory and run the console app:
 
 ```bash
 cd dotnet/samples/DurableAgents/ConsoleApps/01_SingleAgent
-dotnet run
+dotnet run --framework net10.0
 ```
+
+> [!NOTE]
+> The `--framework` option is required to specify the target framework for the console app because the samples are designed to support multiple target frameworks. If you are using a different target framework, you can specify it with the `--framework` option.
 
 The app will prompt you for input via stdin.
 

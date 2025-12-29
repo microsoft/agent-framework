@@ -33,7 +33,7 @@ With the environment setup, you can run the sample:
 
 ```bash
 cd dotnet/samples/DurableAgents/ConsoleApps/07_ReliableStreaming
-dotnet run
+dotnet run --framework net10.0
 ```
 
 The app will prompt you for a travel planning request:

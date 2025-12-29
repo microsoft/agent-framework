@@ -17,6 +17,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
     private const string DtsPort = "8080";
     private const string RedisPort = "6379";
 
+    private static readonly string s_dotnetTargetFramework = GetTargetFramework();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
             .AddUserSecrets(Assembly.GetExecutingAssembly())
@@ -531,6 +532,19 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
+    private static string GetTargetFramework()
+    {
+        string filePath = new Uri(typeof(ConsoleAppSamplesValidation).Assembly.Location).LocalPath;
+        string directory = Path.GetDirectoryName(filePath)!;
+        string tfm = Path.GetFileName(directory);
+        if (tfm.StartsWith("net", StringComparison.OrdinalIgnoreCase))
+        {
+            return tfm;
+        }
+
+        throw new InvalidOperationException($"Unable to find target framework in path: {filePath}");
+    }
+
     private async Task StartSharedInfrastructureAsync()
     {
         this._outputHelper.WriteLine("Starting shared infrastructure for console app samples...");
@@ -735,7 +749,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = "run",
+            Arguments = $"run --framework {s_dotnetTargetFramework}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,

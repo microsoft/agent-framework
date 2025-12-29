@@ -20,7 +20,7 @@ With the environment setup, you can run the sample:
 
 ```bash
 cd dotnet/samples/DurableAgents/ConsoleApps/06_LongRunningTools
-dotnet run
+dotnet run --framework net10.0
 ```
 
 The app will prompt you for input. You can interact with the Publisher agent:
