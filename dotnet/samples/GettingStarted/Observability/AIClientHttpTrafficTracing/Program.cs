@@ -15,7 +15,7 @@ services.AddLogging(loggingBuilder =>
 {
     loggingBuilder.AddConsole();
     loggingBuilder.AddFilter("System.ClientModel.Primitives.MessageLoggingPolicy", LogLevel.Debug);  // For Request and Response body logging we need to set Debug level
-    /* If uses in ASP.NET Core, with appsettings then this can be configured in appsettings.json as:
+    /* If used in ASP.NET Core, with appsettings then this can be configured in appsettings.json as:
     {
       "Logging": {
         "LogLevel": {
