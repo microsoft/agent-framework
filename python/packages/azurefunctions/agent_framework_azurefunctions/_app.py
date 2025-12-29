@@ -36,7 +36,7 @@ from agent_framework_durabletask import (
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._orchestration import AgentOrchestrationContextType, AzureFunctionsAgentExecutor
+from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
 
 logger = get_logger("agent_framework.azurefunctions")
 
@@ -297,7 +297,7 @@ class AgentFunctionApp(DFAppBase):
         self,
         context: AgentOrchestrationContextType,
         agent_name: str,
-    ) -> DurableAIAgent:
+    ) -> DurableAIAgent[AgentTask]:
         """Return a DurableAIAgent proxy for a registered agent.
 
         Args:
@@ -308,7 +308,7 @@ class AgentFunctionApp(DFAppBase):
             ValueError: If the requested agent has not been registered.
 
         Returns:
-            DurableAIAgent wrapper bound to the orchestration context.
+            DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
         """
         normalized_name = str(agent_name)
 

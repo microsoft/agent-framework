@@ -9,12 +9,15 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import azure.durable_functions as df
-from agent_framework import (
-    AgentRunResponse,
-    AgentThread,
-    get_logger,
+from agent_framework import AgentThread, get_logger
+from agent_framework_durabletask import (
+    AgentSessionId,
+    DurableAgentExecutor,
+    DurableAgentThread,
+    RunRequest,
+    ensure_response_format,
+    load_agent_response,
 )
-from agent_framework_durabletask import AgentSessionId, DurableAgentExecutor, DurableAgentThread, RunRequest
 from azure.durable_functions.models import TaskBase
 from azure.durable_functions.models.Task import CompoundTask, TaskState
 from pydantic import BaseModel
@@ -91,10 +94,10 @@ class AgentTask(_TypedCompoundTask):
                 )
 
                 try:
-                    response = self._load_agent_response(raw_result)
+                    response = load_agent_response(raw_result)
 
                     if self._response_format is not None:
-                        self._ensure_response_format(
+                        ensure_response_format(
                             self._response_format,
                             self._correlation_id,
                             response,
@@ -114,39 +117,8 @@ class AgentTask(_TypedCompoundTask):
                 self._first_error = child.result
                 self.set_value(is_error=True, value=self._first_error)
 
-    def _load_agent_response(self, agent_response: AgentRunResponse | dict[str, Any] | None) -> AgentRunResponse:
-        """Convert raw payloads into AgentRunResponse instance."""
-        if agent_response is None:
-            raise ValueError("agent_response cannot be None")
 
-        logger.debug("[load_agent_response] Loading agent response of type: %s", type(agent_response))
-
-        if isinstance(agent_response, AgentRunResponse):
-            return agent_response
-        if isinstance(agent_response, dict):
-            logger.debug("[load_agent_response] Converting dict payload using AgentRunResponse.from_dict")
-            return AgentRunResponse.from_dict(agent_response)
-
-        raise TypeError(f"Unsupported type for agent_response: {type(agent_response)}")
-
-    def _ensure_response_format(
-        self,
-        response_format: type[BaseModel] | None,
-        correlation_id: str,
-        response: AgentRunResponse,
-    ) -> None:
-        """Ensure the AgentRunResponse value is parsed into the expected response_format."""
-        if response_format is not None and not isinstance(response.value, response_format):
-            response.try_parse_value(response_format)
-
-            logger.debug(
-                "[DurableAIAgent] Loaded AgentRunResponse.value for correlation_id %s with type: %s",
-                correlation_id,
-                type(response.value).__name__,
-            )
-
-
-class AzureFunctionsAgentExecutor(DurableAgentExecutor):
+class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
     """Executor that executes durable agents inside Azure Functions orchestrations."""
 
     def __init__(self, context: AgentOrchestrationContextType):

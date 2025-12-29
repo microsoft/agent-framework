@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage
 from pydantic import BaseModel
@@ -19,8 +19,12 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from ._executors import DurableAgentExecutor
 
+# TypeVar for the task type returned by executors
+# Covariant because TaskT only appears in return positions (output)
+TaskT = TypeVar("TaskT", covariant=True)
 
-class DurableAgentProvider(ABC):
+
+class DurableAgentProvider(ABC, Generic[TaskT]):
     """Abstract provider for constructing durable agent proxies.
 
     Implemented by context-specific wrappers (client/orchestration) to return a
@@ -30,7 +34,7 @@ class DurableAgentProvider(ABC):
     """
 
     @abstractmethod
-    def get_agent(self, agent_name: str) -> DurableAIAgent:
+    def get_agent(self, agent_name: str) -> DurableAIAgent[TaskT]:
         """Retrieve a DurableAIAgent shim for the specified agent.
 
         Args:
@@ -45,17 +49,21 @@ class DurableAgentProvider(ABC):
         raise NotImplementedError("Subclasses must implement get_agent()")
 
 
-class DurableAIAgent(AgentProtocol):
+class DurableAIAgent(AgentProtocol, Generic[TaskT]):
     """A durable agent proxy that delegates execution to the provider.
 
-    This class implements AgentProtocol but doesn't contain any agent logic itself.
-    Instead, it serves as a consistent interface that delegates to the underlying
-    provider, which can be either:
-    - DurableAIAgentClient (for external usage via HTTP/gRPC)
-    - DurableAIAgentOrchestrationContext (for use inside orchestrations)
+    This class implements AgentProtocol but with one critical difference:
+    - AgentProtocol.run() returns a Coroutine (async, must await)
+    - DurableAIAgent.run() returns TaskT (sync Task object, must yield)
 
-    The provider determines how execution occurs (entity calls, HTTP requests, etc.)
-    and what type of Task object is returned (asyncio.Task vs durabletask.Task).
+    This represents fundamentally different execution models but maintains the same
+    interface contract for all other properties and methods.
+
+    The underlying provider determines how execution occurs (entity calls, HTTP requests, etc.)
+    and what type of Task object is returned.
+
+    Type Parameters:
+        TaskT: The task type returned by this agent (e.g., DurableAgentTask, AgentTask)
 
     Note:
         This class intentionally does NOT inherit from BaseAgent because:
@@ -64,7 +72,7 @@ class DurableAIAgent(AgentProtocol):
         - BaseAgent methods like as_tool() would fail in orchestrations
     """
 
-    def __init__(self, executor: DurableAgentExecutor, name: str, *, agent_id: str | None = None):
+    def __init__(self, executor: DurableAgentExecutor[TaskT], name: str, *, agent_id: str | None = None):
         """Initialize the shim with a provider and agent name.
 
         Args:
@@ -98,17 +106,27 @@ class DurableAIAgent(AgentProtocol):
         """Get the description of the agent."""
         return self._description
 
-    def run(
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
+        enable_tool_calls: bool | None = None,
         **kwargs: Any,
-    ) -> Any:
+    ) -> TaskT:
         """Execute the agent via the injected provider.
 
-        The provider determines whether the return is awaitable (client) or yieldable (orchestration).
+        Note:
+            This method overrides AgentProtocol.run() with a different return type:
+            - AgentProtocol.run() returns Coroutine[Any, Any, AgentRunResponse] (async)
+            - DurableAIAgent.run() returns TaskT (Task object for yielding)
+
+            This is intentional to support orchestration contexts that use yield patterns
+            instead of async/await patterns.
+
+        Returns:
+            TaskT: The task type specific to the executor (e.g., DurableAgentTask or AgentTask)
         """
         message_str = self._normalize_messages(messages)
         return self._executor.run_durable_agent(
@@ -116,6 +134,7 @@ class DurableAIAgent(AgentProtocol):
             message=message_str,
             thread=thread,
             response_format=response_format,
+            enable_tool_calls=enable_tool_calls,
             **kwargs,
         )
 
