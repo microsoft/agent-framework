@@ -62,14 +62,11 @@ services.AddChatClient(provider =>
 var serviceProvider = services.BuildServiceProvider();
 
 var chatClient = serviceProvider.GetRequiredService<IChatClient>();
-
 var pirateAssistant = chatClient.CreateAIAgent("You are a pirate assistant. Answer questions in short pirate speak.");
 
 var userInput = "Who are you?";
 Console.WriteLine($"You: {userInput}\n");
-
 var response = await pirateAssistant.RunAsync(userInput);
-
 Console.WriteLine($"\nPirate Assistant: {response}");
 
 /*await foreach (var item in pirateAssistant.RunStreamingAsync(userInput)) // For Streaming responses (RunStreamingAsync), there will be multiple log entries
