@@ -29,7 +29,7 @@ new OpenAIClient(new ApiKeyCredential("<apiKey/accessKey>"), clientOptions)
 From the repo root:
 
 ```powershell
-cd samples\GettingStarted\Observability\AIClientHttpTrafficTracing
+cd samples/GettingStarted/Observability/AIClientHttpTrafficTracing
 dotnet run
 ```
 
