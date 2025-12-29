@@ -38,7 +38,10 @@ services.AddChatClient(provider =>
         EnableMessageLogging = true, // Logging the Request and Response Url and Header information. If Null or Not set, then default value will be true
         LoggerFactory = provider.GetRequiredService<ILoggerFactory>()
     };
-    clientLoggingOptions.AllowedHeaderNames.Add("Authorization"); // Logging sensitive header information, by default values will be REDACTED
+    // WARNING: Do NOT log sensitive headers such as "Authorization" in production or shared environments.
+    // By default, sensitive headers are REDACTED. The following example shows how to override this behavior
+    // for controlled, non-production testing only. It is commented out intentionally to avoid unsafe use:
+    // clientLoggingOptions.AllowedHeaderNames.Add("Authorization");
 
     /* Switch to OpenAI Compatible SDK using below code
     var clientOptions = new OpenAIClientOptions()
