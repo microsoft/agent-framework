@@ -573,7 +573,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
     """
 
     INJECTABLE: ClassVar[set[str]] = {"func"}
-    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram"}
+    DEFAULT_EXCLUDE: ClassVar[set[str]] = {"input_model", "_invocation_duration_histogram", "_cached_parameters"}
 
     def __init__(
         self,
@@ -615,6 +615,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         self.func = func
         self._instance = None  # Store the instance for bound methods
         self.input_model = self._resolve_input_model(input_model)
+        self._cached_parameters: dict[str, Any] | None = None  # Cache for model_json_schema()
         self.approval_mode = approval_mode or "never_require"
         if max_invocations is not None and max_invocations < 1:
             raise ValueError("max_invocations must be at least 1 or None.")
@@ -802,8 +803,11 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
 
         Returns:
             A dictionary containing the JSON schema for the function's parameters.
+            The result is cached after the first call for performance.
         """
-        return self.input_model.model_json_schema()
+        if self._cached_parameters is None:
+            self._cached_parameters = self.input_model.model_json_schema()
+        return self._cached_parameters
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a AIFunction to the JSON Schema function specification format.
@@ -825,7 +829,7 @@ class AIFunction(BaseTool, Generic[ArgsT, ReturnT]):
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
-        as_dict["input_model"] = self.input_model.model_json_schema()
+        as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict
 
 
@@ -886,6 +890,8 @@ def _parse_annotation(annotation: Any) -> Any:
     If the second annotation (after the type) is a string, then we convert that to a Pydantic Field description.
     The rest are returned as-is, allowing for multiple annotations.
 
+    Literal types are returned as-is to preserve their enum-like values.
+
     Args:
         annotation: The type annotation to parse.
 
@@ -894,6 +900,12 @@ def _parse_annotation(annotation: Any) -> Any:
     """
     origin = get_origin(annotation)
     if origin is not None:
+        # Literal types should be returned as-is - their args are the allowed values,
+        # not type annotations to be parsed. For example, Literal["Data", "Security"]
+        # has args ("Data", "Security") which are the valid string values.
+        if origin is Literal:
+            return annotation
+
         args = get_args(annotation)
         # For other generics, return the origin type (e.g., list for List[int])
         if len(args) > 1 and isinstance(args[1], str):
@@ -1770,11 +1782,6 @@ def _handle_function_calls_response(
             prepped_messages = prepare_messages(messages)
             response: "ChatResponse | None" = None
             fcc_messages: "list[ChatMessage]" = []
-
-            # If tools are provided but tool_choice is not set, default to "auto" for function invocation
-            tools = _extract_tools(kwargs)
-            if tools and kwargs.get("tool_choice") is None:
-                kwargs["tool_choice"] = "auto"
 
             for attempt_idx in range(config.max_iterations if config.enabled else 0):
                 fcc_todo = _collect_approval_responses(prepped_messages)

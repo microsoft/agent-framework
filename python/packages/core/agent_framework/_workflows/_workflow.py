@@ -13,7 +13,7 @@ from typing import Any
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS
+from ._const import DEFAULT_MAX_ITERATIONS, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -291,6 +291,7 @@ class Workflow(DictConvertible):
         initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
         reset_context: bool = True,
         streaming: bool = False,
+        run_kwargs: dict[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -301,6 +302,7 @@ class Workflow(DictConvertible):
             initial_executor_fn: Optional function to execute initial executor
             reset_context: Whether to reset the context for a new run
             streaming: Whether to enable streaming mode for agents
+            run_kwargs: Optional kwargs to store in SharedState for agent invocations
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -334,6 +336,10 @@ class Workflow(DictConvertible):
                     self._runner.reset_iteration_count()
                     self._runner.context.reset_for_new_run()
                     await self._shared_state.clear()
+
+                # Store run kwargs in SharedState so executors can access them
+                # Always store (even empty dict) so retrieval is deterministic
+                await self._shared_state.set(WORKFLOW_RUN_KWARGS_KEY, run_kwargs or {})
 
                 # Set streaming mode after reset
                 self._runner_context.set_streaming(streaming)
@@ -442,6 +448,7 @@ class Workflow(DictConvertible):
         *,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
     ) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow and stream events.
 
@@ -457,6 +464,9 @@ class Workflow(DictConvertible):
                                - With checkpoint_id: Used to load and restore the specified checkpoint
                                - Without checkpoint_id: Enables checkpointing for this run, overriding
                                  build-time configuration
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
+                     These are stored in SharedState and accessible in @ai_function tools
+                     via the **kwargs parameter.
 
         Yields:
             WorkflowEvent: Events generated during workflow execution.
@@ -473,6 +483,17 @@ class Workflow(DictConvertible):
             .. code-block:: python
 
                 async for event in workflow.run_stream("start message"):
+                    process(event)
+
+            With custom context for ai_functions:
+
+            .. code-block:: python
+
+                async for event in workflow.run_stream(
+                    "analyze data",
+                    custom_data={"endpoint": "https://api.example.com"},
+                    user_token={"user": "alice"},
+                ):
                     process(event)
 
             Enable checkpointing at runtime:
@@ -524,6 +545,7 @@ class Workflow(DictConvertible):
                 ),
                 reset_context=reset_context,
                 streaming=True,
+                run_kwargs=kwargs if kwargs else None,
             ):
                 yield event
         finally:
@@ -559,6 +581,7 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
+        **kwargs: Any,
     ) -> WorkflowRunResult:
         """Run the workflow to completion and return all events.
 
@@ -575,6 +598,9 @@ class Workflow(DictConvertible):
                                - Without checkpoint_id: Enables checkpointing for this run, overriding
                                  build-time configuration
             include_status_events: Whether to include WorkflowStatusEvent instances in the result list.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
+                     These are stored in SharedState and accessible in @ai_function tools
+                     via the **kwargs parameter.
 
         Returns:
             A WorkflowRunResult instance containing events generated during workflow execution.
@@ -592,6 +618,16 @@ class Workflow(DictConvertible):
 
                 result = await workflow.run("start message")
                 outputs = result.get_outputs()
+
+            With custom context for ai_functions:
+
+            .. code-block:: python
+
+                result = await workflow.run(
+                    "analyze data",
+                    custom_data={"endpoint": "https://api.example.com"},
+                    user_token={"user": "alice"},
+                )
 
             Enable checkpointing at runtime:
 
@@ -637,6 +673,7 @@ class Workflow(DictConvertible):
                         self._execute_with_message_or_checkpoint, message, checkpoint_id, checkpoint_storage
                     ),
                     reset_context=reset_context,
+                    run_kwargs=kwargs if kwargs else None,
                 )
             ]
         finally:
