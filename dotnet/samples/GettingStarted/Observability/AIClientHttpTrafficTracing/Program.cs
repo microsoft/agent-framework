@@ -1,16 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+// This sample shows how to enable **HTTP request/response logging** for LLM calls (including request/response bodies) for any `AIClient`.
+
 using System.ClientModel.Primitives;
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-var services = new ServiceCollection();
+ServiceCollection services = new();
 services.AddLogging(loggingBuilder =>
 {
     loggingBuilder.AddConsole();
@@ -40,8 +43,8 @@ services.AddChatClient(provider =>
     };
     // WARNING: Do NOT log sensitive headers such as "Authorization" in production or shared environments.
     // By default, sensitive headers are REDACTED. The following example shows how to override this behavior
-    // for controlled, non-production testing only. It is commented out intentionally to avoid unsafe use:
-    // clientLoggingOptions.AllowedHeaderNames.Add("Authorization");
+    // for controlled, non-production testing only.
+    clientLoggingOptions.AllowedHeaderNames.Add("Authorization");
 
     /* Switch to OpenAI Compatible SDK using below code
     var clientOptions = new OpenAIClientOptions()
@@ -62,14 +65,14 @@ services.AddChatClient(provider =>
     .AsIChatClient();
 });
 
-var serviceProvider = services.BuildServiceProvider();
+ServiceProvider serviceProvider = services.BuildServiceProvider();
 
-var chatClient = serviceProvider.GetRequiredService<IChatClient>();
-var pirateAssistant = chatClient.CreateAIAgent("You are a pirate assistant. Answer questions in short pirate speak.");
+IChatClient chatClient = serviceProvider.GetRequiredService<IChatClient>();
+ChatClientAgent pirateAssistant = chatClient.CreateAIAgent("You are a pirate assistant. Answer questions in short pirate speak.");
 
-var userInput = "Who are you?";
+string userInput = "Who are you?";
 Console.WriteLine($"You: {userInput}\n");
-var response = await pirateAssistant.RunAsync(userInput);
+AgentRunResponse response = await pirateAssistant.RunAsync(userInput);
 Console.WriteLine($"\nPirate Assistant: {response}");
 
 /*await foreach (var item in pirateAssistant.RunStreamingAsync(userInput)) // For Streaming responses (RunStreamingAsync), there will be multiple log entries
