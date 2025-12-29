@@ -59,7 +59,7 @@ Request/response *body* logging is emitted at `Debug` level by the underlying me
 ## Security notes
 
 - Logging bodies can include sensitive prompt/response data. Use only in dev/test.
-- Headers like `Authorization` are **redacted by default**. The sample shows how to allow logging a sensitive header via `clientLoggingOptions.AllowedHeaderNames.Add("Authorization")` — avoid doing this unless you really need it.
+- Headers like `Authorization` are **redacted by default**. While it is technically possible to allow logging a sensitive header (for example, via `clientLoggingOptions.AllowedHeaderNames.Add("Authorization")`), **do not enable this in production or long-lived environments**. If you must temporarily log such headers for debugging, do so only in tightly controlled, short-lived sessions, treat the logs as secrets, and securely delete them immediately after use.
 
 ## Using ASP.NET Core configuration
 
