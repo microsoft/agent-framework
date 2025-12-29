@@ -72,7 +72,7 @@ Provider guidance:
 
 ## What this sample demonstrates
 
-- Using Microsoft Agent Framework in **Web App** 
+- Using Microsoft Agent Framework in a **Web App** 
 - **Hosting agents** with Microsoft Agent Framework in ASP.NET Core (`builder.AddAIAgent(...)`).
 - **Different interaction surfaces for the same agents**:
   - A2A endpoints (`app.MapA2A(...)`)
