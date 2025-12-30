@@ -146,33 +146,46 @@ Pros:
 Cons:
 
 - Discoverability is lower (users need to know where the functions live).
+- Verbose when creating multiple agents (client must be passed every time):
 
-#### Option 2: Factory object
+  ```python
+  agent1 = await azure_agents.create_agent(client, name="Agent1", ...)
+  agent2 = await azure_agents.create_agent(client, name="Agent2", ...)
+  ```
 
-Introduce a dedicated factory type that is constructed from the underlying SDK client, and exposes async `create_agent` / `get_agent` methods.
+#### Option 2: Provider object
+
+Introduce a dedicated provider type that is constructed from the underlying SDK client, and exposes async `create_agent` / `get_agent` methods.
 
 Example:
 
 ```python
-from agent_framework.azure import AgentFactory
+from agent_framework.azure import AzureAIAgentProvider
 
 ai_project_client = AIProjectClient(...)
-factory = AgentFactory(ai_project_client)
+provider = AzureAIAgentProvider(ai_project_client)
 
-agent = await factory.create_agent(
+agent = await provider.create_agent(
     name="",
     instructions="",
     tools=[tool],
 )
 
-agent = await factory.get_agent(agent_id=agent_id)
-agent = factory.get_agent(agent_reference=agent_reference)
+agent = await provider.get_agent(agent_id=agent_id)
+agent = provider.get_agent(agent_reference=agent_reference)
 ```
 
 Pros:
 
 - High discoverability and clear grouping of related behavior.
 - Keeps SDK clients unchanged and supports multiple agents per SDK client.
+- Concise when creating multiple agents (client passed once):
+
+  ```python
+  provider = AzureAIAgentProvider(ai_project_client)
+  agent1 = await provider.create_agent(name="Agent1", ...)
+  agent2 = await provider.create_agent(name="Agent2", ...)
+  ```
 
 Cons:
 
