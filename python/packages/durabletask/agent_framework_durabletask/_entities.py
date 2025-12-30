@@ -128,7 +128,7 @@ class AgentEntity:
     ) -> AgentRunResponse:
         """Execute the agent with a message."""
         if isinstance(request, str):
-            run_request = RunRequest(message=request, role=Role.USER)
+            run_request = RunRequest.from_json(request)
         elif isinstance(request, dict):
             run_request = RunRequest.from_dict(request)
         else:
@@ -139,8 +139,6 @@ class AgentEntity:
         correlation_id = run_request.correlation_id
         if not thread_id:
             raise ValueError("Entity State Provider must provide a thread_id")
-        if not correlation_id:
-            raise ValueError("RunRequest must include a correlation_id")
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 

@@ -226,3 +226,6 @@ local.settings.json
 
 # Database files
 *.db
+
+# Sample files
+**/sample.py

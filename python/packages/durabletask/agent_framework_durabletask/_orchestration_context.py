@@ -11,13 +11,13 @@ from __future__ import annotations
 from agent_framework import get_logger
 from durabletask.task import OrchestrationContext
 
-from ._executors import OrchestrationAgentExecutor
+from ._executors import DurableAgentTask, OrchestrationAgentExecutor
 from ._shim import DurableAgentProvider, DurableAIAgent
 
 logger = get_logger("agent_framework.durabletask.orchestration_context")
 
 
-class DurableAIAgentOrchestrationContext(DurableAgentProvider):
+class DurableAIAgentOrchestrationContext(DurableAgentProvider[DurableAgentTask]):
     """Orchestration context wrapper for interacting with durable agents internally.
 
     This class wraps a durabletask OrchestrationContext and provides a convenient
@@ -55,7 +55,7 @@ class DurableAIAgentOrchestrationContext(DurableAgentProvider):
         self._executor = OrchestrationAgentExecutor(self._context)
         logger.debug("[DurableAIAgentOrchestrationContext] Initialized")
 
-    def get_agent(self, agent_name: str) -> DurableAIAgent:
+    def get_agent(self, agent_name: str) -> DurableAIAgent[DurableAgentTask]:
         """Retrieve a DurableAIAgent shim for the specified agent.
 
         This method returns a proxy object that can be used to execute the agent

@@ -8,6 +8,7 @@ with Azure Durable Entities, enabling stateful and durable AI agent execution.
 
 import json
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from agent_framework_durabletask import (
     WAIT_FOR_RESPONSE_HEADER,
     AgentResponseCallbackProtocol,
     AgentSessionId,
+    ApiResponseFields,
     DurableAgentState,
     DurableAIAgent,
     RunRequest,
@@ -416,7 +418,6 @@ class AgentFunctionApp(DFAppBase):
                 run_request = self._build_request_data(
                     req_body,
                     message,
-                    thread_id,
                     correlation_id,
                     request_response_format,
                 )
@@ -639,7 +640,6 @@ class AgentFunctionApp(DFAppBase):
         run_request = self._build_request_data(
             req_body={"message": query, "role": "user"},
             message=query,
-            thread_id=str(session_id),
             correlation_id=correlation_id,
             request_response_format=REQUEST_RESPONSE_FORMAT_TEXT,
         )
@@ -790,8 +790,9 @@ class AgentFunctionApp(DFAppBase):
 
             agent_response = state.try_get_agent_response(correlation_id)
             if agent_response:
+                response_message = "\n".join(message.text for message in agent_response.messages if message.text)
                 result = self._build_success_result(
-                    response_data=agent_response,
+                    response_message=response_message,
                     message=message,
                     thread_id=thread_id,
                     correlation_id=correlation_id,
@@ -837,23 +838,22 @@ class AgentFunctionApp(DFAppBase):
         )
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
+        self, response_message: str, message: str, thread_id: str, correlation_id: str, state: DurableAgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return self._build_response_payload(
-            response=response_data.get("content"),
+            response=response_message,
             message=message,
             thread_id=thread_id,
             status="success",
             correlation_id=correlation_id,
-            extra_fields={"message_count": response_data.get("message_count", state.message_count)},
+            extra_fields={ApiResponseFields.MESSAGE_COUNT: state.message_count},
         )
 
     def _build_request_data(
         self,
         req_body: dict[str, Any],
         message: str,
-        thread_id: str,
         correlation_id: str,
         request_response_format: str,
     ) -> dict[str, Any]:
@@ -920,15 +920,13 @@ class AgentFunctionApp(DFAppBase):
 
     def _generate_unique_id(self) -> str:
         """Generate a new unique identifier."""
-        import uuid
-
         return uuid.uuid4().hex
 
-    def _create_session_id(self, func_name: str, thread_id: str | None) -> AgentSessionId:
+    def _create_session_id(self, agent_name: str, thread_id: str | None) -> AgentSessionId:
         """Create a session identifier using the provided thread id or a random value."""
         if thread_id:
-            return AgentSessionId(name=func_name, key=thread_id)
-        return AgentSessionId.with_random_key(name=func_name)
+            return AgentSessionId(name=agent_name, key=thread_id)
+        return AgentSessionId.with_random_key(name=agent_name)
 
     def _resolve_thread_id(self, req: func.HttpRequest, req_body: dict[str, Any]) -> str:
         """Retrieve the thread identifier from request body or query parameters."""

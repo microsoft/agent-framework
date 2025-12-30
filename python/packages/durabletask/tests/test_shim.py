@@ -6,6 +6,7 @@ Focuses on critical message normalization, delegation, and protocol compliance.
 Run with: pytest tests/test_shim.py -v
 """
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 
 from agent_framework_durabletask import DurableAgentThread
 from agent_framework_durabletask._executors import DurableAgentExecutor
+from agent_framework_durabletask._models import RunRequest
 from agent_framework_durabletask._shim import DurableAgentProvider, DurableAIAgent
 
 
@@ -29,11 +31,26 @@ def mock_executor() -> Mock:
     mock = Mock(spec=DurableAgentExecutor)
     mock.run_durable_agent = Mock(return_value=None)
     mock.get_new_thread = Mock(return_value=DurableAgentThread())
+
+    # Mock get_run_request to create actual RunRequest objects
+    def create_run_request(
+        message: str, response_format: type[BaseModel] | None = None, enable_tool_calls: bool = True
+    ) -> RunRequest:
+        import uuid
+
+        return RunRequest(
+            message=message,
+            correlation_id=str(uuid.uuid4()),
+            response_format=response_format,
+            enable_tool_calls=enable_tool_calls,
+        )
+
+    mock.get_run_request = Mock(side_effect=create_run_request)
     return mock
 
 
 @pytest.fixture
-def test_agent(mock_executor: Mock) -> DurableAIAgent:
+def test_agent(mock_executor: Mock) -> DurableAIAgent[Any]:
     """Create a test agent with mock executor."""
     return DurableAIAgent(mock_executor, "test_agent")
 
@@ -41,34 +58,34 @@ def test_agent(mock_executor: Mock) -> DurableAIAgent:
 class TestDurableAIAgentMessageNormalization:
     """Test that DurableAIAgent properly normalizes various message input types."""
 
-    def test_run_accepts_string_message(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_accepts_string_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and normalizes string messages."""
         test_agent.run("Hello, world!")
 
         mock_executor.run_durable_agent.assert_called_once()
-        # Verify agent_name and message were passed correctly as kwargs
+        # Verify agent_name and run_request were passed correctly as kwargs
         _, kwargs = mock_executor.run_durable_agent.call_args
         assert kwargs["agent_name"] == "test_agent"
-        assert kwargs["message"] == "Hello, world!"
+        assert kwargs["run_request"].message == "Hello, world!"
 
-    def test_run_accepts_chat_message(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_accepts_chat_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and normalizes ChatMessage objects."""
         chat_msg = ChatMessage(role="user", text="Test message")
         test_agent.run(chat_msg)
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["message"] == "Test message"
+        assert kwargs["run_request"].message == "Test message"
 
-    def test_run_accepts_list_of_strings(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_accepts_list_of_strings(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and joins list of strings."""
         test_agent.run(["First message", "Second message"])
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["message"] == "First message\nSecond message"
+        assert kwargs["run_request"].message == "First message\nSecond message"
 
-    def test_run_accepts_list_of_chat_messages(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_accepts_list_of_chat_messages(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and joins list of ChatMessage objects."""
         messages = [
             ChatMessage(role="user", text="Message 1"),
@@ -78,29 +95,29 @@ class TestDurableAIAgentMessageNormalization:
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["message"] == "Message 1\nMessage 2"
+        assert kwargs["run_request"].message == "Message 1\nMessage 2"
 
-    def test_run_handles_none_message(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_handles_none_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run handles None message gracefully."""
         test_agent.run(None)
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["message"] == ""
+        assert kwargs["run_request"].message == ""
 
-    def test_run_handles_empty_list(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_handles_empty_list(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run handles empty list gracefully."""
         test_agent.run([])
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["message"] == ""
+        assert kwargs["run_request"].message == ""
 
 
 class TestDurableAIAgentParameterFlow:
     """Test that parameters flow correctly through the shim to executor."""
 
-    def test_run_forwards_thread_parameter(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_forwards_thread_parameter(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run forwards thread parameter to executor."""
         thread = DurableAgentThread(service_thread_id="test-thread")
         test_agent.run("message", thread=thread)
@@ -109,31 +126,23 @@ class TestDurableAIAgentParameterFlow:
         _, kwargs = mock_executor.run_durable_agent.call_args
         assert kwargs["thread"] == thread
 
-    def test_run_forwards_response_format(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_run_forwards_response_format(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run forwards response_format parameter to executor."""
         test_agent.run("message", response_format=ResponseFormatModel)
 
         mock_executor.run_durable_agent.assert_called_once()
         _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["response_format"] == ResponseFormatModel
-
-    def test_run_forwards_additional_kwargs(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
-        """Verify run forwards additional kwargs to executor."""
-        test_agent.run("message", custom_param="custom_value")
-
-        mock_executor.run_durable_agent.assert_called_once()
-        _, kwargs = mock_executor.run_durable_agent.call_args
-        assert kwargs["custom_param"] == "custom_value"
+        assert kwargs["run_request"].response_format == ResponseFormatModel
 
 
 class TestDurableAIAgentProtocolCompliance:
     """Test that DurableAIAgent implements AgentProtocol correctly."""
 
-    def test_agent_implements_protocol(self, test_agent: DurableAIAgent) -> None:
+    def test_agent_implements_protocol(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent implements AgentProtocol."""
         assert isinstance(test_agent, AgentProtocol)
 
-    def test_agent_has_required_properties(self, test_agent: DurableAIAgent) -> None:
+    def test_agent_has_required_properties(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent has all required AgentProtocol properties."""
         assert hasattr(test_agent, "id")
         assert hasattr(test_agent, "name")
@@ -142,14 +151,14 @@ class TestDurableAIAgentProtocolCompliance:
 
     def test_agent_id_defaults_to_name(self, mock_executor: Mock) -> None:
         """Verify agent id defaults to name when not provided."""
-        agent = DurableAIAgent(mock_executor, "my_agent")
+        agent: DurableAIAgent[Any] = DurableAIAgent(mock_executor, "my_agent")
 
         assert agent.id == "my_agent"
         assert agent.name == "my_agent"
 
     def test_agent_id_can_be_customized(self, mock_executor: Mock) -> None:
         """Verify agent id can be set independently from name."""
-        agent = DurableAIAgent(mock_executor, "my_agent", agent_id="custom-id")
+        agent: DurableAIAgent[Any] = DurableAIAgent(mock_executor, "my_agent", agent_id="custom-id")
 
         assert agent.id == "custom-id"
         assert agent.name == "my_agent"
@@ -158,7 +167,7 @@ class TestDurableAIAgentProtocolCompliance:
 class TestDurableAIAgentThreadManagement:
     """Test thread creation and management."""
 
-    def test_get_new_thread_delegates_to_executor(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_get_new_thread_delegates_to_executor(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify get_new_thread delegates to executor."""
         mock_thread = DurableAgentThread()
         mock_executor.get_new_thread.return_value = mock_thread
@@ -168,7 +177,7 @@ class TestDurableAIAgentThreadManagement:
         mock_executor.get_new_thread.assert_called_once_with("test_agent")
         assert thread == mock_thread
 
-    def test_get_new_thread_forwards_kwargs(self, test_agent: DurableAIAgent, mock_executor: Mock) -> None:
+    def test_get_new_thread_forwards_kwargs(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify get_new_thread forwards kwargs to executor."""
         mock_thread = DurableAgentThread(service_thread_id="thread-123")
         mock_executor.get_new_thread.return_value = mock_thread

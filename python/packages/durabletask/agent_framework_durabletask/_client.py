@@ -8,16 +8,17 @@ with durable agents via gRPC.
 
 from __future__ import annotations
 
-from agent_framework import get_logger
+from agent_framework import AgentRunResponse, get_logger
 from durabletask.client import TaskHubGrpcClient
 
+from ._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from ._executors import ClientAgentExecutor
 from ._shim import DurableAgentProvider, DurableAIAgent
 
 logger = get_logger("agent_framework.durabletask.client")
 
 
-class DurableAIAgentClient(DurableAgentProvider):
+class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
     """Client wrapper for interacting with durable agents externally.
 
     This class wraps a durabletask TaskHubGrpcClient and provides a convenient
@@ -44,17 +45,31 @@ class DurableAIAgentClient(DurableAgentProvider):
         ```
     """
 
-    def __init__(self, client: TaskHubGrpcClient):
+    def __init__(
+        self,
+        client: TaskHubGrpcClient,
+        max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    ):
         """Initialize the client wrapper.
 
         Args:
             client: The durabletask client instance to wrap
+            max_poll_retries: Maximum polling attempts when waiting for responses
+            poll_interval_seconds: Delay in seconds between polling attempts
         """
         self._client = client
-        self._executor = ClientAgentExecutor(self._client)
+
+        # Validate and set polling parameters
+        self.max_poll_retries = max(1, max_poll_retries)
+        self.poll_interval_seconds = (
+            poll_interval_seconds if poll_interval_seconds > 0 else DEFAULT_POLL_INTERVAL_SECONDS
+        )
+
+        self._executor = ClientAgentExecutor(self._client, self.max_poll_retries, self.poll_interval_seconds)
         logger.debug("[DurableAIAgentClient] Initialized with client type: %s", type(client).__name__)
 
-    def get_agent(self, agent_name: str) -> DurableAIAgent:
+    def get_agent(self, agent_name: str) -> DurableAIAgent[AgentRunResponse]:
         """Retrieve a DurableAIAgent shim for the specified agent.
 
         This method returns a proxy object that can be used to execute the agent.

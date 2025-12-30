@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from agent_framework import AgentProtocol, AgentRunResponseUpdate, AgentThread, ChatMessage
 from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from ._executors import DurableAgentExecutor
+from ._executors import DurableAgentExecutor
+from ._models import DurableAgentThread
 
 # TypeVar for the task type returned by executors
 # Covariant because TaskT only appears in return positions (output)
@@ -112,8 +112,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         *,
         thread: AgentThread | None = None,
         response_format: type[BaseModel] | None = None,
-        enable_tool_calls: bool | None = None,
-        **kwargs: Any,
+        enable_tool_calls: bool = True,
     ) -> TaskT:
         """Execute the agent via the injected provider.
 
@@ -129,13 +128,17 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             TaskT: The task type specific to the executor (e.g., DurableAgentTask or AgentTask)
         """
         message_str = self._normalize_messages(messages)
-        return self._executor.run_durable_agent(
-            agent_name=self._name,
+
+        run_request = self._executor.get_run_request(
             message=message_str,
-            thread=thread,
             response_format=response_format,
             enable_tool_calls=enable_tool_calls,
-            **kwargs,
+        )
+
+        return self._executor.run_durable_agent(
+            agent_name=self._name,
+            run_request=run_request,
+            thread=thread,
         )
 
     def run_stream(
@@ -157,7 +160,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
         """
         raise NotImplementedError("Streaming is not supported for durable agents")
 
-    def get_new_thread(self, **kwargs: Any) -> AgentThread:
+    def get_new_thread(self, **kwargs: Any) -> DurableAgentThread:
         """Create a new agent thread via the provider."""
         return self._executor.get_new_thread(self._name, **kwargs)
 

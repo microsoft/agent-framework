@@ -12,6 +12,7 @@ import pytest
 from agent_framework import AgentProtocol
 
 from agent_framework_durabletask import DurableAgentThread, DurableAIAgentClient
+from agent_framework_durabletask._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from agent_framework_durabletask._shim import DurableAIAgent
 
 
@@ -25,6 +26,16 @@ def mock_grpc_client() -> Mock:
 def agent_client(mock_grpc_client: Mock) -> DurableAIAgentClient:
     """Create a DurableAIAgentClient with mock gRPC client."""
     return DurableAIAgentClient(mock_grpc_client)
+
+
+@pytest.fixture
+def agent_client_with_custom_polling(mock_grpc_client: Mock) -> DurableAIAgentClient:
+    """Create a DurableAIAgentClient with custom polling parameters."""
+    return DurableAIAgentClient(
+        mock_grpc_client,
+        max_poll_retries=15,
+        poll_interval_seconds=0.5,
+    )
 
 
 class TestDurableAIAgentClientGetAgent:
@@ -85,6 +96,46 @@ class TestDurableAIAgentClientIntegration:
 
         assert isinstance(thread, DurableAgentThread)
         assert thread.service_thread_id == "client-session-123"
+
+
+class TestDurableAIAgentClientPollingConfiguration:
+    """Test polling configuration parameters for DurableAIAgentClient."""
+
+    def test_client_uses_default_polling_parameters(self, agent_client: DurableAIAgentClient) -> None:
+        """Verify client initializes with default polling parameters."""
+        assert agent_client.max_poll_retries == DEFAULT_MAX_POLL_RETRIES
+        assert agent_client.poll_interval_seconds == DEFAULT_POLL_INTERVAL_SECONDS
+
+    def test_client_accepts_custom_polling_parameters(
+        self, agent_client_with_custom_polling: DurableAIAgentClient
+    ) -> None:
+        """Verify client accepts and stores custom polling parameters."""
+        assert agent_client_with_custom_polling.max_poll_retries == 15
+        assert agent_client_with_custom_polling.poll_interval_seconds == 0.5
+
+    def test_client_validates_max_poll_retries(self, mock_grpc_client: Mock) -> None:
+        """Verify client validates and normalizes max_poll_retries."""
+        # Test with zero - should enforce minimum of 1
+        client = DurableAIAgentClient(mock_grpc_client, max_poll_retries=0)
+        assert client.max_poll_retries == 1
+
+        # Test with negative - should enforce minimum of 1
+        client = DurableAIAgentClient(mock_grpc_client, max_poll_retries=-5)
+        assert client.max_poll_retries == 1
+
+    def test_client_validates_poll_interval_seconds(self, mock_grpc_client: Mock) -> None:
+        """Verify client validates and normalizes poll_interval_seconds."""
+        # Test with zero - should use default
+        client = DurableAIAgentClient(mock_grpc_client, poll_interval_seconds=0)
+        assert client.poll_interval_seconds == DEFAULT_POLL_INTERVAL_SECONDS
+
+        # Test with negative - should use default
+        client = DurableAIAgentClient(mock_grpc_client, poll_interval_seconds=-0.5)
+        assert client.poll_interval_seconds == DEFAULT_POLL_INTERVAL_SECONDS
+
+        # Test with valid float
+        client = DurableAIAgentClient(mock_grpc_client, poll_interval_seconds=2.5)
+        assert client.poll_interval_seconds == 2.5
 
 
 if __name__ == "__main__":

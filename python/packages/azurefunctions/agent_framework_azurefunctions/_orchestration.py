@@ -11,9 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import azure.durable_functions as df
 from agent_framework import AgentThread, get_logger
 from agent_framework_durabletask import (
-    AgentSessionId,
     DurableAgentExecutor,
-    DurableAgentThread,
     RunRequest,
     ensure_response_format,
     load_agent_response,
@@ -124,58 +122,53 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
     def __init__(self, context: AgentOrchestrationContextType):
         self.context = context
 
+    def _generate_unique_id(self) -> str:
+        return str(self.context.new_uuid())
+
+    def get_run_request(
+        self,
+        message: str,
+        response_format: type[BaseModel] | None,
+        enable_tool_calls: bool,
+    ) -> RunRequest:
+        """Get the current run request from the orchestration context.
+
+        Returns:
+            RunRequest: The current run request
+        """
+        request = super().get_run_request(
+            message,
+            response_format,
+            enable_tool_calls,
+        )
+        request.orchestration_id = self.context.instance_id
+        return request
+
     def run_durable_agent(
         self,
         agent_name: str,
-        message: str,
+        run_request: RunRequest,
         thread: AgentThread | None = None,
-        response_format: type[BaseModel] | None = None,
-        enable_tool_calls: bool | None = None,
-        **kwargs: Any,
     ) -> AgentTask:
-        # Extract optional parameters
-        enable_tools = True if enable_tool_calls is None else enable_tool_calls
 
         # Resolve session
-        if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
-            session_id = thread.session_id
-        else:
-            session_key = str(self.context.new_uuid())
-            session_id = AgentSessionId(name=agent_name, key=session_key)
-            logger.debug(
-                "[AzureFunctionsAgentProvider] No thread provided, created session_id: %s",
-                session_id,
-            )
+        session_id = self._create_session_id(agent_name, thread)
 
         entity_id = df.EntityId(
             name=session_id.entity_name,
             key=session_id.key,
         )
-        correlation_id = str(self.context.new_uuid())
+
         logger.debug(
             "[AzureFunctionsAgentProvider] correlation_id: %s entity_id: %s session_id: %s",
-            correlation_id,
+            run_request.correlation_id,
             entity_id,
             session_id,
-        )
-
-        run_request = RunRequest(
-            message=message,
-            enable_tool_calls=enable_tools,
-            correlation_id=correlation_id,
-            response_format=response_format,
-            orchestration_id=self.context.instance_id,
-            created_at=self.context.current_utc_datetime,
         )
 
         entity_task = self.context.call_entity(entity_id, "run", run_request.to_dict())
         return AgentTask(
             entity_task=entity_task,
-            response_format=response_format,
-            correlation_id=correlation_id,
+            response_format=run_request.response_format,
+            correlation_id=run_request.correlation_id,
         )
-
-    def get_new_thread(self, agent_name: str, **kwargs: Any) -> DurableAgentThread:
-        session_key = str(self.context.new_uuid())
-        session_id = AgentSessionId(name=agent_name, key=session_key)
-        return DurableAgentThread.from_session_id(session_id, **kwargs)
