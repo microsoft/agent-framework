@@ -19,6 +19,7 @@ from agent_framework import (
     ChatMessage,
     ChatMessageStore,
     ChatResponse,
+    ChatResponseUpdate,
     Context,
     ContextProvider,
     FunctionCallContent,
@@ -341,6 +342,37 @@ async def test_chat_agent_run_stream_context_providers(chat_client: ChatClientPr
     # no conversation id is created, so no need to thread_create to be called.
     assert not mock_provider.thread_created_called
     assert mock_provider.invoked_called
+
+
+async def test_chat_agent_run_stream_context_providers_with_conversation_id(chat_client: ChatClientProtocol) -> None:
+    """Test that conversation_id from streaming responses is propagated to the thread's service_thread_id."""
+    mock_provider = MockContextProvider(messages=[ChatMessage(role=Role.SYSTEM, text="Stream context instructions")])
+    mock_response_updates = [
+        ChatResponseUpdate(
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent("test response")])],
+            conversation_id="conv-123",
+        ),
+        ChatResponseUpdate(
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(" another update")])],
+            conversation_id="conv-123",
+        ),
+        ChatResponseUpdate(
+            messages=[ChatMessage(role=Role.ASSISTANT, contents=[TextContent(" final update")])],
+            conversation_id="conv-123",
+        ),
+    ]
+    chat_client.streaming_responses = [mock_response_updates]
+    agent = ChatAgent(chat_client=chat_client, context_providers=mock_provider)
+
+    # Collect all stream updates
+    updates: list[AgentRunResponseUpdate] = []
+    thread = agent.get_new_thread()
+    async for update in agent.run_stream("Hello", thread=thread):
+        updates.append(update)
+
+    # Verify conversation_id is propagated to thread
+    assert all(update.conversation_id == "conv-123" for update in updates)
+    assert thread.service_thread_id == "conv-123"
 
 
 async def test_chat_agent_multiple_context_providers(chat_client: ChatClientProtocol) -> None:
