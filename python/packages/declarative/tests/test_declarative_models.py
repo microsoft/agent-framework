@@ -41,6 +41,7 @@ from agent_framework_declarative._models import (
     Template,
     ToolResource,
     WebSearchTool,
+    _safe_mode_context,
     _try_powerfx_eval,
 )
 
@@ -874,35 +875,50 @@ class TestTryPowerfxEval:
         monkeypatch.setenv("API_KEY", "secret123")
         monkeypatch.setenv("PORT", "8080")
 
-        # Test basic env access
-        assert _try_powerfx_eval("=Env.TEST_VAR") == "test_value"
-        assert _try_powerfx_eval("=Env.API_KEY") == "secret123"
-        assert _try_powerfx_eval("=Env.PORT") == "8080"
+        # Set safe_mode=False to allow environment variable access
+        token = _safe_mode_context.set(False)
+        try:
+            # Test basic env access
+            assert _try_powerfx_eval("=Env.TEST_VAR") == "test_value"
+            assert _try_powerfx_eval("=Env.API_KEY") == "secret123"
+            assert _try_powerfx_eval("=Env.PORT") == "8080"
+        finally:
+            _safe_mode_context.reset(token)
 
     def test_env_variable_with_string_concatenation(self, monkeypatch):
         """Test env variables with string concatenation operator."""
         monkeypatch.setenv("BASE_URL", "https://api.example.com")
         monkeypatch.setenv("API_VERSION", "v1")
 
-        # Test concatenation with &
-        result = _try_powerfx_eval('=Env.BASE_URL & "/" & Env.API_VERSION')
-        assert result == "https://api.example.com/v1"
+        # Set safe_mode=False to allow environment variable access
+        token = _safe_mode_context.set(False)
+        try:
+            # Test concatenation with &
+            result = _try_powerfx_eval('=Env.BASE_URL & "/" & Env.API_VERSION')
+            assert result == "https://api.example.com/v1"
 
-        # Test concatenation with literals
-        result = _try_powerfx_eval('="API Key: " & Env.API_VERSION')
-        assert result == "API Key: v1"
+            # Test concatenation with literals
+            result = _try_powerfx_eval('="API Key: " & Env.API_VERSION')
+            assert result == "API Key: v1"
+        finally:
+            _safe_mode_context.reset(token)
 
     def test_string_comparison_operators(self, monkeypatch):
         """Test PowerFx string comparison operators."""
         monkeypatch.setenv("ENV_MODE", "production")
 
-        # Equal to - returns bool
-        assert _try_powerfx_eval('=Env.ENV_MODE = "production"') is True
-        assert _try_powerfx_eval('=Env.ENV_MODE = "development"') is False
+        # Set safe_mode=False to allow environment variable access
+        token = _safe_mode_context.set(False)
+        try:
+            # Equal to - returns bool
+            assert _try_powerfx_eval('=Env.ENV_MODE = "production"') is True
+            assert _try_powerfx_eval('=Env.ENV_MODE = "development"') is False
 
-        # Not equal to - returns bool
-        assert _try_powerfx_eval('=Env.ENV_MODE <> "development"') is True
-        assert _try_powerfx_eval('=Env.ENV_MODE <> "production"') is False
+            # Not equal to - returns bool
+            assert _try_powerfx_eval('=Env.ENV_MODE <> "development"') is True
+            assert _try_powerfx_eval('=Env.ENV_MODE <> "production"') is False
+        finally:
+            _safe_mode_context.reset(token)
 
     def test_string_in_operator(self):
         """Test PowerFx 'in' operator for substring testing (case-insensitive)."""
@@ -958,11 +974,54 @@ class TestTryPowerfxEval:
         monkeypatch.setenv("URL_WITH_QUERY", "https://example.com?param=value")
         monkeypatch.setenv("PATH_WITH_SPACES", "C:\\Program Files\\App")
 
-        result = _try_powerfx_eval("=Env.URL_WITH_QUERY")
-        assert result == "https://example.com?param=value"
+        # Set safe_mode=False to allow environment variable access
+        token = _safe_mode_context.set(False)
+        try:
+            result = _try_powerfx_eval("=Env.URL_WITH_QUERY")
+            assert result == "https://example.com?param=value"
 
-        result = _try_powerfx_eval("=Env.PATH_WITH_SPACES")
-        assert result == "C:\\Program Files\\App"
+            result = _try_powerfx_eval("=Env.PATH_WITH_SPACES")
+            assert result == "C:\\Program Files\\App"
+        finally:
+            _safe_mode_context.reset(token)
+
+    def test_safe_mode_blocks_env_access(self, monkeypatch):
+        """Test that safe_mode=True (default) blocks environment variable access."""
+        monkeypatch.setenv("SECRET_VAR", "secret_value")
+
+        # Set safe_mode=True (default)
+        token = _safe_mode_context.set(True)
+        try:
+            # When safe_mode=True, Env is not available and the expression fails,
+            # returning the original value
+            result = _try_powerfx_eval("=Env.SECRET_VAR")
+            assert result == "=Env.SECRET_VAR"
+        finally:
+            _safe_mode_context.reset(token)
+
+    def test_safe_mode_context_isolation(self, monkeypatch):
+        """Test that safe_mode context variable properly isolates env access."""
+        monkeypatch.setenv("TEST_VAR", "test_value")
+
+        # First, set safe_mode=True - should NOT allow env access
+        token = _safe_mode_context.set(True)
+        try:
+            result_safe = _try_powerfx_eval("=Env.TEST_VAR")
+            assert result_safe == "=Env.TEST_VAR"
+
+            # Then, set safe_mode=False - should allow env access
+            token2 = _safe_mode_context.set(False)
+            try:
+                result_unsafe = _try_powerfx_eval("=Env.TEST_VAR")
+                assert result_unsafe == "test_value"
+            finally:
+                _safe_mode_context.reset(token2)
+
+            # After reset, should block again
+            result_safe_again = _try_powerfx_eval("=Env.TEST_VAR")
+            assert result_safe_again == "=Env.TEST_VAR"
+        finally:
+            _safe_mode_context.reset(token)
 
 
 class TestAgentManifest:

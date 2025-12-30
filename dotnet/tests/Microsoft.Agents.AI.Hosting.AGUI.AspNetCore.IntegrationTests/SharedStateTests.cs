@@ -342,12 +342,12 @@ internal sealed class FakeStateAgent : AIAgent
 {
     public override string? Description => "Agent for state testing";
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken).ToAgentRunResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

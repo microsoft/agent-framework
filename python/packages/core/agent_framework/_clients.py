@@ -501,7 +501,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -535,6 +535,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -595,7 +596,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -629,6 +630,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.

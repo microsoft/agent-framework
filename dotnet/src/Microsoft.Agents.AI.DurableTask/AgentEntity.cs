@@ -21,7 +21,17 @@ internal class AgentEntity(IServiceProvider services, CancellationToken cancella
         ? cancellationToken
         : services.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
 
-    public async Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    public Task<AgentRunResponse> RunAgentAsync(RunRequest request)
+    {
+        return this.Run(request);
+    }
+
+    // IDE1006 and VSTHRD200 disabled to allow method name to match the common cross-platform entity operation name.
+#pragma warning disable IDE1006
+#pragma warning disable VSTHRD200
+    public async Task<AgentRunResponse> Run(RunRequest request)
+#pragma warning restore VSTHRD200
+#pragma warning restore IDE1006
     {
         AgentSessionId sessionId = this.Context.Id;
         AIAgent agent = this.GetAgent(sessionId);

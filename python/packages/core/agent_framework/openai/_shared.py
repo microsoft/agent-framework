@@ -160,16 +160,16 @@ class OpenAIBase(SerializationMixin):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    async def initialize_client(self) -> None:
+    async def _initialize_client(self) -> None:
         """Initialize OpenAI client asynchronously.
 
         Override in subclasses to initialize the OpenAI client asynchronously.
         """
         pass
 
-    async def ensure_client(self) -> AsyncOpenAI:
+    async def _ensure_client(self) -> AsyncOpenAI:
         """Ensure OpenAI client is initialized."""
-        await self.initialize_client()
+        await self._initialize_client()
         if self.client is None:
             raise ServiceInitializationError("OpenAI client is not initialized")
 
