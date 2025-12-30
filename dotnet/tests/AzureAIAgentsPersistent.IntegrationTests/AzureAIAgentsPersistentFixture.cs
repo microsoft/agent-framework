@@ -72,6 +72,29 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
             });
     }
 
+    public async Task<ChatClientAgent> CreateChatClientAgentAsync(
+      string name,
+      string instructions,
+      IList<ToolDefinition>? toolDefinitions,
+      ToolResources? toolResources)
+    {
+        var persistentAgentResponse = await this._persistentAgentsClient.Administration.CreateAgentAsync(
+            model: s_config.DeploymentName,
+            name: name,
+            instructions: instructions,
+            tools: toolDefinitions,
+            toolResources: toolResources);
+
+        var persistentAgent = persistentAgentResponse.Value;
+
+        return new ChatClientAgent(
+            this._persistentAgentsClient.AsIChatClient(persistentAgent.Id),
+            options: new()
+            {
+                Id = persistentAgent.Id
+            });
+    }
+
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
         this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
@@ -100,5 +123,14 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     {
         this._persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
+    }
+
+    internal ToolDefinition GetWebSearchTool()
+    {
+        return new BingGroundingToolDefinition(
+            new BingGroundingSearchToolParameters(
+                [new BingGroundingSearchConfiguration(s_config.BingConnectionId)]
+            )
+        );
     }
 }
