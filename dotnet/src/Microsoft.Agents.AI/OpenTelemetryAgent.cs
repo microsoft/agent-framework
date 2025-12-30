@@ -78,7 +78,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
@@ -89,7 +89,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
