@@ -7,12 +7,8 @@ No inheritance required - just import and call.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
 
 from .._types import ChatMessage, Role
-
-if TYPE_CHECKING:
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
@@ -99,107 +95,3 @@ def create_completion_message(
         text=message_text,
         author_name=author_name,
     )
-
-
-def prepare_participant_request(
-    *,
-    participant_name: str,
-    conversation: list[ChatMessage],
-    instruction: str | None = None,
-    task: ChatMessage | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> "_GroupChatRequestMessage":
-    """Create a standardized participant request message.
-
-    Simple helper to avoid duplicating request construction.
-
-    Args:
-        participant_name: Name of the target participant
-        conversation: Conversation history to send
-        instruction: Optional instruction from manager/orchestrator
-        task: Optional task context
-        metadata: Optional metadata dict
-
-    Returns:
-        GroupChatRequestMessage ready to send
-    """
-    # Import here to avoid circular dependency
-    from ._group_chat import _GroupChatRequestMessage  # type: ignore[reportPrivateUsage]
-
-    return _GroupChatRequestMessage(
-        agent_name=participant_name,
-        conversation=list(conversation),
-        instruction=instruction or "",
-        task=task,
-        metadata=metadata,
-    )
-
-
-class ParticipantRegistry:
-    """Simple registry for tracking participant executor IDs and routing info.
-
-    Provides a clean interface for the common pattern of mapping participant names
-    to executor IDs and tracking which are agents vs custom executors.
-
-    Tracks both entry IDs (where to send requests) and exit IDs (where responses
-    come from) to support pipeline configurations where these differ.
-    """
-
-    def __init__(self) -> None:
-        self._participant_entry_ids: dict[str, str] = {}
-        self._agent_executor_ids: dict[str, str] = {}
-        self._executor_id_to_participant: dict[str, str] = {}
-        self._non_agent_participants: set[str] = set()
-
-    def register(
-        self,
-        name: str,
-        *,
-        entry_id: str,
-        is_agent: bool,
-        exit_id: str | None = None,
-    ) -> None:
-        """Register a participant's routing information.
-
-        Args:
-            name: Participant name
-            entry_id: Executor ID for this participant's entry point (where to send)
-            is_agent: Whether this is an AgentExecutor (True) or custom Executor (False)
-            exit_id: Executor ID for this participant's exit point (where responses come from).
-                    If None, defaults to entry_id (single-executor pipeline).
-        """
-        self._participant_entry_ids[name] = entry_id
-        actual_exit_id = exit_id if exit_id is not None else entry_id
-
-        if is_agent:
-            self._agent_executor_ids[name] = entry_id
-            # Map both entry and exit IDs to participant name for response routing
-            self._executor_id_to_participant[entry_id] = name
-            if actual_exit_id != entry_id:
-                self._executor_id_to_participant[actual_exit_id] = name
-        else:
-            self._non_agent_participants.add(name)
-
-    def get_entry_id(self, name: str) -> str | None:
-        """Get the entry executor ID for a participant name."""
-        return self._participant_entry_ids.get(name)
-
-    def get_participant_name(self, executor_id: str) -> str | None:
-        """Get the participant name for an executor ID (agents only)."""
-        return self._executor_id_to_participant.get(executor_id)
-
-    def is_agent(self, name: str) -> bool:
-        """Check if a participant is an agent (vs custom executor)."""
-        return name in self._agent_executor_ids
-
-    def is_registered(self, name: str) -> bool:
-        """Check if a participant is registered."""
-        return name in self._participant_entry_ids
-
-    def is_participant_registered(self, name: str) -> bool:
-        """Check if a participant is registered (alias for is_registered for compatibility)."""
-        return self.is_registered(name)
-
-    def all_participants(self) -> set[str]:
-        """Get all registered participant names."""
-        return set(self._participant_entry_ids.keys())

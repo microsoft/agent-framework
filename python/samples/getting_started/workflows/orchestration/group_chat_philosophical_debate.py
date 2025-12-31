@@ -211,7 +211,7 @@ Share your perspective authentically. Feel free to:
 
     workflow = (
         GroupChatBuilder()
-        .set_manager(moderator, display_name="Moderator")
+        .with_agent_orchestrator(moderator)
         .participants([farmer, developer, teacher, activist, spiritual_leader, artist, immigrant, doctor])
         .with_termination_condition(lambda messages: sum(1 for msg in messages if msg.role == Role.ASSISTANT) >= 10)
         .build()
@@ -241,13 +241,11 @@ Share your perspective authentically. Feel free to:
 
     async for event in workflow.run_stream(f"Please begin the discussion on: {topic}"):
         if isinstance(event, AgentRunUpdateEvent):
-            speaker_id = event.executor_id.replace("groupchat_agent:", "")
-
-            if speaker_id != current_speaker:
+            if event.executor_id != current_speaker:
                 if current_speaker is not None:
                     print("\n")
-                print(f"[{speaker_id}]", flush=True)
-                current_speaker = speaker_id
+                print(f"[{event.executor_id}]", flush=True)
+                current_speaker = event.executor_id
 
             print(event.data, end="", flush=True)
 
@@ -286,10 +284,6 @@ Share your perspective authentically. Feel free to:
     DISCUSSION BEGINS
     ================================================================================
 
-    [Moderator]
-    {"selected_participant":"Farmer","instruction":"Please start by sharing what living a good life means to you,
-    especially from your perspective living in a rural area in Southeast Asia.","finish":false,"final_message":null}
-
     [Farmer]
     To me, a good life is deeply intertwined with the rhythm of the land and the nurturing of relationships with my
     family and community. It means cultivating crops that respect our environment, ensuring sustainability for future
@@ -297,11 +291,6 @@ Share your perspective authentically. Feel free to:
     tasks—planting rice or tending to our livestock—creates a sense of fulfillment that cannot be measured by material
     wealth. It's the simple moments, like sharing stories with my children under the stars, that truly define a good
     life. What good is progress if it isolates us from those we love and the land that sustains us?
-
-    [Moderator]
-    {"selected_participant":"Developer","instruction":"Given the insights shared by the Farmer, please discuss what a
-    good life means to you as a software developer in an urban setting in the United States and how it might contrast
-    with or complement the Farmer's view.","finish":false,"final_message":null}
 
     [Developer]
     As a software developer in an urban environment, a good life for me hinges on the intersection of innovation,
@@ -312,11 +301,6 @@ Share your perspective authentically. Feel free to:
     rich personal experiences. The challenge is finding harmony between technological progress and preserving the
     intimate human connections that truly enrich our lives.
 
-    [Moderator]
-    {"selected_participant":"SpiritualLeader","instruction":"Reflect on both the Farmer's and Developer's perspectives
-    and share your view of what constitutes a good life, particularly from your spiritual and cultural standpoint in
-    the Middle East.","finish":false,"final_message":null}
-
     [SpiritualLeader]
     From my spiritual perspective, a good life embodies a balance between personal fulfillment and service to others,
     rooted in compassion and community. In our teachings, we emphasize that true happiness comes from helping those in
@@ -325,11 +309,6 @@ Share your perspective authentically. Feel free to:
     lies in our intentions and actions—finding ways to serve our communities, spread kindness, and live harmoniously
     with those around us. Ultimately, as we align our personal beliefs with our communal responsibilities, we cultivate
     a richness that transcends material wealth.
-
-    [Moderator]
-    {"selected_participant":"Activist","instruction":"Add to the discussion by sharing your perspective on what a good
-    life entails, particularly from your background as a young activist in South America.","finish":false,
-    "final_message":null}
 
     [Activist]
     As a young activist in South America, a good life for me is about advocating for social justice and environmental
@@ -340,11 +319,6 @@ Share your perspective authentically. Feel free to:
     change, like resisting destructive mining practices that threaten our rivers and lands. A good life, therefore, is
     not just lived for oneself but is deeply tied to the well-being of our communities and the health of our
     environment. How can we, regardless of our backgrounds, collaborate to foster these essential changes?
-
-    [Moderator]
-    {"selected_participant":"Teacher","instruction":"Considering the views shared so far, tell us how your experience
-    as a retired history teacher from Eastern Europe shapes your understanding of a good life, perhaps reflecting on
-    lessons from the past and their impact on present-day life choices.","finish":false,"final_message":null}
 
     [Teacher]
     As a retired history teacher from Eastern Europe, my understanding of a good life is deeply rooted in the lessons
@@ -357,11 +331,6 @@ Share your perspective authentically. Feel free to:
     contributions to the rich tapestry of our shared humanity. How can we ensure that the lessons of history inform a
     more compassionate and just society moving forward?
 
-    [Moderator]
-    {"selected_participant":"Artist","instruction":"Expound on the themes and perspectives discussed so far by sharing
-    how, as an artist from Africa, you define a good life and how art plays a role in that vision.","finish":false,
-    "final_message":null}
-
     [Artist]
     As an artist from Africa, I define a good life as one steeped in cultural expression, storytelling, and the
     celebration of our collective memories. Art is a powerful medium through which we capture our histories, struggles,
@@ -372,19 +341,6 @@ Share your perspective authentically. Feel free to:
     issues. It's in this interplay of art and activism that we can transcend individual existence and contribute to a
     collective good, fostering empathy and understanding among diverse communities. How can we harness art to bridge
     differences and amplify marginalized voices in our pursuit of a good life?
-
-    [Moderator]
-    {"selected_participant":null,"instruction":null,"finish":true,"final_message":"As our discussion unfolds, several
-    key themes have gracefully emerged, reflecting the richness of diverse perspectives on what constitutes a good life.
-    From the rural farmer's integration with the land to the developer's search for balance between technology and
-    personal connection, each viewpoint validates that fulfillment, at its core, transcends material wealth. The
-    spiritual leader and the activist highlight the importance of community and social justice, while the history
-    teacher and the artist remind us of the lessons and narratives that shape our cultural and personal identities.
-
-    Ultimately, the good life seems to revolve around meaningful relationships, honoring our legacies while striving for
-    progress, and nurturing both our inner selves and external communities. This dialogue demonstrates that despite our
-    varied backgrounds and experiences, the quest for a good life binds us together, urging cooperation and empathy in
-    our shared human journey."}
 
     ================================================================================
     DISCUSSION SUMMARY

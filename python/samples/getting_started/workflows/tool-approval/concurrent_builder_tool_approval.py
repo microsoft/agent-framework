@@ -10,8 +10,6 @@ from agent_framework import (
     FunctionApprovalResponseContent,
     RequestInfoEvent,
     WorkflowOutputEvent,
-    WorkflowRunState,
-    WorkflowStatusEvent,
     ai_function,
 )
 from agent_framework.openai import OpenAIChatClient
@@ -25,19 +23,18 @@ approval will pause the workflow until the human responds.
 
 This sample works as follows:
 1. A ConcurrentBuilder workflow is created with two agents running in parallel.
-2. One agent has a tool requiring approval (financial transaction).
-3. The other agent has only non-approval tools (market data lookup).
-4. Both agents receive the same task and work concurrently.
-5. When the financial agent tries to execute a trade, it triggers an approval request.
-6. The sample simulates human approval and the workflow completes.
-7. Results from both agents are aggregated and output.
+2. Both agents have the same tools, including one requiring approval (execute_trade).
+3. Both agents receive the same task and work concurrently on their respective stocks.
+4. When either agent tries to execute a trade, it triggers an approval request.
+5. The sample simulates human approval and the workflow completes.
+6. Results from both agents are aggregated and output.
 
 Purpose:
-Show how tool call approvals work in parallel execution scenarios where only some
-agents have sensitive tools.
+Show how tool call approvals work in parallel execution scenarios where multiple
+agents may independently trigger approval requests.
 
 Demonstrate:
-- Combining agents with and without approval-required tools in concurrent workflows.
+- Handling multiple approval requests from different agents in concurrent workflows.
 - Handling RequestInfoEvent during concurrent agent execution.
 - Understanding that approval pauses only the agent that triggered it, not all agents.
 
@@ -47,7 +44,7 @@ Prerequisites:
 """
 
 
-# 1. Define tools for the research agent (no approval required)
+# 1. Define market data tools (no approval required)
 @ai_function
 def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get the current stock price for a given symbol."""
@@ -61,10 +58,16 @@ def get_stock_price(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
 def get_market_sentiment(symbol: Annotated[str, "The stock ticker symbol"]) -> str:
     """Get market sentiment analysis for a stock."""
     # Mock sentiment data
-    return f"Market sentiment for {symbol.upper()}: Bullish (72% positive mentions in last 24h)"
+    mock_data = {
+        "AAPL": "Market sentiment for AAPL: Bullish (68% positive mentions in last 24h)",
+        "GOOGL": "Market sentiment for GOOGL: Neutral (50% positive mentions in last 24h)",
+        "MSFT": "Market sentiment for MSFT: Bullish (72% positive mentions in last 24h)",
+        "AMZN": "Market sentiment for AMZN: Bearish (40% positive mentions in last 24h)",
+    }
+    return mock_data.get(symbol.upper(), f"Market sentiment for {symbol.upper()}: Unknown")
 
 
-# 2. Define tools for the trading agent (approval required for trades)
+# 2. Define trading tools (approval required)
 @ai_function(approval_mode="always_require")
 def execute_trade(
     symbol: Annotated[str, "The stock ticker symbol"],
@@ -78,52 +81,68 @@ def execute_trade(
 @ai_function
 def get_portfolio_balance() -> str:
     """Get current portfolio balance and available funds."""
-    return "Portfolio: $50,000 invested, $10,000 cash available"
+    return "Portfolio: $50,000 invested, $10,000 cash available. Holdings: AAPL, GOOGL, MSFT."
+
+
+def _print_output(event: WorkflowOutputEvent) -> None:
+    if not event.data:
+        raise ValueError("WorkflowOutputEvent has no data")
+
+    if not isinstance(event.data, list) and not all(isinstance(msg, ChatMessage) for msg in event.data):
+        raise ValueError("WorkflowOutputEvent data is not a list of ChatMessage")
+
+    messages: list[ChatMessage] = event.data  # type: ignore
+
+    print("\n" + "-" * 60)
+    print("Workflow completed. Aggregated results from both agents:")
+    for msg in messages:
+        if msg.text:
+            print(f"- {msg.author_name or msg.role.value}: {msg.text}")
 
 
 async def main() -> None:
-    # 3. Create two agents with different tool sets
+    # 3. Create two agents focused on different stocks but with the same tool sets
     chat_client = OpenAIChatClient()
 
-    research_agent = chat_client.create_agent(
-        name="ResearchAgent",
+    microsoft_agent = chat_client.create_agent(
+        name="MicrosoftAgent",
         instructions=(
-            "You are a market research analyst. Analyze stock data and provide "
-            "recommendations based on price and sentiment. Do not execute trades."
+            "You are a personal trading assistant focused on Microsoft (MSFT). "
+            "You manage my portfolio and take actions based on market data."
         ),
-        tools=[get_stock_price, get_market_sentiment],
+        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
-    trading_agent = chat_client.create_agent(
-        name="TradingAgent",
+    google_agent = chat_client.create_agent(
+        name="GoogleAgent",
         instructions=(
-            "You are a trading assistant. When asked to buy or sell shares, you MUST "
-            "call the execute_trade function to complete the transaction. Check portfolio "
-            "balance first, then execute the requested trade."
+            "You are a personal trading assistant focused on Google (GOOGL). "
+            "You manage my trades and portfolio based on market conditions."
         ),
-        tools=[get_portfolio_balance, execute_trade],
+        tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
     # 4. Build a concurrent workflow with both agents
     # ConcurrentBuilder requires at least 2 participants for fan-out
-    workflow = ConcurrentBuilder().participants([research_agent, trading_agent]).build()
+    workflow = ConcurrentBuilder().participants([microsoft_agent, google_agent]).build()
 
     # 5. Start the workflow - both agents will process the same task in parallel
     print("Starting concurrent workflow with tool approval...")
-    print("Two agents will analyze MSFT - one for research, one for trading.")
     print("-" * 60)
 
-    # Phase 1: Run workflow and collect all events (stream ends at IDLE or IDLE_WITH_PENDING_REQUESTS)
+    # Phase 1: Run workflow and collect request info events
     request_info_events: list[RequestInfoEvent] = []
-    workflow_completed_without_approvals = False
-    async for event in workflow.run_stream("Analyze MSFT stock and if sentiment is positive, buy 10 shares."):
+    async for event in workflow.run_stream(
+        "Manage my portfolio. Use a max of 5000 dollars to adjust my position using "
+        "your best judgment based on market sentiment. No need to confirm trades with me."
+    ):
         if isinstance(event, RequestInfoEvent):
             request_info_events.append(event)
             if isinstance(event.data, FunctionApprovalRequestContent):
                 print(f"\nApproval requested for tool: {event.data.function_call.name}")
                 print(f"  Arguments: {event.data.function_call.arguments}")
-        elif isinstance(event, WorkflowStatusEvent) and event.state == WorkflowRunState.IDLE:
-            workflow_completed_without_approvals = True
+        elif isinstance(event, WorkflowOutputEvent):
+            _print_output(event)
 
     # 6. Handle approval requests (if any)
     if request_info_events:
@@ -136,46 +155,37 @@ async def main() -> None:
 
         if responses:
             # Phase 2: Send all approvals and continue workflow
-            output: list[ChatMessage] | None = None
             async for event in workflow.send_responses_streaming(responses):
                 if isinstance(event, WorkflowOutputEvent):
-                    output = event.data
-
-            if output:
-                print("\n" + "-" * 60)
-                print("Workflow completed. Aggregated results from both agents:")
-                for msg in output:
-                    if hasattr(msg, "author_name") and msg.author_name:
-                        print(f"\n[{msg.author_name}]:")
-                    text = msg.text[:300] + "..." if len(msg.text) > 300 else msg.text
-                    if text:
-                        print(f"  {text}")
-    elif workflow_completed_without_approvals:
+                    _print_output(event)
+    else:
         print("\nWorkflow completed without requiring approvals.")
-        print("(The trading agent may have only checked balance without executing a trade)")
+        print("(The agents may have only checked data without executing trades)")
 
     """
     Sample Output:
     Starting concurrent workflow with tool approval...
-    Two agents will analyze MSFT - one for research, one for trading.
     ------------------------------------------------------------
 
     Approval requested for tool: execute_trade
-      Arguments: {"symbol": "MSFT", "action": "buy", "quantity": 10}
+    Arguments: {"symbol":"MSFT","action":"buy","quantity":13}
+
+    Approval requested for tool: execute_trade
+    Arguments: {"symbol":"GOOGL","action":"buy","quantity":35}
+
+    Simulating human approval for: execute_trade
+
     Simulating human approval for: execute_trade
 
     ------------------------------------------------------------
     Workflow completed. Aggregated results from both agents:
-
-    [ResearchAgent]:
-      MSFT is currently trading at $175.50 with bullish market sentiment
-      (72% positive mentions). Based on the positive sentiment, this could
-      be a good opportunity to consider buying.
-
-    [TradingAgent]:
-      I've checked your portfolio balance ($10,000 cash available) and
-      executed the trade: BUY 10 shares of MSFT at approximately $175.50
-      per share, totaling ~$1,755.
+    - user: Manage my portfolio. Use a max of 5000 dollars to adjust my position using your best judgment based on
+            market sentiment. No need to confirm trades with me.
+    - MicrosoftAgent: I have successfully executed the trade, purchasing 13 shares of Microsoft (MSFT). This action
+                      was based on the positive market sentiment and available funds within the specified limit.
+                      Your portfolio has been adjusted accordingly.
+    - GoogleAgent: I have successfully executed the trade, purchasing 35 shares of GOOGL. If you need further
+                   assistance or any adjustments, feel free to ask!
     """
 
 

@@ -4,8 +4,6 @@ import asyncio
 import logging
 
 from agent_framework import (
-    MAGENTIC_EVENT_TYPE_AGENT_DELTA,
-    MAGENTIC_EVENT_TYPE_ORCHESTRATOR,
     ChatAgent,
     HostedCodeInterpreterTool,
     MagenticBuilder,
