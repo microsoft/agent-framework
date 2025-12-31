@@ -7,13 +7,12 @@ as a message broker. It enables clients to disconnect and reconnect without losi
 """
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
 from collections.abc import AsyncIterator
 
 import redis.asyncio as aioredis
-from agent_framework import AgentRunResponseUpdate
 
 
 @dataclass
@@ -57,60 +56,60 @@ class RedisStreamResponseHandler:
         self._redis = redis_client
         self._stream_ttl = stream_ttl
 
-    async def write_streaming_response(
+    async def __aenter__(self):
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context manager and close Redis connection."""
+        await self._redis.aclose()
+
+    async def write_chunk(
         self,
-        response_stream: AsyncIterator[AgentRunResponseUpdate],
         conversation_id: str,
+        text: str,
+        sequence: int,
     ) -> None:
-        """Write streaming response updates to Redis Stream.
+        """Write a single text chunk to the Redis Stream.
 
         Args:
-            response_stream: An async iterator of response update chunks.
             conversation_id: The conversation ID for this agent run.
+            text: The text content to write.
+            sequence: The sequence number for ordering.
         """
         stream_key = self._get_stream_key(conversation_id)
-        sequence_number = 0
+        await self._redis.xadd(
+            stream_key,
+            {
+                "text": text,
+                "sequence": str(sequence),
+                "timestamp": str(int(time.time() * 1000)),
+            }
+        )
+        await self._redis.expire(stream_key, self._stream_ttl)
 
-        try:
-            async for update in response_stream:
-                text = update.text
+    async def write_completion(
+        self,
+        conversation_id: str,
+        sequence: int,
+    ) -> None:
+        """Write an end-of-stream marker to the Redis Stream.
 
-                if text:
-                    # Add text chunk to the stream
-                    await self._redis.xadd(
-                        stream_key,
-                        {
-                            "text": text,
-                            "sequence": str(sequence_number),
-                            "timestamp": str(int(asyncio.get_event_loop().time() * 1000)),
-                        }
-                    )
-                    await self._redis.expire(stream_key, self._stream_ttl)
-                    sequence_number += 1
-
-            # Add end-of-stream marker
-            await self._redis.xadd(
-                stream_key,
-                {
-                    "text": "",
-                    "sequence": str(sequence_number),
-                    "timestamp": str(int(asyncio.get_event_loop().time() * 1000)),
-                    "done": "true",
-                }
-            )
-            await self._redis.expire(stream_key, self._stream_ttl)
-
-        except Exception as ex:
-            # Write error to stream
-            await self._redis.xadd(
-                stream_key,
-                {
-                    "error": str(ex),
-                    "sequence": str(sequence_number),
-                    "timestamp": str(int(asyncio.get_event_loop().time() * 1000)),
-                }
-            )
-            await self._redis.expire(stream_key, self._stream_ttl)
+        Args:
+            conversation_id: The conversation ID for this agent run.
+            sequence: The final sequence number.
+        """
+        stream_key = self._get_stream_key(conversation_id)
+        await self._redis.xadd(
+            stream_key,
+            {
+                "text": "",
+                "sequence": str(sequence),
+                "timestamp": str(int(time.time() * 1000)),
+                "done": "true",
+            }
+        )
+        await self._redis.expire(stream_key, self._stream_ttl)
 
     async def read_stream(
         self,

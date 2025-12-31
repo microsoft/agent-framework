@@ -17,7 +17,6 @@ Prerequisites:
 
 import logging
 import os
-import time
 from datetime import timedelta
 
 import redis.asyncio as aioredis
@@ -33,7 +32,6 @@ from azure.identity import AzureCliCredential
 
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -97,30 +95,20 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
         sequence = self._sequence_numbers[thread_id]
 
         try:
-            # Get stream handler
-            stream_handler = await get_stream_handler()
+            # Use context manager to ensure Redis client is properly closed
+            async with await get_stream_handler() as stream_handler:
+                # Write chunk to Redis Stream using public API
+                await stream_handler.write_chunk(thread_id, text, sequence)
 
-            # Write to Redis Stream
-            stream_key = stream_handler._get_stream_key(thread_id)
-            await stream_handler._redis.xadd(
-                stream_key,
-                {
-                    "text": text,
-                    "sequence": str(sequence),
-                    "timestamp": str(int(time.time() * 1000)),
-                }
-            )
-            await stream_handler._redis.expire(stream_key, stream_handler._stream_ttl)
+                self._sequence_numbers[thread_id] += 1
 
-            self._sequence_numbers[thread_id] += 1
-
-            self._logger.info(
-                "[%s][%s] Wrote chunk to Redis: seq=%d, test=%s",
-                context.agent_name,
-                thread_id[:8],
-                sequence,
-                text,
-            )
+                self._logger.info(
+                    "[%s][%s] Wrote chunk to Redis: seq=%d, text=%s",
+                    context.agent_name,
+                    thread_id[:8],
+                    sequence,
+                    text,
+                )
         except Exception as ex:
             self._logger.error(f"Error writing to Redis stream: {ex}", exc_info=True)
 
@@ -138,30 +126,19 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
         sequence = self._sequence_numbers.get(thread_id, 0)
 
         try:
-            # Get stream handler (creates fresh Redis client in current event loop)
-            stream_handler = await get_stream_handler()
+            # Use context manager to ensure Redis client is properly closed
+            async with await get_stream_handler() as stream_handler:
+                # Write end-of-stream marker using public API
+                await stream_handler.write_completion(thread_id, sequence)
 
-            # Write end-of-stream marker
-            stream_key = stream_handler._get_stream_key(thread_id)
-            await stream_handler._redis.xadd(
-                stream_key,
-                {
-                    "text": "",
-                    "sequence": str(sequence),
-                    "timestamp": str(int(time.time() * 1000)),
-                    "done": "true",
-                }
-            )
-            await stream_handler._redis.expire(stream_key, stream_handler._stream_ttl)
+                self._logger.info(
+                    "[%s][%s] Agent completed, wrote end-of-stream marker",
+                    context.agent_name,
+                    thread_id[:8],
+                )
 
-            self._logger.info(
-                "[%s][%s] Agent completed, wrote end-of-stream marker",
-                context.agent_name,
-                thread_id[:8],
-            )
-
-            # Clean up sequence tracker
-            self._sequence_numbers.pop(thread_id, None)
+                # Clean up sequence tracker
+                self._sequence_numbers.pop(thread_id, None)
         except Exception as ex:
             self._logger.error(f"Error writing end-of-stream marker: {ex}", exc_info=True)
 
@@ -274,25 +251,26 @@ async def _stream_to_client(
         HTTP response with all currently available chunks.
     """
     chunks = []
-    stream_handler = await get_stream_handler()
 
-    try:
-        async for chunk in stream_handler.read_stream(conversation_id, cursor):
-            if chunk.error:
-                logger.warning(f"Stream error for {conversation_id}: {chunk.error}")
-                chunks.append(_format_error(chunk.error, use_sse_format))
-                break
+    # Use context manager to ensure Redis client is properly closed
+    async with await get_stream_handler() as stream_handler:
+        try:
+            async for chunk in stream_handler.read_stream(conversation_id, cursor):
+                if chunk.error:
+                    logger.warning(f"Stream error for {conversation_id}: {chunk.error}")
+                    chunks.append(_format_error(chunk.error, use_sse_format))
+                    break
 
-            if chunk.is_done:
-                chunks.append(_format_end_of_stream(chunk.entry_id, use_sse_format))
-                break
+                if chunk.is_done:
+                    chunks.append(_format_end_of_stream(chunk.entry_id, use_sse_format))
+                    break
 
-            if chunk.text:
-                chunks.append(_format_chunk(chunk, use_sse_format))
+                if chunk.text:
+                    chunks.append(_format_chunk(chunk, use_sse_format))
 
-    except Exception as ex:
-        logger.error(f"Error reading from Redis: {ex}", exc_info=True)
-        chunks.append(_format_error(str(ex), use_sse_format))
+        except Exception as ex:
+            logger.error(f"Error reading from Redis: {ex}", exc_info=True)
+            chunks.append(_format_error(str(ex), use_sse_format))
 
     # Return all chunks
     response_body = "".join(chunks)

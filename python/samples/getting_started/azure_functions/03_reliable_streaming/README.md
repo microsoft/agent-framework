@@ -211,7 +211,7 @@ XRANGE agent-stream:abc-123-def-456 - +
 #       4) "1"
 ```
 
-### Test 2: Check Agent Status
+### Test 4: Check Agent Status
 
 ```bash
 curl http://localhost:7071/api/agents/TravelPlanner/run/abc-123-def-456
@@ -219,7 +219,7 @@ curl http://localhost:7071/api/agents/TravelPlanner/run/abc-123-def-456
 
 Returns the orchestration status (Running, Completed, Failed, etc.).
 
-### Test 3: Using Python to Read from Redis
+### Test 5: Using Python to Read from Redis
 
 ```python
 import asyncio
@@ -245,14 +245,14 @@ async def read_agent_response(conversation_id: str):
 asyncio.run(read_agent_response("abc-123-def-456"))
 ```
 
-### Test 7: Using the demo.http File
+### Test 6: Using the demo.http File
 
 If you have VS Code with the REST Client extension:
 
 1. Open `demo.http` in VS Code
 2. Click "Send Request" above any test
 3. The `conversation_id` is automatically captured for subsequent requests
-4. Try both the custom `/agent/create` and standard `/agents/TravelPlanner/run` endpoints
+4. Try the standard `/api/agents/TravelPlanner/run` endpoint to start the agent, then use `/api/agent/stream/{conversation_id}` to read the response
 
 ## How It Works
 
