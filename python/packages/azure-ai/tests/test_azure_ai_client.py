@@ -941,7 +941,6 @@ async def test_azure_ai_chat_client_agent_with_tools() -> None:
         assert any(word in response.text.lower() for word in ["sunny", "25"])
 
 
-@pytest.mark.asyncio
 async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> None:
     """Test get_agent parameter handling."""
     mock_project_client.agents = AsyncMock()
@@ -981,7 +980,6 @@ async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> N
     assert agent.name == "test-agent"
 
 
-@pytest.mark.asyncio
 async def test_get_agent_missing_parameters(mock_project_client: MagicMock) -> None:
     """Test get_agent missing parameters."""
 
@@ -989,7 +987,6 @@ async def test_get_agent_missing_parameters(mock_project_client: MagicMock) -> N
         await get_agent(project_client=mock_project_client)
 
 
-@pytest.mark.asyncio
 async def test_get_agent_missing_tools(mock_project_client: MagicMock) -> None:
     """Test get_agent missing tools."""
     mock_project_client.agents = AsyncMock()
@@ -1063,7 +1060,6 @@ def test_parse_tools() -> None:
     assert user_location["timezone"] == "PST"
 
 
-@pytest.mark.asyncio
 async def test_get_agent_success(mock_project_client: MagicMock) -> None:
     """Test get_agent success path."""
     mock_project_client.agents = AsyncMock()
