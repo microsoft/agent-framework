@@ -18,6 +18,7 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
+from opentelemetry.trace import get_current_span
 from pydantic import BaseModel, create_model
 
 from ._tools import AIFunction, HostedMCPSpecificApproval, _build_pydantic_model_from_json_schema
@@ -925,6 +926,7 @@ class MCPStreamableHTTPTool(MCPTool):
         terminate_on_close: bool | None = None,
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,
+        include_traceparent: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -958,6 +960,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sse_read_timeout: The timeout for reading from the SSE stream.
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
+            include_traceparent: Whether to include the traceparent header in requests.
             kwargs: Any extra arguments to pass to the SSE client.
         """
         super().__init__(
@@ -978,6 +981,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.sse_read_timeout = sse_read_timeout
         self.terminate_on_close = terminate_on_close
         self._client_kwargs = kwargs
+        self._include_traceparent = include_traceparent
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -998,6 +1002,10 @@ class MCPStreamableHTTPTool(MCPTool):
             args["terminate_on_close"] = self.terminate_on_close
         if self._client_kwargs:
             args.update(self._client_kwargs)
+        if self._include_traceparent:
+            span_ctx = get_current_span().get_span_context()
+            args["headers"]["traceparent"] = \
+                f"00-{span_ctx.trace_id:032x}-{span_ctx.span_id:016x}-01"
         return streamablehttp_client(**args)
 
 
