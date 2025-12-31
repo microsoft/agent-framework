@@ -16,6 +16,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    TypedDict,
     TypeVar,
     cast,
     get_args,
@@ -73,6 +74,7 @@ __all__ = [
     "FunctionInvocationConfiguration",
     "HostedCodeInterpreterTool",
     "HostedFileSearchTool",
+    "HostedImageGenerationTool",
     "HostedMCPSpecificApproval",
     "HostedMCPTool",
     "HostedWebSearchTool",
@@ -322,6 +324,41 @@ class HostedWebSearchTool(BaseTool):
         if description is not None:
             args["description"] = description
         super().__init__(**args)
+
+
+class HostedImageGenerationToolOptions(TypedDict, total=False):
+    """Options for HostedImageGenerationTool."""
+
+    count: int
+    image_size: str
+    media_type: str
+    model_id: str
+    response_format: Literal["uri", "data", "hosted"]
+    streaming_count: int
+
+
+class HostedImageGenerationTool(BaseTool):
+    """Represents a hosted tool that can be specified to an AI service to enable it to perform image generation."""
+
+    def __init__(
+        self,
+        *,
+        options: HostedImageGenerationToolOptions | None = None,
+        description: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        """Initialize a HostedImageGenerationTool."""
+        if "name" in kwargs:
+            raise ValueError("The 'name' argument is reserved for the HostedImageGenerationTool and cannot be set.")
+
+        self.options = options
+        super().__init__(
+            name="image_generation",
+            description=description or "",
+            additional_properties=additional_properties,
+            **kwargs,
+        )
 
 
 class HostedMCPSpecificApproval(TypedDict, total=False):
@@ -1419,14 +1456,11 @@ async def _auto_invoke_function(
     Raises:
         KeyError: If the requested function is not found in the tool map.
     """
-    from ._types import (
-        FunctionResultContent,
-    )
-
     # Note: The scenarios for approval_mode="always_require", declaration_only, and
     # terminate_on_unknown_calls are all handled in _try_execute_function_calls before
     # this function is called. This function only handles the actual execution of approved,
     # non-declaration-only functions.
+    from ._types import FunctionCallContent, FunctionResultContent
 
     tool: AIFunction[BaseModel, Any] | None = None
     if function_call_content.type == "function_call":
@@ -1444,11 +1478,14 @@ async def _auto_invoke_function(
     else:
         # Note: Unapproved tools (approved=False) are handled in _replace_approval_contents_with_results
         # and never reach this function, so we only handle approved=True cases here.
-        tool = tool_map.get(function_call_content.function_call.name)
+        inner_call = function_call_content.function_call
+        if not isinstance(inner_call, FunctionCallContent):
+            return function_call_content
+        tool = tool_map.get(inner_call.name)
         if tool is None:
             # we assume it is a hosted tool
             return function_call_content
-        function_call_content = function_call_content.function_call
+        function_call_content = inner_call
 
     parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
 
