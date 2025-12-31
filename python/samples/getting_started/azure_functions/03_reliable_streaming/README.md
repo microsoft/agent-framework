@@ -431,8 +431,8 @@ docker rm redis
 
 ## Learn More
 
-- [Redis Streams Documentation](https://redis.io/docs/data-types/streams/)
+- [Redis Streams Documentation](https://redis.io/docs/latest/develop/data-types/streams/)
 - [Server-Sent Events Specification](https://html.spec.whatwg.org/multipage/server-sent-events.html)
 - [Microsoft Agent Framework Documentation](https://github.com/microsoft/agent-framework)
 - [Azure Functions Python Developer Guide](https://learn.microsoft.com/azure/azure-functions/functions-reference-python)
-- [Durable Task Framework](https://github.com/microsoft/durabletask)
+- [Durable Task Framework](https://github.com/Azure/durabletask)
