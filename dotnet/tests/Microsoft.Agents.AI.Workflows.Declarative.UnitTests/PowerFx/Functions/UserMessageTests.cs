@@ -59,10 +59,10 @@ public class UserMessageTests
         List<RecordValue> rows = table.Rows.Select(value => value.Value).ToList();
         Assert.Single(rows);
 
-        StringValue contentType = Assert.IsType<StringValue>(rows[0].GetField(TypeSchema.Message.Fields.ContentType));
-        Assert.Equal(TypeSchema.Message.ContentTypes.Text, contentType.Value);
+        StringValue contentType = Assert.IsType<StringValue>(rows[0].GetField(TypeSchema.MessageContent.Fields.Type));
+        Assert.Equal(TypeSchema.MessageContent.ContentTypes.Text, contentType.Value);
 
-        StringValue contentValue = Assert.IsType<StringValue>(rows[0].GetField(TypeSchema.Message.Fields.ContentValue));
+        StringValue contentValue = Assert.IsType<StringValue>(rows[0].GetField(TypeSchema.MessageContent.Fields.Value));
         Assert.Equal(Text, contentValue.Value);
     }
 }
