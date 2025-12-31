@@ -207,7 +207,7 @@ class TestOrchestrationAgentExecutorRun:
 
         # Verify entity ID
         assert isinstance(entity_id_arg, EntityInstanceId)
-        assert entity_id_arg.entity.startswith("test_agent-")
+        assert entity_id_arg.entity == "dafx-test_agent"
 
         # Verify operation name
         assert operation_arg == "run"

@@ -53,9 +53,9 @@ class DurableAgentTask(CompositeTask[AgentRunResponse]):
             response_format: Optional Pydantic model for response parsing
             correlation_id: Correlation ID for logging
         """
-        super().__init__([entity_task])  # type: ignore[misc]
         self._response_format = response_format
         self._correlation_id = correlation_id
+        super().__init__([entity_task])  # type: ignore[misc]
 
     def on_child_completed(self, task: Task[Any]) -> None:
         """Handle completion of the underlying entity task.
