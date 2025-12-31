@@ -3,3 +3,5 @@ agent-framework-azure
 azure-identity
 azure-functions
 azurefunctions-extensions-http-fastapi
+azure-data-tables
+azure-storage-blob
