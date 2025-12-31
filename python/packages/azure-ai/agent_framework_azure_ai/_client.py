@@ -1,15 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import sys
-from collections.abc import Mapping, MutableSequence
-from typing import Any, ClassVar, TypeVar
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
+from typing import Any, ClassVar, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    AIFunction,
+    ChatAgent,
     ChatMessage,
     ChatOptions,
+    Contents,
+    HostedCodeInterpreterTool,
+    HostedFileContent,
+    HostedFileSearchTool,
     HostedMCPTool,
+    HostedVectorStoreContent,
+    HostedWebSearchTool,
     TextContent,
+    ToolProtocol,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
@@ -19,12 +28,20 @@ from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    AgentObject,
+    AgentReference,
+    AgentVersionObject,
+    CodeInterpreterTool,
+    FileSearchTool,
+    FunctionTool,
     MCPTool,
     PromptAgentDefinition,
     PromptAgentDefinitionText,
     ResponseTextFormatConfigurationJsonObject,
     ResponseTextFormatConfigurationJsonSchema,
     ResponseTextFormatConfigurationText,
+    Tool,
+    WebSearchPreviewTool,
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -456,3 +473,253 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
         return mcp
+
+
+class AzureAIAgentProvider:
+    """Azure AI Agent provider."""
+
+    def __init__(
+        self,
+        *,
+        project_client: AIProjectClient | None = None,
+        project_endpoint: str | None = None,
+        model_deployment_name: str | None = None,
+        credential: AsyncTokenCredential | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Azure AI Agent provider.
+
+        Keyword Args:
+            project_client: An existing AIProjectClient to use. If not provided, one will be created.
+            project_endpoint: The Azure AI Project endpoint URL.
+                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+                Ignored when a project_client is passed.
+            model_deployment_name: The model deployment name to use for agent creation.
+                Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
+            credential: Azure async credential to use for authentication.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+        """
+        try:
+            azure_ai_settings = AzureAISettings(
+                project_endpoint=project_endpoint,
+                model_deployment_name=model_deployment_name,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+        except ValidationError as ex:
+            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+
+        # If no project_client is provided, create one
+        if project_client is None:
+            if not azure_ai_settings.project_endpoint:
+                raise ServiceInitializationError(
+                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
+                )
+
+            # Use provided credential
+            if not credential:
+                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+            project_client = AIProjectClient(
+                endpoint=azure_ai_settings.project_endpoint,
+                credential=credential,
+                user_agent=AGENT_FRAMEWORK_USER_AGENT,
+            )
+
+        # Initialize instance variables
+        self.project_client = project_client
+        self.credential = credential
+        self.model_id = azure_ai_settings.model_deployment_name
+
+    async def get_agent(
+        self,
+        agent_reference: AgentReference | None = None,
+        agent_name: str | None = None,
+        agent_object: AgentObject | None = None,
+        tools: ToolProtocol
+        | Callable[..., Any]
+        | MutableMapping[str, Any]
+        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+        | None = None,
+    ) -> ChatAgent:
+        """Retrieves an existing Azure AI agent and converts it into a ChatAgent instance.
+
+        Args:
+            agent_reference: Optional reference containing the agent's name and specific version.
+            agent_name: Optional name of the agent to retrieve (if reference is not provided).
+            agent_object: Optional pre-fetched agent object.
+            tools: A collection of tools to be made available to the agent.
+
+        Returns:
+            ChatAgent: An initialized `ChatAgent` configured with the retrieved agent's settings and tools.
+        """
+        return await get_agent(
+            project_client=self.project_client,
+            agent_reference=agent_reference,
+            agent_name=agent_name,
+            agent_object=agent_object,
+            tools=tools,
+        )
+
+
+async def get_agent(
+    project_client: AIProjectClient,
+    agent_reference: AgentReference | None = None,
+    agent_name: str | None = None,
+    agent_object: AgentObject | None = None,
+    tools: ToolProtocol
+    | Callable[..., Any]
+    | MutableMapping[str, Any]
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+    | None = None,
+) -> ChatAgent:
+    """Retrieves an existing Azure AI agent and converts it into a ChatAgent instance.
+
+    Args:
+        project_client: The client used to interact with the Azure AI project.
+        agent_reference: Optional reference containing the agent's name and specific version.
+        agent_name: Optional name of the agent to retrieve (if reference is not provided).
+        agent_object: Optional pre-fetched agent object.
+        tools: A collection of tools to be made available to the agent.
+
+    Returns:
+        ChatAgent: An initialized `ChatAgent` configured with the retrieved agent's settings and tools.
+    """
+    existing_agent: AgentVersionObject
+
+    if agent_reference and agent_reference.version:
+        existing_agent = await project_client.agents.get_version(
+            agent_name=agent_reference.name, agent_version=agent_reference.version
+        )
+    else:
+        if name := (agent_reference.name if agent_reference else agent_name):
+            agent_object = await project_client.agents.get(agent_name=name)
+
+        if not agent_object:
+            raise ValueError("Either agent_reference or agent_name or agent_object must be provided to get an agent.")
+
+        existing_agent = agent_object.versions.latest
+
+    if not isinstance(existing_agent.definition, PromptAgentDefinition):
+        raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
+
+    # Convert tools to unified format and validate function tools.
+    provided_tools = ChatOptions(tools=tools).tools or []
+    provided_tool_names = {tool.name for tool in provided_tools if isinstance(tool, AIFunction)}
+
+    # If function tools exist in agent definition but were not provided to this method,
+    # we need to raise an error, as it won't be possible to invoke the function.
+    missing_tools = [
+        tool.name
+        for tool in (existing_agent.definition.tools or [])
+        if isinstance(tool, FunctionTool) and tool.name not in provided_tool_names
+    ]
+
+    if missing_tools:
+        raise ValueError(
+            f"The following prompt agent definition required tools were not provided: {', '.join(missing_tools)}"
+        )
+
+    client = AzureAIClient(
+        project_client=project_client,
+        agent_name=existing_agent.name,
+        agent_version=existing_agent.version,
+        agent_description=existing_agent.description,
+    )
+
+    return ChatAgent(
+        chat_client=client,
+        id=existing_agent.id,
+        name=existing_agent.name,
+        description=existing_agent.description,
+        instructions=existing_agent.definition.instructions,
+        model_id=existing_agent.definition.model,
+        temperature=existing_agent.definition.temperature,
+        top_p=existing_agent.definition.top_p,
+        tools=_parse_tools(existing_agent.definition.tools),
+    )
+
+
+def _parse_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProtocol | dict[str, Any]]:
+    """Parses and converts a sequence of Azure AI tools into Agent Framework compatible tools.
+
+    Args:
+        tools: A sequence of tool objects or dictionaries
+            defining the tools to be parsed. Can be None.
+
+    Returns:
+        list[ToolProtocol | dict[str, Any]]: A list of converted tools compatible with the
+            Agent Framework.
+    """
+    agent_tools: list[ToolProtocol | dict[str, Any]] = []
+    if not tools:
+        return agent_tools
+    for tool in tools:
+        # Handle raw dictionary tools
+        tool_dict = tool if isinstance(tool, dict) else dict(tool)
+        tool_type = tool_dict.get("type")
+
+        if tool_type == "mcp":
+            mcp_tool = cast(MCPTool, tool_dict)
+            approval_mode = None
+            if require_approval := mcp_tool.get("require_approval"):
+                if require_approval == "always":
+                    approval_mode = "always_require"
+                elif require_approval == "never":
+                    approval_mode = "never_require"
+                elif isinstance(require_approval, dict):
+                    approval_mode = {}
+                    if "always" in require_approval:
+                        approval_mode["always_require_approval"] = set(require_approval["always"].get("tool_names", []))  # type: ignore
+                    if "never" in require_approval:
+                        approval_mode["never_require_approval"] = set(require_approval["never"].get("tool_names", []))  # type: ignore
+
+            agent_tools.append(
+                HostedMCPTool(
+                    name=mcp_tool.get("server_label", "").replace("_", " "),
+                    url=mcp_tool.get("server_url", ""),
+                    description=mcp_tool.get("server_description"),
+                    headers=mcp_tool.get("headers"),
+                    allowed_tools=mcp_tool.get("allowed_tools"),
+                    approval_mode=approval_mode,  # type: ignore
+                )
+            )
+        elif tool_type == "code_interpreter":
+            ci_tool = cast(CodeInterpreterTool, tool_dict)
+            container = ci_tool.get("container", {})
+            ci_inputs: list[Contents] = []
+            if "file_ids" in container:
+                for file_id in container["file_ids"]:
+                    ci_inputs.append(HostedFileContent(file_id=file_id))
+
+            agent_tools.append(HostedCodeInterpreterTool(inputs=ci_inputs if ci_inputs else None))  # type: ignore
+        elif tool_type == "file_search":
+            fs_tool = cast(FileSearchTool, tool_dict)
+            fs_inputs: list[Contents] = []
+            if "vector_store_ids" in fs_tool:
+                for vs_id in fs_tool["vector_store_ids"]:
+                    fs_inputs.append(HostedVectorStoreContent(vector_store_id=vs_id))
+
+            agent_tools.append(
+                HostedFileSearchTool(
+                    inputs=fs_inputs if fs_inputs else None,  # type: ignore
+                    max_results=fs_tool.get("max_num_results"),
+                )
+            )
+        elif tool_type == "web_search" or tool_type == "web_search_preview":
+            ws_tool = cast(WebSearchPreviewTool, tool_dict)
+            additional_properties: dict[str, Any] = {}
+            if user_location := ws_tool.get("user_location"):
+                additional_properties["user_location"] = {
+                    "city": user_location.get("city"),
+                    "country": user_location.get("country"),
+                    "region": user_location.get("region"),
+                    "timezone": user_location.get("timezone"),
+                }
+
+            agent_tools.append(HostedWebSearchTool(additional_properties=additional_properties))
+        else:
+            agent_tools.append(tool_dict)
+    return agent_tools

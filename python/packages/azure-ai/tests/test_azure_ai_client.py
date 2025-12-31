@@ -14,13 +14,29 @@ from agent_framework import (
     ChatClientProtocol,
     ChatMessage,
     ChatOptions,
+    HostedCodeInterpreterTool,
+    HostedFileContent,
+    HostedFileSearchTool,
+    HostedMCPTool,
+    HostedVectorStoreContent,
+    HostedWebSearchTool,
     Role,
     TextContent,
 )
 from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
+    AgentReference,
+    AgentVersionObject,
+    ApproximateLocation,
+    CodeInterpreterTool,
+    CodeInterpreterToolAuto,
+    FileSearchTool,
+    FunctionTool,
+    MCPTool,
+    PromptAgentDefinition,
     ResponseTextFormatConfigurationJsonSchema,
+    WebSearchPreviewTool,
 )
 from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
@@ -28,6 +44,7 @@ from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
+from agent_framework_azure_ai._client import _parse_tools, get_agent  # type: ignore
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -301,7 +318,7 @@ async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicM
             return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
         ),
     ):
-        run_options = await client._prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)  # type: ignore
 
         assert "extra_body" in run_options
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
@@ -336,7 +353,7 @@ async def test_azure_ai_client_prepare_options_with_application_endpoint(
             return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
         ),
     ):
-        run_options = await client._prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)  # type: ignore
 
     if expects_agent:
         assert "extra_body" in run_options
@@ -376,7 +393,7 @@ async def test_azure_ai_client_prepare_options_with_application_project_client(
             return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
         ),
     ):
-        run_options = await client._prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)  # type: ignore
 
     if expects_agent:
         assert "extra_body" in run_options
@@ -392,7 +409,7 @@ async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock)
     mock_openai_client = MagicMock()
     mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
 
-    await client._initialize_client()
+    await client._initialize_client()  # type: ignore
 
     assert client.client is mock_openai_client
     mock_project_client.get_openai_client.assert_called_once()
@@ -736,7 +753,7 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
             return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
         ),
     ):
-        run_options = await client._prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)  # type: ignore
 
         # response_format should be excluded from final run options
         assert "response_format" not in run_options
@@ -756,7 +773,7 @@ def test_get_conversation_id_with_store_true_and_conversation_id() -> None:
     mock_conversation.id = "conv_67890"
     mock_response.conversation = mock_conversation
 
-    result = client._get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)  # type: ignore
 
     assert result == "conv_67890"
 
@@ -770,7 +787,7 @@ def test_get_conversation_id_with_store_true_and_no_conversation() -> None:
     mock_response.id = "resp_12345"
     mock_response.conversation = None
 
-    result = client._get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)  # type: ignore
 
     assert result == "resp_12345"
 
@@ -786,7 +803,7 @@ def test_get_conversation_id_with_store_true_and_empty_conversation_id() -> None
     mock_conversation.id = ""
     mock_response.conversation = mock_conversation
 
-    result = client._get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)  # type: ignore
 
     assert result == "resp_12345"
 
@@ -802,7 +819,7 @@ def test_get_conversation_id_with_store_false() -> None:
     mock_conversation.id = "conv_67890"
     mock_response.conversation = mock_conversation
 
-    result = client._get_conversation_id(mock_response, store=False)
+    result = client._get_conversation_id(mock_response, store=False)  # type: ignore
 
     assert result is None
 
@@ -818,7 +835,7 @@ def test_get_conversation_id_with_parsed_response_and_store_true() -> None:
     mock_conversation.id = "conv_parsed_67890"
     mock_response.conversation = mock_conversation
 
-    result = client._get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)  # type: ignore
 
     assert result == "conv_parsed_67890"
 
@@ -832,7 +849,7 @@ def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     mock_response.id = "resp_parsed_12345"
     mock_response.conversation = None
 
-    result = client._get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)  # type: ignore
 
     assert result == "resp_parsed_12345"
 
@@ -922,3 +939,155 @@ async def test_azure_ai_chat_client_agent_with_tools() -> None:
         assert response.text is not None
         assert len(response.text) > 0
         assert any(word in response.text.lower() for word in ["sunny", "25"])
+
+
+@pytest.mark.asyncio
+async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> None:
+    """Test get_agent parameter handling."""
+    mock_project_client.agents = AsyncMock()
+
+    # Test with agent_reference
+    agent_reference = AgentReference(name="test-agent", version="1.0")
+    mock_agent_version = MagicMock(spec=AgentVersionObject)
+    mock_agent_version.name = "test-agent"
+    mock_agent_version.version = "1.0"
+    mock_agent_version.description = "Test Agent"
+    mock_agent_version.definition = PromptAgentDefinition(model="test-model")
+    mock_agent_version.definition.model = "gpt-4"
+    mock_agent_version.definition.instructions = "Test instructions"
+    mock_agent_version.definition.tools = []
+
+    mock_project_client.agents.get_version.return_value = mock_agent_version
+
+    agent = await get_agent(project_client=mock_project_client, agent_reference=agent_reference)
+
+    assert agent.name == "test-agent"
+    mock_project_client.agents.get_version.assert_called_with(agent_name="test-agent", agent_version="1.0")
+
+    # Test with agent_name
+    mock_agent_object = MagicMock()
+    mock_agent_object.versions = MagicMock()
+    mock_agent_object.versions.latest = mock_agent_version
+    mock_project_client.agents.get.return_value = mock_agent_object
+
+    agent = await get_agent(project_client=mock_project_client, agent_name="test-agent")
+
+    assert agent.name == "test-agent"
+    mock_project_client.agents.get.assert_called_with(agent_name="test-agent")
+
+    # Test with agent_object
+    agent = await get_agent(project_client=mock_project_client, agent_object=mock_agent_object)
+
+    assert agent.name == "test-agent"
+
+
+@pytest.mark.asyncio
+async def test_get_agent_missing_parameters(mock_project_client: MagicMock) -> None:
+    """Test get_agent missing parameters."""
+
+    with pytest.raises(ValueError, match="Either agent_reference or agent_name or agent_object must be provided"):
+        await get_agent(project_client=mock_project_client)
+
+
+@pytest.mark.asyncio
+async def test_get_agent_missing_tools(mock_project_client: MagicMock) -> None:
+    """Test get_agent missing tools."""
+    mock_project_client.agents = AsyncMock()
+
+    mock_agent_version = MagicMock(spec=AgentVersionObject)
+    mock_agent_version.name = "test-agent"
+    mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
+    mock_agent_version.definition.tools = [
+        FunctionTool(name="test_tool", parameters=[], strict=True, description="Test tool")
+    ]
+
+    mock_agent_object = MagicMock()
+    mock_agent_object.versions = MagicMock()
+    mock_agent_object.versions.latest = mock_agent_version
+
+    with pytest.raises(
+        ValueError, match="The following prompt agent definition required tools were not provided: test_tool"
+    ):
+        await get_agent(project_client=mock_project_client, agent_object=mock_agent_object)
+
+
+def test_parse_tools() -> None:
+    """Test _parse_tools."""
+    # Test MCP tool
+    mcp_tool = MCPTool(server_label="test_server", server_url="http://localhost:8080")
+    parsed_tools = _parse_tools([mcp_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedMCPTool)
+    assert parsed_tools[0].name == "test server"
+    assert str(parsed_tools[0].url).rstrip("/") == "http://localhost:8080"
+
+    # Test Code Interpreter tool
+    ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
+    parsed_tools = _parse_tools([ci_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedCodeInterpreterTool)
+    assert parsed_tools[0].inputs is not None
+    assert len(parsed_tools[0].inputs) == 1
+
+    tool_input = parsed_tools[0].inputs[0]
+
+    assert tool_input and isinstance(tool_input, HostedFileContent) and tool_input.file_id == "file-1"
+
+    # Test File Search tool
+    fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
+    parsed_tools = _parse_tools([fs_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedFileSearchTool)
+    assert parsed_tools[0].inputs is not None
+    assert len(parsed_tools[0].inputs) == 1
+
+    tool_input = parsed_tools[0].inputs[0]
+
+    assert tool_input and isinstance(tool_input, HostedVectorStoreContent) and tool_input.vector_store_id == "vs-1"
+    assert parsed_tools[0].max_results == 5
+
+    # Test Web Search tool
+    ws_tool = WebSearchPreviewTool(
+        user_location=ApproximateLocation(city="Seattle", country="US", region="WA", timezone="PST")
+    )
+    parsed_tools = _parse_tools([ws_tool])
+    assert len(parsed_tools) == 1
+    assert isinstance(parsed_tools[0], HostedWebSearchTool)
+    assert parsed_tools[0].additional_properties
+
+    user_location = parsed_tools[0].additional_properties["user_location"]
+
+    assert user_location["city"] == "Seattle"
+    assert user_location["country"] == "US"
+    assert user_location["region"] == "WA"
+    assert user_location["timezone"] == "PST"
+
+
+@pytest.mark.asyncio
+async def test_get_agent_success(mock_project_client: MagicMock) -> None:
+    """Test get_agent success path."""
+    mock_project_client.agents = AsyncMock()
+
+    mock_agent_version = MagicMock(spec=AgentVersionObject)
+    mock_agent_version.id = "agent-id"
+    mock_agent_version.name = "test-agent"
+    mock_agent_version.description = "Test Agent"
+    mock_agent_version.version = "1.0"
+    mock_agent_version.definition = MagicMock(spec=PromptAgentDefinition)
+    mock_agent_version.definition.model = "gpt-4"
+    mock_agent_version.definition.instructions = "Test instructions"
+    mock_agent_version.definition.temperature = 0.7
+    mock_agent_version.definition.top_p = 0.9
+
+    mock_project_client.agents.get_version.return_value = mock_agent_version
+
+    agent_reference = AgentReference(name="test-agent", version="1.0")
+    agent = await get_agent(project_client=mock_project_client, agent_reference=agent_reference)
+
+    assert agent.id == "agent-id"
+    assert agent.name == "test-agent"
+    assert agent.description == "Test Agent"
+    assert agent.chat_options.instructions == "Test instructions"
+    assert agent.chat_options.model_id == "gpt-4"
+    assert agent.chat_options.temperature == 0.7
+    assert agent.chat_options.top_p == 0.9
