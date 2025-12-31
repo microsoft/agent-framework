@@ -3,10 +3,10 @@
 The agent framework samples are designed to help you get started with building AI-powered agents
 from various providers.
 
-The Agent Framework supports building agents using various infererence and inference-style services.
+The Agent Framework supports building agents using various inference and inference-style services.
 All these are supported using the single `ChatClientAgent` class.
 
-The Agent Framework also supports creating proxy agents, that allow accessing remote agents as if they
+The Agent Framework also supports creating proxy agents, which allow accessing remote agents as if they
 were local agents. These are supported using various `AIAgent` subclasses.
 
 ## Sample Categories
