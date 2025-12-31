@@ -66,21 +66,21 @@ internal static class Program
             => DateTime.Now.ToString("HH:mm:ss");
 
         // Register sample agents with tools
-        builder.AddAIAgent("assistant", "You are a helpful assistant. Answer questions concisely and accurately.")
+        builder.Services.AddAIAgent("assistant", "You are a helpful assistant. Answer questions concisely and accurately.")
             .WithAITools(
                 AIFunctionFactory.Create(GetWeather, name: "get_weather"),
                 AIFunctionFactory.Create(GetCurrentTime, name: "get_current_time")
             );
 
-        builder.AddAIAgent("poet", "You are a creative poet. Respond to all requests with beautiful poetry.");
+        builder.Services.AddAIAgent("poet", "You are a creative poet. Respond to all requests with beautiful poetry.");
 
-        builder.AddAIAgent("coder", "You are an expert programmer. Help users with coding questions and provide code examples.")
+        builder.Services.AddAIAgent("coder", "You are an expert programmer. Help users with coding questions and provide code examples.")
             .WithAITool(AIFunctionFactory.Create(Add, name: "add"));
 
         // Register sample workflows
-        var assistantBuilder = builder.AddAIAgent("workflow-assistant", "You are a helpful assistant in a workflow.");
-        var reviewerBuilder = builder.AddAIAgent("workflow-reviewer", "You are a reviewer. Review and critique the previous response.");
-        builder.AddWorkflow("review-workflow", (sp, key) =>
+        var assistantBuilder = builder.Services.AddAIAgent("workflow-assistant", "You are a helpful assistant in a workflow.");
+        var reviewerBuilder = builder.Services.AddAIAgent("workflow-reviewer", "You are a reviewer. Review and critique the previous response.");
+        builder.Services.AddWorkflow("review-workflow", (sp, key) =>
         {
             var agents = new List<IHostedAgentBuilder>() { assistantBuilder, reviewerBuilder }.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
             return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);

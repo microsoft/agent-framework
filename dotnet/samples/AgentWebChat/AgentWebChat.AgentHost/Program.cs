@@ -29,7 +29,7 @@ builder.AddDevUI();
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
-var pirateAgentBuilder = builder.AddAIAgent(
+var pirateAgentBuilder = builder.Services.AddAIAgent(
     "pirate",
     instructions: "You are a pirate. Speak like a pirate",
     description: "An agent that speaks like a pirate.",
@@ -38,7 +38,7 @@ var pirateAgentBuilder = builder.AddAIAgent(
     .WithAITool(new CustomFunctionTool())
     .WithInMemoryThreadStore();
 
-var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
+var knightsKnavesAgentBuilder = builder.Services.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
     var chatClient = sp.GetRequiredKeyedService<IChatClient>("chat-model");
 
@@ -74,36 +74,36 @@ var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, ke
 });
 
 // Workflow consisting of multiple specialized agents
-var chemistryAgent = builder.AddAIAgent("chemist",
+var chemistryAgent = builder.Services.AddAIAgent("chemist",
     instructions: "You are a chemistry expert. Answer thinking from the chemistry perspective",
     description: "An agent that helps with chemistry.",
     chatClientServiceKey: "chat-model");
 
-var mathsAgent = builder.AddAIAgent("mathematician",
+var mathsAgent = builder.Services.AddAIAgent("mathematician",
     instructions: "You are a mathematics expert. Answer thinking from the maths perspective",
     description: "An agent that helps with mathematics.",
     chatClientServiceKey: "chat-model");
 
-var literatureAgent = builder.AddAIAgent("literator",
+var literatureAgent = builder.Services.AddAIAgent("literator",
     instructions: "You are a literature expert. Answer thinking from the literature perspective",
     description: "An agent that helps with literature.",
     chatClientServiceKey: "chat-model");
 
-var scienceSequentialWorkflow = builder.AddWorkflow("science-sequential-workflow", (sp, key) =>
+var scienceSequentialWorkflow = builder.Services.AddWorkflow("science-sequential-workflow", (sp, key) =>
 {
     List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
     var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
     return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
 }).AddAsAIAgent();
 
-var scienceConcurrentWorkflow = builder.AddWorkflow("science-concurrent-workflow", (sp, key) =>
+var scienceConcurrentWorkflow = builder.Services.AddWorkflow("science-concurrent-workflow", (sp, key) =>
 {
     List<IHostedAgentBuilder> usedAgents = [chemistryAgent, mathsAgent, literatureAgent];
     var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
     return AgentWorkflowBuilder.BuildConcurrent(workflowName: key, agents: agents);
 }).AddAsAIAgent();
 
-builder.AddWorkflow("nonAgentWorkflow", (sp, key) =>
+builder.Services.AddWorkflow("nonAgentWorkflow", (sp, key) =>
 {
     List<IHostedAgentBuilder> usedAgents = [pirateAgentBuilder, chemistryAgent];
     var agents = usedAgents.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));

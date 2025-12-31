@@ -101,7 +101,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.SimpleMockChatClient(responseText);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIConversations();
         builder.AddOpenAIResponses();
 
@@ -129,7 +129,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.StatefulMockChatClient(responseTexts);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIConversations();
         builder.AddOpenAIResponses();
 
@@ -158,7 +158,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
 
         IChatClient mockChatClient = new TestHelpers.ToolCallMockChatClient(functionName, arguments);
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
         builder.AddOpenAIConversations();
         builder.AddOpenAIResponses();
 

@@ -344,7 +344,7 @@ public sealed class OpenAIHttpApiIntegrationTests : IAsyncDisposable
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
 
         // Add agent
-        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+        builder.Services.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
 
         // Add in-memory storage for conversations, responses, and agent index
         builder.AddOpenAIConversations();
