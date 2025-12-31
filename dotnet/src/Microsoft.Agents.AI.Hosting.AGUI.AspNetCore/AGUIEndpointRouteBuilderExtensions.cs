@@ -43,7 +43,11 @@ public static class AGUIEndpointRouteBuilderExtensions
             var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
 
-            var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
+            // Normalize assistant/tool ordering before we map to ChatMessage
+            var aguiMessages = input.Messages?.ToList() ?? new List<AGUIMessage>();
+            FixToolMessageOrdering(aguiMessages);
+
+            var messages = aguiMessages.AsChatMessages(jsonSerializerOptions);
             var clientTools = input.Tools?.AsAITools().ToList();
 
             // Create run options with AG-UI context in AdditionalProperties
@@ -79,5 +83,103 @@ public static class AGUIEndpointRouteBuilderExtensions
             var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
             return new AGUIServerSentEventsResult(events, sseLogger);
         });
+    }
+
+    /// <summary>
+    /// Ensures that tool result messages appear immediately after their corresponding assistant messages
+    /// that contain matching tool call IDs. Any unmatched tool messages are appended at the end.
+    /// </summary>
+    /// <param name="messages">The AG-UI messages to reorder in-place.</param>
+    internal static void FixToolMessageOrdering(List<AGUIMessage> messages)
+    {
+        if (messages == null || messages.Count == 0)
+        {
+            return;
+        }
+
+        // Collect all tool messages by ToolCallId
+        var toolsByCallId = new Dictionary<string, Queue<AGUIToolMessage>>();
+        var toolsWithoutCallId = new List<AGUIToolMessage>();
+
+        foreach (var msg in messages)
+        {
+            if (msg is AGUIToolMessage toolMsg)
+            {
+                if (!string.IsNullOrWhiteSpace(toolMsg.ToolCallId))
+                {
+                    if (!toolsByCallId.TryGetValue(toolMsg.ToolCallId, out var queue))
+                    {
+                        queue = new Queue<AGUIToolMessage>();
+                        toolsByCallId[toolMsg.ToolCallId] = queue;
+                    }
+
+                    queue.Enqueue(toolMsg);
+                }
+                else
+                {
+                    toolsWithoutCallId.Add(toolMsg);
+                }
+            }
+        }
+
+        var reordered = new List<AGUIMessage>(messages.Count);
+
+        foreach (var msg in messages)
+        {
+            // Reinsert tool messages next to their assistant, so skip them in this pass.
+            if (msg is AGUIToolMessage)
+            {
+                continue;
+            }
+
+            reordered.Add(msg);
+
+            if (msg is AGUIAssistantMessage assistant &&
+                assistant.ToolCalls is { Length: > 0 })
+            {
+                // For each tool call in this assistant message, append
+                // the corresponding tool result message(s) immediately after.
+                foreach (var toolCall in assistant.ToolCalls)
+                {
+                    if (toolCall?.Id is null)
+                    {
+                        continue;
+                    }
+
+                    if (toolsByCallId.TryGetValue(toolCall.Id, out var queue))
+                    {
+                        while (queue.Count > 0)
+                        {
+                            var toolMsg = queue.Dequeue();
+                            reordered.Add(toolMsg);
+                        }
+
+                        toolsByCallId.Remove(toolCall.Id);
+                    }
+                }
+            }
+        }
+
+        // Any remaining tool messages (without matching assistant toolCalls)
+        // are appended at the end so nothing is lost.
+        foreach (var remainingQueue in toolsByCallId.Values)
+        {
+            while (remainingQueue.Count > 0)
+            {
+                reordered.Add(remainingQueue.Dequeue());
+            }
+        }
+
+        foreach (var toolMsg in toolsWithoutCallId)
+        {
+            reordered.Add(toolMsg);
+        }
+
+        // Replace the original list contents
+        messages.Clear();
+        foreach (var msg in reordered)
+        {
+            messages.Add(msg);
+        }
     }
 }
