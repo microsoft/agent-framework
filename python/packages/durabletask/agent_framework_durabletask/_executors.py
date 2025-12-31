@@ -42,7 +42,7 @@ class DurableAgentTask(CompositeTask[AgentRunResponse]):
 
     def __init__(
         self,
-        entity_task: Task[AgentRunResponse],
+        entity_task: Task[Any],
         response_format: type[BaseModel] | None,
         correlation_id: str,
     ):
@@ -139,7 +139,7 @@ class DurableAgentExecutor(ABC, Generic[TaskT]):
         agent_name: str,
         thread: AgentThread | None = None,
     ) -> AgentSessionId:
-        """Resolve or create the AgentSessionId for the execution."""
+        """Create the AgentSessionId for the execution."""
         if isinstance(thread, DurableAgentThread) and thread.session_id is not None:
             return thread.session_id
         # Create new session ID - either no thread provided or it's a regular AgentThread
@@ -402,6 +402,25 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         self._context = context
         logger.debug("[OrchestrationAgentExecutor] Initialized")
 
+    def get_run_request(
+        self,
+        message: str,
+        response_format: type[BaseModel] | None,
+        enable_tool_calls: bool,
+    ) -> RunRequest:
+        """Get the current run request from the orchestration context.
+
+        Returns:
+            RunRequest: The current run request
+        """
+        request = super().get_run_request(
+            message,
+            response_format,
+            enable_tool_calls,
+        )
+        request.orchestration_id = self._context.instance_id
+        return request
+
     def run_durable_agent(
         self,
         agent_name: str,
@@ -410,7 +429,39 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
     ) -> DurableAgentTask:
         """Execute the agent via orchestration context.
 
-        Note: Implementation should call the entity (e.g., context.call_entity)
-        and return the native Task for yielding. Placeholder until wired.
+        Calls the agent entity and returns a DurableAgentTask that can be yielded
+        in orchestrations to wait for the entity's response.
+
+        Args:
+            agent_name: Name of the agent to execute
+            run_request: The run request containing message and optional response format
+            thread: Optional conversation thread (creates new if not provided)
+
+        Returns:
+            DurableAgentTask: A task wrapping the entity call that yields AgentRunResponse
         """
-        raise NotImplementedError("OrchestrationAgentProvider.run_durable_agent is not yet implemented")
+        # Resolve session
+        session_id = self._create_session_id(agent_name, thread)
+
+        # Create the entity ID
+        entity_id = EntityInstanceId(
+            entity=session_id.entity_name,
+            key=session_id.key,
+        )
+
+        logger.debug(
+            "[OrchestrationAgentExecutor] correlation_id: %s entity_id: %s session_id: %s",
+            run_request.correlation_id,
+            entity_id,
+            session_id,
+        )
+
+        # Call the entity and get the underlying task
+        entity_task: Task[Any] = self._context.call_entity(entity_id, "run", run_request.to_dict())
+
+        # Wrap in DurableAgentTask for response transformation
+        return DurableAgentTask(
+            entity_task=entity_task,
+            response_format=run_request.response_format,
+            correlation_id=run_request.correlation_id,
+        )

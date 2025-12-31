@@ -1,0 +1,9 @@
+# Agent Framework packages
+agent-framework-azure
+agent-framework-durabletask
+
+# Durable Task Python SDK with Azure Managed support
+durabletask-python
+
+# Azure authentication
+azure-identity

@@ -22,8 +22,7 @@ class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
     """Client wrapper for interacting with durable agents externally.
 
     This class wraps a durabletask TaskHubGrpcClient and provides a convenient
-    interface for retrieving and executing durable agents from external contexts
-    (e.g., FastAPI endpoints, CLI tools, etc.).
+    interface for retrieving and executing durable agents from external contexts.
 
     Example:
         ```python
@@ -87,8 +86,5 @@ class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
             the execution will fail with an appropriate error.
         """
         logger.debug("[DurableAIAgentClient] Creating agent proxy for: %s", agent_name)
-
-        # Note: Validation would require async, so we defer it to execution time
-        # The entity name will be f"dafx-{agent_name}"
 
         return DurableAIAgent(self._executor, agent_name)

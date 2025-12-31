@@ -54,7 +54,8 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
 
     This class implements AgentProtocol but with one critical difference:
     - AgentProtocol.run() returns a Coroutine (async, must await)
-    - DurableAIAgent.run() returns TaskT (sync Task object, must yield)
+    - DurableAIAgent.run() returns TaskT (sync Task object - must yield
+        or the AgentRunResponse directly in the case of TaskHubGrpcClient)
 
     This represents fundamentally different execution models but maintains the same
     interface contract for all other properties and methods.
@@ -63,13 +64,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
     and what type of Task object is returned.
 
     Type Parameters:
-        TaskT: The task type returned by this agent (e.g., DurableAgentTask, AgentTask)
-
-    Note:
-        This class intentionally does NOT inherit from BaseAgent because:
-        - BaseAgent assumes async/await patterns
-        - Orchestration contexts require yield patterns
-        - BaseAgent methods like as_tool() would fail in orchestrations
+        TaskT: The task type returned by this agent (e.g., AgentRunResponse, DurableAgentTask, AgentTask)
     """
 
     def __init__(self, executor: DurableAgentExecutor[TaskT], name: str, *, agent_id: str | None = None):
@@ -125,7 +120,7 @@ class DurableAIAgent(AgentProtocol, Generic[TaskT]):
             instead of async/await patterns.
 
         Returns:
-            TaskT: The task type specific to the executor (e.g., DurableAgentTask or AgentTask)
+            TaskT: The task type specific to the executor
         """
         message_str = self._normalize_messages(messages)
 

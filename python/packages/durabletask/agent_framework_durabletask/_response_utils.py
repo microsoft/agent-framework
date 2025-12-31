@@ -1,10 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Shared utilities for handling AgentRunResponse parsing and validation.
-
-These utilities are used by both DurableAgentTask and AzureFunctions AgentTask
-to ensure consistent response handling across different durable task implementations.
-"""
+"""Shared utilities for handling AgentRunResponse parsing and validation."""
 
 from typing import Any
 
