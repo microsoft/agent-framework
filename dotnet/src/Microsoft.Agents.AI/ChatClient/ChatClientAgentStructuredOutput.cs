@@ -154,7 +154,10 @@ public sealed partial class ChatClientAgent
 
         static ChatClientAgentRunResponse<T> CreateResponse(ChatResponse<T> chatResponse)
         {
-            return new ChatClientAgentRunResponse<T>(chatResponse);
+            return new ChatClientAgentRunResponse<T>(chatResponse)
+            {
+                ContinuationToken = WrapContinuationToken(chatResponse.ContinuationToken)
+            };
         }
 
         return this.RunCoreAsync(GetResponseAsync, CreateResponse, messages, thread, options, cancellationToken);
