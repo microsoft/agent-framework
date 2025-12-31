@@ -63,7 +63,7 @@ def test_concurrent_builder_rejects_duplicate_executors_from_factories() -> None
         return _FakeAgentExec("dup", "B")  # same executor id
 
     builder = ConcurrentBuilder().register_participants([create_dup1, create_dup2])
-    with pytest.raises(ValueError, match="Executor with ID 'dup' has already been created."):
+    with pytest.raises(ValueError, match="Duplicate executor ID 'dup' detected in workflow."):
         builder.build()
 
 

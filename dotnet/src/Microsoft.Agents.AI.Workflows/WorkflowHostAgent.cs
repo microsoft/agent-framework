@@ -79,8 +79,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         return workflowThread;
     }
 
-    public override async
-    Task<AgentRunResponse> RunAsync(
+    protected override async
+    Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -101,8 +101,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         return merger.ComputeMerged(workflowThread.LastResponseId!, this.Id, this.Name);
     }
 
-    public override async
-    IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async
+    IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

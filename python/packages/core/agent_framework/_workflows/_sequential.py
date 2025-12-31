@@ -4,7 +4,8 @@
 
 This module provides a high-level, agent-focused API to assemble a sequential
 workflow where:
-- Participants are a sequence of AgentProtocol instances or Executors
+- Participants can be provided as AgentProtocol or Executor instances via `.participants()`,
+  or as factories returning AgentProtocol or Executor via `.register_participants()`
 - A shared conversation context (list[ChatMessage]) is passed along the chain
 - Agents append their assistant messages to the context
 - Custom executors can transform or summarize and return a refined context
@@ -15,7 +16,7 @@ Typical wiring:
 
 Notes:
 - Participants can mix AgentProtocol and Executor objects
-- Agents are auto-wrapped by WorkflowBuilder as AgentExecutor
+- Agents are auto-wrapped by WorkflowBuilder as AgentExecutor (unless already wrapped)
 - AgentExecutor produces AgentExecutorResponse; _ResponseToConversation converts this to list[ChatMessage]
 - Non-agent executors must define a handler that consumes `list[ChatMessage]` and sends back
   the updated `list[ChatMessage]` via their workflow context
@@ -153,6 +154,9 @@ class SequentialBuilder:
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
 
+        if self._participant_factories:
+            raise ValueError("register_participants() has already been called on this builder instance.")
+
         if not participant_factories:
             raise ValueError("participant_factories cannot be empty")
 
@@ -169,6 +173,9 @@ class SequentialBuilder:
             raise ValueError(
                 "Cannot mix .participants([...]) and .register_participants() in the same builder instance."
             )
+
+        if self._participants:
+            raise ValueError("participants() has already been called on this builder instance.")
 
         if not participants:
             raise ValueError("participants cannot be empty")
@@ -252,7 +259,7 @@ class SequentialBuilder:
         if not self._participants and not self._participant_factories:
             raise ValueError(
                 "No participants or participant factories provided to the builder. "
-                "Use .participants([...]) or .ss([...])."
+                "Use .participants([...]) or .register_participants([...])."
             )
 
         if self._participants and self._participant_factories:
@@ -273,6 +280,8 @@ class SequentialBuilder:
 
         participants: list[Executor | AgentProtocol] = []
         if self._participant_factories:
+            # Resolve the participant factories now. This doesn't break the factory pattern
+            # since the Sequential builder still creates new instances per workflow build.
             for factory in self._participant_factories:
                 p = factory()
                 participants.append(p)
