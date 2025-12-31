@@ -62,7 +62,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 
 # 3. Activities encapsulate external work for review notifications and publishing.
 @app.activity_trigger(input_name="content")
-def notify_user_for_approval(content: dict[str, Any]) -> None:
+def notify_user_for_approval(content: Any) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("NOTIFICATION: Please review the following content for approval:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -71,7 +71,7 @@ def notify_user_for_approval(content: dict[str, Any]) -> None:
 
 
 @app.activity_trigger(input_name="content")
-def publish_content(content: dict[str, Any]) -> None:
+def publish_content(content: Any) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("PUBLISHING: Content has been published successfully:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -285,6 +285,14 @@ async def get_orchestration_status(
         show_history_output=False,
         show_input=True,
     )
+
+    # Check if status is None or if the instance doesn't exist (runtime_status is None)
+    if getattr(status, "runtime_status", None) is None:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Instance not found."}),
+            status_code=404,
+            mimetype="application/json",
+        )
 
     response_data: dict[str, Any] = {
         "instanceId": getattr(status, "instance_id", None),
