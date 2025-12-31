@@ -144,10 +144,12 @@ public class InProcessExecutionTests
 
         public override string Name { get; }
 
-        public override AgentThread GetNewThread() => new SimpleTestAgentThread();
+        public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null) => new SimpleTestAgentThread();
 
-        public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) => new SimpleTestAgentThread();
+        public override AgentThread DeserializeThread(
+            System.Text.Json.JsonElement serializedThread,
+            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null,
+            IAgentFeatureCollection? featureCollection = null) => new SimpleTestAgentThread();
 
         protected override Task<AgentRunResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,

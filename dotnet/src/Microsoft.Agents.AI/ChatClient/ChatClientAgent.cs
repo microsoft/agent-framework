@@ -272,7 +272,7 @@ public sealed partial class ChatClientAgent : AIAgent
         this.UpdateThreadWithTypeAndConversationId(safeThread, chatResponse.ConversationId);
 
         // To avoid inconsistent state we only notify the thread of the input messages if no error occurs after the initial request.
-        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), options, cancellationToken).ConfigureAwait(false);
 
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, aiContextProviderMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
@@ -288,11 +288,20 @@ public sealed partial class ChatClientAgent : AIAgent
         : this.ChatClient.GetService(serviceType, serviceKey));
 
     /// <inheritdoc/>
-    public override AgentThread GetNewThread()
+    public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
         => new ChatClientAgentThread
         {
-            MessageStore = this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null }),
-            AIContextProvider = this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, JsonSerializerOptions = null })
+            ConversationId = featureCollection?.TryGet<ConversationIdAgentFeature>(out var conversationIdAgentFeature) is true
+                ? conversationIdAgentFeature.ConversationId
+                : null,
+            MessageStore =
+                featureCollection?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true
+                ? chatMessageStoreFeature
+                : this._agentOptions?.ChatMessageStoreFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null }),
+            AIContextProvider =
+                featureCollection?.TryGet<AIContextProvider>(out var aIContextProviderFeature) is true
+                ? aIContextProviderFeature
+                : this._agentOptions?.AIContextProviderFactory?.Invoke(new() { SerializedState = default, Features = featureCollection, JsonSerializerOptions = null })
         };
 
     /// <summary>
@@ -348,15 +357,21 @@ public sealed partial class ChatClientAgent : AIAgent
         };
 
     /// <inheritdoc/>
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
     {
-        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory = this._agentOptions?.ChatMessageStoreFactory is null ?
-            null :
-            (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
+        Func<JsonElement, JsonSerializerOptions?, ChatMessageStore>? chatMessageStoreFactory =
+            featureCollection?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true
+                ? (jse, jso) => chatMessageStoreFeature
+                : this._agentOptions?.ChatMessageStoreFactory is not null
+                    ? (jse, jso) => this._agentOptions.ChatMessageStoreFactory.Invoke(new() { SerializedState = jse, Features = featureCollection, JsonSerializerOptions = jso })
+                    : null;
 
-        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory = this._agentOptions?.AIContextProviderFactory is null ?
-            null :
-            (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, JsonSerializerOptions = jso });
+        Func<JsonElement, JsonSerializerOptions?, AIContextProvider>? aiContextProviderFactory =
+            featureCollection?.TryGet<AIContextProvider>(out var aiContextProviderFeature) is true
+                ? (jse, jso) => aiContextProviderFeature
+                : this._agentOptions?.AIContextProviderFactory is not null
+                    ? (jse, jso) => this._agentOptions.AIContextProviderFactory.Invoke(new() { SerializedState = jse, Features = featureCollection, JsonSerializerOptions = jso })
+                    : null;
 
         return new ChatClientAgentThread(
             serializedThread,
@@ -415,7 +430,7 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         // Only notify the thread of new messages if the chatResponse was successful to avoid inconsistent message state in the thread.
-        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), cancellationToken).ConfigureAwait(false);
+        await NotifyMessageStoreOfNewMessagesAsync(safeThread, inputMessages.Concat(aiContextProviderMessages ?? []).Concat(chatResponse.Messages), options, cancellationToken).ConfigureAwait(false);
 
         // Notify the AIContextProvider of all new messages.
         await NotifyAIContextProviderOfSuccessAsync(safeThread, inputMessages, aiContextProviderMessages, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
@@ -641,10 +656,19 @@ public sealed partial class ChatClientAgent : AIAgent
         // Populate the thread messages only if we are not continuing an existing response as it's not allowed
         if (chatOptions?.ContinuationToken is null)
         {
-            // Add any existing messages from the thread to the messages to be sent to the chat client.
-            if (typedThread.MessageStore is not null)
+            var messageStore = typedThread.MessageStore;
+
+            // If the caller provided an override message store via run options, we should use that instead of the message store
+            // on the thread.
+            if (runOptions?.Features?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true)
             {
-                inputMessagesForChatClient.AddRange(await typedThread.MessageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
+                messageStore = chatMessageStoreFeature;
+            }
+
+            // Add any existing messages from the thread to the messages to be sent to the chat client.
+            if (messageStore is not null)
+            {
+                inputMessagesForChatClient.AddRange(await messageStore.GetMessagesAsync(cancellationToken).ConfigureAwait(false));
             }
 
             // If we have an AIContextProvider, we should get context from it, and update our
@@ -725,9 +749,16 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    private static Task NotifyMessageStoreOfNewMessagesAsync(ChatClientAgentThread thread, IEnumerable<ChatMessage> newMessages, CancellationToken cancellationToken)
+    private static Task NotifyMessageStoreOfNewMessagesAsync(ChatClientAgentThread thread, IEnumerable<ChatMessage> newMessages, AgentRunOptions? runOptions, CancellationToken cancellationToken)
     {
         var messageStore = thread.MessageStore;
+
+        // If the caller provided an override message store via run options, we should use that instead of the message store
+        // on the thread.
+        if (runOptions?.Features?.TryGet<ChatMessageStore>(out var chatMessageStoreFeature) is true)
+        {
+            messageStore = chatMessageStoreFeature;
+        }
 
         // Only notify the message store if we have one.
         // If we don't have one, it means that the chat history is service managed and the underlying service is responsible for storing messages.

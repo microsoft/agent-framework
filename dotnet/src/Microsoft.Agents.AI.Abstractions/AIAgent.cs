@@ -105,6 +105,7 @@ public abstract class AIAgent
     /// <summary>
     /// Creates a new conversation thread that is compatible with this agent.
     /// </summary>
+    /// <param name="featureCollection">An optional feature collection to override or provide additional context or capabilities to the thread where the thread supports these features.</param>
     /// <returns>A new <see cref="AgentThread"/> instance ready for use with this agent.</returns>
     /// <remarks>
     /// <para>
@@ -118,13 +119,14 @@ public abstract class AIAgent
     /// may be deferred until first use to optimize performance.
     /// </para>
     /// </remarks>
-    public abstract AgentThread GetNewThread();
+    public abstract AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null);
 
     /// <summary>
     /// Deserializes an agent thread from its JSON serialized representation.
     /// </summary>
     /// <param name="serializedThread">A <see cref="JsonElement"/> containing the serialized thread state.</param>
     /// <param name="jsonSerializerOptions">Optional settings to customize the deserialization process.</param>
+    /// <param name="featureCollection">An optional feature collection to override or provide additional context or capabilities to the thread where the thread supports these features.</param>
     /// <returns>A restored <see cref="AgentThread"/> instance with the state from <paramref name="serializedThread"/>.</returns>
     /// <exception cref="ArgumentException">The <paramref name="serializedThread"/> is not in the expected format.</exception>
     /// <exception cref="JsonException">The serialized data is invalid or cannot be deserialized.</exception>
@@ -133,7 +135,7 @@ public abstract class AIAgent
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
     /// </remarks>
-    public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null);
+    public abstract AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.

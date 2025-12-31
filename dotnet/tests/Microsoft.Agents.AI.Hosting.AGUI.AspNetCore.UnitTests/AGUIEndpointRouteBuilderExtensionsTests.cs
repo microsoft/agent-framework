@@ -425,9 +425,9 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Agent that produces multiple text chunks";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null) => new TestInMemoryAgentThread();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null) =>
             new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
 
         protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -514,9 +514,9 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
 
         public override string? Description => "Test agent";
 
-        public override AgentThread GetNewThread() => new TestInMemoryAgentThread();
+        public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null) => new TestInMemoryAgentThread();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null) =>
             new TestInMemoryAgentThread(serializedThread, jsonSerializerOptions);
 
         protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

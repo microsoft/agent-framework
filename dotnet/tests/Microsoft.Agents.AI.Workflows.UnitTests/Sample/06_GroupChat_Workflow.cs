@@ -60,10 +60,10 @@ internal sealed class HelloAgent(string id = nameof(HelloAgent)) : AIAgent
     protected override string? IdCore => id;
     public override string? Name => id;
 
-    public override AgentThread GetNewThread()
+    public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
         => new HelloAgentThread();
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
         => new HelloAgentThread();
 
     protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -35,7 +36,12 @@ public class DelegatingAIAgentTests
         this._innerAgentMock.Protected().SetupGet<string>("IdCore").Returns("test-agent-id");
         this._innerAgentMock.Setup(x => x.Name).Returns("Test Agent");
         this._innerAgentMock.Setup(x => x.Description).Returns("Test Description");
-        this._innerAgentMock.Setup(x => x.GetNewThread()).Returns(this._testThread);
+        this._innerAgentMock.Setup(x => x.GetNewThread(It.IsAny<IAgentFeatureCollection?>())).Returns(this._testThread);
+        this._innerAgentMock.Setup(x => x.DeserializeThread(
+            It.IsAny<JsonElement>(),
+            It.IsAny<JsonSerializerOptions?>(),
+            It.IsAny<IAgentFeatureCollection?>()))
+            .Returns(this._testThread);
 
         this._innerAgentMock
             .Protected()
@@ -138,11 +144,29 @@ public class DelegatingAIAgentTests
     public void GetNewThread_DelegatesToInnerAgent()
     {
         // Act
-        var thread = this._delegatingAgent.GetNewThread();
+        var featureCollection = new AgentFeatureCollection();
+        var thread = this._delegatingAgent.GetNewThread(featureCollection);
 
         // Assert
         Assert.Same(this._testThread, thread);
-        this._innerAgentMock.Verify(x => x.GetNewThread(), Times.Once);
+        this._innerAgentMock.Verify(x => x.GetNewThread(featureCollection), Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that DeserializeThread delegates to inner agent.
+    /// </summary>
+    [Fact]
+    public void DeserializeThread_DelegatesToInnerAgent()
+    {
+        // Act
+        var featureCollection = new AgentFeatureCollection();
+        var jsonElement = new JsonElement();
+        var jso = new JsonSerializerOptions();
+        var thread = this._delegatingAgent.DeserializeThread(jsonElement, jso, featureCollection);
+
+        // Assert
+        Assert.Same(this._testThread, thread);
+        this._innerAgentMock.Verify(x => x.DeserializeThread(jsonElement, jso, featureCollection), Times.Once);
     }
 
     /// <summary>

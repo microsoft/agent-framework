@@ -24,10 +24,10 @@ internal sealed class TestAIAgent : AIAgent
 
     public override string? Description => this.DescriptionFunc?.Invoke() ?? base.Description;
 
-    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null) =>
+    public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null) =>
         this.DeserializeThreadFunc(serializedThread, jsonSerializerOptions);
 
-    public override AgentThread GetNewThread() =>
+    public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null) =>
         this.GetNewThreadFunc();
 
     protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>

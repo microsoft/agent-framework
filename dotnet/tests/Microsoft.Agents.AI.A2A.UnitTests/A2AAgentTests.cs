@@ -71,6 +71,24 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public void GetNewThread_WithStringFeature_UsesItForContextId()
+    {
+        // Arrange
+        var contextIdFeature = new ConversationIdAgentFeature("feature-context-id");
+        var agentWithFeature = new A2AAgent(this._a2aClient);
+
+        // Act
+        var features = new AgentFeatureCollection();
+        features.Set(contextIdFeature);
+        var thread = agentWithFeature.GetNewThread(features);
+
+        // Assert
+        Assert.IsType<A2AAgentThread>(thread);
+        var a2aThread = (A2AAgentThread)thread;
+        Assert.Equal(contextIdFeature.ConversationId, a2aThread.ContextId);
+    }
+
+    [Fact]
     public async Task RunAsync_AllowsNonUserRoleMessagesAsync()
     {
         // Arrange

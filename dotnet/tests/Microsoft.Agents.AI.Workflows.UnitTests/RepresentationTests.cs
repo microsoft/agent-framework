@@ -24,10 +24,10 @@ public class RepresentationTests
 
     private sealed class TestAgent : AIAgent
     {
-        public override AgentThread GetNewThread()
+        public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
             => throw new NotImplementedException();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
             => throw new NotImplementedException();
 
         protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>

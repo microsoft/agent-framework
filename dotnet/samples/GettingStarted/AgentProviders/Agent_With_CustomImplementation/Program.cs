@@ -28,10 +28,10 @@ namespace SampleApp
     {
         public override string? Name => "UpperCaseParrotAgent";
 
-        public override AgentThread GetNewThread()
+        public override AgentThread GetNewThread(IAgentFeatureCollection? featureCollection = null)
             => new CustomAgentThread();
 
-        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, IAgentFeatureCollection? featureCollection = null)
             => new CustomAgentThread(serializedThread, jsonSerializerOptions);
 
         protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)

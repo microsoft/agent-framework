@@ -23,7 +23,8 @@ public class AgentRunOptionsTests
             {
                 ["key1"] = "value1",
                 ["key2"] = 42
-            }
+            },
+            Features = new AgentFeatureCollection()
         };
 
         // Act
@@ -37,6 +38,7 @@ public class AgentRunOptionsTests
         Assert.NotSame(options.AdditionalProperties, clone.AdditionalProperties);
         Assert.Equal("value1", clone.AdditionalProperties["key1"]);
         Assert.Equal(42, clone.AdditionalProperties["key2"]);
+        Assert.Same(options.Features, clone.Features);
     }
 
     [Fact]
