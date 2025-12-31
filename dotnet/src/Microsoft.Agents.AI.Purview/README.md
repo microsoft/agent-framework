@@ -47,9 +47,9 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetOpenAIResponseClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
@@ -182,9 +182,9 @@ var settings = new PurviewSettings("My Sample App")
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ``` csharp
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent("You are a helpful assistant.")
     .AsBuilder()
@@ -195,9 +195,9 @@ AIAgent agent = new AzureOpenAIClient(
 Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
 
 ``` csharp
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetOpenAIResponseClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()

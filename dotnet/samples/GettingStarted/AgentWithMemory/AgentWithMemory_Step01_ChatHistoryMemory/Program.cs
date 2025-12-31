@@ -3,12 +3,13 @@
 // This sample shows how to create and use a simple AI agent that stores chat messages in a vector store using the ChatHistoryMemoryProvider.
 // It can then use the chat history from prior conversations to inform responses in new conversations.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
 using Microsoft.SemanticKernel.Connectors.InMemory;
+using OpenAI;
 using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -20,15 +21,17 @@ var embeddingDeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_E
 // Replace this with a vector store implementation of your choice that can persist the chat history long term.
 VectorStore vectorStore = new InMemoryVectorStore(new InMemoryVectorStoreOptions()
 {
-    EmbeddingGenerator = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
+    EmbeddingGenerator = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
         .GetEmbeddingClient(embeddingDeploymentName)
         .AsIEmbeddingGenerator()
 });
 
 // Create the agent and add the ChatHistoryMemoryProvider to store chat messages in the vector store.
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
     .GetChatClient(deploymentName)
     .CreateAIAgent(new ChatClientAgentOptions
     {

@@ -1,15 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 namespace WriterCriticWorkflow;
 
@@ -50,7 +51,10 @@ public static class Program
         // Set up the Azure OpenAI client
         string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        IChatClient chatClient = new OpenAIClient(
+            new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+            new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
+            .GetChatClient(deploymentName).AsIChatClient();
 
         // Create executors for content creation and review
         WriterExecutor writer = new(chatClient);

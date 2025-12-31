@@ -4,7 +4,7 @@
 // The agent can then be consumed from various M365 channels.
 // See the README.md for more information.
 
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using M365Agent;
 using M365Agent.Agents;
@@ -36,9 +36,9 @@ if (builder.Configuration.GetSection("AIServices").GetValue<bool>("UseAzureOpenA
     var deploymentName = builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("DeploymentName")!;
     var endpoint = builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("Endpoint")!;
 
-    chatClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        new AzureCliCredential())
+    chatClient = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions() { Endpoint = new Uri($"{endpoint}/openai/v1") })
          .GetChatClient(deploymentName)
          .AsIChatClient();
 }
