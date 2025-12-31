@@ -78,11 +78,11 @@ public class ChatMessageStoreTests
 
     private sealed class TestChatMessageStore : ChatMessageStore
     {
-        public override Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IEnumerable<ChatMessage>>([]);
+        public override ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
+            => new(Array.Empty<ChatMessage>());
 
-        public override Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        public override ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
+            => default;
 
         public override JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
             => default;
