@@ -1,0 +1,167 @@
+###
+# Reliable Streaming with Redis - Demo HTTP Requests
+#
+# Workflow:
+# 1. POST /api/agents/TravelPlanner/run - Start durable agent run (returns conversation_id)
+# 2. GET /api/agent/stream/{conversation_id} - Read chunks from Redis (SSE or plain text)
+# 3. Resume with ?cursor={id} parameter to skip already-processed messages
+#
+# Prerequisites:
+# 1. Start Redis: docker run -d --name redis -p 6379:6379 redis:latest
+# 2. Start DTS and Azurite (see README)
+# 3. Start function app: func start
+###
+
+@baseUrl = http://localhost:7071
+@agentName = TravelPlanner
+
+###
+# ===== RECOMMENDED WORKFLOW =====
+###
+
+###
+# Test 1: Start agent run (standard endpoint - triggers Redis callback)
+# @name tokyo-trip
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+Plan a 3-day trip to Tokyo
+
+###
+# Test 2: Stream from Redis (custom endpoint with SSE format)
+# Automatically captures conversation_id from Test 1
+@tokyoConvId = {{tokyo-trip.response.body.$.conversation_id}}
+GET {{baseUrl}}/api/agent/stream/{{tokyoConvId}}
+Accept: text/event-stream
+
+###
+# Test 3: Stream in plain text format (good for terminals)
+GET {{baseUrl}}/api/agent/stream/{{tokyoConvId}}
+Accept: text/plain
+
+###
+# Test 4: Resume from a specific cursor
+# Replace {cursor_id} with actual id from SSE events
+GET {{baseUrl}}/api/agent/stream/{{tokyoConvId}}?cursor={cursor_id}
+Accept: text/event-stream
+
+###
+# ===== MORE EXAMPLES =====
+###
+
+###
+# Test 5: Weekend trip to Paris
+# @name paris-trip
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+Plan a weekend trip to Paris with romantic restaurants and museums
+
+###
+# Test 6: Stream Paris trip
+@parisConvId = {{paris-trip.response.body.$.conversation_id}}
+GET {{baseUrl}}/api/agent/stream/{{parisConvId}}
+Accept: text/event-stream
+
+###
+# Test 7: Check agent status
+GET {{baseUrl}}/api/agents/{{agentName}}/run/{{parisConvId}}
+
+###
+# ===== LONG-RUNNING EXAMPLES =====
+###
+
+###
+# Test 8: Detailed Rome itinerary (long-running, good for testing resumption)
+# @name rome-trip
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+Create a detailed 5-day itinerary for Rome including historical sites,
+local restaurants, and day trips. Check weather and local events!
+
+###
+# Test 9: Stream Rome trip
+@romeConvId = {{rome-trip.response.body.$.conversation_id}}
+GET {{baseUrl}}/api/agent/stream/{{romeConvId}}
+Accept: text/event-stream
+
+###
+# Test 10: Business trip comparison
+# @name business-trip
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+Compare Tokyo and New York for a 4-day business trip.
+Which has better weather next week?
+
+###
+# Test 11: Stream business trip
+@businessConvId = {{business-trip.response.body.$.conversation_id}}
+GET {{baseUrl}}/api/agent/stream/{{businessConvId}}
+Accept: text/plain
+
+###
+# ===== SYSTEM ENDPOINTS =====
+###
+
+###
+# Test 12: Check health endpoint
+GET {{baseUrl}}/api/health
+
+###
+# ===== USAGE PATTERNS =====
+#
+# Standard Workflow:
+# 1. POST /api/agents/TravelPlanner/run → get conversation_id
+# 2. GET /api/agent/stream/{conversation_id} → read chunks from Redis
+# 3. Check status: GET /api/agents/TravelPlanner/run/{conversation_id}
+# 4. Resume: GET /api/agent/stream/{conversation_id}?cursor={cursor_id}
+#
+# Demonstrating Stream Resumption:
+# 1. Run Test 8 (detailed Rome itinerary)
+# 2. Run Test 9 to start streaming (note some SSE event IDs)
+# 3. While streaming, cancel the request (Stop button)
+# 4. Run Test 9 again - messages replay from start
+# 5. Or use Test 4 with a cursor to skip to a specific point
+#
+# Key Benefits:
+# - Agent runs in background (durable orchestration)
+# - Redis callback persists all chunks with TTL (default 10 minutes)
+# - Clients can disconnect/reconnect without losing messages
+# - Cursor-based resumption allows skipping already-processed messages
+# - SSE format provides structured events with cursors for resumption
+###
+
+###
+# ===== EDGE CASE TESTS =====
+###
+
+###
+# Test 13: Empty prompt (should return 400)
+POST {{baseUrl}}/api/agents/{{agentName}}/run
+Content-Type: text/plain
+
+###
+# Test 14: Stream non-existent conversation (should timeout or return error)
+GET {{baseUrl}}/api/agent/stream/non-existent-conversation-id-12345
+Accept: text/event-stream
+
+###
+# Debugging with Redis CLI
+#
+# Connect to Redis:
+#   docker exec -it redis redis-cli
+#
+# Check if stream exists:
+#   XLEN agent-stream:{conversation_id}
+#
+# View stream contents:
+#   XRANGE agent-stream:{conversation_id} - +
+#
+# View stream with entry IDs:
+#   XREAD STREAMS agent-stream:{conversation_id} 0-0
+#
+# Check TTL:
+#   TTL agent-stream:{conversation_id}
+###
