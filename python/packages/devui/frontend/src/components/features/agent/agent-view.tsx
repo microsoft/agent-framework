@@ -270,6 +270,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   const conversationUsage = useDevUIStore((state) => state.conversationUsage);
   const pendingApprovals = useDevUIStore((state) => state.pendingApprovals);
   const oaiMode = useDevUIStore((state) => state.oaiMode);
+  const streamingEnabled = useDevUIStore((state) => state.streamingEnabled);
 
   // Get conversation actions from Zustand (only the ones we actually use)
   const setCurrentConversation = useDevUIStore((state) => state.setCurrentConversation);
@@ -570,6 +571,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               let allItems: unknown[] = [];
               let hasMore = true;
               let after: string | undefined = undefined;
+              let storedTraces: unknown[] = [];
 
               while (hasMore) {
                 const result = await apiClient.listConversationItems(
@@ -578,7 +580,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                 );
                 allItems = allItems.concat(result.data);
                 hasMore = result.has_more;
-                
+
+                // Capture traces from metadata (only need from one response, they accumulate)
+                if (result.metadata?.traces && result.metadata.traces.length > 0) {
+                  storedTraces = result.metadata.traces;
+                }
+
                 // Get the last item's ID for pagination
                 if (hasMore && result.data.length > 0) {
                   const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -589,6 +596,21 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               // Use OpenAI ConversationItems directly (no conversion!)
               setChatItems(allItems as import("@/types/openai").ConversationItem[]);
               setIsStreaming(false);
+
+              // Restore stored traces as debug events for context inspection
+              if (storedTraces.length > 0) {
+                // Clear any previous debug events first
+                onDebugEvent("clear");
+                for (const trace of storedTraces) {
+                  // Convert stored trace back to ResponseTraceComplete event format
+                  const traceEvent: ExtendedResponseStreamEvent = {
+                    type: "response.trace.completed",
+                    data: trace as Record<string, unknown>,
+                    sequence_number: 0, // Not used for display
+                  };
+                  onDebugEvent(traceEvent);
+                }
+              }
 
               // Check for incomplete stream and resume if needed
               const state = loadStreamingState(mostRecent.id);
@@ -724,6 +746,9 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
 
+      // Clear debug panel for fresh conversation
+      onDebugEvent("clear");
+
       // Update localStorage cache with new conversation
       const cachedKey = `devui_convs_${selectedAgent.id}`;
       const updated = [newConversation, ...availableConversations];
@@ -736,7 +761,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         type: "conversation_creation_error",
       });
     }
-  }, [selectedAgent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
+  }, [selectedAgent, onDebugEvent, setCurrentConversation, setAvailableConversations, setChatItems, setIsStreaming]);
 
   // Handle conversation deletion
   const handleDeleteConversation = useCallback(
@@ -843,6 +868,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         let allItems: unknown[] = [];
         let hasMore = true;
         let after: string | undefined = undefined;
+        let storedTraces: unknown[] = [];
 
         while (hasMore) {
           const result = await apiClient.listConversationItems(conversationId, {
@@ -851,7 +877,12 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           });
           allItems = allItems.concat(result.data);
           hasMore = result.has_more;
-          
+
+          // Capture traces from metadata (only need from one response, they accumulate)
+          if (result.metadata?.traces && result.metadata.traces.length > 0) {
+            storedTraces = result.metadata.traces;
+          }
+
           // Get the last item's ID for pagination
           if (hasMore && result.data.length > 0) {
             const lastItem = result.data[result.data.length - 1] as { id?: string };
@@ -864,6 +895,19 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         setChatItems(items);
         setIsStreaming(false);
+
+        // Restore stored traces as debug events for context inspection
+        if (storedTraces.length > 0) {
+          for (const trace of storedTraces) {
+            // Convert stored trace back to ResponseTraceComplete event format
+            const traceEvent: ExtendedResponseStreamEvent = {
+              type: "response.trace.completed",
+              data: trace as Record<string, unknown>,
+              sequence_number: 0, // Not used for display
+            };
+            onDebugEvent(traceEvent);
+          }
+        }
 
         // Calculate usage from loaded items
         useDevUIStore.setState({
@@ -1249,13 +1293,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
             // Handle function calls as separate conversation items
             if (item.type === "function_call") {
+              // Type assertion for function call - narrows from union type
+              const funcCall = item as import("@/types/openai").ResponseFunctionToolCall;
               const functionCallItem: import("@/types/openai").ConversationFunctionCall = {
-                id: item.id || `call-${Date.now()}`,
+                id: funcCall.id || `call-${Date.now()}`,
                 type: "function_call",
-                name: item.name,
-                arguments: item.arguments || "",
-                call_id: item.call_id,
-                status: (item.status === "failed" || item.status === "cancelled" ? "incomplete" : item.status) || "in_progress",
+                name: funcCall.name,
+                arguments: funcCall.arguments || "",
+                call_id: funcCall.call_id,
+                status: funcCall.status || "in_progress",
                 created_at: Math.floor(Date.now() / 1000),
               };
 
@@ -1414,6 +1460,209 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     [selectedAgent, currentConversation, onDebugEvent, setChatItems, setIsStreaming, setCurrentConversation, setAvailableConversations, setPendingApprovals, updateConversationUsage, createAbortSignal, resetCancelling]
   );
 
+  // Handle non-streaming message sending
+  const handleSendMessageSync = useCallback(
+    async (request: RunAgentRequest) => {
+      if (!selectedAgent) return;
+
+      // Check if this is a function approval response (internal, don't show in chat)
+      const isApprovalResponse = request.input.some(
+        (inputItem) =>
+          inputItem.type === "message" &&
+          Array.isArray(inputItem.content) &&
+          inputItem.content.some((c) => c.type === "function_approval_response")
+      );
+
+      // Extract content from OpenAI format to create ConversationMessage
+      const messageContent: import("@/types/openai").MessageContent[] = [];
+
+      // Parse OpenAI ResponseInputParam to extract content
+      for (const inputItem of request.input) {
+        if (inputItem.type === "message" && Array.isArray(inputItem.content)) {
+          for (const contentItem of inputItem.content) {
+            if (contentItem.type === "input_text") {
+              messageContent.push({
+                type: "text",
+                text: contentItem.text,
+              });
+            } else if (contentItem.type === "input_image") {
+              messageContent.push({
+                type: "input_image",
+                image_url: contentItem.image_url || "",
+                detail: "auto",
+              });
+            } else if (contentItem.type === "input_file") {
+              const fileItem = contentItem as import("@/types/agent-framework").ResponseInputFileParam;
+              messageContent.push({
+                type: "input_file",
+                file_data: fileItem.file_data,
+                filename: fileItem.filename,
+              });
+            }
+          }
+        }
+      }
+
+      // Capture timestamp once for both user and assistant messages
+      const messageTimestamp = Math.floor(Date.now() / 1000); // Unix seconds
+
+      // Only add user message to UI if it's not an approval response (internal messages)
+      if (!isApprovalResponse && messageContent.length > 0) {
+        const userMessage: import("@/types/openai").ConversationMessage = {
+          id: `user-${Date.now()}`,
+          type: "message",
+          role: "user",
+          content: messageContent,
+          status: "completed",
+          created_at: messageTimestamp,
+        };
+
+        setChatItems([...useDevUIStore.getState().chatItems, userMessage]);
+      }
+
+      // Show loading state (but not streaming indicator)
+      setIsSubmitting(true);
+
+      try {
+        // If no conversation selected, create one automatically
+        let conversationToUse = currentConversation;
+        if (!conversationToUse) {
+          try {
+            conversationToUse = await apiClient.createConversation({
+              agent_id: selectedAgent.id,
+            });
+            setCurrentConversation(conversationToUse);
+            setAvailableConversations([conversationToUse, ...useDevUIStore.getState().availableConversations]);
+            setConversationError(null);
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Failed to create conversation";
+            setConversationError({
+              message: errorMessage,
+              type: "conversation_creation_error",
+            });
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        // Call non-streaming API
+        const response = await apiClient.runAgentSync(selectedAgent.id, {
+          input: request.input,
+          conversation_id: conversationToUse?.id,
+        });
+
+        // Extract content from response output
+        const assistantContent: import("@/types/openai").MessageContent[] = [];
+        const toolCalls: import("@/types/openai").ConversationFunctionCall[] = [];
+        const toolResults: import("@/types/openai").ConversationFunctionCallOutput[] = [];
+
+        if (response.output) {
+          for (const outputItem of response.output) {
+            if (outputItem.type === "message") {
+              // Extract message content
+              const msgItem = outputItem as import("@/types/openai").ResponseOutputMessage;
+              if (msgItem.content) {
+                for (const content of msgItem.content) {
+                  if (content.type === "output_text") {
+                    assistantContent.push({
+                      type: "text",
+                      text: (content as { text: string }).text,
+                    } as import("@/types/openai").MessageTextContent);
+                  } else if (content.type === "output_image") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
+                  } else if (content.type === "output_file") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputFile);
+                  } else if (content.type === "output_data") {
+                    assistantContent.push(content as unknown as import("@/types/openai").MessageOutputData);
+                  }
+                }
+              }
+            } else if (outputItem.type === "function_call") {
+              const funcCall = outputItem as unknown as import("@/types/openai").ResponseFunctionToolCall;
+              toolCalls.push({
+                id: funcCall.id || `call-${Date.now()}`,
+                type: "function_call",
+                name: funcCall.name,
+                arguments: funcCall.arguments || "",
+                call_id: funcCall.call_id,
+                status: funcCall.status || "completed",
+                created_at: messageTimestamp,
+              });
+            } else if (outputItem.type === "function_call_output") {
+              const resultItem = outputItem as unknown as { call_id: string; output: string };
+              toolResults.push({
+                id: `result-${Date.now()}`,
+                type: "function_call_output",
+                call_id: resultItem.call_id,
+                output: resultItem.output,
+                status: "completed",
+                created_at: messageTimestamp,
+              });
+            }
+          }
+        }
+
+        // Create assistant message with all content
+        const assistantMessage: import("@/types/openai").ConversationMessage = {
+          id: `assistant-${Date.now()}`,
+          type: "message",
+          role: "assistant",
+          content: assistantContent,
+          status: "completed",
+          created_at: messageTimestamp,
+          usage: response.usage ? {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            total_tokens: response.usage.total_tokens,
+          } : undefined,
+        };
+
+        // Add all items to chat
+        const currentItems = useDevUIStore.getState().chatItems;
+        const newItems: import("@/types/openai").ConversationItem[] = [
+          ...currentItems,
+          assistantMessage,
+          ...toolCalls,
+          ...toolResults,
+        ];
+        setChatItems(newItems);
+
+        // Update conversation-level usage stats
+        if (response.usage) {
+          updateConversationUsage(response.usage.total_tokens);
+        }
+
+        // Send debug event with response completed
+        onDebugEvent({
+          type: "response.completed",
+          response: response,
+          sequence_number: 0,
+        } as ExtendedResponseStreamEvent);
+
+      } catch (error) {
+        // Show error message
+        const errorMessage = error instanceof Error ? error.message : "Failed to get response";
+        const assistantMessage: import("@/types/openai").ConversationMessage = {
+          id: `assistant-${Date.now()}`,
+          type: "message",
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: `Error: ${errorMessage}`,
+          } as import("@/types/openai").MessageTextContent],
+          status: "incomplete",
+          created_at: messageTimestamp,
+        };
+
+        const currentItems = useDevUIStore.getState().chatItems;
+        setChatItems([...currentItems, assistantMessage]);
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [selectedAgent, currentConversation, onDebugEvent, setChatItems, setCurrentConversation, setAvailableConversations, updateConversationUsage, setIsSubmitting]
+  );
+
 
   // Handle message submission from ChatMessageInput
   const handleChatInputSubmit = async (content: import("@/types/agent-framework").ResponseInputContent[]) => {
@@ -1435,11 +1684,17 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         },
       ];
 
-      // Use pure OpenAI format
-      await handleSendMessage({
+      const request = {
         input: openaiInput,
         conversation_id: currentConversation?.id,
-      });
+      };
+
+      // Use streaming or non-streaming based on setting
+      if (streamingEnabled) {
+        await handleSendMessage(request);
+      } else {
+        await handleSendMessageSync(request);
+      }
     } finally {
       setIsSubmitting(false);
     }
