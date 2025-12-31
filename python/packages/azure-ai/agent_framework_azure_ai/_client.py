@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -663,7 +663,7 @@ def _parse_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProt
 
         if tool_type == "mcp":
             mcp_tool = cast(MCPTool, tool_dict)
-            approval_mode = None
+            approval_mode: Literal["always_require", "never_require"] | dict[str, set[str]] | None = None
             if require_approval := mcp_tool.get("require_approval"):
                 if require_approval == "always":
                     approval_mode = "always_require"
