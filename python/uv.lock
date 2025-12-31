@@ -4450,16 +4450,16 @@ wheels = [
 
 [[package]]
 name = "poethepoet"
-version = "0.38.0"
+version = "0.39.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pastel", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tomli", marker = "(python_full_version < '3.11' and sys_platform == 'darwin') or (python_full_version < '3.11' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform == 'win32')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/14/d1f795f314c4bf3ad6d64216e370bdfda73093ed76e979485778b655a7ac/poethepoet-0.38.0.tar.gz", hash = "sha256:aeeb2f0a2cf0d3afa833976eff3ac7b8f5e472ae64171824900d79d3c68163c7", size = 77339, upload-time = "2025-11-23T13:51:28.246Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/f5/7561bc002bcd40c96633173fb2eb5daf2589dd4dfc4a2cb1b1a2cc6bb60f/poethepoet-0.39.0.tar.gz", hash = "sha256:85f279ffaf2a58ba31db2048ab897740d4db839233c3f28740cf0517b3367710", size = 79816, upload-time = "2025-12-25T15:10:57.799Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/89/2bf7d43ef4b0d60f446933ae9d3649f95c2c45c47b6736d121b602c28361/poethepoet-0.38.0-py3-none-any.whl", hash = "sha256:214bd9fcb348ff3dfd1466579d67e0c02242451a7044aced1a79641adef9cad0", size = 101938, upload-time = "2025-11-23T13:51:26.518Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/18/9f356cdf243ca90a985f2e8e9eab938b1ddac461acfa6348db434ba70525/poethepoet-0.39.0-py3-none-any.whl", hash = "sha256:2865b04230df0fb43b6fb4f739c975b19be03d6db18f0ab760b3fb5c56b50b5c", size = 104763, upload-time = "2025-12-25T15:10:56.099Z" },
 ]
 
 [[package]]
