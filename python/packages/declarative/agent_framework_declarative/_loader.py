@@ -37,6 +37,7 @@ from ._models import (
     RemoteConnection,
     Tool,
     WebSearchTool,
+    _safe_mode_context,
     agent_schema_dispatch,
 )
 
@@ -118,7 +119,9 @@ class AgentFactory:
         client_kwargs: Mapping[str, Any] | None = None,
         additional_mappings: Mapping[str, ProviderTypeMapping] | None = None,
         default_provider: str = "AzureAIClient",
-        env_file: str | None = None,
+        safe_mode: bool = True,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Create the agent factory, with bindings.
 
@@ -151,7 +154,15 @@ class AgentFactory:
                 that accepts the model.id value.
             default_provider: The default provider used when model.provider is not specified,
                 default is "AzureAIClient".
-            env_file: An optional path to a .env file to load environment variables from.
+            safe_mode: Whether to run in safe mode, default is True.
+                When safe_mode is True, environment variables are not accessible in the powerfx expressions.
+                You can still use environment variables, but through the constructors of the classes.
+                Which means you must make sure you are using the standard env variable names of the classes
+                you are using and not custom ones and remove the powerfx statements that start with `=Env.`.
+                Only when you trust the source of your yaml files, you can set safe_mode to False
+                via the AgentFactory constructor.
+            env_file_path: The path to the .env file to load environment variables from.
+            env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
         """
         self.chat_client = chat_client
         self.bindings = bindings
@@ -159,7 +170,8 @@ class AgentFactory:
         self.client_kwargs = client_kwargs or {}
         self.additional_mappings = additional_mappings or {}
         self.default_provider: str = default_provider
-        load_dotenv(dotenv_path=env_file)
+        self.safe_mode = safe_mode
+        load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> ChatAgent:
         """Create a ChatAgent from a YAML file path.
@@ -215,6 +227,8 @@ class AgentFactory:
             ModuleNotFoundError: If the required module for the provider type cannot be imported.
             AttributeError: If the required class for the provider type cannot be found in the module.
         """
+        # Set safe_mode context before parsing YAML to control PowerFx environment variable access
+        _safe_mode_context.set(self.safe_mode)
         prompt_agent = agent_schema_dispatch(yaml.safe_load(yaml_str))
         if not isinstance(prompt_agent, PromptAgent):
             raise DeclarativeLoaderError("Only yaml definitions for a PromptAgent are supported for agent creation.")

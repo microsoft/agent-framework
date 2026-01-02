@@ -25,6 +25,7 @@ from chatkit.types import (
     Attachment,
     ClientToolCallItem,
     EndOfTurnItem,
+    GeneratedImageItem,
     HiddenContextItem,
     ImageAttachment,
     SDKHiddenContextItem,
@@ -528,6 +529,9 @@ class ThreadItemConverter:
             case SDKHiddenContextItem():
                 out = self.hidden_context_to_input(item) or []
                 return out if isinstance(out, list) else [out]
+            case GeneratedImageItem():
+                # TODO(evmattso): Implement generated image handling in a future PR
+                return []
             case _:
                 assert_never(item)
 

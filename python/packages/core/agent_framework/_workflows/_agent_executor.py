@@ -100,6 +100,11 @@ class AgentExecutor(Executor):
         self._cache: list[ChatMessage] = []
 
     @property
+    def output_response(self) -> bool:
+        """Whether this executor yields AgentRunResponse as workflow output when complete."""
+        return self._output_response
+
+    @property
     def workflow_output_types(self) -> list[type[Any]]:
         # Override to declare AgentRunResponse as a possible output type only if enabled.
         if self._output_response:
