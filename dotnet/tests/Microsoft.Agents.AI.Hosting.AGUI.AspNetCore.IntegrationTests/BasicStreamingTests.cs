@@ -290,7 +290,7 @@ internal sealed class FakeChatClientAgent : AIAgent
         return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -305,7 +305,7 @@ internal sealed class FakeChatClientAgent : AIAgent
         return updates.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -358,7 +358,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         return new FakeInMemoryAgentThread(serializedThread, jsonSerializerOptions);
     }
 
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -373,7 +373,7 @@ internal sealed class FakeMultiMessageAgent : AIAgent
         return updates.ToAgentRunResponse();
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
