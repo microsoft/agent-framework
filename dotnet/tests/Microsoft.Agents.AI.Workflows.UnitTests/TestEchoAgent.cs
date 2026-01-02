@@ -47,7 +47,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
               select
                     UpdateThread(new ChatMessage(ChatRole.Assistant, $"{prefix}{message.Text}")
                     {
-                        AuthorName = this.DisplayName,
+                        AuthorName = this.Name ?? this.Id,
                         CreatedAt = DateTimeOffset.Now,
                         MessageId = Guid.NewGuid().ToString("N")
                     }, thread as InMemoryAgentThread);
@@ -60,7 +60,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return [];
     }
 
-    public override Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         AgentRunResponse result =
             new(this.EchoMessages(messages, thread, options).ToList())
@@ -73,7 +73,7 @@ internal class TestEchoAgent(string? id = null, string? name = null, string? pre
         return Task.FromResult(result);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         string responseId = Guid.NewGuid().ToString("N");
 

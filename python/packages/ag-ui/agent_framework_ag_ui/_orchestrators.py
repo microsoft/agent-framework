@@ -86,7 +86,7 @@ class ExecutionContext:
     def run_id(self) -> str:
         """Get or generate run ID."""
         if self._run_id is None:
-            self._run_id = self.input_data.get("run_id") or str(uuid.uuid4())
+            self._run_id = self.input_data.get("run_id") or self.input_data.get("runId") or str(uuid.uuid4())
         # This should never be None after the if block above, but satisfy type checkers
         if self._run_id is None:  # pragma: no cover
             raise RuntimeError("Failed to initialize run_id")
@@ -96,7 +96,7 @@ class ExecutionContext:
     def thread_id(self) -> str:
         """Get or generate thread ID."""
         if self._thread_id is None:
-            self._thread_id = self.input_data.get("thread_id") or str(uuid.uuid4())
+            self._thread_id = self.input_data.get("thread_id") or self.input_data.get("threadId") or str(uuid.uuid4())
         # This should never be None after the if block above, but satisfy type checkers
         if self._thread_id is None:  # pragma: no cover
             raise RuntimeError("Failed to initialize thread_id")
