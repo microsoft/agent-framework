@@ -79,14 +79,15 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
             update: The streaming response update chunk.
             context: The callback context with thread_id, agent_name, etc.
         """
-        thread_id = context.thread_id or context.correlation_id
+        thread_id = context.thread_id
         if not thread_id:
-            self._logger.warning("No thread_id or correlation_id available for streaming update")
+            self._logger.warning("No thread_id available for streaming update")
             return
 
-        text = getattr(update, "text", None)
-        if not text:
+        if not update.text:
             return
+
+        text = update.text
 
         # Get or initialize sequence number for this thread
         if thread_id not in self._sequence_numbers:
@@ -119,7 +120,7 @@ class RedisStreamCallback(AgentResponseCallbackProtocol):
             response: The final agent response.
             context: The callback context.
         """
-        thread_id = context.thread_id or context.correlation_id
+        thread_id = context.thread_id
         if not thread_id:
             return
 
