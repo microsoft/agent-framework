@@ -292,6 +292,15 @@ public class AgentRunResponse
     }
 
     /// <summary>
+    /// Deserializes the response text into the given type.
+    /// </summary>
+    /// <typeparam name="T">The output type to deserialize into.</typeparam>
+    /// <returns>The result as the requested type.</returns>
+    /// <exception cref="InvalidOperationException">The result is not parsable into the requested type.</exception>
+    public T Deserialize<T>() =>
+        this.Deserialize<T>(AgentAbstractionsJsonUtilities.DefaultOptions);
+
+    /// <summary>
     /// Deserializes the response text into the given type using the specified serializer options.
     /// </summary>
     /// <typeparam name="T">The output type to deserialize into.</typeparam>
@@ -310,6 +319,15 @@ public class AgentRunResponse
             _ => structuredOutput!,
         };
     }
+
+    /// <summary>
+    /// Tries to deserialize response text into the given type.
+    /// </summary>
+    /// <typeparam name="T">The output type to deserialize into.</typeparam>
+    /// <param name="structuredOutput">The parsed structured output.</param>
+    /// <returns><see langword="true" /> if parsing was successful; otherwise, <see langword="false" />.</returns>
+    public bool TryDeserialize<T>([NotNullWhen(true)] out T? structuredOutput) =>
+        this.TryDeserialize(AgentAbstractionsJsonUtilities.DefaultOptions, out structuredOutput);
 
     /// <summary>
     /// Tries to deserialize response text into the given type using the specified serializer options.
