@@ -4,7 +4,7 @@
 
 These classes are internal execution strategies used by the DurableAIAgent shim.
 They are intentionally separate from the public client/orchestration APIs to keep
-only `get_agent` exposed to consumers. Providers implement the execution contract
+only `get_agent` exposed to consumers. Executors implement the execution contract
 and are injected into the shim.
 """
 
