@@ -171,9 +171,7 @@ public class ChatClientAgentThread : AgentThread
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        serviceType == typeof(AgentThreadMetadata)
-            ? new AgentThreadMetadata(this.ConversationId)
-            : base.GetService(serviceType, serviceKey)
+        base.GetService(serviceType, serviceKey)
             ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
             ?? this.MessageStore?.GetService(serviceType, serviceKey);
 

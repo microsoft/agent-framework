@@ -55,12 +55,6 @@ public sealed class DurableAgentThread : AgentThread
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
     {
-        // This is a common convention for MAF agents.
-        if (serviceType == typeof(AgentThreadMetadata))
-        {
-            return new AgentThreadMetadata(conversationId: this.SessionId.ToString());
-        }
-
         if (serviceType == typeof(AgentSessionId))
         {
             return this.SessionId;
