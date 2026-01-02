@@ -1680,13 +1680,12 @@ def _capture_messages(
     prepped = prepare_messages(messages, system_instructions=system_instructions)
     otel_messages: list[dict[str, Any]] = []
     for index, message in enumerate(prepped):
-        otel_messages.append(_to_otel_message(message))
-        try:
-            message_data = message.to_dict(exclude_none=True)
-        except Exception:
-            message_data = {"role": message.role.value, "contents": message.contents}
+        # Reuse the otel message representation for logging instead of calling to_dict()
+        # to avoid expensive Pydantic serialization overhead
+        otel_message = _to_otel_message(message)
+        otel_messages.append(otel_message)
         logger.info(
-            message_data,
+            otel_message,
             extra={
                 OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role.value),
                 OtelAttr.PROVIDER_NAME: provider_name,

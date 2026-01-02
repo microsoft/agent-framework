@@ -1,6 +1,11 @@
 ---
 applyTo: '**/agent-framework/python/**'
 ---
+- Use `uv run` as the main entrypoint for running Python commands with all packages available.
+- Use `uv run poe <task>` for development tasks like formatting (`fmt`), linting (`lint`), type checking (`pyright`, `mypy`), and testing (`test`).
+- Use `uv run --directory packages/<package> poe <task>` to run tasks for a specific package.
+- Read [DEV_SETUP.md](../../DEV_SETUP.md) for detailed development environment setup and available poe tasks.
+- Read [CODING_STANDARD.md](../../CODING_STANDARD.md) for the project's coding standards and best practices.
 - When verifying logic with unit tests, run only the related tests, not the entire test suite.
 - For new tests and samples, review existing ones to understand the coding style and reuse it.
 - When generating new functions, always specify the function return type and parameter types.

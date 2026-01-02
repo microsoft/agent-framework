@@ -3,12 +3,19 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework_ollama import OllamaChatClient
+from agent_framework.ollama import OllamaChatClient
 
-# Ensure to install Ollama and have a model running locally before running the sample
-# Not all Models support function calling, to test function calling try llama3.2
-# Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
-# https://ollama.com/
+"""
+Ollama Chat Client Example
+
+This sample demonstrates using the native Ollama Chat Client directly.
+
+Ensure to install Ollama and have a model running locally before running the sample.
+Not all Models support function calling, to test function calling try llama3.2
+Set the model to use via the OLLAMA_CHAT_MODEL_ID environment variable or modify the code below.
+https://ollama.com/
+
+"""
 
 
 def get_time():

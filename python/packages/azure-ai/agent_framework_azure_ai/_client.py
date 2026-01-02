@@ -28,10 +28,6 @@ from azure.ai.projects.models import (
 )
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
-from openai.types.responses.parsed_response import (
-    ParsedResponse,
-)
-from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ValidationError
 
 from ._shared import AzureAISettings
@@ -40,6 +36,11 @@ if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
     from typing_extensions import Self  # pragma: no cover
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 logger = get_logger("agent_framework.azure")
@@ -368,7 +369,38 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         if self._should_close_client:
             await self.project_client.close()
 
-    def _prepare_input(self, messages: MutableSequence[ChatMessage]) -> tuple[list[ChatMessage], str | None]:
+    @override
+    async def _prepare_options(
+        self,
+        messages: MutableSequence[ChatMessage],
+        chat_options: ChatOptions,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Take ChatOptions and create the specific options for Azure AI."""
+        prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
+        run_options = await super()._prepare_options(prepared_messages, chat_options, **kwargs)
+        if not self._is_application_endpoint:
+            # Application-scoped response APIs do not support "agent" property.
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
+            run_options["extra_body"] = {"agent": agent_reference}
+
+        # Remove properties that are not supported on request level
+        # but were configured on agent level
+        exclude = ["model", "tools", "response_format", "temperature", "top_p"]
+
+        for property in exclude:
+            run_options.pop(property, None)
+
+        return run_options
+
+    @override
+    def _get_current_conversation_id(self, chat_options: ChatOptions, **kwargs: Any) -> str | None:
+        """Get the current conversation ID from chat options or kwargs."""
+        return chat_options.conversation_id or kwargs.get("conversation_id") or self.conversation_id
+
+    def _prepare_messages_for_azure_ai(
+        self, messages: MutableSequence[ChatMessage]
+    ) -> tuple[list[ChatMessage], str | None]:
         """Prepare input from messages and convert system/developer messages to instructions."""
         result: list[ChatMessage] = []
         instructions_list: list[str] = []
@@ -387,44 +419,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
         return result, instructions
 
-    async def prepare_options(
-        self,
-        messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Take ChatOptions and create the specific options for Azure AI."""
-        prepared_messages, instructions = self._prepare_input(messages)
-        run_options = await super().prepare_options(prepared_messages, chat_options, **kwargs)
-
-        if not self._is_application_endpoint:
-            # Application-scoped response APIs do not support "agent" property.
-            agent_reference = await self._get_agent_reference_or_create(run_options, instructions)
-            run_options["extra_body"] = {"agent": agent_reference}
-
-        conversation_id = chat_options.conversation_id or self.conversation_id
-
-        # Handle different conversation ID formats
-        if conversation_id:
-            if conversation_id.startswith("resp_"):
-                # For response IDs, set previous_response_id and remove conversation property
-                run_options.pop("conversation", None)
-                run_options["previous_response_id"] = conversation_id
-            elif conversation_id.startswith("conv_"):
-                # For conversation IDs, set conversation and remove previous_response_id property
-                run_options.pop("previous_response_id", None)
-                run_options["conversation"] = conversation_id
-
-        # Remove properties that are not supported on request level
-        # but were configured on agent level
-        exclude = ["model", "tools", "response_format", "temperature", "top_p"]
-
-        for property in exclude:
-            run_options.pop(property, None)
-
-        return run_options
-
-    async def initialize_client(self) -> None:
+    async def _initialize_client(self) -> None:
         """Initialize OpenAI client."""
         self.client = self.project_client.get_openai_client()  # type: ignore
 
@@ -442,7 +437,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         if description and not self.agent_description:
             self.agent_description = description
 
-    def get_mcp_tool(self, tool: HostedMCPTool) -> Any:
+    @staticmethod
+    def _prepare_mcp_tool(tool: HostedMCPTool) -> MCPTool:  # type: ignore[override]
         """Get MCP tool from HostedMCPTool."""
         mcp = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
@@ -460,17 +456,3 @@ class AzureAIClient(OpenAIBaseResponsesClient):
                         mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
 
         return mcp
-
-    def get_conversation_id(
-        self, response: OpenAIResponse | ParsedResponse[BaseModel], store: bool | None
-    ) -> str | None:
-        """Get the conversation ID from the response if store is True."""
-        if store is False:
-            return None
-        # If conversation ID exists, it means that we operate with conversation
-        # so we use conversation ID as input and output.
-        if response.conversation and response.conversation.id:
-            return response.conversation.id
-        # If conversation ID doesn't exist, we operate with responses
-        # so we use response ID as input and output.
-        return response.id
