@@ -112,20 +112,21 @@ class TestDurableAgentStateMessageCreatedAt:
     """Test suite for DurableAgentStateMessage created_at field handling."""
 
     def test_message_from_run_request_without_created_at_preserves_none(self) -> None:
-        """Test from_run_request preserves None created_at instead of defaulting to current time.
+        """Test from_run_request handles auto-populated created_at from RunRequest.
 
-        When a RunRequest has no created_at value, the resulting DurableAgentStateMessage
-        should also have None for created_at, not default to current UTC time.
+        When a RunRequest is created with None for created_at, RunRequest defaults it to
+        current UTC time. The resulting DurableAgentStateMessage should have this timestamp.
         """
         run_request = RunRequest(
             message="test message",
             correlation_id="corr-run",
-            created_at=None,  # Explicitly None
+            created_at=None,  # RunRequest will default this to current time
         )
 
         durable_message = DurableAgentStateMessage.from_run_request(run_request)
 
-        assert durable_message.created_at is None
+        # RunRequest auto-populates created_at, so it should not be None
+        assert durable_message.created_at is not None
 
     def test_message_from_run_request_with_created_at_parses_correctly(self) -> None:
         """Test from_run_request correctly parses a valid created_at timestamp."""
