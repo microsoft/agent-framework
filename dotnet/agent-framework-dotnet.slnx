@@ -33,6 +33,7 @@
     <Project Path="samples/AzureFunctions/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
     <Project Path="samples/AzureFunctions/06_LongRunningTools/06_LongRunningTools.csproj" />
     <Project Path="samples/AzureFunctions/07_AgentAsMcpTool/07_AgentAsMcpTool.csproj" />
+    <Project Path="samples/AzureFunctions/08_ReliableStreaming/08_ReliableStreaming.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

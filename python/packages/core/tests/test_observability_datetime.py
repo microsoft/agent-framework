@@ -22,5 +22,5 @@ def test_datetime_in_tool_results() -> None:
     result = _to_otel_part(content)
     parsed = json.loads(result["response"])
 
-    # Datetime should be converted to string
-    assert isinstance(parsed["timestamp"], str)
+    # Datetime should be converted to string in the result field
+    assert isinstance(parsed["result"]["timestamp"], str)

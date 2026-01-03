@@ -91,7 +91,7 @@ async def main() -> None:
     print("User: ", query)
     print("Agent: ", result)
 
-    query = "Remember that anyone who does not clean shrimp will be eaten by a shark"
+    query = "Remember that I have a meeting at 3pm tomorro"
     result = await agent.run(query)
     print("User: ", query)
     print("Agent: ", result)

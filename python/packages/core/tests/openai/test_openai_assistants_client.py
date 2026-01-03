@@ -463,9 +463,9 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     """Test _process_stream_events with thread.run.requires_action event."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    # Mock the _create_function_call_contents method to return test content
+    # Mock the _parse_function_calls_from_assistants method to return test content
     test_function_content = FunctionCallContent(call_id="call-123", name="test_func", arguments={"arg": "value"})
-    chat_client._create_function_call_contents = MagicMock(return_value=[test_function_content])  # type: ignore
+    chat_client._parse_function_calls_from_assistants = MagicMock(return_value=[test_function_content])  # type: ignore
 
     # Create a mock Run object
     mock_run = MagicMock(spec=Run)
@@ -498,8 +498,8 @@ async def test_openai_assistants_client_process_stream_events_requires_action(mo
     assert update.contents[0] == test_function_content
     assert update.raw_representation == mock_run
 
-    # Verify _create_function_call_contents was called correctly
-    chat_client._create_function_call_contents.assert_called_once_with(mock_run, None)  # type: ignore
+    # Verify _parse_function_calls_from_assistants was called correctly
+    chat_client._parse_function_calls_from_assistants.assert_called_once_with(mock_run, None)  # type: ignore
 
 
 async def test_openai_assistants_client_process_stream_events_run_step_created(mock_async_openai: MagicMock) -> None:
@@ -585,8 +585,8 @@ async def test_openai_assistants_client_process_stream_events_run_completed_with
     assert update.raw_representation == mock_run
 
 
-def test_openai_assistants_client_create_function_call_contents_basic(mock_async_openai: MagicMock) -> None:
-    """Test _create_function_call_contents with a simple function call."""
+def test_openai_assistants_client_parse_function_calls_from_assistants_basic(mock_async_openai: MagicMock) -> None:
+    """Test _parse_function_calls_from_assistants with a simple function call."""
 
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
@@ -605,7 +605,7 @@ def test_openai_assistants_client_create_function_call_contents_basic(mock_async
 
     # Call the method
     response_id = "response_456"
-    contents = chat_client._create_function_call_contents(mock_run, response_id)  # type: ignore
+    contents = chat_client._parse_function_calls_from_assistants(mock_run, response_id)  # type: ignore
 
     # Test that one function call content was created
     assert len(contents) == 1
@@ -825,24 +825,24 @@ def test_openai_assistants_client_prepare_options_with_image_content(mock_async_
     assert message["content"][0]["image_url"]["url"] == "https://example.com/image.jpg"
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_empty(mock_async_openai: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with empty list."""
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_empty(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_tool_outputs_for_assistants with empty list."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([])  # type: ignore
 
     assert run_id is None
     assert tool_outputs is None
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_valid(mock_async_openai: MagicMock) -> None:
-    """Test _convert_function_results_to_tool_output with valid function results."""
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_valid(mock_async_openai: MagicMock) -> None:
+    """Test _prepare_tool_outputs_for_assistants with valid function results."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     call_id = json.dumps(["run-123", "call-456"])
     function_result = FunctionResultContent(call_id=call_id, result="Function executed successfully")
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([function_result])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result])  # type: ignore
 
     assert run_id == "run-123"
     assert tool_outputs is not None
@@ -851,10 +851,10 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_valid(
     assert tool_outputs[0].get("output") == "Function executed successfully"
 
 
-def test_openai_assistants_client_convert_function_results_to_tool_output_mismatched_run_ids(
+def test_openai_assistants_client_prepare_tool_outputs_for_assistants_mismatched_run_ids(
     mock_async_openai: MagicMock,
 ) -> None:
-    """Test _convert_function_results_to_tool_output with mismatched run IDs."""
+    """Test _prepare_tool_outputs_for_assistants with mismatched run IDs."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
     # Create function results with different run IDs
@@ -863,7 +863,7 @@ def test_openai_assistants_client_convert_function_results_to_tool_output_mismat
     function_result1 = FunctionResultContent(call_id=call_id1, result="Result 1")
     function_result2 = FunctionResultContent(call_id=call_id2, result="Result 2")
 
-    run_id, tool_outputs = chat_client._convert_function_results_to_tool_output([function_result1, function_result2])  # type: ignore
+    run_id, tool_outputs = chat_client._prepare_tool_outputs_for_assistants([function_result1, function_result2])  # type: ignore
 
     # Should only process the first one since run IDs don't match
     assert run_id == "run-123"

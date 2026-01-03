@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeVar, run
 from pydantic import BaseModel
 
 from ._logging import get_logger
-from ._mcp import MCPTool
 from ._memory import AggregateContextProvider, ContextProvider
 from ._middleware import (
     ChatMiddleware,
@@ -426,6 +425,8 @@ class BaseChatClient(SerializationMixin, ABC):
             else [tools]
         )
         for tool in tools_list:  # type: ignore[reportUnknownType]
+            from ._mcp import MCPTool
+
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
                     await tool.connect()
@@ -500,7 +501,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -534,6 +535,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.
@@ -594,7 +596,7 @@ class BaseChatClient(SerializationMixin, ABC):
         stop: str | Sequence[str] | None = None,
         store: bool | None = None,
         temperature: float | None = None,
-        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = None,
+        tool_choice: ToolMode | Literal["auto", "required", "none"] | dict[str, Any] | None = "auto",
         tools: ToolProtocol
         | Callable[..., Any]
         | MutableMapping[str, Any]
@@ -628,6 +630,7 @@ class BaseChatClient(SerializationMixin, ABC):
             store: Whether to store the response.
             temperature: The sampling temperature to use.
             tool_choice: The tool choice for the request.
+                Default is `auto`.
             tools: The tools to use for the request.
             top_p: The nucleus sampling probability to use.
             user: The user to associate with the request.

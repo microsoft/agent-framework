@@ -73,7 +73,7 @@ internal sealed class Program
         Dictionary<string, byte[]> screenshots = ComputerUseUtil.LoadScreenshotAssets();
 
         ChatOptions chatOptions = new();
-        ResponseCreationOptions responseCreationOptions = new()
+        CreateResponseOptions responseCreationOptions = new()
         {
             TruncationMode = ResponseTruncationMode.Auto
         };

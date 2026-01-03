@@ -28,6 +28,18 @@ runs:
           echo "Waiting for Azurite (Azure Storage emulator) to be ready"
           timeout 30 bash -c 'until curl --silent http://localhost:10000/devstoreaccount1; do sleep 1; done'
           echo "Azurite (Azure Storage emulator) is ready"
+      - name: Start Redis
+        shell: bash
+        run: |
+          if [ "$(docker ps -aq -f name=redis)" ]; then
+            echo "Stopping and removing existing Redis"
+            docker rm -f redis
+          fi
+          echo "Starting Redis"
+          docker run -d --name redis -p 6379:6379 redis:latest
+          echo "Waiting for Redis to be ready"
+          timeout 30 bash -c 'until docker exec redis redis-cli ping | grep -q PONG; do sleep 1; done'
+          echo "Redis is ready"
       - name: Install Azure Functions Core Tools
         shell: bash
         run: |

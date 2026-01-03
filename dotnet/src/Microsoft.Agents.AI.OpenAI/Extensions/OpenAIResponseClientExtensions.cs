@@ -8,7 +8,7 @@ using Microsoft.Shared.Diagnostics;
 namespace OpenAI.Responses;
 
 /// <summary>
-/// Provides extension methods for <see cref="OpenAIResponseClient"/>
+/// Provides extension methods for <see cref="ResponsesClient"/>
 /// to simplify the creation of AI agents that work with OpenAI services.
 /// </summary>
 /// <remarks>
@@ -20,9 +20,9 @@ namespace OpenAI.Responses;
 public static class OpenAIResponseClientExtensions
 {
     /// <summary>
-    /// Creates an AI agent from an <see cref="OpenAIResponseClient"/> using the OpenAI Response API.
+    /// Creates an AI agent from an <see cref="ResponsesClient"/> using the OpenAI Response API.
     /// </summary>
-    /// <param name="client">The <see cref="OpenAIResponseClient" /> to use for the agent.</param>
+    /// <param name="client">The <see cref="ResponsesClient" /> to use for the agent.</param>
     /// <param name="instructions">Optional system instructions that define the agent's behavior and personality.</param>
     /// <param name="name">Optional name for the agent for identification purposes.</param>
     /// <param name="description">Optional description of the agent's capabilities and purpose.</param>
@@ -33,7 +33,7 @@ public static class OpenAIResponseClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> is <see langword="null"/>.</exception>
     public static ChatClientAgent CreateAIAgent(
-        this OpenAIResponseClient client,
+        this ResponsesClient client,
         string? instructions = null,
         string? name = null,
         string? description = null,
@@ -61,9 +61,9 @@ public static class OpenAIResponseClientExtensions
     }
 
     /// <summary>
-    /// Creates an AI agent from an <see cref="OpenAIResponseClient"/> using the OpenAI Response API.
+    /// Creates an AI agent from an <see cref="ResponsesClient"/> using the OpenAI Response API.
     /// </summary>
-    /// <param name="client">The <see cref="OpenAIResponseClient" /> to use for the agent.</param>
+    /// <param name="client">The <see cref="ResponsesClient" /> to use for the agent.</param>
     /// <param name="options">Full set of options to configure the agent.</param>
     /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
@@ -71,7 +71,7 @@ public static class OpenAIResponseClientExtensions
     /// <returns>An <see cref="ChatClientAgent"/> instance backed by the OpenAI Response service.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="client"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     public static ChatClientAgent CreateAIAgent(
-        this OpenAIResponseClient client,
+        this ResponsesClient client,
         ChatClientAgentOptions options,
         Func<IChatClient, IChatClient>? clientFactory = null,
         ILoggerFactory? loggerFactory = null,

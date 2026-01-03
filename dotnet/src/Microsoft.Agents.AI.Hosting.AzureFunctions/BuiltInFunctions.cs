@@ -7,6 +7,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.DurableTask.Client;
+using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -22,14 +23,14 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
 
     // Exposed as an entity trigger via AgentFunctionsProvider
-    public static async Task InvokeAgentAsync(
-        [EntityTrigger] TaskEntityDispatcher dispatcher,
+    public static Task<string> InvokeAgentAsync(
         [DurableClient] DurableTaskClient client,
+        string encodedEntityRequest,
         FunctionContext functionContext)
     {
         // This should never be null except if the function trigger is misconfigured.
-        ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(client);
+        ArgumentNullException.ThrowIfNull(encodedEntityRequest);
         ArgumentNullException.ThrowIfNull(functionContext);
 
         // Create a combined service provider that includes both the existing services
@@ -38,7 +39,8 @@ internal static class BuiltInFunctions
 
         // This method is the entry point for the agent entity.
         // It will be invoked by the Azure Functions runtime when the entity is called.
-        await dispatcher.DispatchAsync(new AgentEntity(combinedServiceProvider, functionContext.CancellationToken));
+        AgentEntity entity = new(combinedServiceProvider, functionContext.CancellationToken);
+        return GrpcEntityRunner.LoadAndRunAsync(encodedEntityRequest, entity, combinedServiceProvider);
     }
 
     public static async Task<HttpResponseData> RunAgentHttpAsync(

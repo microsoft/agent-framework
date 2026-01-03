@@ -33,9 +33,8 @@ public static class A2AClientExtensions
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    /// <param name="displayName">The display name of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
     /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null) =>
-        new A2AAgent(client, id, name, description, displayName, loggerFactory);
+    public static AIAgent GetAIAgent(this A2AClient client, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null) =>
+        new A2AAgent(client, id, name, description, loggerFactory);
 }

@@ -1,5 +1,9 @@
 # Release History
 
+## <version>
+
+- Addressed incompatibility issue with `Microsoft.Azure.Functions.Worker.Extensions.DurableTask` >= 1.11.0 ([#2759](https://github.com/microsoft/agent-framework/pull/2759))
+
 ## v1.0.0-preview.251125.1
 
 - Added support for .NET 10 ([#2128](https://github.com/microsoft/agent-framework/pull/2128))

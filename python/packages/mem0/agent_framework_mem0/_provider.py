@@ -150,11 +150,12 @@ class Mem0Provider(ContextProvider):
         if not input_text.strip():
             return Context(messages=None)
 
+        # Build filters from init parameters
+        filters = self._build_filters()
+
         search_response: MemorySearchResponse_v1_1 | MemorySearchResponse_v2 = await self.mem0_client.search(  # type: ignore[misc]
             query=input_text,
-            user_id=self.user_id,
-            agent_id=self.agent_id,
-            run_id=self._per_operation_thread_id if self.scope_to_per_operation_thread_id else self.thread_id,
+            filters=filters,
         )
 
         # Depending on the API version, the response schema varies slightly
@@ -184,6 +185,29 @@ class Mem0Provider(ContextProvider):
             raise ServiceInitializationError(
                 "At least one of the filters: agent_id, user_id, application_id, or thread_id is required."
             )
+
+    def _build_filters(self) -> dict[str, Any]:
+        """Build search filters from initialization parameters.
+
+        Returns:
+            Filter dictionary for mem0 v2 search API containing initialization parameters.
+            In the v2 API, filters holds the user_id, agent_id, run_id (thread_id), and app_id
+            (application_id) which are required for scoping memory search operations.
+        """
+        filters: dict[str, Any] = {}
+
+        if self.user_id:
+            filters["user_id"] = self.user_id
+        if self.agent_id:
+            filters["agent_id"] = self.agent_id
+        if self.scope_to_per_operation_thread_id and self._per_operation_thread_id:
+            filters["run_id"] = self._per_operation_thread_id
+        elif self.thread_id:
+            filters["run_id"] = self.thread_id
+        if self.application_id:
+            filters["app_id"] = self.application_id
+
+        return filters
 
     def _validate_per_operation_thread_id(self, thread_id: str | None) -> None:
         """Validates that a new thread ID doesn't conflict with an existing one when scoped.

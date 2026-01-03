@@ -9,7 +9,7 @@ from agent_framework import (
     WorkflowOutputEvent,
     handler,
 )
-from agent_framework.observability import get_tracer, setup_observability
+from agent_framework.observability import configure_otel_providers, get_tracer
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
 from typing_extensions import Never
@@ -105,7 +105,7 @@ async def main():
     """Run the telemetry sample with a simple sequential workflow."""
     # This will enable tracing and create the necessary tracing, logging and metrics providers
     # based on environment variables. See the .env.example file for the available configuration options.
-    setup_observability()
+    configure_otel_providers()
 
     with get_tracer().start_as_current_span("Sequential Workflow Scenario", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")

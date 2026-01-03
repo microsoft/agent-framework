@@ -8,8 +8,11 @@ This folder contains an example demonstrating how to use the Redis context provi
 
 | File | Description |
 |------|-------------|
+| [`azure_redis_conversation.py`](azure_redis_conversation.py) | Demonstrates conversation persistence with RedisChatMessageStore and Azure Redis with Azure AD (Entra ID) authentication using credential provider. |
 | [`redis_basics.py`](redis_basics.py) | Shows standalone provider usage and agent integration. Demonstrates writing messages to Redis, retrieving context via full‑text or hybrid vector search, and persisting preferences across threads. Also includes a simple tool example whose outputs are remembered. |
-| [`redis_threads.py`](redis_threads.py) | Demonstrates thread scoping. Includes: (1) global thread scope with a fixed `thread_id` shared across operations; (2) per‑operation thread scope where `scope_to_per_operation_thread_id=True` binds memory to a single thread for the provider’s lifetime; and (3) multiple agents with isolated memory via different `agent_id` values. |
+| [`redis_conversation.py`](redis_conversation.py) | Simple example showing conversation persistence with RedisChatMessageStore using traditional connection string authentication. |
+| [`redis_threads.py`](redis_threads.py) | Demonstrates thread scoping. Includes: (1) global thread scope with a fixed `thread_id` shared across operations; (2) per‑operation thread scope where `scope_to_per_operation_thread_id=True` binds memory to a single thread for the provider's lifetime; and (3) multiple agents with isolated memory via different `agent_id` values. |
+
 
 ## Prerequisites
 

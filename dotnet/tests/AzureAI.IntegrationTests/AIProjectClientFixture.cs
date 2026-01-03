@@ -89,7 +89,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         List<ChatMessage> messages = [];
         await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
-            var openAIItem = item.AsOpenAIResponseItem();
+            var openAIItem = item.AsResponseResultItem();
             if (openAIItem is MessageResponseItem messageItem)
             {
                 messages.Add(new ChatMessage

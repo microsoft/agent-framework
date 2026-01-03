@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import Awaitable, Callable
+
 import pytest
 
 from agent_framework import (
@@ -16,6 +18,7 @@ from agent_framework import (
     TextContent,
     ai_function,
 )
+from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
 
 
 async def test_base_client_with_function_calling(chat_client_base: ChatClientProtocol):
@@ -2206,3 +2209,175 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: ChatCli
     assert len(error_results) >= 1
     assert len(success_results) >= 1
     assert call_count == 2  # Both calls executed
+
+
+class TerminateLoopMiddleware(FunctionMiddleware):
+    """Middleware that sets terminate=True to exit the function calling loop."""
+
+    async def process(
+        self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
+    ) -> None:
+        # Set result to a simple value - the framework will wrap it in FunctionResultContent
+        context.result = "terminated by middleware"
+        context.terminate = True
+
+
+async def test_terminate_loop_single_function_call(chat_client_base: ChatClientProtocol):
+    """Test that terminate_loop=True exits the function calling loop after single function call."""
+    exec_counter = 0
+
+    @ai_function(name="test_function")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    # Queue up two responses: function call, then final text
+    # If terminate_loop works, only the first response should be consumed
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response(
+        "hello",
+        tool_choice="auto",
+        tools=[ai_func],
+        middleware=[TerminateLoopMiddleware()],
+    )
+
+    # Function should NOT have been executed - middleware intercepted it
+    assert exec_counter == 0
+
+    # There should be 2 messages: assistant with function call, tool result from middleware
+    # The loop should NOT have continued to call the LLM again
+    assert len(response.messages) == 2
+    assert response.messages[0].role == Role.ASSISTANT
+    assert isinstance(response.messages[0].contents[0], FunctionCallContent)
+    assert response.messages[1].role == Role.TOOL
+    assert isinstance(response.messages[1].contents[0], FunctionResultContent)
+    assert response.messages[1].contents[0].result == "terminated by middleware"
+
+    # Verify the second response is still in the queue (wasn't consumed)
+    assert len(chat_client_base.run_responses) == 1
+
+
+class SelectiveTerminateMiddleware(FunctionMiddleware):
+    """Only terminates for terminating_function."""
+
+    async def process(
+        self, context: FunctionInvocationContext, next_handler: Callable[[FunctionInvocationContext], Awaitable[None]]
+    ) -> None:
+        if context.function.name == "terminating_function":
+            # Set result to a simple value - the framework will wrap it in FunctionResultContent
+            context.result = "terminated by middleware"
+            context.terminate = True
+        else:
+            await next_handler(context)
+
+
+async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client_base: ChatClientProtocol):
+    """Test that any(terminate_loop=True) exits loop even with multiple function calls."""
+    normal_call_count = 0
+    terminating_call_count = 0
+
+    @ai_function(name="normal_function")
+    def normal_func(arg1: str) -> str:
+        nonlocal normal_call_count
+        normal_call_count += 1
+        return f"Normal {arg1}"
+
+    @ai_function(name="terminating_function")
+    def terminating_func(arg1: str) -> str:
+        nonlocal terminating_call_count
+        terminating_call_count += 1
+        return f"Terminating {arg1}"
+
+    # Queue up two responses: parallel function calls, then final text
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=ChatMessage(
+                role="assistant",
+                contents=[
+                    FunctionCallContent(call_id="1", name="normal_function", arguments='{"arg1": "value1"}'),
+                    FunctionCallContent(call_id="2", name="terminating_function", arguments='{"arg1": "value2"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=ChatMessage(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response(
+        "hello",
+        tool_choice="auto",
+        tools=[normal_func, terminating_func],
+        middleware=[SelectiveTerminateMiddleware()],
+    )
+
+    # normal_function should have executed (middleware calls next_handler)
+    # terminating_function should NOT have executed (middleware intercepts it)
+    assert normal_call_count == 1
+    assert terminating_call_count == 0
+
+    # There should be 2 messages: assistant with function calls, tool results
+    # The loop should NOT have continued to call the LLM again
+    assert len(response.messages) == 2
+    assert response.messages[0].role == Role.ASSISTANT
+    assert len(response.messages[0].contents) == 2
+    assert response.messages[1].role == Role.TOOL
+    # Both function results should be present
+    assert len(response.messages[1].contents) == 2
+
+    # Verify the second response is still in the queue (wasn't consumed)
+    assert len(chat_client_base.run_responses) == 1
+
+
+async def test_terminate_loop_streaming_single_function_call(chat_client_base: ChatClientProtocol):
+    """Test that terminate_loop=True exits the streaming function calling loop."""
+    exec_counter = 0
+
+    @ai_function(name="test_function")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    # Queue up two streaming responses
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[FunctionCallContent(call_id="1", name="test_function", arguments='{"arg1": "value1"}')],
+                role="assistant",
+            ),
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[TextContent(text="done")],
+                role="assistant",
+            )
+        ],
+    ]
+
+    updates = []
+    async for update in chat_client_base.get_streaming_response(
+        "hello",
+        tool_choice="auto",
+        tools=[ai_func],
+        middleware=[TerminateLoopMiddleware()],
+    ):
+        updates.append(update)
+
+    # Function should NOT have been executed - middleware intercepted it
+    assert exec_counter == 0
+
+    # Should have function call update and function result update
+    # The loop should NOT have continued to call the LLM again
+    assert len(updates) == 2
+
+    # Verify the second streaming response is still in the queue (wasn't consumed)
+    assert len(chat_client_base.streaming_responses) == 1

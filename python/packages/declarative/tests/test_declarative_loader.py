@@ -454,3 +454,140 @@ def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir:
     result = agent_schema_dispatch(yaml.safe_load(content))
     # Result can be None for unknown kinds, but should not raise exceptions
     assert result is not None, f"agent_schema_dispatch returned None for {yaml_file.relative_to(agent_samples_dir)}"
+
+
+class TestAgentFactorySafeMode:
+    """Tests for AgentFactory safe_mode parameter."""
+
+    def test_agent_factory_safe_mode_default_is_true(self):
+        """Test that safe_mode is True by default."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        factory = AgentFactory()
+        assert factory.safe_mode is True
+
+    def test_agent_factory_safe_mode_can_be_set_false(self):
+        """Test that safe_mode can be explicitly set to False."""
+        from agent_framework_declarative._loader import AgentFactory
+
+        factory = AgentFactory(safe_mode=False)
+        assert factory.safe_mode is False
+
+    def test_agent_factory_safe_mode_blocks_env_in_yaml(self, monkeypatch):
+        """Test that safe_mode=True blocks environment variable access in YAML parsing."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative._loader import AgentFactory
+
+        monkeypatch.setenv("TEST_MODEL_ID", "gpt-4-from-env")
+
+        # Create a mock chat client to avoid needing real provider
+        mock_client = MagicMock()
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: =Env.TEST_DESCRIPTION
+instructions: Hello world
+"""
+        monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
+
+        # With safe_mode=True (default), Env access should fail and return original value
+        factory = AgentFactory(chat_client=mock_client, safe_mode=True)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # The description should NOT be resolved from env (PowerFx fails, returns original)
+        assert agent.description == "=Env.TEST_DESCRIPTION"
+
+    def test_agent_factory_safe_mode_false_allows_env_in_yaml(self, monkeypatch):
+        """Test that safe_mode=False allows environment variable access in YAML parsing."""
+        from unittest.mock import MagicMock
+
+        from agent_framework_declarative._loader import AgentFactory
+
+        monkeypatch.setenv("TEST_DESCRIPTION", "Description from env")
+
+        # Create a mock chat client to avoid needing real provider
+        mock_client = MagicMock()
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: =Env.TEST_DESCRIPTION
+instructions: Hello world
+"""
+
+        # With safe_mode=False, Env access should work
+        factory = AgentFactory(chat_client=mock_client, safe_mode=False)
+        agent = factory.create_agent_from_yaml(yaml_content)
+
+        # The description should be resolved from env
+        assert agent.description == "Description from env"
+
+    def test_agent_factory_safe_mode_with_api_key_connection(self, monkeypatch):
+        """Test safe_mode with API key connection containing env variable."""
+        from agent_framework_declarative._models import _safe_mode_context
+
+        monkeypatch.setenv("MY_API_KEY", "secret-key-123")
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: Test agent
+instructions: Hello
+model:
+  id: gpt-4
+  provider: OpenAI
+  apiType: Chat
+  connection:
+    kind: key
+    apiKey: =Env.MY_API_KEY
+"""
+
+        # Manually trigger the YAML parsing to check the context is set correctly
+        import yaml as yaml_module
+
+        from agent_framework_declarative._models import agent_schema_dispatch
+
+        token = _safe_mode_context.set(True)  # Ensure we're in safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+
+            # The API key should NOT be resolved (still has the PowerFx expression)
+            assert result.model.connection.apiKey == "=Env.MY_API_KEY"
+        finally:
+            _safe_mode_context.reset(token)
+
+    def test_agent_factory_safe_mode_false_resolves_api_key(self, monkeypatch):
+        """Test safe_mode=False resolves API key from environment."""
+        from agent_framework_declarative._models import _safe_mode_context
+
+        monkeypatch.setenv("MY_API_KEY", "secret-key-123")
+
+        yaml_content = """
+kind: Prompt
+name: test-agent
+description: Test agent
+instructions: Hello
+model:
+  id: gpt-4
+  provider: OpenAI
+  apiType: Chat
+  connection:
+    kind: key
+    apiKey: =Env.MY_API_KEY
+"""
+
+        # With safe_mode=False, the API key should be resolved
+        import yaml as yaml_module
+
+        from agent_framework_declarative._models import agent_schema_dispatch
+
+        token = _safe_mode_context.set(False)  # Disable safe mode
+        try:
+            result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+
+            # The API key should be resolved from environment
+            assert result.model.connection.apiKey == "secret-key-123"
+        finally:
+            _safe_mode_context.reset(token)

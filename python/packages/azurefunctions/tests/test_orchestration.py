@@ -295,7 +295,7 @@ class TestDurableAIAgent:
         call_args = mock_context.call_entity.call_args
         entity_id, operation, request = call_args[0]
 
-        assert operation == "run_agent"
+        assert operation == "run"
         assert request["message"] == "Test message"
         assert request["enable_tool_calls"] is True
         assert "correlationId" in request

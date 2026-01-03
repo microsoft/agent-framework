@@ -55,7 +55,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -72,7 +72,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
 
         try
         {
-            AgentRunResponse response = await base.RunAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
+            AgentRunResponse response = await base.RunCoreAsync(messages, thread, options, cancellationToken).ConfigureAwait(false);
 
             if (this._logger.IsEnabled(LogLevel.Debug))
             {
@@ -101,7 +101,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (this._logger.IsEnabled(LogLevel.Debug))
@@ -119,7 +119,7 @@ public sealed partial class LoggingAgent : DelegatingAIAgent
         IAsyncEnumerator<AgentRunResponseUpdate> e;
         try
         {
-            e = base.RunStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
+            e = base.RunCoreStreamingAsync(messages, thread, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
         }
         catch (OperationCanceledException)
         {

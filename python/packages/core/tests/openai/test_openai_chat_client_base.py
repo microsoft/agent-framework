@@ -76,7 +76,7 @@ async def test_cmc(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -97,7 +97,7 @@ async def test_cmc_chat_options(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -120,7 +120,7 @@ async def test_cmc_no_fcc_in_response(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -167,7 +167,7 @@ async def test_scmc_chat_options(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -203,7 +203,7 @@ async def test_cmc_additional_properties(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
         reasoning_effort="low",
     )
 
@@ -246,7 +246,7 @@ async def test_get_streaming(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -285,7 +285,7 @@ async def test_get_streaming_singular(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -349,7 +349,7 @@ async def test_get_streaming_no_fcc_in_response(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -399,7 +399,7 @@ def test_chat_response_created_at_uses_utc(openai_unit_test_env: dict[str, str])
     )
 
     client = OpenAIChatClient()
-    response = client._create_chat_response(mock_response, ChatOptions())
+    response = client._parse_response_from_openai(mock_response, ChatOptions())
 
     # Verify that created_at is correctly formatted as UTC
     assert response.created_at is not None
@@ -431,7 +431,7 @@ def test_chat_response_update_created_at_uses_utc(openai_unit_test_env: dict[str
     )
 
     client = OpenAIChatClient()
-    response_update = client._create_chat_response_update(mock_chunk)
+    response_update = client._parse_response_update_from_openai(mock_chunk)
 
     # Verify that created_at is correctly formatted as UTC
     assert response_update.created_at is not None

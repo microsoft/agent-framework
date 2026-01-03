@@ -339,10 +339,16 @@ class SerializationMixin:
                     continue
                 # Handle dicts containing SerializationProtocol values
                 if isinstance(value, dict):
+                    from datetime import date, datetime, time
+
                     serialized_dict: dict[str, Any] = {}
                     for k, v in value.items():
                         if isinstance(v, SerializationProtocol):
                             serialized_dict[k] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
+                            continue
+                        # Convert datetime objects to strings
+                        if isinstance(v, (datetime, date, time)):
+                            serialized_dict[k] = str(v)
                             continue
                         # Check if the value is JSON serializable
                         if is_serializable(v):

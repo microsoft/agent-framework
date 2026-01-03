@@ -85,6 +85,9 @@ public static class ServiceCollectionExtensions
         // The agent dictionary contains the real agent factories, which is used by the agent entities.
         services.AddSingleton(agents);
 
+        // Register the options so AgentEntity can access TTL configuration
+        services.AddSingleton(options);
+
         // The keyed services are used to resolve durable agent *proxy* instances for external clients.
         foreach (var factory in agents)
         {

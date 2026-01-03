@@ -11,7 +11,7 @@ var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 AIAgent agent = new OpenAIClient(
     apiKey)
-     .GetOpenAIResponseClient(model)
+     .GetResponsesClient(model)
      .CreateAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.

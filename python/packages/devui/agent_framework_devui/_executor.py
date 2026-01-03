@@ -82,27 +82,23 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_OTEL is set
-        if os.environ.get("ENABLE_OTEL"):
+        # Configure Agent Framework tracing only if ENABLE_INSTRUMENTATION is set
+        if os.environ.get("ENABLE_INSTRUMENTATION"):
             try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
+                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Get OTLP endpoint from either custom or standard env var
-                    # This handles the case where env vars are set after ObservabilitySettings was imported
-                    otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-                    # Pass the endpoint explicitly to setup_observability
+                    # Run the configure_otel_providers
                     # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                    configure_otel_providers(enable_sensitive_data=True)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("ENABLE_OTEL not set, skipping observability setup")
+            logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -252,7 +248,7 @@ class AgentFrameworkExecutor:
 
             # Get thread from conversation parameter (OpenAI standard!)
             thread = None
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if conversation_id:
                 thread = self.conversation_store.get_thread(conversation_id)
                 if thread:
@@ -328,7 +324,7 @@ class AgentFrameworkExecutor:
             entity_id = request.get_entity_id() or "unknown"
 
             # Get or create session conversation for checkpoint storage
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if not conversation_id:
                 # Create default session if not provided
                 import time

@@ -40,7 +40,7 @@ from .._types import (
     prepare_function_call_results,
 )
 from ..exceptions import ServiceInitializationError
-from ..observability import use_observability
+from ..observability import use_instrumentation
 from ._shared import OpenAIConfigMixin, OpenAISettings
 
 if sys.version_info >= (3, 11):
@@ -53,7 +53,7 @@ __all__ = ["OpenAIAssistantsClient"]
 
 
 @use_function_invocation
-@use_observability
+@use_instrumentation
 @use_chat_middleware
 class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     """OpenAI Assistants client."""
@@ -164,7 +164,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     async def close(self) -> None:
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
-            client = await self.ensure_client()
+            client = await self._ensure_client()
             await client.beta.assistants.delete(self.assistant_id)
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
@@ -188,7 +188,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         chat_options: ChatOptions,
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        # Extract necessary state from messages and options
+        # prepare
         run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
 
         # Get the thread ID
@@ -204,10 +204,10 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         # Determine which assistant to use and create if needed
         assistant_id = await self._get_assistant_id_or_create()
 
-        # Create the streaming response
+        # execute
         stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
 
-        # Process and yield each update from the stream
+        # process
         async for update in self._process_stream_events(stream, thread_id):
             yield update
 
@@ -222,7 +222,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             if not self.model_id:
                 raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
 
-            client = await self.ensure_client()
+            client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(
                 model=self.model_id,
                 description=self.assistant_description,
@@ -245,11 +245,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         Returns:
             tuple: (stream, final_thread_id)
         """
-        client = await self.ensure_client()
+        client = await self._ensure_client()
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
-        tool_run_id, tool_outputs = self._convert_function_results_to_tool_output(tool_results)
+        tool_run_id, tool_outputs = self._prepare_tool_outputs_for_assistants(tool_results)
 
         if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
             # There's an active run and we have tool results to submit, so submit the results.
@@ -270,7 +270,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     async def _get_active_thread_run(self, thread_id: str | None) -> Run | None:
         """Get any active run for the given thread."""
-        client = await self.ensure_client()
+        client = await self._ensure_client()
         if thread_id is None:
             return None
 
@@ -281,7 +281,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
     async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
-        client = await self.ensure_client()
+        client = await self._ensure_client()
         if thread_id is None:
             # No thread ID was provided, so create a new thread.
             thread = await client.beta.threads.create(  # type: ignore[reportDeprecated]
@@ -330,7 +330,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                                 response_id=response_id,
                             )
                 elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
-                    contents = self._create_function_call_contents(response.data, response_id)
+                    contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:
                         yield ChatResponseUpdate(
                             role=Role.ASSISTANT,
@@ -371,8 +371,8 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                         role=Role.ASSISTANT,
                     )
 
-    def _create_function_call_contents(self, event_data: Run, response_id: str | None) -> list[Contents]:
-        """Create function call contents from a tool action event."""
+    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Contents]:
+        """Parse function call contents from an assistants tool action event."""
         contents: list[Contents] = []
 
         if event_data.required_action is not None:
@@ -437,7 +437,10 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             if chat_options.response_format is not None:
                 run_options["response_format"] = {
                     "type": "json_schema",
-                    "json_schema": chat_options.response_format.model_json_schema(),
+                    "json_schema": {
+                        "name": chat_options.response_format.__name__,
+                        "schema": chat_options.response_format.model_json_schema(),
+                    },
                 }
 
         instructions: list[str] = []
@@ -487,10 +490,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         return run_options, tool_results
 
-    def _convert_function_results_to_tool_output(
+    def _prepare_tool_outputs_for_assistants(
         self,
         tool_results: list[FunctionResultContent] | None,
     ) -> tuple[str | None, list[ToolOutput] | None]:
+        """Prepare function results for submission to the assistants API."""
         run_id: str | None = None
         tool_outputs: list[ToolOutput] | None = None
 

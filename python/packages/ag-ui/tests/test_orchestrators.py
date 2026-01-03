@@ -83,3 +83,71 @@ async def test_default_orchestrator_merges_client_tools() -> None:
     assert "server_tool" in tool_names
     assert "get_weather" in tool_names
     assert agent.chat_client.function_invocation_configuration.additional_tools
+
+
+async def test_default_orchestrator_with_camel_case_ids() -> None:
+    """Client tool is able to extract camelCase IDs."""
+
+    agent = DummyAgent()
+    orchestrator = DefaultOrchestrator()
+
+    input_data = {
+        "runId": "test-camelcase-runid",
+        "threadId": "test-camelcase-threadid",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello"}],
+            }
+        ],
+        "tools": [],
+    }
+
+    context = ExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(),
+    )
+
+    events = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+
+    # assert the last event has the expected run_id and thread_id
+    last_event = events[-1]
+    assert last_event.run_id == "test-camelcase-runid"
+    assert last_event.thread_id == "test-camelcase-threadid"
+
+
+async def test_default_orchestrator_with_snake_case_ids() -> None:
+    """Client tool is able to extract snake_case IDs."""
+
+    agent = DummyAgent()
+    orchestrator = DefaultOrchestrator()
+
+    input_data = {
+        "run_id": "test-snakecase-runid",
+        "thread_id": "test-snakecase-threadid",
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello"}],
+            }
+        ],
+        "tools": [],
+    }
+
+    context = ExecutionContext(
+        input_data=input_data,
+        agent=agent,
+        config=AgentConfig(),
+    )
+
+    events = []
+    async for event in orchestrator.run(context):
+        events.append(event)
+
+    # assert the last event has the expected run_id and thread_id
+    last_event = events[-1]
+    assert last_event.run_id == "test-snakecase-runid"
+    assert last_event.thread_id == "test-snakecase-threadid"

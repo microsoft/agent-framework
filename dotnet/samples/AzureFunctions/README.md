@@ -9,6 +9,7 @@ This directory contains samples for Azure Functions.
 - **[05_AgentOrchestration_HITL](05_AgentOrchestration_HITL)**: A sample that demonstrates how to implement a human-in-the-loop workflow using durable orchestration, including external event handling for human approval.
 - **[06_LongRunningTools](06_LongRunningTools)**: A sample that demonstrates how agents can start and interact with durable orchestrations from tool calls to enable long-running tool scenarios.
 - **[07_AgentAsMcpTool](07_AgentAsMcpTool)**: A sample that demonstrates how to configure durable AI agents to be accessible as Model Context Protocol (MCP) tools.
+- **[08_ReliableStreaming](08_ReliableStreaming)**: A sample that demonstrates how to implement reliable streaming for durable agents using Redis Streams, enabling clients to disconnect and reconnect without losing messages.
 
 ## Running the Samples
 

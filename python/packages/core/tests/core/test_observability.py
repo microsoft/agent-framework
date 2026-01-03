@@ -33,8 +33,8 @@ from agent_framework.observability import (
     ChatMessageListTimestampFilter,
     OtelAttr,
     get_function_span,
-    use_agent_observability,
-    use_observability,
+    use_agent_instrumentation,
+    use_instrumentation,
 )
 
 # region Test constants
@@ -157,7 +157,7 @@ def test_start_span_with_tool_call_id(span_exporter: InMemorySpanExporter):
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
 
 
-# region Test use_observability decorator
+# region Test use_instrumentation decorator
 
 
 def test_decorator_with_valid_class():
@@ -175,7 +175,7 @@ def test_decorator_with_valid_class():
             return gen()
 
     # Apply the decorator
-    decorated_class = use_observability(MockChatClient)
+    decorated_class = use_instrumentation(MockChatClient)
     assert hasattr(decorated_class, OPEN_TELEMETRY_CHAT_CLIENT_MARKER)
 
 
@@ -187,7 +187,7 @@ def test_decorator_with_missing_methods():
 
     # Apply the decorator - should not raise an error
     with pytest.raises(ChatClientInitializationError):
-        use_observability(MockChatClient)
+        use_instrumentation(MockChatClient)
 
 
 def test_decorator_with_partial_methods():
@@ -200,7 +200,7 @@ def test_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(ChatClientInitializationError):
-        use_observability(MockChatClient)
+        use_instrumentation(MockChatClient)
 
 
 # region Test telemetry decorator with mock client
@@ -235,7 +235,7 @@ def mock_chat_client():
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_observability(mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data):
     """Test that when diagnostics are enabled, telemetry is applied."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
 
     messages = [ChatMessage(role=Role.USER, text="Test message")]
     span_exporter.clear()
@@ -258,8 +258,8 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 async def test_chat_client_streaming_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test streaming telemetry through the use_observability decorator."""
-    client = use_observability(mock_chat_client)()
+    """Test streaming telemetry through the use_instrumentation decorator."""
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
@@ -282,7 +282,7 @@ async def test_chat_client_streaming_observability(
 
 async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
     """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     response = await client.get_response(messages=messages)
@@ -301,7 +301,7 @@ async def test_chat_client_streaming_without_model_id_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter
 ):
     """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
-    client = use_observability(mock_chat_client)()
+    client = use_instrumentation(mock_chat_client)()
     messages = [ChatMessage(role=Role.USER, text="Test")]
     span_exporter.clear()
     # Collect all yielded updates
@@ -329,7 +329,7 @@ def test_prepend_user_agent_with_none_value():
     assert AGENT_FRAMEWORK_USER_AGENT in str(result["User-Agent"])
 
 
-# region Test use_agent_observability decorator
+# region Test use_agent_instrumentation decorator
 
 
 def test_agent_decorator_with_valid_class():
@@ -337,7 +337,7 @@ def test_agent_decorator_with_valid_class():
 
     # Create a mock class with the required methods
     class MockChatClientAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"
@@ -358,7 +358,7 @@ def test_agent_decorator_with_valid_class():
             return AgentThread()
 
     # Apply the decorator
-    decorated_class = use_agent_observability(MockChatClientAgent)
+    decorated_class = use_agent_instrumentation(MockChatClientAgent)
 
     assert hasattr(decorated_class, OPEN_TELEMETRY_AGENT_MARKER)
 
@@ -367,19 +367,19 @@ def test_agent_decorator_with_missing_methods():
     """Test that agent decorator handles classes missing required methods gracefully."""
 
     class MockAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
     # Apply the decorator - should not raise an error
     with pytest.raises(AgentInitializationError):
-        use_agent_observability(MockAgent)
+        use_agent_instrumentation(MockAgent)
 
 
 def test_agent_decorator_with_partial_methods():
     """Test agent decorator when only one method is present."""
-    from agent_framework.observability import use_agent_observability
+    from agent_framework.observability import use_agent_instrumentation
 
     class MockAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"
@@ -390,7 +390,7 @@ def test_agent_decorator_with_partial_methods():
             return Mock()
 
     with pytest.raises(AgentInitializationError):
-        use_agent_observability(MockAgent)
+        use_agent_instrumentation(MockAgent)
 
 
 # region Test agent telemetry decorator with mock agent
@@ -401,7 +401,7 @@ def mock_chat_agent():
     """Create a mock chat client agent for testing."""
 
     class MockChatClientAgent:
-        AGENT_SYSTEM_NAME = "test_agent_system"
+        AGENT_PROVIDER_NAME = "test_agent_system"
 
         def __init__(self):
             self.id = "test_agent_id"
@@ -433,7 +433,7 @@ async def test_agent_instrumentation_enabled(
 ):
     """Test that when agent diagnostics are enabled, telemetry is applied."""
 
-    agent = use_agent_observability(mock_chat_agent)()
+    agent = use_agent_instrumentation(mock_chat_agent)()
 
     span_exporter.clear()
     response = await agent.run("Test message")
@@ -457,8 +457,8 @@ async def test_agent_instrumentation_enabled(
 async def test_agent_streaming_response_with_diagnostics_enabled_via_decorator(
     mock_chat_agent: AgentProtocol, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test agent streaming telemetry through the use_agent_observability decorator."""
-    agent = use_agent_observability(mock_chat_agent)()
+    """Test agent streaming telemetry through the use_agent_instrumentation decorator."""
+    agent = use_agent_instrumentation(mock_chat_agent)()
     span_exporter.clear()
     updates = []
     async for update in agent.run_stream("Test message"):
@@ -522,3 +522,393 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
     exception_message = exception_event.attributes["exception.message"]
     assert isinstance(exception_message, str)
     assert "Function execution failed" in exception_message
+
+
+# region Test OTEL environment variable parsing
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_with_grpc_endpoint(monkeypatch):
+    """Test _get_exporters_from_env with OTEL_EXPORTER_OTLP_ENDPOINT (gRPC)."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+    exporters = _get_exporters_from_env()
+
+    # Should return 3 exporters (trace, metrics, logs)
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_with_http_endpoint(monkeypatch):
+    """Test _get_exporters_from_env with OTEL_EXPORTER_OTLP_ENDPOINT (HTTP)."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http")
+
+    exporters = _get_exporters_from_env()
+
+    # Should return 3 exporters (trace, metrics, logs)
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_with_individual_endpoints(monkeypatch):
+    """Test _get_exporters_from_env with individual signal endpoints."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://localhost:4319")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+    exporters = _get_exporters_from_env()
+
+    # Should return 3 exporters (trace, metrics, logs)
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_with_headers(monkeypatch):
+    """Test _get_exporters_from_env with OTEL_EXPORTER_OTLP_HEADERS."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "key1=value1,key2=value2")
+
+    exporters = _get_exporters_from_env()
+
+    # Should return 3 exporters with headers
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_with_signal_specific_headers(monkeypatch):
+    """Test _get_exporters_from_env with signal-specific headers."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "trace-key=trace-value")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+    exporters = _get_exporters_from_env()
+
+    # Should have at least the traces exporter
+    assert len(exporters) >= 1
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_without_env_vars(monkeypatch):
+    """Test _get_exporters_from_env returns empty list when no env vars set."""
+    from agent_framework.observability import _get_exporters_from_env
+
+    # Clear all OTEL env vars
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    exporters = _get_exporters_from_env()
+
+    # Should return empty list
+    assert len(exporters) == 0
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_get_exporters_from_env_missing_grpc_dependency(monkeypatch):
+    """Test _get_exporters_from_env raises ImportError when gRPC exporters not installed."""
+
+    from agent_framework.observability import _get_exporters_from_env
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+    # Mock the import to raise ImportError
+    original_import = __builtins__.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if "opentelemetry.exporter.otlp.proto.grpc" in name:
+            raise ImportError("No module named 'opentelemetry.exporter.otlp.proto.grpc'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(__builtins__, "__import__", mock_import)
+
+    with pytest.raises(ImportError, match="opentelemetry-exporter-otlp-proto-grpc"):
+        _get_exporters_from_env()
+
+
+# region Test create_resource
+
+
+def test_create_resource_from_env(monkeypatch):
+    """Test create_resource reads OTEL environment variables."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "test-service")
+    monkeypatch.setenv("OTEL_SERVICE_VERSION", "1.0.0")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=production,host.name=server1")
+
+    resource = create_resource()
+
+    assert resource.attributes["service.name"] == "test-service"
+    assert resource.attributes["service.version"] == "1.0.0"
+    assert resource.attributes["deployment.environment"] == "production"
+    assert resource.attributes["host.name"] == "server1"
+
+
+def test_create_resource_with_parameters_override_env(monkeypatch):
+    """Test create_resource parameters override environment variables."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "env-service")
+    monkeypatch.setenv("OTEL_SERVICE_VERSION", "0.1.0")
+
+    resource = create_resource(service_name="param-service", service_version="2.0.0")
+
+    # Parameters should override env vars
+    assert resource.attributes["service.name"] == "param-service"
+    assert resource.attributes["service.version"] == "2.0.0"
+
+
+def test_create_resource_with_custom_attributes(monkeypatch):
+    """Test create_resource accepts custom attributes."""
+    from agent_framework.observability import create_resource
+
+    resource = create_resource(custom_attr="custom_value", another_attr=123)
+
+    assert resource.attributes["custom_attr"] == "custom_value"
+    assert resource.attributes["another_attr"] == 123
+
+
+# region Test _create_otlp_exporters
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_create_otlp_exporters_grpc_with_single_endpoint():
+    """Test _create_otlp_exporters creates gRPC exporters with single endpoint."""
+    from agent_framework.observability import _create_otlp_exporters
+
+    exporters = _create_otlp_exporters(endpoint="http://localhost:4317", protocol="grpc")
+
+    # Should return 3 exporters (trace, metrics, logs)
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_create_otlp_exporters_http_with_single_endpoint():
+    """Test _create_otlp_exporters creates HTTP exporters with single endpoint."""
+    from agent_framework.observability import _create_otlp_exporters
+
+    exporters = _create_otlp_exporters(endpoint="http://localhost:4318", protocol="http")
+
+    # Should return 3 exporters (trace, metrics, logs)
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_create_otlp_exporters_with_individual_endpoints():
+    """Test _create_otlp_exporters with individual signal endpoints."""
+    from agent_framework.observability import _create_otlp_exporters
+
+    exporters = _create_otlp_exporters(
+        protocol="grpc",
+        traces_endpoint="http://localhost:4317",
+        metrics_endpoint="http://localhost:4318",
+        logs_endpoint="http://localhost:4319",
+    )
+
+    # Should return 3 exporters
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_create_otlp_exporters_with_headers():
+    """Test _create_otlp_exporters with headers."""
+    from agent_framework.observability import _create_otlp_exporters
+
+    exporters = _create_otlp_exporters(
+        endpoint="http://localhost:4317", protocol="grpc", headers={"Authorization": "Bearer token"}
+    )
+
+    # Should return 3 exporters with headers
+    assert len(exporters) == 3
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_create_otlp_exporters_grpc_missing_dependency():
+    """Test _create_otlp_exporters raises ImportError when gRPC exporters not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from agent_framework.observability import _create_otlp_exporters
+
+    # Mock the import to raise ImportError
+    with (
+        patch.dict(sys.modules, {"opentelemetry.exporter.otlp.proto.grpc.trace_exporter": None}),
+        pytest.raises(ImportError, match="opentelemetry-exporter-otlp-proto-grpc"),
+    ):
+        _create_otlp_exporters(endpoint="http://localhost:4317", protocol="grpc")
+
+
+# region Test configure_otel_providers with views
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_configure_otel_providers_with_views(monkeypatch):
+    """Test configure_otel_providers accepts views parameter."""
+    from opentelemetry.sdk.metrics import View
+    from opentelemetry.sdk.metrics.view import DropAggregation
+
+    from agent_framework.observability import configure_otel_providers
+
+    # Clear all OTEL env vars
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    # Create a view that drops all metrics
+    views = [View(instrument_name="*", aggregation=DropAggregation())]
+
+    # Should not raise an error
+    configure_otel_providers(views=views)
+
+
+@pytest.mark.skipif(
+    True,
+    reason="Skipping OTLP exporter tests - optional dependency not installed by default",
+)
+def test_configure_otel_providers_without_views(monkeypatch):
+    """Test configure_otel_providers works without views parameter."""
+    from agent_framework.observability import configure_otel_providers
+
+    # Clear all OTEL env vars
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    # Should not raise an error with default empty views
+    configure_otel_providers()
+
+
+# region Test console exporters opt-in
+
+
+def test_console_exporters_opt_in_false(monkeypatch):
+    """Test console exporters are not added when ENABLE_CONSOLE_EXPORTERS is false."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "false")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+
+    settings = ObservabilitySettings(env_file_path="test.env")
+    assert settings.enable_console_exporters is False
+
+
+def test_console_exporters_opt_in_true(monkeypatch):
+    """Test console exporters are added when ENABLE_CONSOLE_EXPORTERS is true."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+
+    settings = ObservabilitySettings(env_file_path="test.env")
+    assert settings.enable_console_exporters is True
+
+
+def test_console_exporters_default_false(monkeypatch):
+    """Test console exporters default to False when not set."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+
+    settings = ObservabilitySettings(env_file_path="test.env")
+    assert settings.enable_console_exporters is False
+
+
+# region Test _parse_headers helper
+
+
+def test_parse_headers_valid():
+    """Test _parse_headers with valid header string."""
+    from agent_framework.observability import _parse_headers
+
+    headers = _parse_headers("key1=value1,key2=value2")
+    assert headers == {"key1": "value1", "key2": "value2"}
+
+
+def test_parse_headers_with_spaces():
+    """Test _parse_headers handles spaces around keys and values."""
+    from agent_framework.observability import _parse_headers
+
+    headers = _parse_headers("key1 = value1 , key2 = value2 ")
+    assert headers == {"key1": "value1", "key2": "value2"}
+
+
+def test_parse_headers_empty_string():
+    """Test _parse_headers with empty string."""
+    from agent_framework.observability import _parse_headers
+
+    headers = _parse_headers("")
+    assert headers == {}
+
+
+def test_parse_headers_invalid_format():
+    """Test _parse_headers ignores invalid pairs."""
+    from agent_framework.observability import _parse_headers
+
+    headers = _parse_headers("key1=value1,invalid,key2=value2")
+    # Should only include valid pairs
+    assert headers == {"key1": "value1", "key2": "value2"}

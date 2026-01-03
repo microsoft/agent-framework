@@ -54,6 +54,13 @@ async def main() -> None:
         result = await agent.run(query)
         print(f"Agent: {result}\n")
 
+        # Mem0 processes and indexes memories asynchronously.
+        # Wait for memories to be indexed before querying in a new thread.
+        # In production, consider implementing retry logic or using Mem0's
+        # eventual consistency handling instead of a fixed delay.
+        print("Waiting for memories to be processed...")
+        await asyncio.sleep(12)  # Empirically determined delay for Mem0 indexing
+
         print("\nRequest within a new thread:")
         # Create a new thread for the agent.
         # The new thread has no context of the previous conversation.

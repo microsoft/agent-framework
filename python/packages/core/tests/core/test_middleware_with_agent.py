@@ -193,7 +193,8 @@ class TestChatAgentFunctionBasedMiddleware:
         # Create a message to start the conversation
         messages = [ChatMessage(role=Role.USER, text="test message")]
 
-        # Set up chat client to return a function call
+        # Set up chat client to return a function call, then a final response
+        # If terminate works correctly, only the first response should be consumed
         chat_client.responses = [
             ChatResponse(
                 messages=[
@@ -204,7 +205,8 @@ class TestChatAgentFunctionBasedMiddleware:
                         ],
                     )
                 ]
-            )
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -222,7 +224,11 @@ class TestChatAgentFunctionBasedMiddleware:
         # Verify that function was not called and only middleware executed
         assert execution_order == ["middleware_before", "middleware_after"]
         assert "function_called" not in execution_order
-        assert execution_order == ["middleware_before", "middleware_after"]
+
+        # Verify the chat client was only called once (no extra LLM call after termination)
+        assert chat_client.call_count == 1
+        # Verify the second response is still in the queue (wasn't consumed)
+        assert len(chat_client.responses) == 1
 
     async def test_function_middleware_with_post_termination(self, chat_client: "MockChatClient") -> None:
         """Test that function middleware can terminate execution after calling next()."""
@@ -242,7 +248,8 @@ class TestChatAgentFunctionBasedMiddleware:
         # Create a message to start the conversation
         messages = [ChatMessage(role=Role.USER, text="test message")]
 
-        # Set up chat client to return a function call
+        # Set up chat client to return a function call, then a final response
+        # If terminate works correctly, only the first response should be consumed
         chat_client.responses = [
             ChatResponse(
                 messages=[
@@ -253,7 +260,8 @@ class TestChatAgentFunctionBasedMiddleware:
                         ],
                     )
                 ]
-            )
+            ),
+            ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="this should not be consumed")]),
         ]
 
         # Create the test function with the expected signature
@@ -272,6 +280,11 @@ class TestChatAgentFunctionBasedMiddleware:
         assert response is not None
         assert "function_called" in execution_order
         assert execution_order == ["middleware_before", "function_called", "middleware_after"]
+
+        # Verify the chat client was only called once (no extra LLM call after termination)
+        assert chat_client.call_count == 1
+        # Verify the second response is still in the queue (wasn't consumed)
+        assert len(chat_client.responses) == 1
 
     async def test_function_based_agent_middleware_with_chat_agent(self, chat_client: "MockChatClient") -> None:
         """Test function-based agent middleware with ChatAgent."""

@@ -78,7 +78,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
@@ -89,7 +89,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
@@ -114,7 +114,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         // Override information set by OpenTelemetryChatClient to make it specific to invoke_agent.
 
-        activity.DisplayName = $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.DisplayName}";
+        activity.DisplayName = string.IsNullOrWhiteSpace(this.Name)
+            ? $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Id}"
+            : $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Name}({this.Id})";
         activity.SetTag(OpenTelemetryConsts.GenAI.Operation.Name, OpenTelemetryConsts.GenAI.InvokeAgent);
 
         if (!string.IsNullOrWhiteSpace(this._providerName))
