@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-framework-azure-voice-live"
+version = "0.1.0"
+description = "Azure Voice Live integration for Microsoft Agent Framework - Real-time voice conversations with streaming audio"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Microsoft", email = "noreply@microsoft.com" },
+]
+keywords = [
+    "azure",
+    "voice",
+    "realtime",
+    "audio",
+    "ai",
+    "agent",
+    "streaming",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "agent-framework>=0.1.0",
+    "azure-ai-voicelive",  # Azure Voice Live SDK (preview)
+    "azure-identity>=1.14.0",
+    "azure-core>=1.29.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "websockets>=12.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/agent-framework"
+Documentation = "https://learn.microsoft.com/agent-framework/"
+Repository = "https://github.com/microsoft/agent-framework"
+Issues = "https://github.com/microsoft/agent-framework/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_framework_azure_voice_live"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.black]
+line-length = 120
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
