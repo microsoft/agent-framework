@@ -183,7 +183,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",
-            "max_tokens": "max_output_tokens",
+            "max_tokens": "max_completion_tokens",
         }
         for old_key, new_key in translations.items():
             if old_key in run_options and old_key != new_key:
