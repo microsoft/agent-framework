@@ -57,6 +57,7 @@ public class AgentRunResponseTests
             RawRepresentation = new object(),
             ResponseId = "responseId",
             Usage = new UsageDetails(),
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })
         };
 
         AgentRunResponse response = new(chatResponse);
@@ -66,6 +67,7 @@ public class AgentRunResponseTests
         Assert.Equal(chatResponse.ResponseId, response.ResponseId);
         Assert.Same(chatResponse, response.RawRepresentation as ChatResponse);
         Assert.Same(chatResponse.Usage, response.Usage);
+        Assert.Equivalent(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }), response.ContinuationToken);
     }
 
     [Fact]

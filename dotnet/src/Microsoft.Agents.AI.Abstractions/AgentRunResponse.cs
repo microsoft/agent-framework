@@ -74,6 +74,7 @@ public class AgentRunResponse
         this.RawRepresentation = response;
         this.ResponseId = response.ResponseId;
         this.Usage = response.Usage;
+        this.ContinuationToken = response.ContinuationToken;
     }
 
     /// <summary>
