@@ -141,11 +141,11 @@ public class AgentWorkflowBuilderTests
         public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
             => new DoubleEchoAgentThread();
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentRunResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
@@ -409,7 +409,7 @@ public class AgentWorkflowBuilderTests
 
     private sealed class DoubleEchoAgentWithBarrier(string name, StrongBox<TaskCompletionSource<bool>> barrier, StrongBox<int> remaining) : DoubleEchoAgent(name)
     {
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             if (Interlocked.Decrement(ref remaining.Value) == 0)
@@ -419,7 +419,7 @@ public class AgentWorkflowBuilderTests
 
             await barrier.Value!.Task.ConfigureAwait(false);
 
-            await foreach (var update in base.RunStreamingAsync(messages, thread, options, cancellationToken))
+            await foreach (var update in base.RunCoreStreamingAsync(messages, thread, options, cancellationToken))
             {
                 await Task.Yield();
                 yield return update;

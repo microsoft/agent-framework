@@ -63,21 +63,21 @@ __all__ = [
 ]
 
 
-def _mcp_prompt_message_to_chat_message(
+def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
 ) -> ChatMessage:
-    """Convert a MCP container type to a Agent Framework type."""
+    """Parse an MCP container type into an Agent Framework type."""
     return ChatMessage(
         role=Role(value=mcp_type.role),
-        contents=_mcp_type_to_ai_content(mcp_type.content),
+        contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
     )
 
 
-def _mcp_call_tool_result_to_ai_contents(
+def _parse_contents_from_mcp_tool_result(
     mcp_type: types.CallToolResult,
 ) -> list[Contents]:
-    """Convert a MCP container type to a Agent Framework type.
+    """Parse an MCP CallToolResult into Agent Framework content types.
 
     This function extracts the complete _meta field from CallToolResult objects
     and merges all metadata into the additional_properties field of converted
@@ -111,7 +111,7 @@ def _mcp_call_tool_result_to_ai_contents(
     # Convert each content item and merge metadata
     result_contents = []
     for item in mcp_type.content:
-        contents = _mcp_type_to_ai_content(item)
+        contents = _parse_content_from_mcp(item)
 
         if merged_meta_props:
             for content in contents:
@@ -124,7 +124,7 @@ def _mcp_call_tool_result_to_ai_contents(
     return result_contents
 
 
-def _mcp_type_to_ai_content(
+def _parse_content_from_mcp(
     mcp_type: types.ImageContent
     | types.TextContent
     | types.AudioContent
@@ -142,7 +142,7 @@ def _mcp_type_to_ai_content(
         | types.ToolResultContent
     ],
 ) -> list[Contents]:
-    """Convert a MCP type to a Agent Framework type."""
+    """Parse an MCP type into an Agent Framework type."""
     mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
     return_types: list[Contents] = []
     for mcp_type in mcp_types:
@@ -152,7 +152,7 @@ def _mcp_type_to_ai_content(
             case types.ImageContent() | types.AudioContent():
                 return_types.append(
                     DataContent(
-                        uri=mcp_type.data,
+                        data=mcp_type.data,
                         media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
                     )
@@ -178,7 +178,7 @@ def _mcp_type_to_ai_content(
                 return_types.append(
                     FunctionResultContent(
                         call_id=mcp_type.toolUseId,
-                        result=_mcp_type_to_ai_content(mcp_type.content)
+                        result=_parse_content_from_mcp(mcp_type.content)
                         if mcp_type.content
                         else mcp_type.structuredContent,
                         exception=Exception() if mcp_type.isError else None,
@@ -211,10 +211,10 @@ def _mcp_type_to_ai_content(
     return return_types
 
 
-def _ai_content_to_mcp_types(
+def _prepare_content_for_mcp(
     content: Contents,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
-    """Convert a BaseContent type to a MCP type."""
+    """Prepare an Agent Framework content type for MCP."""
     match content:
         case TextContent():
             return types.TextContent(type="text", text=content.text)
@@ -253,15 +253,15 @@ def _ai_content_to_mcp_types(
             return None
 
 
-def _chat_message_to_mcp_types(
+def _prepare_message_for_mcp(
     content: ChatMessage,
 ) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Convert a ChatMessage to a list of MCP types."""
+    """Prepare a ChatMessage for MCP format."""
     messages: list[
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
     ] = []
     for item in content.contents:
-        mcp_content = _ai_content_to_mcp_types(item)
+        mcp_content = _prepare_content_for_mcp(item)
         if mcp_content:
             messages.append(mcp_content)
     return messages
@@ -469,7 +469,7 @@ class MCPTool:
         logger.debug("Sampling callback called with params: %s", params)
         messages: list[ChatMessage] = []
         for msg in params.messages:
-            messages.append(_mcp_prompt_message_to_chat_message(msg))
+            messages.append(_parse_message_from_mcp(msg))
         try:
             response = await self.chat_client.get_response(
                 messages,
@@ -487,7 +487,7 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = _chat_message_to_mcp_types(response.messages[0])
+        mcp_contents = _prepare_message_for_mcp(response.messages[0])
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
@@ -685,8 +685,16 @@ class MCPTool:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
+        # Filter out framework kwargs that cannot be serialized by the MCP SDK.
+        # These are internal objects passed through the function invocation pipeline
+        # that should not be forwarded to external MCP servers.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
+        }
         try:
-            return _mcp_call_tool_result_to_ai_contents(await self.session.call_tool(tool_name, arguments=kwargs))
+            return _parse_contents_from_mcp_tool_result(
+                await self.session.call_tool(tool_name, arguments=filtered_kwargs)
+            )
         except McpError as mcp_exc:
             raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
@@ -716,7 +724,7 @@ class MCPTool:
             )
         try:
             prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)
-            return [_mcp_prompt_message_to_chat_message(message) for message in prompt_result.messages]
+            return [_parse_message_from_mcp(message) for message in prompt_result.messages]
         except McpError as mcp_exc:
             raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
