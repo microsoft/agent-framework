@@ -178,6 +178,48 @@ class _CountingWorkflowBuilder(WorkflowBuilder):
         return cast("_CountingWorkflowBuilder", super().set_start_executor(executor))
 
 
+async def test_magentic_builder_returns_workflow_and_runs() -> None:
+    manager = StubMagenticManager()
+    agent = StubAgent("writer", "first draft")
+
+    workflow = MagenticBuilder().participants([agent]).with_standard_manager(manager).build()
+
+    assert isinstance(workflow, Workflow)
+
+    outputs: list[ChatMessage] = []
+    orchestrator_event_count = 0
+    agent_event_count = 0
+    async for event in workflow.run_stream("compose summary"):
+        if isinstance(event, WorkflowOutputEvent):
+            msg = event.data
+            if isinstance(msg, list):
+                outputs.extend(cast(list[ChatMessage], msg))
+
+    assert outputs, "Expected a final output message"
+    assert len(outputs) >= 1
+    final = outputs[-1]
+    assert final.text == "final"
+    assert final.author_name == "magentic_manager"
+    assert orchestrator_event_count > 0, "Expected orchestrator events to be emitted"
+    assert agent_event_count > 0, "Expected agent delta events to be emitted"
+
+
+async def test_magentic_as_agent_accepts_conversation() -> None:
+    manager = StubMagenticManager()
+    writer = StubAgent("writer", "draft")
+
+    workflow = MagenticBuilder().participants(writer=writer).with_standard_manager(manager=manager).build()
+
+    agent = workflow.as_agent(name="magentic-agent")
+    conversation = [
+        ChatMessage(role=Role.SYSTEM, text="Guidelines", author_name="system"),
+        ChatMessage(role=Role.USER, text="Summarize the findings", author_name="requester"),
+    ]
+    response = await agent.run(conversation)
+
+    assert isinstance(response, AgentRunResponse)
+
+
 async def test_standard_manager_plan_and_replan_combined_ledger():
     manager = FakeManager(max_round_count=10, max_stall_count=3, max_reset_count=2)
     ctx = MagenticContext(

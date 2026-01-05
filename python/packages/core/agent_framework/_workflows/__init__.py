@@ -6,7 +6,11 @@ from ._agent_executor import (
     AgentExecutorRequest,
     AgentExecutorResponse,
 )
-from ._base_group_chat_orchestrator import GroupChatRequestSentEvent, GroupChatResponseReceivedEvent
+from ._base_group_chat_orchestrator import (
+    BaseGroupChatOrchestrator,
+    GroupChatRequestSentEvent,
+    GroupChatResponseReceivedEvent,
+)
 from ._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -117,6 +121,7 @@ __all__ = [
     "AgentRequestInfoResponse",
     "AgentRunEvent",
     "AgentRunUpdateEvent",
+    "BaseGroupChatOrchestrator",
     "Case",
     "CheckpointStorage",
     "ConcurrentBuilder",

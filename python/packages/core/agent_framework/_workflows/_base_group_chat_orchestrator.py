@@ -252,6 +252,8 @@ class BaseGroupChatOrchestrator(Executor, ABC):
                 ChatMessage(role=Role.USER, text="Make it engaging and informative.")
             ])
         """
+        if not task:
+            raise ValueError("At least one ChatMessage is required to start the group chat workflow.")
         await self._handle_messages(task, ctx)
 
     @handler
