@@ -931,10 +931,9 @@ class MCPStreamableHTTPTool(MCPTool):
         """Initialize the MCP streamable HTTP tool.
 
         Note:
-            The arguments are used to create a streamable HTTP client.
-            See ``mcp.client.streamable_http.streamablehttp_client`` for more details.
-            Any extra arguments passed to the constructor will be passed to the
-            streamable HTTP client constructor.
+            The arguments are used to create a streamable HTTP client using the
+            new ``mcp.client.streamable_http.streamable_http_client`` API.
+            The tool manages its own httpx.AsyncClient instance for proper session isolation.
 
         Args:
             name: The name of the tool.
@@ -955,11 +954,11 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
             headers: The headers to send with the request.
-            timeout: The timeout for the request.
-            sse_read_timeout: The timeout for reading from the SSE stream.
+            timeout: The timeout for the request (default: 30.0 seconds).
+            sse_read_timeout: The timeout for reading from the SSE stream (default: 300.0 seconds).
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
-            kwargs: Any extra arguments to pass to the SSE client.
+            kwargs: Any extra arguments (currently not used but preserved for future compatibility).
         """
         super().__init__(
             name=name,
