@@ -149,7 +149,7 @@ public class InProcessExecutionTests
         public override AgentThread DeserializeThread(System.Text.Json.JsonElement serializedThread,
             System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) => new SimpleTestAgentThread();
 
-        public override Task<AgentRunResponse> RunAsync(
+        protected override Task<AgentRunResponse> RunCoreAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,
@@ -160,7 +160,7 @@ public class InProcessExecutionTests
             return Task.FromResult(new AgentRunResponse(responseMessage));
         }
 
-        public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentThread? thread = null,
             AgentRunOptions? options = null,

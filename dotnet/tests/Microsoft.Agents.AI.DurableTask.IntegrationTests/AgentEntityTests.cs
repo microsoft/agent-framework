@@ -81,6 +81,64 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         Assert.Null(request.OrchestrationId);
     }
 
+    [Theory]
+    [InlineData("run")]
+    [InlineData("Run")]
+    [InlineData("RunAgentAsync")]
+    public async Task RunAgentMethodNamesAllWorkAsync(string runAgentMethodName)
+    {
+        // Setup
+        AIAgent simpleAgent = TestHelper.GetAzureOpenAIChatClient(s_configuration).CreateAIAgent(
+            name: "TestAgent",
+            instructions: "You are a helpful assistant that always responds with a friendly greeting."
+        );
+
+        using TestHelper testHelper = TestHelper.Start([simpleAgent], this._outputHelper);
+
+        // A proxy agent is needed to call the hosted test agent
+        AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
+
+        AgentThread thread = simpleAgentProxy.GetNewThread();
+
+        DurableTaskClient client = testHelper.GetClient();
+
+        AgentSessionId sessionId = thread.GetService<AgentSessionId>();
+        EntityInstanceId expectedEntityId = new($"dafx-{simpleAgent.Name}", sessionId.Key);
+
+        EntityMetadata? entity = await client.Entities.GetEntityAsync(expectedEntityId, false, this.TestTimeoutToken);
+
+        Assert.Null(entity);
+
+        // Act: send a prompt to the agent
+        await client.Entities.SignalEntityAsync(
+            expectedEntityId,
+            runAgentMethodName,
+            new RunRequest("Hello!"),
+            cancellation: this.TestTimeoutToken);
+
+        while (!this.TestTimeoutToken.IsCancellationRequested)
+        {
+            await Task.Delay(500, this.TestTimeoutToken);
+
+            // Assert: verify the agent state was stored with the correct entity name prefix
+            entity = await client.Entities.GetEntityAsync(expectedEntityId, true, this.TestTimeoutToken);
+
+            if (entity is not null)
+            {
+                break;
+            }
+        }
+
+        Assert.NotNull(entity);
+        Assert.True(entity.IncludesState);
+
+        DurableAgentState state = entity.State.ReadAs<DurableAgentState>();
+
+        DurableAgentStateRequest request = Assert.Single(state.Data.ConversationHistory.OfType<DurableAgentStateRequest>());
+
+        Assert.Null(request.OrchestrationId);
+    }
+
     [Fact]
     public async Task OrchestrationIdSetDuringOrchestrationAsync()
     {
