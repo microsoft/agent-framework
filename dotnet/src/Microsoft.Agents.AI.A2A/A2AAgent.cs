@@ -13,6 +13,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
+using Microsoft.Agents.AI;
 
 namespace Microsoft.Agents.AI.A2A;
 
@@ -211,6 +212,13 @@ internal sealed class A2AAgent : AIAgent
         if (options?.AllowBackgroundResponses is true && thread is null)
         {
             throw new InvalidOperationException("A thread must be provided when AllowBackgroundResponses is enabled.");
+        }
+
+        // New logic: Check for ContextId
+        string? contextId = options?.ContextId ?? AgentContext.ContextId;
+        if (thread is null && contextId is not null)
+        {
+            thread = this.GetNewThread(contextId);
         }
 
         thread ??= this.GetNewThread();
