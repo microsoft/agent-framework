@@ -475,97 +475,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return mcp
 
 
-class AzureAIAgentProvider:
-    """Azure AI Agent provider."""
-
-    def __init__(
-        self,
-        *,
-        project_client: AIProjectClient | None = None,
-        project_endpoint: str | None = None,
-        model_deployment_name: str | None = None,
-        credential: AsyncTokenCredential | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
-    ) -> None:
-        """Initialize an Azure AI Agent provider.
-
-        Keyword Args:
-            project_client: An existing AIProjectClient to use. If not provided, one will be created.
-            project_endpoint: The Azure AI Project endpoint URL.
-                Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
-                Ignored when a project_client is passed.
-            model_deployment_name: The model deployment name to use for agent creation.
-                Can also be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
-            credential: Azure async credential to use for authentication.
-            env_file_path: Path to environment file for loading settings.
-            env_file_encoding: Encoding of the environment file.
-        """
-        try:
-            azure_ai_settings = AzureAISettings(
-                project_endpoint=project_endpoint,
-                model_deployment_name=model_deployment_name,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
-
-        # If no project_client is provided, create one
-        if project_client is None:
-            if not azure_ai_settings.project_endpoint:
-                raise ServiceInitializationError(
-                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
-                )
-
-            # Use provided credential
-            if not credential:
-                raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
-                endpoint=azure_ai_settings.project_endpoint,
-                credential=credential,
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
-
-        # Initialize instance variables
-        self.project_client = project_client
-        self.credential = credential
-        self.model_id = azure_ai_settings.model_deployment_name
-
-    async def get_agent(
-        self,
-        agent_reference: AgentReference | None = None,
-        agent_name: str | None = None,
-        agent_object: AgentObject | None = None,
-        tools: ToolProtocol
-        | Callable[..., Any]
-        | MutableMapping[str, Any]
-        | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
-        | None = None,
-    ) -> ChatAgent:
-        """Retrieves an existing Azure AI agent and converts it into a ChatAgent instance.
-
-        Args:
-            agent_reference: Optional reference containing the agent's name and specific version.
-            agent_name: Optional name of the agent to retrieve (if reference is not provided).
-            agent_object: Optional pre-fetched agent object.
-            tools: A collection of tools to be made available to the agent.
-
-        Returns:
-            ChatAgent: An initialized `ChatAgent` configured with the retrieved agent's settings and tools.
-        """
-        return await get_agent(
-            project_client=self.project_client,
-            agent_reference=agent_reference,
-            agent_name=agent_name,
-            agent_object=agent_object,
-            tools=tools,
-        )
-
-
 async def get_agent(
-    project_client: AIProjectClient,
+    project_client: AIProjectClient | None = None,
     agent_reference: AgentReference | None = None,
     agent_name: str | None = None,
     agent_object: AgentObject | None = None,
@@ -574,20 +485,56 @@ async def get_agent(
     | MutableMapping[str, Any]
     | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
     | None = None,
+    project_endpoint: str | None = None,
+    credential: AsyncTokenCredential | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
 ) -> ChatAgent:
     """Retrieves an existing Azure AI agent and converts it into a ChatAgent instance.
 
     Args:
-        project_client: The client used to interact with the Azure AI project.
+        project_client: An existing AIProjectClient to use. If not provided, one will be created.
         agent_reference: Optional reference containing the agent's name and specific version.
         agent_name: Optional name of the agent to retrieve (if reference is not provided).
         agent_object: Optional pre-fetched agent object.
         tools: A collection of tools to be made available to the agent.
+        project_endpoint: The Azure AI Project endpoint URL.
+            Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+            Ignored when a project_client is passed.
+        credential: Azure async credential to use for authentication.
+        env_file_path: Path to environment file for loading settings.
+        env_file_encoding: Encoding of the environment file.
 
     Returns:
         ChatAgent: An initialized `ChatAgent` configured with the retrieved agent's settings and tools.
     """
     existing_agent: AgentVersionObject
+
+    try:
+        azure_ai_settings = AzureAISettings(
+            project_endpoint=project_endpoint,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+    except ValidationError as ex:
+        raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
+
+    # If no project_client is provided, create one
+    if project_client is None:
+        if not azure_ai_settings.project_endpoint:
+            raise ServiceInitializationError(
+                "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+                "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
+            )
+
+        # Use provided credential
+        if not credential:
+            raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
+        project_client = AIProjectClient(
+            endpoint=azure_ai_settings.project_endpoint,
+            credential=credential,
+            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+        )
 
     if agent_reference and agent_reference.version:
         existing_agent = await project_client.agents.get_version(

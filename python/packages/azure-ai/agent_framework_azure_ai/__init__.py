@@ -3,7 +3,7 @@
 import importlib.metadata
 
 from ._chat_client import AzureAIAgentClient
-from ._client import AzureAIAgentProvider, AzureAIClient, get_agent
+from ._client import AzureAIClient, get_agent
 from ._shared import AzureAISettings
 
 try:
@@ -13,7 +13,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AzureAIAgentClient",
-    "AzureAIAgentProvider",
     "AzureAIClient",
     "AzureAISettings",
     "__version__",
