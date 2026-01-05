@@ -339,7 +339,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Create a mock message store that would normally provide messages
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
 
         // Create a mock AI context provider that would normally provide context
@@ -383,7 +383,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Verify that message store was never called due to continuation token
         mockMessageStore.Verify(
-            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Verify that AI context provider was never called due to continuation token
@@ -401,7 +401,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Create a mock message store that would normally provide messages
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
 
         // Create a mock AI context provider that would normally provide context
@@ -446,7 +446,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Verify that message store was never called due to continuation token
         mockMessageStore.Verify(
-            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Verify that AI context provider was never called due to continuation token
