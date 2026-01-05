@@ -40,8 +40,8 @@ from .._agents import AgentProtocol, ChatAgent
 from .._middleware import FunctionInvocationContext, FunctionMiddleware
 from .._threads import AgentThread
 from .._tools import AIFunction, ai_function
-from .._types import ChatMessage, Role
-from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse, AgentRunResponse
+from .._types import AgentRunResponse, ChatMessage, Role
+from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._base_group_chat_orchestrator import TerminationCondition
 from ._checkpoint import CheckpointStorage
 from ._events import WorkflowEvent
@@ -1191,8 +1191,10 @@ class HandoffBuilder:
         for id, agent in agents.items():
             # Note that here `id` may be either factory name or agent display_name
             if agent.display_name not in handoffs or not handoffs.get(agent.display_name):
-                # All agents should have handoff configurations at this point
-                raise ValueError(f"No handoff configuration found for agent '{agent.display_name}'")
+                logger.warning(
+                    f"No handoff configuration found for agent '{agent.display_name}'. "
+                    "This agent will not be able to hand off to any other agents and your workflow may get stuck."
+                )
 
             # Autonomous mode is enabled only for specified agents (or all if none specified)
             autonomous_mode = self._autonomous_mode and (
@@ -1201,7 +1203,7 @@ class HandoffBuilder:
 
             executors[agent.display_name] = HandoffAgentExecutor(
                 agent=agent,
-                handoffs=handoffs.get(agent.display_name),  # type: ignore
+                handoffs=handoffs.get(agent.display_name, []),
                 is_start_agent=(id == self._start_id),
                 termination_condition=self._termination_condition,
                 autonomous_mode=autonomous_mode,

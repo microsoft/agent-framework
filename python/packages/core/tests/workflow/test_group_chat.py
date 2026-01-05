@@ -88,7 +88,7 @@ class StubManagerAgent(ChatAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AgentRunResponse:  # type: ignore[override]
+    ) -> AgentRunResponse:
         if self._call_count == 0:
             self._call_count += 1
             # First call: select the agent (using AgentOrchestrationOutput format)
@@ -134,7 +134,7 @@ class StubManagerAgent(ChatAgent):
         *,
         thread: AgentThread | None = None,
         **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:  # type: ignore[override]
+    ) -> AsyncIterable[AgentRunResponseUpdate]:
         if self._call_count == 0:
             self._call_count += 1
 
