@@ -5,6 +5,7 @@ from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
@@ -1519,17 +1520,29 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
         custom_param="test",
     )
 
-    with patch("agent_framework._mcp.streamablehttp_client") as mock_http_client:
+    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client, patch(
+        "agent_framework._mcp.httpx.AsyncClient"
+    ) as mock_async_client:
+        # Create a mock httpx client instance
+        mock_client_instance = Mock()
+        mock_async_client.return_value = mock_client_instance
+
         tool.get_mcp_client()
 
-        # Verify all parameters were passed
+        # Verify httpx.AsyncClient was created with correct parameters
+        mock_async_client.assert_called_once()
+        call_kwargs = mock_async_client.call_args.kwargs
+        assert call_kwargs["headers"] == {"Auth": "token"}
+        assert isinstance(call_kwargs["timeout"], httpx.Timeout)
+        # The timeout constructor sets connect/write/pool to the first arg, and read can be overridden
+        assert call_kwargs["timeout"].connect == 30.0
+        assert call_kwargs["timeout"].read == 10.0
+
+        # Verify streamable_http_client was called with new API parameters
         mock_http_client.assert_called_once_with(
             url="http://example.com",
-            headers={"Auth": "token"},
-            timeout=30.0,
-            sse_read_timeout=10.0,
+            http_client=mock_client_instance,
             terminate_on_close=True,
-            custom_param="test",
         )
 
 
@@ -1692,3 +1705,66 @@ async def test_load_prompts_prevents_multiple_calls():
         tool._prompts_loaded = True
 
     assert mock_session.list_prompts.call_count == 1  # Still 1, not incremented
+
+
+@pytest.mark.asyncio
+async def test_mcp_streamable_http_tool_httpx_client_cleanup():
+    """Test that MCPStreamableHTTPTool properly closes httpx client and creates new instances."""
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from agent_framework import MCPStreamableHTTPTool
+
+    # Mock the streamable_http_client to avoid actual connections
+    with patch("agent_framework._mcp.streamable_http_client") as mock_client, patch(
+        "agent_framework._mcp.ClientSession"
+    ) as mock_session_class:
+        # Setup mock context manager for streamable_http_client
+        mock_transport = (Mock(), Mock())
+        mock_context_manager = Mock()
+        mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+        mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+        mock_client.return_value = mock_context_manager
+
+        # Setup mock session
+        mock_session = Mock()
+        mock_session.initialize = AsyncMock()
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        # Create and use first tool
+        tool1 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+            timeout=30,
+        )
+        await tool1.connect()
+        client1 = tool1._httpx_client
+        assert client1 is not None, "First httpx client should be created"
+        client1_id = id(client1)
+
+        # Close first tool
+        await tool1.close()
+        assert tool1._httpx_client is None, "First httpx client should be cleared after close"
+
+        # Create and use second tool
+        tool2 = MCPStreamableHTTPTool(
+            name="test",
+            url="http://localhost:8081/mcp",
+            load_tools=False,
+            load_prompts=False,
+            terminate_on_close=False,
+            timeout=30,
+        )
+        await tool2.connect()
+        client2 = tool2._httpx_client
+        assert client2 is not None, "Second httpx client should be created"
+        client2_id = id(client2)
+
+        # Verify different httpx client instances (no reuse)
+        assert client1_id != client2_id, "httpx clients should not be reused between tool instances"
+
+        await tool2.close()
+        assert tool2._httpx_client is None, "Second httpx client should be cleared after close"

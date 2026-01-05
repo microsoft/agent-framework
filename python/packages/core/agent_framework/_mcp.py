@@ -10,10 +10,11 @@ from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
+import httpx
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client, streamablehttp_client
 from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
@@ -978,6 +979,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.sse_read_timeout = sse_read_timeout
         self.terminate_on_close = terminate_on_close
         self._client_kwargs = kwargs
+        self._httpx_client: httpx.AsyncClient | None = None
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -985,20 +987,33 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        args: dict[str, Any] = {
-            "url": self.url,
-        }
-        if self.headers:
-            args["headers"] = self.headers
-        if self.timeout is not None:
-            args["timeout"] = self.timeout
-        if self.sse_read_timeout is not None:
-            args["sse_read_timeout"] = self.sse_read_timeout
-        if self.terminate_on_close is not None:
-            args["terminate_on_close"] = self.terminate_on_close
-        if self._client_kwargs:
-            args.update(self._client_kwargs)
-        return streamablehttp_client(**args)
+        timeout_value = self.timeout if self.timeout is not None else 30.0
+        sse_timeout_value = self.sse_read_timeout if self.sse_read_timeout is not None else 300.0
+
+        # Create and track httpx client
+        # Note: _client_kwargs are not passed to AsyncClient as they were specific to the old API
+        self._httpx_client = httpx.AsyncClient(
+            headers=self.headers,
+            timeout=httpx.Timeout(timeout_value, read=sse_timeout_value),
+        )
+
+        # Use new API instead of deprecated streamablehttp_client()
+        return streamable_http_client(
+            url=self.url,
+            http_client=self._httpx_client,
+            terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
+        )
+
+    async def close(self) -> None:
+        """Disconnect from the MCP server and close httpx client.
+
+        Closes the connection and cleans up resources including the httpx client.
+        """
+        await super().close()
+
+        if self._httpx_client is not None:
+            await self._httpx_client.aclose()
+            self._httpx_client = None
 
 
 class MCPWebsocketTool(MCPTool):
