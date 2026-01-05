@@ -97,7 +97,7 @@ Another issue applies to service side threads and that is that a thread can be u
 In .Net threads have protected constructors, and can therefore not be created directly by a user, all interactions (adding messages from a run and (de)serialization) with a thread are also supposed to go through the agent. It is already doubtful if that is a good idea, since it makes adding things like ChatHistoryReducers more difficult, if we keep to that principle, they will have to be part of the agent as well in order to work properly. And in Python, there are no protected methods, classes can be "marked" as private, but that does not prevent users from using them directly.
 
 ### Issue 6: Cross-agent threads
-Threads are used for certain workflows to support things like group chats, in that case a thread should be shared between multiple agents, but those agents are not necessarily of the same type, or they might be using different chat clients, which might have different support for threads. This makes it problematic to share threads because some might have a preference for a service side thread, but others might use a different service, or have not support for service side threads at all.
+Threads are used for certain workflows to support things like group chats, in that case a thread should be shared between multiple agents, but those agents are not necessarily of the same type, or they might be using different chat clients, which might have different support for threads. This makes it problematic to share threads because some might have a preference for a service side thread, but others might use a different service, or have no support for service side threads at all.
 
 ## Scenario's
 To further clarify both the issues and the solutions, we can look at the scenario's below and ensure we support them, or choose to not support one of them and why.
@@ -430,7 +430,7 @@ agent.run("Query with service thread", thread=service_thread)
 - **LocalThread**: Middleware has full access to the message list via `get_messages()`, enabling rich inspection, modification, or analytics.
 - **RemoteThread**: Middleware only has access to metadata (e.g., `thread_id`). There is no abstraction for fetching thread state from the service, as this would add complexity and latency. Some middleware may become a no-op for `RemoteThread` if they require message-level access.
 
-This design choice prioritizes simplicity and performance over uniformity. Middleware authors should design their components to gracefully handle both thread types or clearly document which thread types they support.
+This scenario prioritizes simplicity and performance over uniformity. Middleware authors should design their components to gracefully handle both thread types or clearly document which thread types they support.
 
 ## Decision Drivers
 
@@ -451,6 +451,7 @@ This design choice prioritizes simplicity and performance over uniformity. Middl
     1. Variant with a special Context Provider that handles local storage and generates a thread id for local threads, so that the agent only deals with thread ids.
     1. Variant with a default Context Provider that can store messages, that can be overridden by other context providers
 1. Rename `Thread` for clarity.
+1. Diverge the python and dotnet implementations to better suit the languages.
 
 ### 1. Separate classes for `ServiceThread`/`RemoteThread` and `LocalAgentThread`/`LocalThread`, each with their own behaviors and methods.
 
@@ -933,7 +934,7 @@ thread = agent.get_new_thread()
 - ⚠️ **Constraint**: Context provider state MUST be serializable - limits flexibility
 - ⚠️ **Complexity**: Context providers must manage stateless operations, which may be unnatural for some use cases
 
-### 4. Local threads only
+### 3. Local threads only
 This approach would mean:
 - Adding an abstraction on ChatClient to load a thread by id from the service and cast the messages to our types, so that the local thread can always be synced with the service side thread, and the agent can then run with just the new messages compared to the last known state. This will make supporting cross-agent threads easier.
 - The additional latency of reading the service side thread, and the fact that adding a thread reading abstraction to existing ChatClients is a breaking change, means that this option is excluded and will not be further investigated.
@@ -1009,7 +1010,7 @@ var response = await agent.RunAsync("Hello", thread);
 - ❌ **Complexity**: Message merging logic needed to handle concurrent updates
 - ❌ **Service dependency**: Local thread becomes dependent on service availability
 
-### 5. Context Provider to handle local message storage and context generation.
+### 4. Context Provider to handle local message storage and context generation.
 - The contract of a ChatMessageStore is already quite similar to a Context Provider, so we could create a Context Provider that handles local message storage and context generation for local threads.
 - One note is that potentially, something like `Context Manager` would be a more accurate name for such a Context Provider, as it would manage the context (messages) for the thread, but for consistency we will keep using Context Provider here.
 - There are two variants to consider here:
@@ -1245,7 +1246,7 @@ public class SummaryContextProvider : IContextProvider
 - ⚠️ **Inconsistency**: Different context providers may handle storage differently
 - ⚠️ **Hidden behavior**: Default provider may be implicitly added, surprising users
 
-### 6. Rename `Thread` for clarity.
+### 5. Rename `Thread` for clarity.
 - Another consideration is if we should continue the `Thread` name or move to something else like `Conversation`, `Session`, or `Context`, that would be a bigger breaking change initially but would be clearer in the long run. This ADR will keep using `Thread` for now for consistency. One of the reasons for it is to clarify that it is not focused only on chat and messages, but especially for workflows, it is a broader concept.
 
 #### Code Examples
@@ -1336,7 +1337,7 @@ var response = await agent.RunAsync("Hello", thread);
 - ⚠️ **Migration effort**: Documentation, samples, user code all need updates
 - ⚠️ **Deprecation period**: Would need to support both names temporarily
 
-### 7. Diverge python design from dotnet design
+### 6. Diverge python design from dotnet design
 The approach with a closed constructor on the Thread classes is not something that is possible with native Python without using unnecessary complexity. Therefore, the Python design might have to diverge from the dotnet design in this regard, and the Thread classes will have public constructors in Python, however this also has further implications for the design:
 - Does it still make sense that a Agent creates a Thread, or should a user just call the Thread constructor directly?
     - Related to this: Do we then need factories for ChatMessageStore and ContextProviders on the agent, or should there just be a thread creation that can take a concrete ChatMessageStore and a (list of) ContextProvider(s)?
@@ -1600,7 +1601,7 @@ sequenceDiagram
 - Context providers are stateless, receiving and returning `context_state` for each invocation
 - Serialization becomes trivial with standard JSON/binary serializers
 
-### Enhancement 4: Local Threads Only (with Service Sync)
+### Enhancement 3: Local Threads Only (with Service Sync)
 
 This flow shows how all threads would be local but sync with service before each run.
 
@@ -1643,7 +1644,7 @@ sequenceDiagram
 
 **Note**: This option was excluded due to added latency and complexity, but the diagram shows how it would work.
 
-### Enhancement 5.1: Context Provider Handles Storage (Special Provider)
+### Enhancement 4.1: Context Provider Handles Storage (Special Provider)
 
 This flow shows how a special context provider would handle all message storage, with the agent only dealing with thread IDs.
 
@@ -1691,7 +1692,7 @@ sequenceDiagram
 
 **Note**: User only sees thread IDs, never thread objects. Storage is completely handled by the context provider.
 
-### Enhancement 5.2: Default Context Provider (Can Be Overridden)
+### Enhancement 4.2: Default Context Provider (Can Be Overridden)
 
 This flow shows how a default context provider would handle storage, but can be overridden by custom providers.
 
@@ -1736,11 +1737,11 @@ sequenceDiagram
 
 **Note**: Confusing responsibility - unclear whether custom providers should also handle storage.
 
-### Enhancement 6: Rename Thread (No Flow Change)
+### Enhancement 5: Rename Thread (No Flow Change)
 
-The renaming option (Enhancement 6) does not change the flow - it only renames `Thread` to `Conversation`, `Session`, or keeps it as `Thread`. The flows above would remain the same, just with different naming.
+The renaming option (Enhancement 5) does not change the flow - it only renames `Thread` to `Conversation`, `Session`, or keeps it as `Thread`. The flows above would remain the same, just with different naming.
 
-### Enhancement 7: Diverge Python Design from Dotnet Design
+### Enhancement 6: Diverge Python Design from Dotnet Design
 The divergence in design between Python and Dotnet does not change the flow diagrams above, but it does impact how threads are created and managed in Python. The flow remains the same, but users would create threads directly using constructors rather than through agent factory methods. The agent would still interact with the threads in the same way during runs.
 
 ## Decision Outcome
