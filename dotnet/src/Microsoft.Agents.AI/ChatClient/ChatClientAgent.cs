@@ -204,10 +204,13 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> inputMessagesForChatClient, IList<ChatMessage>? aiContextProviderMessages, IList<ChatMessage>? chatMessageStoreMessages) =
+        (ChatClientAgentThread safeThread,
+         ChatOptions? chatOptions,
+         List<ChatMessage> inputMessagesForChatClient,
+         IList<ChatMessage>? aiContextProviderMessages,
+         IList<ChatMessage>? chatMessageStoreMessages,
+         ChatClientAgentContinuationToken? continuationToken) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
-
-        var continuationToken = ParseContinuationToken(options?.ContinuationToken ?? (options is ChatClientAgentRunOptions ccops ? ccops.ChatOptions?.ContinuationToken : null));
 
         var chatClient = this.ChatClient;
 
@@ -390,7 +393,12 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
-        (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> inputMessagesForChatClient, IList<ChatMessage>? aiContextProviderMessages, IList<ChatMessage>? chatMessageStoreMessages) =
+        (ChatClientAgentThread safeThread,
+         ChatOptions? chatOptions,
+         List<ChatMessage> inputMessagesForChatClient,
+         IList<ChatMessage>? aiContextProviderMessages,
+         IList<ChatMessage>? chatMessageStoreMessages,
+         ChatClientAgentContinuationToken? _) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
         var chatClient = this.ChatClient;
@@ -482,20 +490,20 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <param name="runOptions">Optional run options that may include specific chat configuration settings.</param>
     /// <returns>A <see cref="ChatOptions"/> object representing the merged chat configuration, or <see langword="null"/> if
     /// neither the run options nor the agent's chat options are available.</returns>
-    private ChatOptions? CreateConfiguredChatOptions(AgentRunOptions? runOptions)
+    private (ChatOptions?, ChatClientAgentContinuationToken?) CreateConfiguredChatOptions(AgentRunOptions? runOptions)
     {
         ChatOptions? requestChatOptions = (runOptions as ChatClientAgentRunOptions)?.ChatOptions?.Clone();
 
         // If no agent chat options were provided, return the request chat options as is.
         if (this._agentOptions?.ChatOptions is null)
         {
-            return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+            return GetContinuationTokenAndApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
         }
 
         // If no request chat options were provided, use the agent's chat options clone.
         if (requestChatOptions is null)
         {
-            return ApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
+            return GetContinuationTokenAndApplyBackgroundResponsesProperties(this._agentOptions?.ChatOptions.Clone(), runOptions);
         }
 
         // If both are present, we need to merge them.
@@ -591,9 +599,9 @@ public sealed partial class ChatClientAgent : AIAgent
             }
         }
 
-        return ApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
+        return GetContinuationTokenAndApplyBackgroundResponsesProperties(requestChatOptions, runOptions);
 
-        static ChatOptions? ApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
+        static (ChatOptions?, ChatClientAgentContinuationToken?) GetContinuationTokenAndApplyBackgroundResponsesProperties(ChatOptions? chatOptions, AgentRunOptions? agentRunOptions)
         {
             if (agentRunOptions?.AllowBackgroundResponses is not null)
             {
@@ -601,13 +609,16 @@ public sealed partial class ChatClientAgent : AIAgent
                 chatOptions.AllowBackgroundResponses = agentRunOptions.AllowBackgroundResponses;
             }
 
+            ChatClientAgentContinuationToken? agentContinuationToken = null;
+
             if ((agentRunOptions?.ContinuationToken ?? chatOptions?.ContinuationToken) is { } continuationToken)
             {
+                agentContinuationToken = ChatClientAgentContinuationToken.FromToken(continuationToken);
                 chatOptions ??= new ChatOptions();
-                chatOptions.ContinuationToken = ParseContinuationToken(continuationToken)!.InnerToken;
+                chatOptions.ContinuationToken = agentContinuationToken!.InnerToken;
             }
 
-            return chatOptions;
+            return (chatOptions, agentContinuationToken);
         }
     }
 
@@ -618,21 +629,22 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <param name="inputMessages">The input messages to use.</param>
     /// <param name="runOptions">Optional parameters for agent invocation.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>A tuple containing the thread, chat options, and thread messages.</returns>
+    /// <returns>A tuple containing the thread, chat options, messages and continuation token.</returns>
     private async Task
         <(
             ChatClientAgentThread AgentThread,
             ChatOptions? ChatOptions,
             List<ChatMessage> InputMessagesForChatClient,
             IList<ChatMessage>? AIContextProviderMessages,
-            IList<ChatMessage>? ChatMessageStoreMessages
+            IList<ChatMessage>? ChatMessageStoreMessages,
+            ChatClientAgentContinuationToken? ContinuationToken
         )> PrepareThreadAndMessagesAsync(
         AgentThread? thread,
         IEnumerable<ChatMessage> inputMessages,
         AgentRunOptions? runOptions,
         CancellationToken cancellationToken)
     {
-        ChatOptions? chatOptions = this.CreateConfiguredChatOptions(runOptions);
+        (ChatOptions? chatOptions, ChatClientAgentContinuationToken? continuationToken) = this.CreateConfiguredChatOptions(runOptions);
 
         // Supplying a thread for background responses is required to prevent inconsistent experience
         // for callers if they forget to provide the thread for initial or follow-up runs.
@@ -720,7 +732,7 @@ public sealed partial class ChatClientAgent : AIAgent
             chatOptions.ConversationId = typedThread.ConversationId;
         }
 
-        return (typedThread, chatOptions, inputMessagesForChatClient, aiContextProviderMessages, chatMessageStoreMessages);
+        return (typedThread, chatOptions, inputMessagesForChatClient, aiContextProviderMessages, chatMessageStoreMessages, continuationToken);
     }
 
     private void UpdateThreadWithTypeAndConversationId(ChatClientAgentThread thread, string? responseConversationId)
@@ -796,13 +808,6 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return Task.CompletedTask;
-    }
-
-    private static ChatClientAgentContinuationToken? ParseContinuationToken(ResponseContinuationToken? continuationToken)
-    {
-        return continuationToken is null
-            ? null
-            : ChatClientAgentContinuationToken.FromToken(continuationToken);
     }
 
     private static ChatClientAgentContinuationToken? WrapContinuationToken(ResponseContinuationToken? continuationToken, IEnumerable<ChatMessage>? inputMessages = null, List<ChatResponseUpdate>? responseUpdates = null)
