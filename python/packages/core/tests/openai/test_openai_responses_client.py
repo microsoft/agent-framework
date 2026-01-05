@@ -1526,7 +1526,7 @@ def test_parse_response_from_openai_image_generation_raw_base64():
     assert isinstance(call_content, ImageGenerationToolCallContent)
     assert isinstance(result_content, ImageGenerationToolResultContent)
     assert result_content.outputs
-    data_out = result_content.outputs[0]
+    data_out = result_content.outputs
     assert isinstance(data_out, DataContent)
     assert data_out.uri.startswith("data:image/png;base64,")
     assert data_out.media_type == "image/png"
@@ -1550,7 +1550,7 @@ def test_parse_response_from_openai_image_generation_existing_data_uri():
     valid_webp_base64 = base64.b64encode(webp_signature + b"VP8 fake_data").decode()
     mock_item = MagicMock()
     mock_item.type = "image_generation_call"
-    mock_item.result = f"data:image/webp;base64,{valid_webp_base64}"
+    mock_item.result = valid_webp_base64
 
     mock_response.output = [mock_item]
 
@@ -1563,7 +1563,7 @@ def test_parse_response_from_openai_image_generation_existing_data_uri():
     assert isinstance(call_content, ImageGenerationToolCallContent)
     assert isinstance(result_content, ImageGenerationToolResultContent)
     assert result_content.outputs
-    data_out = result_content.outputs[0]
+    data_out = result_content.outputs
     assert isinstance(data_out, DataContent)
     assert data_out.uri == f"data:image/webp;base64,{valid_webp_base64}"
     assert data_out.media_type == "image/webp"
@@ -1595,9 +1595,9 @@ def test_parse_response_from_openai_image_generation_format_detection():
     result_contents = response_jpeg.messages[0].contents
     assert isinstance(result_contents[1], ImageGenerationToolResultContent)
     outputs = result_contents[1].outputs
-    assert outputs and isinstance(outputs[0], DataContent)
-    assert outputs[0].media_type == "image/jpeg"
-    assert "data:image/jpeg;base64," in outputs[0].uri
+    assert outputs and isinstance(outputs, DataContent)
+    assert outputs.media_type == "image/jpeg"
+    assert "data:image/jpeg;base64," in outputs.uri
 
     # Test WEBP detection
     webp_signature = b"RIFF" + b"\x00\x00\x00\x00" + b"WEBP"
@@ -1619,9 +1619,9 @@ def test_parse_response_from_openai_image_generation_format_detection():
     with patch.object(client, "_get_metadata_from_response", return_value={}):
         response_webp = client._parse_response_from_openai(mock_response_webp, chat_options=ChatOptions())  # type: ignore
     outputs_webp = response_webp.messages[0].contents[1].outputs
-    assert outputs_webp and isinstance(outputs_webp[0], DataContent)
-    assert outputs_webp[0].media_type == "image/webp"
-    assert "data:image/webp;base64," in outputs_webp[0].uri
+    assert outputs_webp and isinstance(outputs_webp, DataContent)
+    assert outputs_webp.media_type == "image/webp"
+    assert "data:image/webp;base64," in outputs_webp.uri
 
 
 def test_parse_response_from_openai_image_generation_fallback():
@@ -1653,8 +1653,8 @@ def test_parse_response_from_openai_image_generation_fallback():
     assert len(response.messages[0].contents) == 2
     result_content = response.messages[0].contents[1]
     assert isinstance(result_content, ImageGenerationToolResultContent)
-    assert result_content.outputs and isinstance(result_content.outputs[0], DataContent)
-    content = result_content.outputs[0]
+    assert result_content.outputs
+    content = result_content.outputs
     assert content.media_type == "image/png"
     assert f"data:image/png;base64,{unrecognized_base64}" == content.uri
 

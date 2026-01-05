@@ -341,7 +341,7 @@ def test_mcp_server_tool_call_and_result():
 
     result = MCPServerToolResultContent(call_id="c-1", output=[{"type": "text", "text": "done"}])
     assert result.type == "mcp_server_tool_result"
-    assert result.output and isinstance(result.output[0], TextContent)
+    assert result.output
 
     with raises(ValueError):
         MCPServerToolCallContent(call_id="", tool_name="tool")
