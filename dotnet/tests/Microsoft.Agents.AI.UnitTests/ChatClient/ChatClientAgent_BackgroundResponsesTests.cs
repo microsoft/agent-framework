@@ -540,39 +540,6 @@ public class ChatClientAgent_BackgroundResponsesTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WhenContinuationTokenProvidedForInitialRun_ThrowsInvalidOperationExceptionAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockChatClient = new();
-
-        ChatClientAgent agent = new(mockChatClient.Object);
-
-        // Create a new thread with no ConversationId and no MessageStore imitating initial run
-        ChatClientAgentThread thread = new()
-        {
-            ConversationId = null,
-            MessageStore = null
-        };
-
-        AgentRunOptions runOptions = new()
-        {
-            ContinuationToken = new ChatClientAgentContinuationToken(ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }))
-        };
-
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await agent.RunStreamingAsync(thread: thread, options: runOptions).ToListAsync());
-        Assert.Equal("Continuation tokens are not allowed to be used for initial runs.", exception.Message);
-
-        // Verify that the IChatClient was never called due to early validation
-        mockChatClient.Verify(
-            c => c.GetStreamingResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
     public async Task RunStreamingAsync_WhenInputMessagesPresentInContinuationToken_ResumesStreamingAsync()
     {
         // Arrange

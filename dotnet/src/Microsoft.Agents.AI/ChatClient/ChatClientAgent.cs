@@ -207,9 +207,7 @@ public sealed partial class ChatClientAgent : AIAgent
         (ChatClientAgentThread safeThread, ChatOptions? chatOptions, List<ChatMessage> inputMessagesForChatClient, IList<ChatMessage>? aiContextProviderMessages, IList<ChatMessage>? chatMessageStoreMessages) =
             await this.PrepareThreadAndMessagesAsync(thread, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
-        var continuationToken = ParseContinuationToken(options?.ContinuationToken);
-
-        ValidateStreamResumptionAllowed(continuationToken, safeThread);
+        var continuationToken = ParseContinuationToken(options?.ContinuationToken ?? (options is ChatClientAgentRunOptions ccops ? ccops.ChatOptions?.ContinuationToken : null));
 
         var chatClient = this.ChatClient;
 
@@ -800,21 +798,6 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return Task.CompletedTask;
-    }
-
-    private static void ValidateStreamResumptionAllowed(ChatClientAgentContinuationToken? continuationToken, ChatClientAgentThread safeThread)
-    {
-        if (continuationToken is null)
-        {
-            return;
-        }
-
-        // If neither input messages nor response updates are present in the token,
-        // it means it's an initial run that cannot be resumed.
-        if (!(continuationToken.InputMessages is { } ims && ims.Any()) && continuationToken.ResponseUpdates is not { Count: > 0 })
-        {
-            throw new InvalidOperationException("Continuation tokens are not allowed to be used for initial runs.");
-        }
     }
 
     private static void ValidatePollingAllowed(ResponseContinuationToken? continuationToken, ChatClientAgentThread safeThread)
