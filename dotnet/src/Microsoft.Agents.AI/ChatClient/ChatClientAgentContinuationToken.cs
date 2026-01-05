@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
@@ -40,14 +41,14 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
 
         writer.WriteString("innerToken", JsonSerializer.Serialize(this.InnerToken, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ResponseContinuationToken))));
 
-        if (this.InputMessages?.Count > 0)
+        if (this.InputMessages?.Any() is true)
         {
-            writer.WriteString("inputMessages", JsonSerializer.Serialize(this.InputMessages, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyCollection<ChatMessage>))));
+            writer.WriteString("inputMessages", JsonSerializer.Serialize(this.InputMessages, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IEnumerable<ChatMessage>))));
         }
 
         if (this.ResponseUpdates?.Count > 0)
         {
-            writer.WriteString("responseUpdates", JsonSerializer.Serialize(this.ResponseUpdates, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyCollection<ChatResponseUpdate>))));
+            writer.WriteString("responseUpdates", JsonSerializer.Serialize(this.ResponseUpdates, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyList<ChatResponseUpdate>))));
         }
 
         writer.WriteEndObject();
@@ -85,8 +86,8 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
         ValidateTokenType(reader, token);
 
         ResponseContinuationToken? innerToken = null;
-        IReadOnlyCollection<ChatMessage>? inputMessages = null;
-        IReadOnlyCollection<ChatResponseUpdate>? responseUpdates = null;
+        IEnumerable<ChatMessage>? inputMessages = null;
+        IReadOnlyList<ChatResponseUpdate>? responseUpdates = null;
 
         while (reader.Read())
         {
@@ -109,12 +110,12 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
                 case "inputMessages":
                     _ = reader.Read();
                     var innerMessagesJson = reader.GetString() ?? throw new ArgumentException("No content for inputMessages property.", nameof(token));
-                    inputMessages = (IReadOnlyCollection<ChatMessage>?)JsonSerializer.Deserialize(innerMessagesJson, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyCollection<ChatMessage>)));
+                    inputMessages = (IEnumerable<ChatMessage>?)JsonSerializer.Deserialize(innerMessagesJson, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IEnumerable<ChatMessage>)));
                     break;
                 case "responseUpdates":
                     _ = reader.Read();
                     var responseUpdatesJson = reader.GetString() ?? throw new ArgumentException("No content for responseUpdates property.", nameof(token));
-                    responseUpdates = (IReadOnlyCollection<ChatResponseUpdate>?)JsonSerializer.Deserialize(responseUpdatesJson, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyCollection<ChatResponseUpdate>)));
+                    responseUpdates = (IReadOnlyList<ChatResponseUpdate>?)JsonSerializer.Deserialize(responseUpdatesJson, AgentJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IReadOnlyList<ChatResponseUpdate>)));
                     break;
                 default:
                     break;
@@ -160,10 +161,10 @@ internal class ChatClientAgentContinuationToken : ResponseContinuationToken
     /// <summary>
     /// Gets or sets the input messages used for streaming run.
     /// </summary>
-    internal IReadOnlyCollection<ChatMessage>? InputMessages { get; set; }
+    internal IEnumerable<ChatMessage>? InputMessages { get; set; }
 
     /// <summary>
     /// Gets or sets the response updates received so far.
     /// </summary>
-    internal IReadOnlyCollection<ChatResponseUpdate>? ResponseUpdates { get; set; }
+    internal IReadOnlyList<ChatResponseUpdate>? ResponseUpdates { get; set; }
 }

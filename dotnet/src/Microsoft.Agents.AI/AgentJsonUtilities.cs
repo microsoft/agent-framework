@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
 
@@ -70,8 +68,6 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(ChatClientAgentThread.ThreadState))]
     [JsonSerializable(typeof(TextSearchProvider.TextSearchProviderState))]
     [JsonSerializable(typeof(ChatHistoryMemoryProvider.ChatHistoryMemoryProviderState))]
-    [JsonSerializable(typeof(IReadOnlyCollection<ChatMessage>))]
-    [JsonSerializable(typeof(IReadOnlyCollection<ChatResponseUpdate>))]
 
     [ExcludeFromCodeCoverage]
     internal sealed partial class JsonContext : JsonSerializerContext;

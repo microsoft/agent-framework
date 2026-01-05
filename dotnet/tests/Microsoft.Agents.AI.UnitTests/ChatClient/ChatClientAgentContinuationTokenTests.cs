@@ -43,8 +43,8 @@ public class ChatClientAgentContinuationTokenTests
 
         // Verify InputMessages
         Assert.NotNull(tokenFromBytes.InputMessages);
-        Assert.Equal(chatClientToken.InputMessages.Count, tokenFromBytes.InputMessages.Count);
-        for (int i = 0; i < chatClientToken.InputMessages.Count; i++)
+        Assert.Equal(chatClientToken.InputMessages.Count(), tokenFromBytes.InputMessages.Count());
+        for (int i = 0; i < chatClientToken.InputMessages.Count(); i++)
         {
             Assert.Equal(chatClientToken.InputMessages.ElementAt(i).Role, tokenFromBytes.InputMessages.ElementAt(i).Role);
             Assert.Equal(chatClientToken.InputMessages.ElementAt(i).Text, tokenFromBytes.InputMessages.ElementAt(i).Text);
@@ -96,8 +96,8 @@ public class ChatClientAgentContinuationTokenTests
 
         // Verify InputMessages
         Assert.NotNull(deserializedChatClientToken.InputMessages);
-        Assert.Equal(chatClientToken.InputMessages.Count, deserializedChatClientToken.InputMessages.Count);
-        for (int i = 0; i < chatClientToken.InputMessages.Count; i++)
+        Assert.Equal(chatClientToken.InputMessages.Count(), deserializedChatClientToken.InputMessages.Count());
+        for (int i = 0; i < chatClientToken.InputMessages.Count(); i++)
         {
             Assert.Equal(chatClientToken.InputMessages.ElementAt(i).Role, deserializedChatClientToken.InputMessages.ElementAt(i).Role);
             Assert.Equal(chatClientToken.InputMessages.ElementAt(i).Text, deserializedChatClientToken.InputMessages.ElementAt(i).Text);

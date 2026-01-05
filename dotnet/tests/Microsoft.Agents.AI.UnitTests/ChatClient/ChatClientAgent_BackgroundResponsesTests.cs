@@ -841,7 +841,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         Assert.Equal("Tell me a story", capturedContinuationTokens[0].InputMessages!.Last().Text);
         Assert.NotNull(capturedContinuationTokens[0].ResponseUpdates);
         Assert.Single(capturedContinuationTokens[0].ResponseUpdates!);
-        Assert.Equal("Once", capturedContinuationTokens[0].ResponseUpdates!.Last().Text);
+        Assert.Equal("Once", capturedContinuationTokens[0].ResponseUpdates![0].Text);
 
         // Verify the last continuation token has the input and all updates
         var lastToken = capturedContinuationTokens[^1];

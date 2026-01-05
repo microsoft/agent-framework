@@ -759,7 +759,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         // If neither input messages nor response updates are present in the token,
         // it means it's an initial run that cannot be resumed.
-        if (continuationToken.InputMessages is not { Count: > 0 } && continuationToken.ResponseUpdates is not { Count: > 0 })
+        if (!(continuationToken.InputMessages is { } ims && ims.Any()) && continuationToken.ResponseUpdates is not { Count: > 0 })
         {
             throw new InvalidOperationException("Continuation tokens are not allowed to be used for initial runs.");
         }
@@ -787,7 +787,7 @@ public sealed partial class ChatClientAgent : AIAgent
             : ChatClientAgentContinuationToken.FromToken(continuationToken);
     }
 
-    private static ChatClientAgentContinuationToken? WrapContinuationToken(ResponseContinuationToken? continuationToken, IReadOnlyCollection<ChatMessage>? inputMessages = null, List<ChatResponseUpdate>? responseUpdates = null)
+    private static ChatClientAgentContinuationToken? WrapContinuationToken(ResponseContinuationToken? continuationToken, IEnumerable<ChatMessage>? inputMessages = null, List<ChatResponseUpdate>? responseUpdates = null)
     {
         if (continuationToken is null)
         {
@@ -799,7 +799,7 @@ public sealed partial class ChatClientAgent : AIAgent
             // Save input messages to the continuation token so they can be added to the thread and
             // provided to the context provider in the last successful streaming resumption run.
             // That's necessary for scenarios where initial streaming run fails and streaming is resumed later.
-            InputMessages = inputMessages?.Count > 0 ? inputMessages : null,
+            InputMessages = inputMessages?.Any() is true ? inputMessages : null,
 
             // Save all updates received so far to the continuation token so they can be provided to the
             // message store and context provider in the last successful streaming resumption run.
@@ -808,10 +808,10 @@ public sealed partial class ChatClientAgent : AIAgent
         };
     }
 
-    private static IReadOnlyCollection<ChatMessage> GetInputMessages(IReadOnlyCollection<ChatMessage> inputMessages, ChatClientAgentContinuationToken? token)
+    private static IEnumerable<ChatMessage> GetInputMessages(IEnumerable<ChatMessage> inputMessages, ChatClientAgentContinuationToken? token)
     {
         // First, use input messages if provided.
-        if (inputMessages.Count > 0)
+        if (inputMessages.Any())
         {
             return inputMessages;
         }
