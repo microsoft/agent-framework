@@ -369,8 +369,7 @@ group.run("Hello everyone, let's discuss AI.")
 A user wants to manage the context window size by reducing chat history, which is only feasible with local threads where history is stored client-side.
 
 ```python
-from semantic_kernel_agent_framework.chat_message_stores import InMemoryChatMessageStore
-from semantic_kernel_agent_framework.chat_history_reducers import MessageCountingChatReducer
+from agent_framework import InMemoryChatMessageStore, MessageCountingChatReducer
 
 agent = SomeAgent(
     chat_message_store_factory=lambda: InMemoryChatMessageStore(
@@ -1337,6 +1336,16 @@ var response = await agent.RunAsync("Hello", thread);
 - ⚠️ **Migration effort**: Documentation, samples, user code all need updates
 - ⚠️ **Deprecation period**: Would need to support both names temporarily
 
+### 7. Diverge python design from dotnet design
+The approach with a closed constructor on the Thread classes is not something that is possible with native Python without using unnecessary complexity. Therefore, the Python design might have to diverge from the dotnet design in this regard, and the Thread classes will have public constructors in Python, however this also has further implications for the design:
+- Does it still make sense that a Agent creates a Thread, or should a user just call the Thread constructor directly?
+    - Related to this: Do we then need factories for ChatMessageStore and ContextProviders on the agent, or should there just be a thread creation that can take a concrete ChatMessageStore and a (list of) ContextProvider(s)?
+- Do we need to handle anything related to serialization inside the Agent, or should that be contained (if needed) inside the Thread classes?
+    - Could even be handled completely by treating the Thread classes as pure data classes, and then the user can handle serialization as they see fit.
+- [!Note]: We would have to add handling logic inside each agent type to ensure that the thread can be used, in some cases that might be only possible at runtime, this needs to be investigated.
+- Would this change any of the other design considerations above?
+    - For instance, the zen of python says "Explicit is better than implicit", would that point to using separate Thread types for Local and Hosted threads, as that will make it much simpler to understand what you are expected to pass to the new thread you are creating.
+
 ## Agent Thread Invocation Flows
 
 The following diagrams illustrate the flow for each enhancement option. These show how threads interact with agents, context providers, and chat clients.
@@ -1728,6 +1737,9 @@ sequenceDiagram
 ### Enhancement 6: Rename Thread (No Flow Change)
 
 The renaming option (Enhancement 6) does not change the flow - it only renames `Thread` to `Conversation`, `Session`, or keeps it as `Thread`. The flows above would remain the same, just with different naming.
+
+### Enhancement 7: Diverge Python Design from Dotnet Design
+The divergence in design between Python and Dotnet does not change the flow diagrams above, but it does impact how threads are created and managed in Python. The flow remains the same, but users would create threads directly using constructors rather than through agent factory methods. The agent would still interact with the threads in the same way during runs.
 
 ## Decision Outcome
 
