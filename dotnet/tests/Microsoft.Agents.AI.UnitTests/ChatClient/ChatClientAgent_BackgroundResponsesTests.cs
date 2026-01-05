@@ -339,7 +339,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Create a mock message store that would normally provide messages
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
 
         // Create a mock AI context provider that would normally provide context
@@ -386,7 +386,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Verify that message store was never called due to continuation token
         mockMessageStore.Verify(
-            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Verify that AI context provider was never called due to continuation token
@@ -404,7 +404,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         // Create a mock message store that would normally provide messages
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()))
+            .Setup(ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new(ChatRole.User, "Message from message store")]);
 
         // Create a mock AI context provider that would normally provide context
@@ -450,7 +450,7 @@ public class ChatClientAgent_BackgroundResponsesTests
 
         // Verify that message store was never called due to continuation token
         mockMessageStore.Verify(
-            ms => ms.GetMessagesAsync(It.IsAny<CancellationToken>()),
+            ms => ms.InvokingAsync(It.IsAny<ChatMessageStore.InvokingContext>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Verify that AI context provider was never called due to continuation token
@@ -692,9 +692,9 @@ public class ChatClientAgent_BackgroundResponsesTests
         List<ChatMessage> capturedMessagesAddedToStore = [];
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.AddMessagesAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, CancellationToken>((messages, ct) => capturedMessagesAddedToStore.AddRange(messages))
-            .Returns(Task.CompletedTask);
+            .Setup(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Callback<ChatMessageStore.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToStore.AddRange(ctx.ResponseMessages ?? []))
+            .Returns(new ValueTask());
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
         var mockContextProvider = new Mock<AIContextProvider>();
@@ -721,7 +721,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync();
 
         // Assert
-        mockMessageStore.Verify(ms => ms.AddMessagesAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockMessageStore.Verify(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.Single(capturedMessagesAddedToStore);
         Assert.Contains("once upon a time", capturedMessagesAddedToStore[0].Text);
 
@@ -748,9 +748,9 @@ public class ChatClientAgent_BackgroundResponsesTests
         List<ChatMessage> capturedMessagesAddedToStore = [];
         var mockMessageStore = new Mock<ChatMessageStore>();
         mockMessageStore
-            .Setup(ms => ms.AddMessagesAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, CancellationToken>((messages, ct) => capturedMessagesAddedToStore.AddRange(messages))
-            .Returns(Task.CompletedTask);
+            .Setup(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()))
+            .Callback<ChatMessageStore.InvokedContext, CancellationToken>((ctx, ct) => capturedMessagesAddedToStore.AddRange(ctx.RequestMessages))
+            .Returns(new ValueTask());
 
         AIContextProvider.InvokedContext? capturedInvokedContext = null;
         var mockContextProvider = new Mock<AIContextProvider>();
@@ -777,7 +777,7 @@ public class ChatClientAgent_BackgroundResponsesTests
         await agent.RunStreamingAsync(thread, options: runOptions).ToListAsync();
 
         // Assert
-        mockMessageStore.Verify(ms => ms.AddMessagesAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
+        mockMessageStore.Verify(ms => ms.InvokedAsync(It.IsAny<ChatMessageStore.InvokedContext>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.Single(capturedMessagesAddedToStore);
         Assert.Contains("Tell me a story", capturedMessagesAddedToStore[0].Text);
 
