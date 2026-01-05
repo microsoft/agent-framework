@@ -2190,38 +2190,30 @@ async def test_openai_responses_client_agent_hosted_code_interpreter_tool():
 
 @pytest.mark.flaky
 @skip_if_openai_integration_tests_disabled
-async def test_openai_responses_client_agent_raw_image_generation_tool():
+async def test_openai_responses_client_agent_image_generation_tool():
     """Test OpenAI Responses Client agent with raw image_generation tool through OpenAIResponsesClient."""
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can generate images.",
-        tools=[{"type": "image_generation", "size": "1024x1024", "quality": "low", "format": "png"}],
+        tools=HostedImageGenerationTool(options={"image_size": "1024x1024", "media_type": "png"}),
     ) as agent:
         # Test image generation functionality
         response = await agent.run("Generate an image of a cute red panda sitting on a tree branch in a forest.")
 
         assert isinstance(response, AgentRunResponse)
+        assert response.messages
 
-        # For image generation, we expect to get some response content
-        # This could be DataContent with image data, UriContent
-        assert response.messages is not None and len(response.messages) > 0
-
-        # Check that we have some kind of content in the response
-        total_contents = sum(len(message.contents) for message in response.messages)
-        assert total_contents > 0, f"Expected some content in response messages, got {total_contents} contents"
-
-        # Verify we got image content - look for DataContent with URI starting with "data:image"
+        # Verify we got image content - look for ImageGenerationToolResultContent
         image_content_found = False
         for message in response.messages:
             for content in message.contents:
-                uri = getattr(content, "uri", None)
-                if uri and uri.startswith("data:image"):
+                if content.type == "image_generation_tool_result" and content.outputs:
                     image_content_found = True
                     break
             if image_content_found:
                 break
 
-        # The test passes if we got image content (which we did based on the visible base64 output)
+        # The test passes if we got image content
         assert image_content_found, "Expected to find image content in response"
 
 
@@ -2343,26 +2335,24 @@ async def test_openai_responses_client_agent_chat_options_agent_level() -> None:
 async def test_openai_responses_client_agent_hosted_mcp_tool() -> None:
     """Integration test for HostedMCPTool with OpenAI Response Agent using Microsoft Learn MCP."""
 
-    mcp_tool = HostedMCPTool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-        description="A Microsoft Learn MCP server for documentation questions",
-        approval_mode="never_require",
-    )
-
     async with ChatAgent(
         chat_client=OpenAIResponsesClient(),
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=[mcp_tool],
+        tools=HostedMCPTool(
+            name="Microsoft Learn MCP",
+            url="https://learn.microsoft.com/api/mcp",
+            description="A Microsoft Learn MCP server for documentation questions",
+            approval_mode="never_require",
+        ),
     ) as agent:
         response = await agent.run(
             "How to create an Azure storage account using az cli?",
-            max_tokens=200,
+            # this needs to be high enough to handle the full MCP tool response.
+            max_tokens=5000,
         )
 
         assert isinstance(response, AgentRunResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
+        assert response.text
         # Should contain Azure-related content since it's asking about Azure CLI
         assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
 

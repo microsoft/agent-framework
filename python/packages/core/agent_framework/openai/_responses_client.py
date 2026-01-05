@@ -326,13 +326,12 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         mapped_tool: dict[str, Any] = {"type": "image_generation"}
                         if tool.options:
                             option_mapping = {
-                                "count": "n",
                                 "image_size": "size",
-                                "media_type": "media_type",
+                                "media_type": "output_format",
                                 "model_id": "model",
-                                "response_format": "response_format",
                                 "streaming_count": "partial_images",
                             }
+                            # count and response_format are not supported by Responses API
                             for key, value in tool.options.items():
                                 mapped_key = option_mapping.get(key, key)
                                 mapped_tool[mapped_key] = value
@@ -818,56 +817,35 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                         )
                     )
                 case "mcp_call":
-                    call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
+                    call_id = item.id
                     contents.append(
                         MCPServerToolCallContent(
                             call_id=call_id,
-                            tool_name=getattr(item, "name", "") or "",
-                            server_name=getattr(item, "server_label", None),
-                            arguments=getattr(item, "arguments", None),
+                            tool_name=item.name,
+                            server_name=item.server_label,
+                            arguments=item.arguments,
                             raw_representation=item,
                         )
                     )
-                    result_output = (
-                        getattr(item, "result", None) or getattr(item, "output", None) or getattr(item, "outputs", None)
-                    )
-                    parsed_output: list[Contents] | None = None
-                    if result_output:
-                        normalized = (
-                            result_output
-                            if isinstance(result_output, Sequence)
-                            and not isinstance(result_output, (str, bytes, MutableMapping))
-                            else [result_output]
-                        )
-                        parsed_output = [_parse_content(output_item) for output_item in normalized]
-                    contents.append(
-                        MCPServerToolResultContent(
-                            call_id=call_id,
-                            output=parsed_output,
-                            raw_representation=item,
-                        )
-                    )
-                case "image_generation_call":  # ResponseOutputImageGenerationCall
-                    image_outputs: list["Contents"] = []
-                    if item.result:
-                        uri = item.result
-                        media_type = None
-                        if not uri.startswith("data:"):
-                            uri, media_type = DataContent.create_data_uri_from_base64(uri)
-                        else:
-                            try:
-                                if ";" in uri and uri.startswith("data:"):
-                                    media_type = uri.split(";")[0].split(":", 1)[1]
-                            except Exception:
-                                media_type = "image"
-                        image_outputs.append(
-                            DataContent(
-                                uri=uri,
-                                media_type=media_type,
+                    if item.output is not None:
+                        contents.append(
+                            MCPServerToolResultContent(
+                                call_id=call_id,
+                                output=[TextContent(text=item.output)],
                                 raw_representation=item,
                             )
                         )
-                    image_id = getattr(item, "image_id", None) or getattr(item, "id", None)
+                case "image_generation_call":  # ResponseOutputImageGenerationCall
+                    image_output: DataContent | None = None
+                    if item.result:
+                        base64_data = item.result
+                        image_format = DataContent.detect_image_format_from_base64(base64_data)
+                        image_output = DataContent(
+                            data=base64_data,
+                            media_type=f"image/{image_format}" if image_format else "image/png",
+                            raw_representation=item.result,
+                        )
+                    image_id = item.id
                     contents.append(
                         ImageGenerationToolCallContent(
                             image_id=image_id,
@@ -877,7 +855,7 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                     contents.append(
                         ImageGenerationToolResultContent(
                             image_id=image_id,
-                            outputs=image_outputs or None,
+                            outputs=image_output,
                             raw_representation=item,
                         )
                     )

@@ -1778,6 +1778,16 @@ class ImageGenerationToolCallContent(BaseContent):
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initializes an ImageGenerationToolCallContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the image to be generated.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
         super().__init__(
             annotations=annotations,
             additional_properties=additional_properties,
@@ -1795,12 +1805,23 @@ class ImageGenerationToolResultContent(BaseContent):
         self,
         *,
         image_id: str | None = None,
-        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        outputs: DataContent | UriContent | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initializes an ImageGenerationToolResultContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the generated image.
+            outputs: The outputs of the image generation tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
         super().__init__(
             annotations=annotations,
             additional_properties=additional_properties,
@@ -1808,14 +1829,7 @@ class ImageGenerationToolResultContent(BaseContent):
             **kwargs,
         )
         self.image_id = image_id
-        self.outputs: list["Contents"] | None = None
-        if outputs:
-            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
-                outputs
-                if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
-                else [outputs]
-            )
-            self.outputs = _parse_content_list(list(normalized_outputs))
+        self.outputs: DataContent | UriContent | None = outputs
         self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
 
 
@@ -1828,15 +1842,30 @@ class MCPServerToolCallContent(BaseContent):
         tool_name: str,
         server_name: str | None = None,
         *,
-        arguments: Mapping[str, Any] | None = None,
+        arguments: str | Mapping[str, Any] | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        if not call_id or call_id.isspace():
+        """Initializes a MCPServerToolCallContent instance.
+
+        Args:
+            call_id: The tool call identifier.
+            tool_name: The name of the tool requested.
+            server_name: The name of the MCP server where the tool is hosted.
+
+        Keyword Args:
+            arguments: The arguments requested to be provided to the tool,
+                can be a string to allow gradual completion of the args.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
             raise ValueError("call_id must be a non-empty string.")
-        if not tool_name or tool_name.isspace():
+        if not tool_name:
             raise ValueError("tool_name must be a non-empty string.")
         super().__init__(
             annotations=annotations,
@@ -1846,14 +1875,22 @@ class MCPServerToolCallContent(BaseContent):
         )
         self.call_id = call_id
         self.tool_name = tool_name
-        # Maintain compatibility with existing call content interfaces
         self.name = tool_name
         self.server_name = server_name
-        self.arguments = dict(arguments) if arguments is not None else None
+        self.arguments = arguments
         self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
 
     def parse_arguments(self) -> dict[str, Any] | None:
         """Returns the parsed arguments for the MCP server tool call, if any."""
+        if isinstance(self.arguments, str):
+            # If arguments are a string, try to parse it as JSON
+            try:
+                loaded = json.loads(self.arguments)
+                if isinstance(loaded, dict):
+                    return loaded  # type:ignore
+                return {"raw": loaded}
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": self.arguments}
         return self.arguments
 
 
@@ -1864,13 +1901,25 @@ class MCPServerToolResultContent(BaseContent):
         self,
         call_id: str,
         *,
-        output: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        output: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        if not call_id or call_id.isspace():
+        """Initializes a MCPServerToolResultContent instance.
+
+        Args:
+            call_id: The identifier of the tool call for which this is the result.
+
+        Keyword Args:
+            output: The output of the MCP server tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
             raise ValueError("call_id must be a non-empty string.")
         super().__init__(
             annotations=annotations,
@@ -1879,14 +1928,7 @@ class MCPServerToolResultContent(BaseContent):
             **kwargs,
         )
         self.call_id = call_id
-        self.output: list["Contents"] | None = None
-        if output:
-            normalized_output: Sequence["Contents | MutableMapping[str, Any]"] = (
-                output
-                if isinstance(output, Sequence) and not isinstance(output, (str, bytes, MutableMapping))
-                else [output]
-            )
-            self.output = _parse_content_list(list(normalized_output))
+        self.output: Any | None = output
         self.type: Literal["mcp_server_tool_result"] = "mcp_server_tool_result"
 
 
