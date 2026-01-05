@@ -1125,17 +1125,16 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
                 # Use helper function to create data URI from base64
                 uri, media_type = DataContent.create_data_uri_from_base64(image_base64)
 
-                outputs = [
-                    DataContent(
-                        uri=uri,
-                        media_type=media_type,
-                        additional_properties={
-                            "partial_image_index": partial_index,
-                            "is_partial_image": True,
-                        },
-                        raw_representation=event,
-                    )
-                ]
+                outputs = DataContent(
+                    uri=uri,
+                    media_type=media_type,
+                    additional_properties={
+                        "partial_image_index": partial_index,
+                        "is_partial_image": True,
+                    },
+                    raw_representation=event,
+                )
+
                 image_id = getattr(event, "item_id", None)
                 contents.append(
                     ImageGenerationToolCallContent(

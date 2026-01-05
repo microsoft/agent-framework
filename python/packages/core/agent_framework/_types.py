@@ -1891,7 +1891,7 @@ class MCPServerToolCallContent(BaseContent):
                 return {"raw": loaded}
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
-        return self.arguments
+        return cast(dict[str, Any] | None, self.arguments)
 
 
 class MCPServerToolResultContent(BaseContent):
