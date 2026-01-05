@@ -66,7 +66,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, jsonSerializerOptions);
 
-    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    private ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
         thread ??= this.GetNewThread();
 
@@ -75,8 +75,10 @@ internal sealed class WorkflowHostAgent : AIAgent
             throw new ArgumentException($"Incompatible thread type: {thread.GetType()} (expecting {typeof(WorkflowThread)})", nameof(thread));
         }
 
-        await workflowThread.MessageStore.AddMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
-        return workflowThread;
+        // For workflow threads, messages are added directly via the internal AddMessages method
+        // The MessageStore methods are used for agent invocation scenarios
+        workflowThread.MessageStore.AddMessages(messages);
+        return new ValueTask<WorkflowThread>(workflowThread);
     }
 
     protected override async

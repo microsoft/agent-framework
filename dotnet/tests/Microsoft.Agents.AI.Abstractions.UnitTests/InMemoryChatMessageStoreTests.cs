@@ -47,34 +47,54 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
-    public async Task AddMessagesAsyncAddsMessagesAndReturnsNullThreadIdAsync()
+    public async Task InvokedAsyncAddsMessagesAsync()
     {
-        var store = new InMemoryChatMessageStore();
-        var messages = new List<ChatMessage>
+        var requestMessages = new List<ChatMessage>
         {
-            new(ChatRole.User, "Hello"),
+            new(ChatRole.User, "Hello")
+        };
+        var responseMessages = new List<ChatMessage>
+        {
             new(ChatRole.Assistant, "Hi there!")
         };
+        var messageStoreMessages = new List<ChatMessage>()
+        {
+            new(ChatRole.System, "original instructions")
+        };
+        var aiContextProviderMessages = new List<ChatMessage>()
+        {
+            new(ChatRole.System, "additional context")
+        };
 
-        await store.AddMessagesAsync(messages, CancellationToken.None);
+        var store = new InMemoryChatMessageStore();
+        store.Add(messageStoreMessages[0]);
+        var context = new ChatMessageStore.InvokedContext(requestMessages, messageStoreMessages)
+        {
+            AIContextProviderMessages = aiContextProviderMessages,
+            ResponseMessages = responseMessages
+        };
+        await store.InvokedAsync(context, CancellationToken.None);
 
-        Assert.Equal(2, store.Count);
-        Assert.Equal("Hello", store[0].Text);
-        Assert.Equal("Hi there!", store[1].Text);
+        Assert.Equal(4, store.Count);
+        Assert.Equal("original instructions", store[0].Text);
+        Assert.Equal("Hello", store[1].Text);
+        Assert.Equal("additional context", store[2].Text);
+        Assert.Equal("Hi there!", store[3].Text);
     }
 
     [Fact]
-    public async Task AddMessagesAsyncWithEmptyDoesNotFailAsync()
+    public async Task InvokedAsyncWithEmptyDoesNotFailAsync()
     {
         var store = new InMemoryChatMessageStore();
 
-        await store.AddMessagesAsync([], CancellationToken.None);
+        var context = new ChatMessageStore.InvokedContext([], []);
+        await store.InvokedAsync(context, CancellationToken.None);
 
         Assert.Empty(store);
     }
 
     [Fact]
-    public async Task GetMessagesAsyncReturnsAllMessagesAsync()
+    public async Task InvokingAsyncReturnsAllMessagesAsync()
     {
         var store = new InMemoryChatMessageStore
         {
@@ -82,7 +102,8 @@ public class InMemoryChatMessageStoreTests
             new ChatMessage(ChatRole.Assistant, "Test2")
         };
 
-        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
+        var context = new ChatMessageStore.InvokingContext([]);
+        var result = (await store.InvokingAsync(context, CancellationToken.None)).ToList();
 
         Assert.Equal(2, result.Count);
         Assert.Contains(result, m => m.Text == "Test1");
@@ -157,24 +178,25 @@ public class InMemoryChatMessageStoreTests
     }
 
     [Fact]
-    public async Task AddMessagesAsyncWithEmptyMessagesDoesNotChangeStoreAsync()
+    public async Task InvokedAsyncWithEmptyMessagesDoesNotChangeStoreAsync()
     {
         var store = new InMemoryChatMessageStore();
         var messages = new List<ChatMessage>();
 
-        await store.AddMessagesAsync(messages, CancellationToken.None);
+        var context = new ChatMessageStore.InvokedContext(messages, []);
+        await store.InvokedAsync(context, CancellationToken.None);
 
         Assert.Empty(store);
     }
 
     [Fact]
-    public async Task AddMessagesAsync_WithNullMessages_ThrowsArgumentNullExceptionAsync()
+    public async Task InvokedAsync_WithNullContext_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         var store = new InMemoryChatMessageStore();
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => store.AddMessagesAsync(null!, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => store.InvokedAsync(null!, CancellationToken.None).AsTask());
     }
 
     [Fact]
@@ -498,7 +520,8 @@ public class InMemoryChatMessageStoreTests
         var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.AfterMessageAdded);
 
         // Act
-        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+        var context = new ChatMessageStore.InvokedContext(originalMessages, []);
+        await store.InvokedAsync(context, CancellationToken.None);
 
         // Assert
         Assert.Single(store);
@@ -526,10 +549,15 @@ public class InMemoryChatMessageStoreTests
             .ReturnsAsync(reducedMessages);
 
         var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
-        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+        // Add messages directly to the store for this test
+        foreach (var msg in originalMessages)
+        {
+            store.Add(msg);
+        }
 
         // Act
-        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
+        var invokingContext = new ChatMessageStore.InvokingContext(Array.Empty<ChatMessage>());
+        var result = (await store.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
         Assert.Single(result);
@@ -551,7 +579,8 @@ public class InMemoryChatMessageStoreTests
         var store = new InMemoryChatMessageStore(reducerMock.Object, InMemoryChatMessageStore.ChatReducerTriggerEvent.BeforeMessagesRetrieval);
 
         // Act
-        await store.AddMessagesAsync(originalMessages, CancellationToken.None);
+        var context = new ChatMessageStore.InvokedContext(originalMessages, []);
+        await store.InvokedAsync(context, CancellationToken.None);
 
         // Assert
         Assert.Single(store);
@@ -576,7 +605,8 @@ public class InMemoryChatMessageStoreTests
         };
 
         // Act
-        var result = (await store.GetMessagesAsync(CancellationToken.None)).ToList();
+        var invokingContext = new ChatMessageStore.InvokingContext(Array.Empty<ChatMessage>());
+        var result = (await store.InvokingAsync(invokingContext, CancellationToken.None)).ToList();
 
         // Assert
         Assert.Single(result);
