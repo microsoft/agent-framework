@@ -1342,9 +1342,11 @@ The approach with a closed constructor on the Thread classes is not something th
     - Related to this: Do we then need factories for ChatMessageStore and ContextProviders on the agent, or should there just be a thread creation that can take a concrete ChatMessageStore and a (list of) ContextProvider(s)?
 - Do we need to handle anything related to serialization inside the Agent, or should that be contained (if needed) inside the Thread classes?
     - Could even be handled completely by treating the Thread classes as pure data classes, and then the user can handle serialization as they see fit.
-- [!Note]: We would have to add handling logic inside each agent type to ensure that the thread can be used, in some cases that might be only possible at runtime, this needs to be investigated.
 - Would this change any of the other design considerations above?
     - For instance, the zen of python says "Explicit is better than implicit", would that point to using separate Thread types for Local and Hosted threads, as that will make it much simpler to understand what you are expected to pass to the new thread you are creating.
+
+> [!Note]
+> We would have to add handling logic inside each agent type to ensure that the thread can be used, in some cases that might be only possible at runtime, this needs to be investigated.
 
 ## Agent Thread Invocation Flows
 
