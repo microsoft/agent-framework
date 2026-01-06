@@ -31,7 +31,9 @@ from azure.ai.projects.models import (
     AgentObject,
     AgentReference,
     AgentVersionObject,
+    ApproximateLocation,
     CodeInterpreterTool,
+    CodeInterpreterToolAuto,
     FileSearchTool,
     FunctionTool,
     MCPTool,
@@ -620,6 +622,9 @@ async def create_agent(
 
 
 def _get_agent_from_version_object(project_client: AIProjectClient, version_object: AgentVersionObject) -> ChatAgent:
+    if not isinstance(version_object.definition, PromptAgentDefinition):
+        raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
+
     client = AzureAIClient(
         project_client=project_client,
         agent_name=version_object.name,
@@ -777,24 +782,23 @@ def _to_azure_ai_tools(
                 case HostedMCPTool():
                     azure_tools.append(_prepare_mcp_tool_for_azure_ai(tool))
                 case HostedCodeInterpreterTool():
-                    ci_tool: CodeInterpreterTool = {"type": "code_interpreter"}
+                    ci_tool: CodeInterpreterTool = CodeInterpreterTool()
                     if tool.inputs:
                         file_ids: list[str] = []
                         for tool_input in tool.inputs:
                             if isinstance(tool_input, HostedFileContent):
                                 file_ids.append(tool_input.file_id)
                         if file_ids:
-                            ci_tool["container"] = {"file_ids": file_ids}
+                            ci_tool.container = CodeInterpreterToolAuto(file_ids=file_ids)
                     azure_tools.append(ci_tool)
                 case AIFunction():
                     params = tool.parameters()
                     params["additionalProperties"] = False
                     azure_tools.append(
                         FunctionTool(
-                            type="function",
-                            strict=False,
                             name=tool.name,
                             parameters=params,
+                            strict=False,
                             description=tool.description,
                         )
                     )
@@ -808,15 +812,12 @@ def _to_azure_ai_tools(
                         raise ValueError(
                             "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
                         )
-                    fs_tool: FileSearchTool = {
-                        "type": "file_search",
-                        "vector_store_ids": vector_store_ids,
-                    }
+                    fs_tool: FileSearchTool = FileSearchTool(vector_store_ids=vector_store_ids)
                     if tool.max_results:
                         fs_tool["max_num_results"] = tool.max_results
                     azure_tools.append(fs_tool)
                 case HostedWebSearchTool():
-                    ws_tool: WebSearchPreviewTool = {"type": "web_search_preview"}
+                    ws_tool: WebSearchPreviewTool = WebSearchPreviewTool()
                     if tool.additional_properties:
                         location: dict[str, str] | None = (
                             tool.additional_properties.get("user_location", None)
@@ -824,12 +825,12 @@ def _to_azure_ai_tools(
                             else None
                         )
                         if location:
-                            ws_tool["user_location"] = {
-                                "city": location.get("city"),
-                                "country": location.get("country"),
-                                "region": location.get("region"),
-                                "timezone": location.get("timezone"),
-                            }
+                            ws_tool.user_location = ApproximateLocation(
+                                city=location.get("city"),
+                                country=location.get("country"),
+                                region=location.get("region"),
+                                timezone=location.get("timezone"),
+                            )
                     azure_tools.append(ws_tool)
                 case _:
                     logger.debug("Unsupported tool passed (type: %s)", type(tool))
@@ -850,11 +851,7 @@ def _prepare_mcp_tool_for_azure_ai(tool: HostedMCPTool) -> MCPTool:
     Returns:
         MCPTool: The converted Azure AI MCPTool.
     """
-    mcp: MCPTool = {
-        "type": "mcp",
-        "server_label": tool.name.replace(" ", "_"),
-        "server_url": str(tool.url),
-    }
+    mcp: MCPTool = MCPTool(server_label=tool.name.replace(" ", "_"), server_url=str(tool.url))
 
     if tool.description:
         mcp["server_description"] = tool.description
