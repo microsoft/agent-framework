@@ -2,9 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -17,102 +14,6 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public class SpecializedExecutorSmokeTests
 {
-    public class TestAIAgent(List<ChatMessage>? messages = null, string? id = null, string? name = null) : AIAgent
-    {
-        protected override string? IdCore => id;
-        public override string? Name => name;
-
-        public static List<ChatMessage> ToChatMessages(params string[] messages)
-        {
-            List<ChatMessage> result = messages.Select(ToMessage).ToList();
-
-            static ChatMessage ToMessage(string text)
-            {
-                if (string.IsNullOrEmpty(text))
-                {
-                    return new ChatMessage(ChatRole.Assistant, "") { MessageId = "" };
-                }
-
-                string[] splits = text.Split(' ');
-                for (int i = 0; i < splits.Length - 1; i++)
-                {
-                    splits[i] += ' ';
-                }
-
-                List<AIContent> contents = splits.Select<string, AIContent>(text => new TextContent(text) { RawRepresentation = text }).ToList();
-                return new(ChatRole.Assistant, contents)
-                {
-                    MessageId = Guid.NewGuid().ToString("N"),
-                    RawRepresentation = text,
-                    CreatedAt = DateTime.UtcNow,
-                };
-            }
-
-            return result;
-        }
-
-        public override ValueTask<AgentThread> GetNewThreadAsync(CancellationToken cancellationToken = default)
-            => new(new TestAgentThread());
-
-        public override ValueTask<AgentThread> DeserializeThreadAsync(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-            => new(new TestAgentThread());
-
-        public static TestAIAgent FromStrings(params string[] messages) =>
-            new(ToChatMessages(messages));
-
-        public List<ChatMessage> Messages { get; } = Validate(messages) ?? [];
-
-        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new AgentResponse(this.Messages)
-            {
-                AgentId = this.Id,
-                ResponseId = Guid.NewGuid().ToString("N")
-            });
-
-        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            string responseId = Guid.NewGuid().ToString("N");
-            foreach (ChatMessage message in this.Messages)
-            {
-                foreach (AIContent content in message.Contents)
-                {
-                    yield return new AgentResponseUpdate()
-                    {
-                        AgentId = this.Id,
-                        MessageId = message.MessageId,
-                        ResponseId = responseId,
-                        Contents = [content],
-                        Role = message.Role,
-                    };
-                }
-            }
-        }
-
-        private static List<ChatMessage>? Validate(List<ChatMessage>? candidateMessages)
-        {
-            string? currentMessageId = null;
-
-            if (candidateMessages is not null)
-            {
-                foreach (ChatMessage message in candidateMessages)
-                {
-                    if (currentMessageId is null)
-                    {
-                        currentMessageId = message.MessageId;
-                    }
-                    else if (currentMessageId == message.MessageId)
-                    {
-                        throw new ArgumentException("Duplicate consecutive message ids");
-                    }
-                }
-            }
-
-            return candidateMessages;
-        }
-    }
-
-    public sealed class TestAgentThread() : InMemoryAgentThread();
-
     internal sealed class TestWorkflowContext(string executorId, bool concurrentRunsEnabled = false) : IWorkflowContext
     {
         private readonly StateManager _stateManager = new();
@@ -177,9 +78,9 @@ public class SpecializedExecutorSmokeTests
             "Quisque dignissim ante odio, at facilisis orci porta a. Duis mi augue, fringilla eu egestas a, pellentesque sed lacus."
         ];
 
-        List<ChatMessage> expected = TestAIAgent.ToChatMessages(MessageStrings);
+        List<ChatMessage> expected = TestReplayAgent.ToChatMessages(MessageStrings);
 
-        TestAIAgent agent = new(expected);
+        TestReplayAgent agent = new(expected);
         AIAgentHostExecutor host = new(agent, new());
 
         TestWorkflowContext collectingContext = new(host.Id);
@@ -203,8 +104,8 @@ public class SpecializedExecutorSmokeTests
     {
         const string AgentAName = "TestAgentAName";
         const string AgentBName = "TestAgentBName";
-        TestAIAgent agentA = new(name: AgentAName);
-        TestAIAgent agentB = new(name: AgentBName);
+        TestReplayAgent agentA = new(name: AgentAName);
+        TestReplayAgent agentB = new(name: AgentBName);
         var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
         var definition = workflow.ToWorkflowInfo();
 
@@ -225,8 +126,8 @@ public class SpecializedExecutorSmokeTests
     [Fact]
     public async Task Test_AIAgent_ExecutorId_Use_Agent_ID_When_Name_Not_ProvidedAsync()
     {
-        TestAIAgent agentA = new();
-        TestAIAgent agentB = new();
+        TestReplayAgent agentA = new();
+        TestReplayAgent agentB = new();
         var workflow = new WorkflowBuilder(agentA).AddEdge(agentA, agentB).Build();
         var definition = workflow.ToWorkflowInfo();
 
