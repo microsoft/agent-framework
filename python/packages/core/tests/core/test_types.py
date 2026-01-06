@@ -2092,10 +2092,11 @@ def test_prepare_function_call_results_nested_pydantic_model():
 
 def test_prepare_function_call_results_text_content_single():
     """Test that objects with text attribute (like MCP TextContent) are properly handled."""
+    from dataclasses import dataclass
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     result = [MockTextContent("Hello from MCP tool!")]
     json_result = prepare_function_call_results(result)
@@ -2107,10 +2108,11 @@ def test_prepare_function_call_results_text_content_single():
 
 def test_prepare_function_call_results_text_content_multiple():
     """Test that multiple TextContent-like objects are serialized correctly."""
+    from dataclasses import dataclass
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     result = [MockTextContent("First result"), MockTextContent("Second result")]
     json_result = prepare_function_call_results(result)

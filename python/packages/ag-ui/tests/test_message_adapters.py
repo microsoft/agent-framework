@@ -349,10 +349,11 @@ def test_agent_framework_to_agui_function_result_empty_list():
 
 def test_agent_framework_to_agui_function_result_single_text_content():
     """Test converting FunctionResultContent with single TextContent-like item."""
+    from dataclasses import dataclass
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     msg = ChatMessage(
         role=Role.TOOL,
@@ -370,10 +371,11 @@ def test_agent_framework_to_agui_function_result_single_text_content():
 
 def test_agent_framework_to_agui_function_result_multiple_text_contents():
     """Test converting FunctionResultContent with multiple TextContent-like items."""
+    from dataclasses import dataclass
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     msg = ChatMessage(
         role=Role.TOOL,

@@ -712,11 +712,13 @@ async def test_tool_result_with_empty_list():
 
 async def test_tool_result_with_single_text_content():
     """Test FunctionResultContent with single TextContent-like item (MCP tool result)."""
+    from dataclasses import dataclass
+
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
@@ -734,11 +736,13 @@ async def test_tool_result_with_single_text_content():
 
 async def test_tool_result_with_multiple_text_contents():
     """Test FunctionResultContent with multiple TextContent-like items (MCP tool result)."""
+    from dataclasses import dataclass
+
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
+    @dataclass
     class MockTextContent:
-        def __init__(self, text: str):
-            self.text = text
+        text: str
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
