@@ -124,10 +124,10 @@ Without `PYTHONPATH`, Python cannot find modules in sibling directories and DevU
 
 ## Viewing Telemetry (Otel Traces) in DevUI
 
-Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling tracing when starting the server.
+Agent Framework emits OpenTelemetry (Otel) traces for various operations. You can view these traces in DevUI by enabling instrumentation when starting the server.
 
 ```bash
-devui ./agents --tracing
+devui ./agents --instrumentation
 ```
 
 ## OpenAI-Compatible API
@@ -217,7 +217,7 @@ Options:
   --host          Host (default: 127.0.0.1)
   --headless      API only, no UI
   --no-open       Don't automatically open browser
-  --tracing       Enable OpenTelemetry tracing
+  --instrumentation  Enable OpenTelemetry instrumentation
   --reload        Enable auto-reload
   --mode          developer|user (default: developer)
   --auth          Enable Bearer token authentication

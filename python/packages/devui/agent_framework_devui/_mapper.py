@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Union
 from uuid import uuid4
 
+from agent_framework import ChatMessage, TextContent
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -602,7 +603,7 @@ class MessageMapper:
                 return events
 
             # Check if we're streaming text content
-            has_text_content = any(content.__class__.__name__ == "TextContent" for content in update.contents)
+            has_text_content = any(isinstance(content, TextContent) for content in update.contents)
 
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
@@ -892,7 +893,7 @@ class MessageMapper:
 
                     # Extract text from output data based on type
                     text = None
-                    if hasattr(output_data, "__class__") and output_data.__class__.__name__ == "ChatMessage":
+                    if isinstance(output_data, ChatMessage):
                         # Handle ChatMessage (from Magentic and AgentExecutor with output_response=True)
                         text = getattr(output_data, "text", None)
                         if not text:
@@ -902,7 +903,7 @@ class MessageMapper:
                         # Handle list of ChatMessage objects (from Magentic yield_output([final_answer]))
                         text_parts = []
                         for item in output_data:
-                            if hasattr(item, "__class__") and item.__class__.__name__ == "ChatMessage":
+                            if isinstance(item, ChatMessage):
                                 item_text = getattr(item, "text", None)
                                 if item_text:
                                     text_parts.append(item_text)

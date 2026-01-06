@@ -541,8 +541,8 @@ async def test_magentic_events_use_same_event_class_as_other_workflows(
 
     # Both should be the SAME class
     assert type(regular_event) is type(magentic_event)
-    assert regular_event.__class__.__name__ == "AgentRunUpdateEvent"
-    assert magentic_event.__class__.__name__ == "AgentRunUpdateEvent"
+    assert isinstance(regular_event, AgentRunUpdateEvent)
+    assert isinstance(magentic_event, AgentRunUpdateEvent)
 
     # Both should be handled by the same isinstance check in mapper
     regular_events = await mapper.convert_event(regular_event, test_request)

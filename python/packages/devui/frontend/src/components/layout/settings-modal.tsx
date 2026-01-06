@@ -659,11 +659,11 @@ export function SettingsModal({
                 <div className="space-y-2 pt-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Capabilities</p>
                   <div className="space-y-1 text-sm">
-                    {serverCapabilities?.tracing !== undefined && (
+                    {serverCapabilities?.instrumentation !== undefined && (
                       <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Tracing:</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.tracing ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
-                          {serverCapabilities.tracing ? 'Enabled' : 'Disabled'}
+                        <span className="text-muted-foreground">Instrumentation:</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${serverCapabilities.instrumentation ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                          {serverCapabilities.instrumentation ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
                     )}

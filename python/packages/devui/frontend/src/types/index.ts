@@ -160,7 +160,7 @@ export interface MetaResponse {
   framework: string;
   runtime: "python" | "dotnet";
   capabilities: {
-    tracing: boolean;
+    instrumentation: boolean;
     openai_proxy: boolean;
     deployment: boolean;
   };

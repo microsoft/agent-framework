@@ -4,7 +4,6 @@
 
 import json
 import logging
-import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -45,8 +44,8 @@ class AgentFrameworkExecutor:
         """
         self.entity_discovery = entity_discovery
         self.message_mapper = message_mapper
-        self._setup_tracing_provider()
-        self._setup_agent_framework_tracing()
+        self._setup_instrumentation_provider()
+        self._setup_agent_framework_instrumentation()
 
         # Use provided conversation store or default to in-memory
         self.conversation_store = conversation_store or InMemoryConversationStore()
@@ -56,7 +55,7 @@ class AgentFrameworkExecutor:
 
         self.checkpoint_manager = CheckpointConversationManager(self.conversation_store)
 
-    def _setup_tracing_provider(self) -> None:
+    def _setup_instrumentation_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
         try:
             from opentelemetry import trace
@@ -71,7 +70,7 @@ class AgentFrameworkExecutor:
                 })
                 provider = TracerProvider(resource=resource)
                 trace.set_tracer_provider(provider)
-                logger.info("Set up TracerProvider for server tracing")
+                logger.info("Set up TracerProvider for instrumentation")
             else:
                 logger.debug("TracerProvider already exists")
 
@@ -80,40 +79,27 @@ class AgentFrameworkExecutor:
         except Exception as e:
             logger.warning(f"Failed to setup TracerProvider: {e}")
 
-    def _setup_agent_framework_tracing(self) -> None:
-        """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_INSTRUMENTATION is set
-        if os.environ.get("ENABLE_INSTRUMENTATION"):
-            try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+    def _setup_agent_framework_instrumentation(self) -> None:
+        """Set up Agent Framework's built-in instrumentation."""
+        try:
+            from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
-                # Only configure if not already executed
+            # Configure if instrumentation is enabled (via enable_instrumentation() or env var)
+            if OBSERVABILITY_SETTINGS.ENABLED:
+                # Only configure providers if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Get OTLP endpoint from standard env vars
-                    otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-                    if otlp_endpoint:
-                        # User provided an OTLP endpoint - use it
-                        configure_otel_providers(enable_sensitive_data=True)
-                        logger.info(f"Enabled Agent Framework observability with OTLP endpoint: {otlp_endpoint}")
-                    else:
-                        # No OTLP endpoint - use NoOp exporters to enable tracing without
-                        # console spam or failed connection attempts.
-                        # DevUI's SimpleTraceCollector will still capture spans via the
-                        # TracerProvider's span processors.
-                        from ._tracing import NoOpLogExporter, NoOpMetricExporter, NoOpSpanExporter
-
-                        configure_otel_providers(
-                            enable_sensitive_data=True,
-                            exporters=[NoOpSpanExporter(), NoOpLogExporter(), NoOpMetricExporter()],  # type: ignore[list-item]
-                        )
-                        logger.info("Enabled Agent Framework observability with local-only tracing")
+                    # Call configure_otel_providers to set up exporters.
+                    # If OTEL_EXPORTER_OTLP_ENDPOINT is set, exporters will be created automatically.
+                    # If not set, no exporters are created (no console spam), but DevUI's
+                    # TracerProvider from _setup_instrumentation_provider() remains active for local capture.
+                    configure_otel_providers(enable_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED)
+                    logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
-            except Exception as e:
-                logger.warning(f"Failed to enable Agent Framework observability: {e}")
-        else:
-            logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
+            else:
+                logger.debug("Instrumentation not enabled, skipping observability setup")
+        except Exception as e:
+            logger.warning(f"Failed to enable Agent Framework observability: {e}")
 
     async def _ensure_mcp_connections(self, agent: Any) -> None:
         """Ensure MCP tool connections are healthy before agent execution.

@@ -20,7 +20,6 @@ import {
   MessageSquare,
   ChevronRight,
   ChevronDown,
-  Info,
   BarChart3,
 } from "lucide-react";
 import { ContextInspector } from "@/components/features/agent/context-inspector";
@@ -1522,47 +1521,42 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
       {/* Sub-tab content */}
       {subTab === "spans" ? (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* OTel Spans header */}
-          <div className="p-3 border-b flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4" />
-              <span className="font-medium text-sm">OTel Spans</span>
-              <Badge variant="outline" className="text-xs">
-                {traceGroups.length} turn{traceGroups.length !== 1 ? "s" : ""}
-              </Badge>
+          {/* OTel Spans header - only show when we have data */}
+          {traceEvents.length > 0 && (
+            <div className="p-3 border-b flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4" />
+                <span className="font-medium text-sm">OTel Spans</span>
+                <Badge variant="outline" className="text-xs">
+                  {traceGroups.length} turn{traceGroups.length !== 1 ? "s" : ""}
+                </Badge>
+              </div>
             </div>
-          </div>
+          )}
 
-          <ScrollArea className="flex-1">
-            <div className="p-3">
-              {traceEvents.length === 0 ? (
-                <div className="text-center text-muted-foreground text-sm py-8">
-                  No trace data available.
-                  <br />
-                  {events && events.length > 0 && (
-                    <div className="mt-3 text-xs border rounded p-2">
-                      <Info className="inline h-4 w-4 mr-1" />
-                      You may have to set the environment variable{" "}
-                      <span className="font-mono bg-accent/10 px-1 rounded">
-                        ENABLE_OTEL=true
-                      </span>{" "}
-                      or restart devui with the tracing flag{" "}
-                      <div className="font-mono bg-accent/10 px-1 rounded">
-                        devui --tracing
-                      </div>
-                      to enable tracing.
-                    </div>
-                  )}
-                </div>
-              ) : (
+          {traceEvents.length === 0 ? (
+            <div className="flex flex-col items-center text-center p-6 pt-9">
+              <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
+              <div className="text-sm font-medium mb-1">No Data</div>
+              <div className="text-xs text-muted-foreground max-w-[200px]">
+                Run{" "}
+                <span className="font-mono bg-accent/10 px-1 rounded">
+                  devui --instrumentation
+                </span>{" "}
+                and start a conversation.
+              </div>
+            </div>
+          ) : (
+            <ScrollArea className="flex-1">
+              <div className="p-3">
                 <div className="space-y-3">
                   {traceGroups.map((group) => (
                     <TraceGroupItem key={group.response_id} group={group} />
                   ))}
                 </div>
-              )}
-            </div>
-          </ScrollArea>
+              </div>
+            </ScrollArea>
+          )}
         </div>
       ) : (
         <ContextInspector events={events} />

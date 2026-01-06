@@ -407,7 +407,7 @@ class DevServer:
                 framework="agent_framework",
                 runtime="python",  # Python DevUI backend
                 capabilities={
-                    "tracing": os.getenv("ENABLE_INSTRUMENTATION") == "true",
+                    "instrumentation": os.getenv("ENABLE_INSTRUMENTATION") == "true",
                     "openai_proxy": openai_executor.is_configured,
                     "deployment": True,  # Deployment feature is available
                 },
@@ -1092,7 +1092,7 @@ class DevServer:
             events = []
 
             # Get conversation_id for trace storage
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
 
             # Stream all events
             async for event in executor.execute_streaming(request):

@@ -740,11 +740,15 @@ export function ContextInspector({ events }: ContextInspectorProps) {
   // No data state
   if (turns.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-6">
+      <div className="flex flex-col items-center text-center p-6 pt-9">
         <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
-        <div className="text-sm font-medium mb-1">No Token Data</div>
+        <div className="text-sm font-medium mb-1">No Data</div>
         <div className="text-xs text-muted-foreground max-w-[200px]">
-          Token usage will appear here after running conversations with tracing enabled.
+          Run{" "}
+          <span className="font-mono bg-accent/10 px-1 rounded">
+            devui --instrumentation
+          </span>{" "}
+          and start a conversation.
         </div>
       </div>
     );

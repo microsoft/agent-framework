@@ -6,81 +6,13 @@ import logging
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from opentelemetry.sdk._logs import ReadableLogRecord
-from opentelemetry.sdk._logs.export import LogRecordExporter, LogRecordExportResult
-from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
 from .models import ResponseTraceEvent
 
-if TYPE_CHECKING:
-    from opentelemetry.sdk.metrics.export import MetricsData
-
 logger = logging.getLogger(__name__)
-
-
-class NoOpSpanExporter(SpanExporter):
-    """A no-op span exporter that discards all spans.
-
-    Used when tracing is enabled for local capture but no external
-    OTLP endpoint is configured. This prevents the default Console
-    exporter from spamming stdout.
-    """
-
-    def export(self, spans: Sequence[Any]) -> SpanExportResult:
-        """Discard spans and return success."""
-        return SpanExportResult.SUCCESS
-
-    def shutdown(self) -> None:
-        """No-op shutdown."""
-        pass
-
-    def force_flush(self, timeout_millis: int = 30000) -> bool:
-        """No-op flush."""
-        return True
-
-
-class NoOpLogExporter(LogRecordExporter):
-    """A no-op log exporter that discards all logs.
-
-    Used when tracing is enabled for local capture but no external
-    OTLP endpoint is configured.
-    """
-
-    def export(self, batch: Sequence[ReadableLogRecord]) -> LogRecordExportResult:
-        """Discard logs and return success."""
-        return LogRecordExportResult.SUCCESS
-
-    def shutdown(self) -> None:
-        """No-op shutdown."""
-        pass
-
-
-class NoOpMetricExporter(MetricExporter):
-    """A no-op metric exporter that discards all metrics.
-
-    Used when tracing is enabled for local capture but no external
-    OTLP endpoint is configured.
-    """
-
-    def export(
-        self,
-        metrics_data: "MetricsData",
-        timeout_millis: float = 10000,
-        **kwargs: Any,
-    ) -> MetricExportResult:
-        """Discard metrics and return success."""
-        return MetricExportResult.SUCCESS
-
-    def shutdown(self, timeout_millis: float = 30000, **kwargs: Any) -> None:
-        """No-op shutdown."""
-        pass
-
-    def force_flush(self, timeout_millis: float = 10000) -> bool:
-        """No-op flush."""
-        return True
 
 
 class SimpleTraceCollector(SpanExporter):
