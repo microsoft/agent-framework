@@ -831,10 +831,10 @@ public sealed partial class ChatClientAgent : AIAgent
         };
     }
 
-    private static IEnumerable<ChatMessage> GetInputMessages(IEnumerable<ChatMessage> inputMessages, ChatClientAgentContinuationToken? token)
+    private static IEnumerable<ChatMessage> GetInputMessages(IReadOnlyCollection<ChatMessage> inputMessages, ChatClientAgentContinuationToken? token)
     {
         // First, use input messages if provided.
-        if (inputMessages.Any())
+        if (inputMessages.Count > 0)
         {
             return inputMessages;
         }
