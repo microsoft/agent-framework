@@ -286,6 +286,93 @@ async def test_azure_ai_client_prepare_messages_for_azure_ai_no_system_messages(
     assert instructions is None
 
 
+def test_azure_ai_client_transform_input_for_azure_ai(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai adds required fields for Azure AI schema.
+
+    WORKAROUND TEST: Azure AI Projects API requires 'type' at item level and
+    'annotations' in output_text content items, which OpenAI's Responses API does not require.
+    See: https://github.com/Azure/azure-sdk-for-python/issues/44493
+    See: https://github.com/microsoft/agent-framework/issues/2926
+    """
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input in OpenAI Responses API format (what agent-framework generates)
+    openai_format_input = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Hello"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Hi there!"},
+            ],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(openai_format_input)  # type: ignore
+
+    # Verify 'type': 'message' added at item level
+    assert result[0]["type"] == "message"
+    assert result[1]["type"] == "message"
+
+    # Verify 'annotations' added ONLY to output_text (assistant) content, NOT input_text (user)
+    assert result[0]["content"][0]["type"] == "input_text"  # user content type preserved
+    assert "annotations" not in result[0]["content"][0]  # user message - no annotations
+    assert result[1]["content"][0]["type"] == "output_text"  # assistant content type preserved
+    assert result[1]["content"][0]["annotations"] == []  # assistant message - has annotations
+
+    # Verify original fields preserved
+    assert result[0]["role"] == "user"
+    assert result[0]["content"][0]["text"] == "Hello"
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"][0]["text"] == "Hi there!"
+
+
+def test_azure_ai_client_transform_input_preserves_existing_fields(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai preserves existing type and annotations."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input that already has the fields (shouldn't duplicate)
+    input_with_fields = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Hello", "annotations": [{"some": "annotation"}]},
+            ],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(input_with_fields)  # type: ignore
+
+    # Should preserve existing values, not overwrite
+    assert result[0]["type"] == "message"
+    assert result[0]["content"][0]["annotations"] == [{"some": "annotation"}]
+
+
+def test_azure_ai_client_transform_input_handles_non_dict_content(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai handles non-dict content items."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input with string content (edge case)
+    input_with_string_content = [
+        {
+            "role": "user",
+            "content": ["plain string content"],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(input_with_string_content)  # type: ignore
+
+    # Should add 'type': 'message' at item level even with non-dict content
+    assert result[0]["type"] == "message"
+    # Non-dict content items should be preserved without modification
+    assert result[0]["content"] == ["plain string content"]
+
+
 async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicMock) -> None:
     """Test prepare_options basic functionality."""
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
