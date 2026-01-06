@@ -782,14 +782,13 @@ def _to_azure_ai_tools(
                 case HostedMCPTool():
                     azure_tools.append(_prepare_mcp_tool_for_azure_ai(tool))
                 case HostedCodeInterpreterTool():
-                    ci_tool: CodeInterpreterTool = CodeInterpreterTool()
+                    file_ids: list[str] = []
                     if tool.inputs:
-                        file_ids: list[str] = []
                         for tool_input in tool.inputs:
                             if isinstance(tool_input, HostedFileContent):
                                 file_ids.append(tool_input.file_id)
-                        if file_ids:
-                            ci_tool.container = CodeInterpreterToolAuto(file_ids=file_ids)
+                    container = CodeInterpreterToolAuto(file_ids=file_ids if file_ids else None)
+                    ci_tool: CodeInterpreterTool = CodeInterpreterTool(container=container)
                     azure_tools.append(ci_tool)
                 case AIFunction():
                     params = tool.parameters()
