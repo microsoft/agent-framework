@@ -96,16 +96,15 @@ public sealed class FunctionTriggers
 
         // Create a new agent thread
         AgentThread thread = agentProxy.GetNewThread();
-        AgentThreadMetadata metadata = thread.GetService<AgentThreadMetadata>()
-            ?? throw new InvalidOperationException("Failed to get AgentThreadMetadata from new thread.");
+        string agentSessionId = thread.GetService<AgentSessionId>().ToString();
 
-        this._logger.LogInformation("Creating new agent session: {ConversationId}", metadata.ConversationId);
+        this._logger.LogInformation("Creating new agent session: {AgentSessionId}", agentSessionId);
 
         // Run the agent in the background (fire-and-forget)
         DurableAgentRunOptions options = new() { IsFireAndForget = true };
         await agentProxy.RunAsync(prompt, thread, options, cancellationToken);
 
-        this._logger.LogInformation("Agent run started for session: {ConversationId}", metadata.ConversationId);
+        this._logger.LogInformation("Agent run started for session: {AgentSessionId}", agentSessionId);
 
         // Check Accept header to determine response format
         // text/plain = raw text output (ideal for terminals)
@@ -114,7 +113,7 @@ public sealed class FunctionTriggers
         bool useSseFormat = acceptHeader?.Contains("text/plain", StringComparison.OrdinalIgnoreCase) != true;
 
         return await this.StreamToClientAsync(
-            conversationId: metadata.ConversationId!, cursor: null, useSseFormat, request.HttpContext, cancellationToken);
+            conversationId: agentSessionId, cursor: null, useSseFormat, request.HttpContext, cancellationToken);
     }
 
     /// <summary>
