@@ -894,3 +894,170 @@ def test_prepare_content_for_openai_document_file_mapping(openai_unit_test_env: 
 
     assert result["type"] == "file"
     assert "filename" not in result["file"]  # None filename should be omitted
+
+
+# =============================================================================
+# reasoning_field Tests
+# =============================================================================
+
+
+async def test_streaming_reasoning_content():
+    """Test that reasoning_field parameter enables custom reasoning content extraction."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework import TextReasoningContent
+
+    from agent_framework.openai import OpenAIChatClient
+
+    client = OpenAIChatClient(
+        model_id="kimi-k2-reasoning",
+        api_key="test_key",
+        base_url="https://api.moonshot.cn/v1",
+        reasoning_field="reasoning_content",
+    )
+
+    # Create mock chunk with reasoning_content
+    mock_chunk = MagicMock()
+    mock_chunk.id = "chunk_1"
+    mock_chunk.model = "kimi-k2-reasoning"
+    mock_chunk.created = 1704067200
+    mock_chunk.usage = None
+    mock_chunk.system_fingerprint = "test_fp"
+
+    mock_choice = MagicMock()
+    mock_choice.index = 0
+    mock_choice.finish_reason = None
+    mock_choice.logprobs = None
+
+    mock_delta = MagicMock()
+    mock_delta.content = None
+    mock_delta.tool_calls = None
+    mock_delta.refusal = None
+    mock_delta.reasoning_content = "Let me think step by step..."
+    mock_delta.reasoning_details = None  # Explicitly set to None to avoid MagicMock
+
+    mock_choice.delta = mock_delta
+    mock_chunk.choices = [mock_choice]
+
+    # Parse the chunk
+    result = client._parse_response_update_from_openai(mock_chunk)
+
+    # Should have TextReasoningContent with text field
+    reasoning_contents = [c for c in result.contents if isinstance(c, TextReasoningContent)]
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "Let me think step by step..."
+
+
+async def test_streaming_without_reasoning_field():
+    """Test that without reasoning_field, custom reasoning content is not extracted."""
+    from unittest.mock import MagicMock
+
+    from agent_framework import TextReasoningContent
+
+    from agent_framework.openai import OpenAIChatClient
+
+    client = OpenAIChatClient(
+        model_id="gpt-4",
+        api_key="test_key",
+        # Note: reasoning_field not set
+    )
+
+    # Create mock chunk with reasoning_content
+    mock_chunk = MagicMock()
+    mock_chunk.id = "chunk_1"
+    mock_chunk.model = "gpt-4"
+    mock_chunk.created = 1704067200
+    mock_chunk.usage = None
+    mock_chunk.system_fingerprint = "test_fp"
+
+    mock_choice = MagicMock()
+    mock_choice.index = 0
+    mock_choice.finish_reason = None
+    mock_choice.logprobs = None
+
+    mock_delta = MagicMock()
+    mock_delta.content = None
+    mock_delta.tool_calls = None
+    mock_delta.refusal = None
+    mock_delta.reasoning_content = "This should be ignored"
+    mock_delta.reasoning_details = None  # Explicitly set to None
+
+    mock_choice.delta = mock_delta
+    mock_chunk.choices = [mock_choice]
+
+    # Parse the chunk
+    result = client._parse_response_update_from_openai(mock_chunk)
+
+    # Should NOT have TextReasoningContent since reasoning_field is not set
+    reasoning_contents = [c for c in result.contents if isinstance(c, TextReasoningContent)]
+    assert len(reasoning_contents) == 0
+
+
+async def test_reasoning_field_with_regular_text():
+    """Test that reasoning_field works alongside regular text content."""
+    from unittest.mock import MagicMock
+
+    from agent_framework import TextContent, TextReasoningContent
+
+    from agent_framework.openai import OpenAIChatClient
+
+    client = OpenAIChatClient(
+        model_id="deepseek-reasoner",
+        api_key="test_key",
+        base_url="https://api.deepseek.com",
+        reasoning_field="reasoning_content",
+    )
+
+    # Create mock chunk with both reasoning and regular content
+    mock_chunk = MagicMock()
+    mock_chunk.id = "chunk_1"
+    mock_chunk.model = "deepseek-reasoner"
+    mock_chunk.created = 1704067200
+    mock_chunk.usage = None
+    mock_chunk.system_fingerprint = "test_fp"
+
+    mock_choice = MagicMock()
+    mock_choice.index = 0
+    mock_choice.finish_reason = None
+    mock_choice.logprobs = None
+
+    mock_delta = MagicMock()
+    mock_delta.content = "Final answer: 42"
+    mock_delta.tool_calls = None
+    mock_delta.refusal = None
+    mock_delta.reasoning_content = "Calculating..."
+    mock_delta.reasoning_details = None
+
+    mock_choice.delta = mock_delta
+    mock_chunk.choices = [mock_choice]
+
+    # Parse the chunk
+    result = client._parse_response_update_from_openai(mock_chunk)
+
+    # Should have both TextContent and TextReasoningContent
+    text_contents = [c for c in result.contents if isinstance(c, TextContent)]
+    reasoning_contents = [c for c in result.contents if isinstance(c, TextReasoningContent)]
+
+    assert len(text_contents) == 1
+    assert text_contents[0].text == "Final answer: 42"
+    assert len(reasoning_contents) == 1
+    assert reasoning_contents[0].text == "Calculating..."
+
+
+async def test_reasoning_field_attribute_stored():
+    """Test that reasoning_field is properly stored as an instance attribute."""
+    from agent_framework.openai import OpenAIChatClient
+
+    client_with_reasoning = OpenAIChatClient(
+        model_id="kimi-k2-reasoning",
+        api_key="test_key",
+        reasoning_field="reasoning_content",
+    )
+
+    client_without_reasoning = OpenAIChatClient(
+        model_id="gpt-4",
+        api_key="test_key",
+    )
+
+    assert getattr(client_with_reasoning, "reasoning_field", None) == "reasoning_content"
+    assert getattr(client_without_reasoning, "reasoning_field", None) is None

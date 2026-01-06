@@ -448,6 +448,12 @@ class DefaultOrchestrator(Orchestrator):
             events = await event_bridge.from_agent_run_update(update)
             logger.info(f"[STREAM] Update #{update_count} produced {len(events)} events")
             for event in events:
+                # End thinking before text or tool call events (like TextMessageEndEvent pattern)
+                if event.type in ("TEXT_MESSAGE_START", "TOOL_CALL_START"):
+                    thinking_end_events = event_bridge.finalize_thinking()
+                    for te in thinking_end_events:
+                        logger.info(f"[STREAM] Emitting thinking end event before {event.type}: {type(te).__name__}")
+                        yield te
                 logger.info(f"[STREAM] Yielding event: {type(event).__name__}")
                 yield event
 
@@ -502,6 +508,12 @@ class DefaultOrchestrator(Orchestrator):
                     yield TextMessageContentEvent(message_id=message_id, delta=response_dict["message"])
                     yield TextMessageEndEvent(message_id=message_id)
                     logger.info(f"Emitted conversational message with length={len(response_dict['message'])}")
+
+        # Finalize any open thinking events at stream end
+        thinking_end_events = event_bridge.finalize_thinking()
+        for event in thinking_end_events:
+            logger.info(f"[FINALIZE] Emitting thinking end event: {type(event).__name__}")
+            yield event
 
         logger.info(f"[FINALIZE] Checking for unclosed message. current_message_id={event_bridge.current_message_id}")
         if event_bridge.current_message_id:

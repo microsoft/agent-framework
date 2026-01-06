@@ -276,6 +276,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
                 contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
                 contents.append(TextReasoningContent(None, protected_data=json.dumps(reasoning_details)))
+            # Handle custom reasoning field for OpenAI-compatible APIs (e.g., Kimi, DeepSeek)
+            if reasoning_field := getattr(self, "reasoning_field", None):
+                if reasoning_content := getattr(choice.delta, reasoning_field, None):
+                    contents.append(TextReasoningContent(text=reasoning_content, raw_representation=choice))
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -520,6 +524,7 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
         base_url: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        reasoning_field: str | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -541,6 +546,9 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             env_file_path: Use the environment settings file as a fallback
                 to environment variables.
             env_file_encoding: The encoding of the environment settings file.
+            reasoning_field: The field name for reasoning content in OpenAI-compatible APIs.
+                For example, Kimi and DeepSeek use "reasoning_content". If not set,
+                only the standard "reasoning_details" field (used by o1 models) is processed.
 
         Examples:
             .. code-block:: python
@@ -588,4 +596,5 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             default_headers=default_headers,
             client=async_client,
             instruction_role=instruction_role,
+            reasoning_field=reasoning_field,
         )

@@ -688,3 +688,213 @@ async def test_state_delta_count_logging():
 
     # State delta count should have incremented (one per unique state update)
     assert bridge.state_delta_count >= 1
+
+
+# =============================================================================
+# TextReasoningContent Tests
+# =============================================================================
+
+
+async def test_text_reasoning_content_with_text():
+    """Test TextReasoningContent with text field (Anthropic extended thinking format)."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="Let me think about this...")]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    # Should emit: ThinkingStartEvent, ThinkingTextMessageStartEvent, ThinkingTextMessageContentEvent
+    assert len(events) == 3
+    assert events[0].type == "THINKING_START"
+    assert events[1].type == "THINKING_TEXT_MESSAGE_START"
+    assert events[2].type == "THINKING_TEXT_MESSAGE_CONTENT"
+    assert events[2].delta == "Let me think about this..."
+
+
+async def test_text_reasoning_content_with_protected_data():
+    """Test TextReasoningContent with protected_data field (OpenAI reasoning_details format)."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # OpenAI reasoning_details format
+    protected_data = json.dumps([{"type": "text", "content": "Reasoning step 1"}])
+    update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text=None, protected_data=protected_data)]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    assert len(events) == 3
+    assert events[0].type == "THINKING_START"
+    assert events[1].type == "THINKING_TEXT_MESSAGE_START"
+    assert events[2].type == "THINKING_TEXT_MESSAGE_CONTENT"
+    assert events[2].delta == "Reasoning step 1"
+
+
+async def test_text_reasoning_streaming():
+    """Test streaming TextReasoningContent with multiple chunks."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update1 = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="First ")]
+    )
+    update2 = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="second ")]
+    )
+    update3 = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="third")]
+    )
+
+    events1 = await bridge.from_agent_run_update(update1)
+    events2 = await bridge.from_agent_run_update(update2)
+    events3 = await bridge.from_agent_run_update(update3)
+
+    # First chunk: START events + content
+    assert len(events1) == 3
+    assert events1[0].type == "THINKING_START"
+    assert events1[1].type == "THINKING_TEXT_MESSAGE_START"
+    assert events1[2].type == "THINKING_TEXT_MESSAGE_CONTENT"
+    assert events1[2].delta == "First "
+
+    # Subsequent chunks: just content (no duplicate START events)
+    assert len(events2) == 1
+    assert events2[0].type == "THINKING_TEXT_MESSAGE_CONTENT"
+    assert events2[0].delta == "second "
+
+    assert len(events3) == 1
+    assert events3[0].type == "THINKING_TEXT_MESSAGE_CONTENT"
+    assert events3[0].delta == "third"
+
+
+async def test_text_reasoning_then_text():
+    """Test transition from reasoning content to regular text content.
+
+    Note: END events are emitted by orchestrator (like TextMessageEndEvent),
+    not by from_agent_run_update. This test verifies the bridge behavior,
+    and the orchestrator is responsible for calling finalize_thinking()
+    before yielding TEXT_MESSAGE_START events.
+    """
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # First: reasoning content
+    reasoning_update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="Thinking...")]
+    )
+    reasoning_events = await bridge.from_agent_run_update(reasoning_update)
+
+    # Then: regular text content (bridge does NOT auto-emit END events)
+    text_update = AgentRunResponseUpdate(
+        contents=[TextContent(text="Here is the answer")]
+    )
+    text_events = await bridge.from_agent_run_update(text_update)
+
+    # Reasoning events: START events + content
+    assert len(reasoning_events) == 3
+    assert reasoning_events[0].type == "THINKING_START"
+
+    # Text events: just text events (no thinking END - that's orchestrator's job)
+    assert len(text_events) == 2
+    assert text_events[0].type == "TEXT_MESSAGE_START"
+    assert text_events[1].type == "TEXT_MESSAGE_CONTENT"
+    assert text_events[1].delta == "Here is the answer"
+
+    # Thinking is still "open" from bridge's perspective
+    assert bridge._thinking_started is True
+
+    # Orchestrator would call finalize_thinking() before TEXT_MESSAGE_START
+    end_events = bridge.finalize_thinking()
+    assert len(end_events) == 2
+    assert end_events[0].type == "THINKING_TEXT_MESSAGE_END"
+    assert end_events[1].type == "THINKING_END"
+
+
+async def test_text_reasoning_content_empty_text():
+    """Test TextReasoningContent with empty text returns no events."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="")]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    # Empty text should not emit any events
+    assert len(events) == 0
+
+
+async def test_text_reasoning_content_none_text():
+    """Test TextReasoningContent with None text and no protected_data returns no events."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text=None)]
+    )
+    events = await bridge.from_agent_run_update(update)
+
+    # None text with no protected_data should not emit any events
+    assert len(events) == 0
+
+
+async def test_finalize_thinking():
+    """Test finalize_thinking() closes open thinking events."""
+    from agent_framework import TextReasoningContent
+
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # Start thinking
+    update = AgentRunResponseUpdate(
+        contents=[TextReasoningContent(text="Thinking...")]
+    )
+    await bridge.from_agent_run_update(update)
+
+    # Verify thinking is open
+    assert bridge._thinking_started is True
+    assert bridge._thinking_text_started is True
+
+    # Finalize thinking
+    end_events = bridge.finalize_thinking()
+
+    # Should emit END events
+    assert len(end_events) == 2
+    assert end_events[0].type == "THINKING_TEXT_MESSAGE_END"
+    assert end_events[1].type == "THINKING_END"
+
+    # Verify state is reset
+    assert bridge._thinking_started is False
+    assert bridge._thinking_text_started is False
+
+
+async def test_finalize_thinking_when_not_started():
+    """Test finalize_thinking() when no thinking was started returns empty list."""
+    from agent_framework_ag_ui._events import AgentFrameworkEventBridge
+
+    bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
+
+    # Finalize without starting thinking
+    end_events = bridge.finalize_thinking()
+
+    assert len(end_events) == 0

@@ -20,6 +20,11 @@ from ag_ui.core import (
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ThinkingEndEvent,
+    ThinkingStartEvent,
+    ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
@@ -31,6 +36,7 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
+    TextReasoningContent,
 )
 
 from ._utils import generate_event_id
@@ -89,6 +95,10 @@ class AgentFrameworkEventBridge:
         self.tool_calls_ended: set[str] = set()  # Track which tool calls have had ToolCallEndEvent emitted
         self.accumulated_text_content: str = ""  # Track accumulated text for final MessagesSnapshotEvent
 
+        # For thinking/reasoning content (extended thinking from Anthropic, reasoning from OpenAI)
+        self._thinking_started: bool = False
+        self._thinking_text_started: bool = False
+
     async def from_agent_run_update(self, update: AgentRunResponseUpdate) -> list[BaseEvent]:
         """
         Convert an AgentRunResponseUpdate to AG-UI events.
@@ -104,7 +114,10 @@ class AgentFrameworkEventBridge:
         logger.info(f"Processing AgentRunUpdate with {len(update.contents)} content items")
         for idx, content in enumerate(update.contents):
             logger.info(f"  Content {idx}: type={type(content).__name__}")
-            if isinstance(content, TextContent):
+            if isinstance(content, TextReasoningContent):
+                # Handle reasoning/thinking content first (before regular text)
+                events.extend(self._handle_text_reasoning_content(content))
+            elif isinstance(content, TextContent):
                 events.extend(self._handle_text_content(content))
             elif isinstance(content, FunctionCallContent):
                 events.extend(self._handle_function_call_content(content))
@@ -675,3 +688,66 @@ class AgentFrameworkEventBridge:
         return StateDeltaEvent(
             delta=delta,
         )
+
+    def _handle_text_reasoning_content(self, content: TextReasoningContent) -> list[BaseEvent]:
+        """Handle TextReasoningContent by emitting AG-UI thinking events.
+
+        Supports both Anthropic extended thinking (text field) and OpenAI reasoning_details
+        (protected_data field with JSON-encoded content).
+        """
+        events: list[BaseEvent] = []
+
+        # Prefer text field, fallback to extracting from protected_data (OpenAI format)
+        text = content.text
+        if not text and content.protected_data:
+            try:
+                data = json.loads(content.protected_data)
+                # OpenAI reasoning_details format: [{"type": "text", "content": "..."}]
+                if isinstance(data, list) and data:
+                    text = data[0].get("content", "")
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                pass
+
+        if not text:
+            return events
+
+        if not self._thinking_started:
+            events.append(ThinkingStartEvent())
+            self._thinking_started = True
+            logger.info("Emitting ThinkingStartEvent")
+
+        if not self._thinking_text_started:
+            events.append(ThinkingTextMessageStartEvent())
+            self._thinking_text_started = True
+            logger.info("Emitting ThinkingTextMessageStartEvent")
+
+        events.append(ThinkingTextMessageContentEvent(delta=text))
+        logger.info(f"Emitting ThinkingTextMessageContentEvent with delta_length={len(text)}")
+        return events
+
+    def _end_thinking_if_needed(self) -> list[BaseEvent]:
+        """End thinking events if they were started.
+
+        Called when transitioning from reasoning content to regular content.
+        """
+        events: list[BaseEvent] = []
+
+        if self._thinking_text_started:
+            events.append(ThinkingTextMessageEndEvent())
+            self._thinking_text_started = False
+            logger.info("Emitting ThinkingTextMessageEndEvent")
+
+        if self._thinking_started:
+            events.append(ThinkingEndEvent())
+            self._thinking_started = False
+            logger.info("Emitting ThinkingEndEvent")
+
+        return events
+
+    def finalize_thinking(self) -> list[BaseEvent]:
+        """Finalize any open thinking events at the end of a stream.
+
+        This should be called by the orchestrator at stream end, similar to
+        how TextMessageEndEvent is handled in the orchestrator.
+        """
+        return self._end_thinking_if_needed()
