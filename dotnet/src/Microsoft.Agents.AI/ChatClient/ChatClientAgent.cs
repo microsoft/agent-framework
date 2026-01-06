@@ -821,12 +821,12 @@ public sealed partial class ChatClientAgent : AIAgent
         {
             // Save input messages to the continuation token so they can be added to the thread and
             // provided to the context provider in the last successful streaming resumption run.
-            // That's necessary for scenarios where initial streaming run fails and streaming is resumed later.
+            // That's necessary for scenarios where initial streaming run is interrupted and streaming is resumed later.
             InputMessages = inputMessages?.Any() is true ? inputMessages : null,
 
             // Save all updates received so far to the continuation token so they can be provided to the
             // message store and context provider in the last successful streaming resumption run.
-            // That's necessary for scenarios where a streaming run fails after some updates were received.
+            // That's necessary for scenarios where a streaming run is interrupted after some updates were received.
             ResponseUpdates = responseUpdates?.Count > 0 ? responseUpdates : null
         };
     }
