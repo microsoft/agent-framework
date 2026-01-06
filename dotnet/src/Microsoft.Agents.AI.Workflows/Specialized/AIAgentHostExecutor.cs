@@ -137,7 +137,16 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     private async ValueTask ContinueTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken)
     {
         this._currentTurnEmitEvents = emitEvents;
-        AgentResponse response = await this.InvokeAgentAsync(messages, context, emitEvents, cancellationToken).ConfigureAwait(false);
+        if (this._options.ForwardIncomingMessages)
+        {
+            await context.SendMessageAsync(messages, cancellationToken).ConfigureAwait(false);
+        }
+
+        IEnumerable<ChatMessage> filteredMessages = this._options.ReassignOtherAgentsAsUsers
+                                                  ? messages.Select(m => m.ChatAssistantToUserIfNotFromNamed(this._agent.Name ?? this._agent.Id))
+                                                  : messages;
+
+        AgentResponse response = await this.InvokeAgentAsync(filteredMessages, context, emitEvents, cancellationToken).ConfigureAwait(false);
 
         await context.SendMessageAsync(response.Messages is List<ChatMessage> list ? list : response.Messages.ToList(), cancellationToken)
                      .ConfigureAwait(false);
