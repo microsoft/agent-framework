@@ -321,7 +321,7 @@ def _create_otlp_exporters(
     if not actual_logs_endpoint and not actual_traces_endpoint and not actual_metrics_endpoint:
         return exporters
 
-    if protocol in ("grpc", "http/protobuf"):
+    if protocol == "grpc":
         # Import all gRPC exporters
         try:
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
@@ -357,7 +357,7 @@ def _create_otlp_exporters(
                 )
             )
 
-    elif protocol == "http":
+    elif protocol in ("http/protobuf", "http"):
         # Import all HTTP exporters
         try:
             from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HTTPLogExporter
