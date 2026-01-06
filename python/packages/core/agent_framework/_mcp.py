@@ -14,7 +14,7 @@ import httpx
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamable_http_client, streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
@@ -926,6 +926,7 @@ class MCPStreamableHTTPTool(MCPTool):
         terminate_on_close: bool | None = None,
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,
+        http_client: httpx.AsyncClient | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -933,7 +934,8 @@ class MCPStreamableHTTPTool(MCPTool):
         Note:
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
-            The tool manages its own httpx.AsyncClient instance for proper session isolation.
+            If an httpx.AsyncClient is provided, it will be used; otherwise, the
+            streamable_http_client will create and manage its own client.
 
         Args:
             name: The name of the tool.
@@ -958,6 +960,8 @@ class MCPStreamableHTTPTool(MCPTool):
             sse_read_timeout: The timeout for reading from the SSE stream (default: 300.0 seconds).
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
+            http_client: Optional httpx.AsyncClient to use. If not provided, the client
+                will be created and managed by streamable_http_client.
             kwargs: Any extra arguments (currently not used but preserved for future compatibility).
         """
         super().__init__(
@@ -978,7 +982,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.sse_read_timeout = sse_read_timeout
         self.terminate_on_close = terminate_on_close
         self._client_kwargs = kwargs
-        self._httpx_client: httpx.AsyncClient | None = None
+        self._httpx_client: httpx.AsyncClient | None = http_client
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -986,17 +990,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        timeout_value = self.timeout if self.timeout is not None else 30.0
-        sse_timeout_value = self.sse_read_timeout if self.sse_read_timeout is not None else 300.0
-
-        # Create and track httpx client
-        # Note: _client_kwargs are not passed to AsyncClient as they were specific to the old API
-        self._httpx_client = httpx.AsyncClient(
-            headers=self.headers,
-            timeout=httpx.Timeout(timeout_value, read=sse_timeout_value),
-        )
-
-        # Use new API instead of deprecated streamablehttp_client()
+        # Pass the http_client if provided, otherwise let streamable_http_client handle it
         return streamable_http_client(
             url=self.url,
             http_client=self._httpx_client,
@@ -1006,13 +1000,15 @@ class MCPStreamableHTTPTool(MCPTool):
     async def close(self) -> None:
         """Disconnect from the MCP server and close httpx client.
 
-        Closes the connection and cleans up resources including the httpx client.
+        Closes the connection and cleans up resources. If an httpx client was
+        provided by the user, it is their responsibility to close it.
         """
         await super().close()
 
-        if self._httpx_client is not None:
-            await self._httpx_client.aclose()
-            self._httpx_client = None
+        # Only close the client if we created it (user didn't provide one)
+        # Note: We can't distinguish between user-provided and self-created clients,
+        # so we don't close any clients to avoid closing user-provided ones
+        self._httpx_client = None
 
 
 class MCPWebsocketTool(MCPTool):
