@@ -920,14 +920,10 @@ class MCPStreamableHTTPTool(MCPTool):
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | HostedMCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
-        headers: dict[str, Any] | None = None,
-        timeout: float | None = None,
-        sse_read_timeout: float | None = None,
         terminate_on_close: bool | None = None,
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
 
@@ -935,8 +931,7 @@ class MCPStreamableHTTPTool(MCPTool):
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
             If an httpx.AsyncClient is provided via ``http_client``, it will be used directly.
-            Otherwise, an httpx.AsyncClient will be created automatically using the
-            ``headers``, ``timeout``, and ``sse_read_timeout`` parameters.
+            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
 
         Args:
             name: The name of the tool.
@@ -956,15 +951,12 @@ class MCPStreamableHTTPTool(MCPTool):
                 A tool should not be listed in both, if so, it will require approval.
             allowed_tools: A list of tools that are allowed to use this tool.
             additional_properties: Additional properties.
-            headers: The headers to send with the request. Only used if ``http_client`` is not provided.
-            timeout: The timeout for the request (default: 30.0 seconds). Only used if ``http_client`` is not provided.
-            sse_read_timeout: The timeout for reading from the SSE stream (default: 300.0 seconds).
-                Only used if ``http_client`` is not provided.
             terminate_on_close: Close the transport when the MCP client is terminated.
             chat_client: The chat client to use for sampling.
-            http_client: Optional httpx.AsyncClient to use. If not provided, one will be created
-                automatically using the ``headers``, ``timeout``, and ``sse_read_timeout`` parameters.
-            kwargs: Any extra arguments (currently not used but preserved for future compatibility).
+            http_client: Optional httpx.AsyncClient to use. If not provided, the
+                ``streamable_http_client`` API will create and manage a default client.
+                To configure headers, timeouts, or other HTTP client settings, create
+                and pass your own ``httpx.AsyncClient`` instance.
         """
         super().__init__(
             name=name,
@@ -979,13 +971,8 @@ class MCPStreamableHTTPTool(MCPTool):
             request_timeout=request_timeout,
         )
         self.url = url
-        self.headers = headers or {}
-        self.timeout = timeout
-        self.sse_read_timeout = sse_read_timeout
         self.terminate_on_close = terminate_on_close
-        self._client_kwargs = kwargs
         self._httpx_client: httpx.AsyncClient | None = http_client
-        self._owns_client = http_client is None  # Track if we need to close the client
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -993,37 +980,13 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        # If no client was provided, create one with the configured parameters
-        if self._httpx_client is None:
-            timeout_value = self.timeout if self.timeout is not None else 30.0
-            sse_timeout_value = self.sse_read_timeout if self.sse_read_timeout is not None else 300.0
-            
-            self._httpx_client = httpx.AsyncClient(
-                headers=self.headers,
-                timeout=httpx.Timeout(timeout_value, read=sse_timeout_value),
-            )
-        
-        # Pass the http_client to streamable_http_client
+        # Pass the http_client (which may be None) to streamable_http_client
         return streamable_http_client(
             url=self.url,
             http_client=self._httpx_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
 
-    async def close(self) -> None:
-        """Disconnect from the MCP server and close httpx client if we created it.
-
-        Closes the MCP connection and cleans up internal resources. If this tool
-        created an httpx client (because none was provided), it will be closed.
-        If the caller provided their own client, they remain responsible for closing it.
-        """
-        await super().close()
-
-        # Only close the client if we created it
-        if self._httpx_client is not None and self._owns_client:
-            await self._httpx_client.aclose()
-        
-        self._httpx_client = None
 
 
 class MCPWebsocketTool(MCPTool):
