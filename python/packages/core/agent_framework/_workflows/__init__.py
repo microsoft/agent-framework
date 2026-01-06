@@ -8,6 +8,7 @@ from ._agent_executor import (
 )
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
+    GroupChatRequestMessage,
     GroupChatRequestSentEvent,
     GroupChatResponseReceivedEvent,
 )
@@ -73,6 +74,7 @@ from ._magentic import (
     MagenticBuilder,
     MagenticContext,
     MagenticManagerBase,
+    MagenticOrchestrator,
     MagenticOrchestratorEvent,
     MagenticOrchestratorEventType,
     MagenticPlanReviewRequest,
@@ -139,6 +141,7 @@ __all__ = [
     "FunctionExecutor",
     "GraphConnectivityError",
     "GroupChatBuilder",
+    "GroupChatRequestMessage",
     "GroupChatRequestSentEvent",
     "GroupChatResponseReceivedEvent",
     "GroupChatState",
@@ -150,6 +153,7 @@ __all__ = [
     "MagenticBuilder",
     "MagenticContext",
     "MagenticManagerBase",
+    "MagenticOrchestrator",
     "MagenticOrchestratorEvent",
     "MagenticOrchestratorEventType",
     "MagenticPlanReviewRequest",
