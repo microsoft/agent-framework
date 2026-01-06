@@ -44,7 +44,7 @@ from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_azure_ai import AzureAIClient, AzureAISettings
-from agent_framework_azure_ai._client import _parse_tools, get_agent  # type: ignore
+from agent_framework_azure_ai._client import _from_azure_ai_tools, get_agent  # type: ignore
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
@@ -969,7 +969,7 @@ async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> N
     mock_agent_object.versions.latest = mock_agent_version
     mock_project_client.agents.get.return_value = mock_agent_object
 
-    agent = await get_agent(project_client=mock_project_client, agent_name="test-agent")
+    agent = await get_agent(project_client=mock_project_client, name="test-agent")
 
     assert agent.name == "test-agent"
     mock_project_client.agents.get.assert_called_with(agent_name="test-agent")
@@ -983,7 +983,7 @@ async def test_get_agent_parameter_handling(mock_project_client: MagicMock) -> N
 async def test_get_agent_missing_parameters(mock_project_client: MagicMock) -> None:
     """Test get_agent missing parameters."""
 
-    with pytest.raises(ValueError, match="Either agent_reference or agent_name or agent_object must be provided"):
+    with pytest.raises(ValueError, match="Either name or agent_reference or agent_object must be provided"):
         await get_agent(project_client=mock_project_client)
 
 
@@ -1012,7 +1012,7 @@ def test_parse_tools() -> None:
     """Test _parse_tools."""
     # Test MCP tool
     mcp_tool = MCPTool(server_label="test_server", server_url="http://localhost:8080")
-    parsed_tools = _parse_tools([mcp_tool])
+    parsed_tools = _from_azure_ai_tools([mcp_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedMCPTool)
     assert parsed_tools[0].name == "test server"
@@ -1020,7 +1020,7 @@ def test_parse_tools() -> None:
 
     # Test Code Interpreter tool
     ci_tool = CodeInterpreterTool(container=CodeInterpreterToolAuto(file_ids=["file-1"]))
-    parsed_tools = _parse_tools([ci_tool])
+    parsed_tools = _from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedCodeInterpreterTool)
     assert parsed_tools[0].inputs is not None
@@ -1032,7 +1032,7 @@ def test_parse_tools() -> None:
 
     # Test File Search tool
     fs_tool = FileSearchTool(vector_store_ids=["vs-1"], max_num_results=5)
-    parsed_tools = _parse_tools([fs_tool])
+    parsed_tools = _from_azure_ai_tools([fs_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedFileSearchTool)
     assert parsed_tools[0].inputs is not None
@@ -1047,7 +1047,7 @@ def test_parse_tools() -> None:
     ws_tool = WebSearchPreviewTool(
         user_location=ApproximateLocation(city="Seattle", country="US", region="WA", timezone="PST")
     )
-    parsed_tools = _parse_tools([ws_tool])
+    parsed_tools = _from_azure_ai_tools([ws_tool])
     assert len(parsed_tools) == 1
     assert isinstance(parsed_tools[0], HostedWebSearchTool)
     assert parsed_tools[0].additional_properties

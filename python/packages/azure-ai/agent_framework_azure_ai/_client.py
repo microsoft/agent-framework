@@ -282,40 +282,6 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         """Close the project_client."""
         await self._close_client_if_needed()
 
-    def _create_text_format_config(
-        self, response_format: Any
-    ) -> (
-        ResponseTextFormatConfigurationJsonSchema
-        | ResponseTextFormatConfigurationJsonObject
-        | ResponseTextFormatConfigurationText
-    ):
-        """Convert response_format into Azure text format configuration."""
-        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            return ResponseTextFormatConfigurationJsonSchema(
-                name=response_format.__name__,
-                schema=response_format.model_json_schema(),
-            )
-
-        if isinstance(response_format, Mapping):
-            format_config = self._convert_response_format(response_format)
-            format_type = format_config.get("type")
-            if format_type == "json_schema":
-                config_kwargs: dict[str, Any] = {
-                    "name": format_config.get("name") or "response",
-                    "schema": format_config["schema"],
-                }
-                if "strict" in format_config:
-                    config_kwargs["strict"] = format_config["strict"]
-                if "description" in format_config:
-                    config_kwargs["description"] = format_config["description"]
-                return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
-            if format_type == "json_object":
-                return ResponseTextFormatConfigurationJsonObject()
-            if format_type == "text":
-                return ResponseTextFormatConfigurationText()
-
-        raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
-
     async def _get_agent_reference_or_create(
         self, run_options: dict[str, Any], messages_instructions: str | None
     ) -> dict[str, str]:
@@ -360,7 +326,7 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
             if "response_format" in run_options:
                 response_format = run_options["response_format"]
-                args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
+                args["text"] = PromptAgentDefinitionText(format=_create_text_format_config(response_format))
 
             # Combine instructions from messages and options
             combined_instructions = [
@@ -477,8 +443,8 @@ class AzureAIClient(OpenAIBaseResponsesClient):
 
 async def get_agent(
     project_client: AIProjectClient | None = None,
+    name: str | None = None,
     agent_reference: AgentReference | None = None,
-    agent_name: str | None = None,
     agent_object: AgentObject | None = None,
     tools: ToolProtocol
     | Callable[..., Any]
@@ -494,8 +460,8 @@ async def get_agent(
 
     Args:
         project_client: An existing AIProjectClient to use. If not provided, one will be created.
+        name: Optional name of the agent to retrieve (if reference is not provided).
         agent_reference: Optional reference containing the agent's name and specific version.
-        agent_name: Optional name of the agent to retrieve (if reference is not provided).
         agent_object: Optional pre-fetched agent object.
         tools: A collection of tools to be made available to the agent.
         project_endpoint: The Azure AI Project endpoint URL.
@@ -508,8 +474,131 @@ async def get_agent(
     Returns:
         ChatAgent: An initialized `ChatAgent` configured with the retrieved agent's settings and tools.
     """
+    # If no project_client is provided, create one
+    if project_client is None:
+        project_client = _get_project_client(
+            project_endpoint=project_endpoint,
+            credential=credential,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
     existing_agent: AgentVersionObject
 
+    if agent_reference and agent_reference.version:
+        existing_agent = await project_client.agents.get_version(
+            agent_name=agent_reference.name, agent_version=agent_reference.version
+        )
+    else:
+        if agent_name := (agent_reference.name if agent_reference else name):
+            agent_object = await project_client.agents.get(agent_name=agent_name)
+
+        if not agent_object:
+            raise ValueError("Either name or agent_reference or agent_object must be provided to get an agent.")
+
+        existing_agent = agent_object.versions.latest
+
+    if not isinstance(existing_agent.definition, PromptAgentDefinition):
+        raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
+
+    # Normalize and validate function tools.
+    normalized_tools = ChatOptions(tools=tools).tools or []
+    tool_names = {tool.name for tool in normalized_tools if isinstance(tool, AIFunction)}
+
+    # If function tools exist in agent definition but were not provided to this method,
+    # we need to raise an error, as it won't be possible to invoke the function.
+    missing_tools = [
+        tool.name
+        for tool in (existing_agent.definition.tools or [])
+        if isinstance(tool, FunctionTool) and tool.name not in tool_names
+    ]
+
+    if missing_tools:
+        raise ValueError(
+            f"The following prompt agent definition required tools were not provided: {', '.join(missing_tools)}"
+        )
+
+    return _get_agent_from_version_object(project_client, existing_agent)
+
+
+async def create_agent(
+    name: str,
+    model: str,
+    instructions: str | None = None,
+    description: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    response_format: type[BaseModel] | None = None,
+    tools: ToolProtocol
+    | Callable[..., Any]
+    | MutableMapping[str, Any]
+    | Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]]
+    | None = None,
+    project_client: AIProjectClient | None = None,
+    project_endpoint: str | None = None,
+    credential: AsyncTokenCredential | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> ChatAgent:
+    # If no project_client is provided, create one
+    if project_client is None:
+        project_client = _get_project_client(
+            project_endpoint=project_endpoint,
+            credential=credential,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
+    args: dict[str, Any] = {"model": model}
+
+    if instructions:
+        args["instructions"] = instructions
+    if temperature:
+        args["temperature"] = temperature
+    if top_p:
+        args["top_p"] = top_p
+    if response_format:
+        args["text"] = PromptAgentDefinitionText(format=_create_text_format_config(response_format))
+    if tools:
+        normalized_tools = ChatOptions(tools=tools).tools or []
+        args["tools"] = _to_azure_ai_tools(normalized_tools)
+
+    created_agent = await project_client.agents.create_version(
+        agent_name=name,
+        definition=PromptAgentDefinition(**args),
+        description=description,
+    )
+
+    return _get_agent_from_version_object(project_client, created_agent)
+
+
+def _get_agent_from_version_object(project_client: AIProjectClient, version_object: AgentVersionObject) -> ChatAgent:
+    client = AzureAIClient(
+        project_client=project_client,
+        agent_name=version_object.name,
+        agent_version=version_object.version,
+        agent_description=version_object.description,
+    )
+
+    return ChatAgent(
+        chat_client=client,
+        id=version_object.id,
+        name=version_object.name,
+        description=version_object.description,
+        instructions=version_object.definition.instructions,
+        model_id=version_object.definition.model,
+        temperature=version_object.definition.temperature,
+        top_p=version_object.definition.top_p,
+        tools=_from_azure_ai_tools(version_object.definition.tools),
+    )
+
+
+def _get_project_client(
+    project_endpoint: str | None = None,
+    credential: AsyncTokenCredential | None = None,
+    env_file_path: str | None = None,
+    env_file_encoding: str | None = None,
+) -> AIProjectClient:
     try:
         azure_ai_settings = AzureAISettings(
             project_endpoint=project_endpoint,
@@ -519,77 +608,24 @@ async def get_agent(
     except ValidationError as ex:
         raise ServiceInitializationError("Failed to create Azure AI settings.", ex) from ex
 
-    # If no project_client is provided, create one
-    if project_client is None:
-        if not azure_ai_settings.project_endpoint:
-            raise ServiceInitializationError(
-                "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
-            )
-
-        # Use provided credential
-        if not credential:
-            raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
-        project_client = AIProjectClient(
-            endpoint=azure_ai_settings.project_endpoint,
-            credential=credential,
-            user_agent=AGENT_FRAMEWORK_USER_AGENT,
+    if not azure_ai_settings.project_endpoint:
+        raise ServiceInitializationError(
+            "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+            "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
         )
 
-    if agent_reference and agent_reference.version:
-        existing_agent = await project_client.agents.get_version(
-            agent_name=agent_reference.name, agent_version=agent_reference.version
-        )
-    else:
-        if name := (agent_reference.name if agent_reference else agent_name):
-            agent_object = await project_client.agents.get(agent_name=name)
+    # Use provided credential
+    if not credential:
+        raise ServiceInitializationError("Azure credential is required when project_client is not provided.")
 
-        if not agent_object:
-            raise ValueError("Either agent_reference or agent_name or agent_object must be provided to get an agent.")
-
-        existing_agent = agent_object.versions.latest
-
-    if not isinstance(existing_agent.definition, PromptAgentDefinition):
-        raise ValueError("Agent definition must be PromptAgentDefinition to get a ChatAgent.")
-
-    # Convert tools to unified format and validate function tools.
-    provided_tools = ChatOptions(tools=tools).tools or []
-    provided_tool_names = {tool.name for tool in provided_tools if isinstance(tool, AIFunction)}
-
-    # If function tools exist in agent definition but were not provided to this method,
-    # we need to raise an error, as it won't be possible to invoke the function.
-    missing_tools = [
-        tool.name
-        for tool in (existing_agent.definition.tools or [])
-        if isinstance(tool, FunctionTool) and tool.name not in provided_tool_names
-    ]
-
-    if missing_tools:
-        raise ValueError(
-            f"The following prompt agent definition required tools were not provided: {', '.join(missing_tools)}"
-        )
-
-    client = AzureAIClient(
-        project_client=project_client,
-        agent_name=existing_agent.name,
-        agent_version=existing_agent.version,
-        agent_description=existing_agent.description,
-    )
-
-    return ChatAgent(
-        chat_client=client,
-        id=existing_agent.id,
-        name=existing_agent.name,
-        description=existing_agent.description,
-        instructions=existing_agent.definition.instructions,
-        model_id=existing_agent.definition.model,
-        temperature=existing_agent.definition.temperature,
-        top_p=existing_agent.definition.top_p,
-        tools=_parse_tools(existing_agent.definition.tools),
+    return AIProjectClient(
+        endpoint=azure_ai_settings.project_endpoint,
+        credential=credential,
+        user_agent=AGENT_FRAMEWORK_USER_AGENT,
     )
 
 
-def _parse_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProtocol | dict[str, Any]]:
+def _from_azure_ai_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProtocol | dict[str, Any]]:
     """Parses and converts a sequence of Azure AI tools into Agent Framework compatible tools.
 
     Args:
@@ -655,7 +691,7 @@ def _parse_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProt
                     max_results=fs_tool.get("max_num_results"),
                 )
             )
-        elif tool_type == "web_search" or tool_type == "web_search_preview":
+        elif tool_type == "web_search_preview":
             ws_tool = cast(WebSearchPreviewTool, tool_dict)
             additional_properties: dict[str, Any] = {}
             if user_location := ws_tool.get("user_location"):
@@ -670,3 +706,198 @@ def _parse_tools(tools: Sequence[Tool | dict[str, Any]] | None) -> list[ToolProt
         else:
             agent_tools.append(tool_dict)
     return agent_tools
+
+
+def _to_azure_ai_tools(
+    tools: Sequence[ToolProtocol | MutableMapping[str, Any]] | None,
+) -> list[Tool | dict[str, Any]]:
+    """Converts Agent Framework tools into Azure AI compatible tools.
+
+    Args:
+        tools: A sequence of Agent Framework tool objects or dictionaries
+            defining the tools to be converted. Can be None.
+
+    Returns:
+        list[Tool | dict[str, Any]]: A list of converted tools compatible with Azure AI.
+    """
+    azure_tools: list[Tool | dict[str, Any]] = []
+    if not tools:
+        return azure_tools
+
+    for tool in tools:
+        if isinstance(tool, ToolProtocol):
+            match tool:
+                case HostedMCPTool():
+                    azure_tools.append(_prepare_mcp_tool_for_azure_ai(tool))
+                case HostedCodeInterpreterTool():
+                    ci_tool: CodeInterpreterTool = {"type": "code_interpreter"}
+                    if tool.inputs:
+                        file_ids: list[str] = []
+                        for tool_input in tool.inputs:
+                            if isinstance(tool_input, HostedFileContent):
+                                file_ids.append(tool_input.file_id)
+                        if file_ids:
+                            ci_tool["container"] = {"file_ids": file_ids}
+                    azure_tools.append(ci_tool)
+                case AIFunction():
+                    params = tool.parameters()
+                    params["additionalProperties"] = False
+                    azure_tools.append(
+                        FunctionTool(
+                            type="function",
+                            strict=False,
+                            name=tool.name,
+                            parameters=params,
+                            description=tool.description,
+                        )
+                    )
+                case HostedFileSearchTool():
+                    if not tool.inputs:
+                        raise ValueError("HostedFileSearchTool requires inputs to be specified.")
+                    vector_store_ids: list[str] = [
+                        inp.vector_store_id for inp in tool.inputs if isinstance(inp, HostedVectorStoreContent)
+                    ]
+                    if not vector_store_ids:
+                        raise ValueError(
+                            "HostedFileSearchTool requires inputs to be of type `HostedVectorStoreContent`."
+                        )
+                    fs_tool: FileSearchTool = {
+                        "type": "file_search",
+                        "vector_store_ids": vector_store_ids,
+                    }
+                    if tool.max_results:
+                        fs_tool["max_num_results"] = tool.max_results
+                    azure_tools.append(fs_tool)
+                case HostedWebSearchTool():
+                    ws_tool: WebSearchPreviewTool = {"type": "web_search_preview"}
+                    if tool.additional_properties:
+                        location: dict[str, str] | None = (
+                            tool.additional_properties.get("user_location", None)
+                            if tool.additional_properties
+                            else None
+                        )
+                        if location:
+                            ws_tool["user_location"] = {
+                                "city": location.get("city"),
+                                "country": location.get("country"),
+                                "region": location.get("region"),
+                                "timezone": location.get("timezone"),
+                            }
+                    azure_tools.append(ws_tool)
+                case _:
+                    logger.debug("Unsupported tool passed (type: %s)", type(tool))
+        else:
+            # Handle raw dictionary tools
+            tool_dict = tool if isinstance(tool, dict) else dict(tool)
+            azure_tools.append(tool_dict)
+
+    return azure_tools
+
+
+def _prepare_mcp_tool_for_azure_ai(tool: HostedMCPTool) -> MCPTool:
+    """Convert HostedMCPTool to Azure AI MCPTool format.
+
+    Args:
+        tool: The HostedMCPTool to convert.
+
+    Returns:
+        MCPTool: The converted Azure AI MCPTool.
+    """
+    mcp: MCPTool = {
+        "type": "mcp",
+        "server_label": tool.name.replace(" ", "_"),
+        "server_url": str(tool.url),
+    }
+
+    if tool.description:
+        mcp["server_description"] = tool.description
+
+    if tool.headers:
+        mcp["headers"] = tool.headers
+
+    if tool.allowed_tools:
+        mcp["allowed_tools"] = list(tool.allowed_tools)
+
+    if tool.approval_mode:
+        match tool.approval_mode:
+            case str():
+                mcp["require_approval"] = "always" if tool.approval_mode == "always_require" else "never"
+            case _:
+                if always_require_approvals := tool.approval_mode.get("always_require_approval"):
+                    mcp["require_approval"] = {"always": {"tool_names": list(always_require_approvals)}}
+                if never_require_approvals := tool.approval_mode.get("never_require_approval"):
+                    mcp["require_approval"] = {"never": {"tool_names": list(never_require_approvals)}}
+
+    return mcp
+
+
+def _create_text_format_config(
+    response_format: Any,
+) -> (
+    ResponseTextFormatConfigurationJsonSchema
+    | ResponseTextFormatConfigurationJsonObject
+    | ResponseTextFormatConfigurationText
+):
+    """Convert response_format into Azure text format configuration."""
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        return ResponseTextFormatConfigurationJsonSchema(
+            name=response_format.__name__,
+            schema=response_format.model_json_schema(),
+        )
+
+    if isinstance(response_format, Mapping):
+        format_config = _convert_response_format(response_format)
+        format_type = format_config.get("type")
+        if format_type == "json_schema":
+            config_kwargs: dict[str, Any] = {
+                "name": format_config.get("name") or "response",
+                "schema": format_config["schema"],
+            }
+            if "strict" in format_config:
+                config_kwargs["strict"] = format_config["strict"]
+            if "description" in format_config:
+                config_kwargs["description"] = format_config["description"]
+            return ResponseTextFormatConfigurationJsonSchema(**config_kwargs)
+        if format_type == "json_object":
+            return ResponseTextFormatConfigurationJsonObject()
+        if format_type == "text":
+            return ResponseTextFormatConfigurationText()
+
+    raise ServiceInvalidRequestError("response_format must be a Pydantic model or mapping.")
+
+
+def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert Chat style response_format into Responses text format config."""
+    if "format" in response_format and isinstance(response_format["format"], Mapping):
+        return dict(cast("Mapping[str, Any]", response_format["format"]))
+
+    format_type = response_format.get("type")
+    if format_type == "json_schema":
+        schema_section = response_format.get("json_schema", response_format)
+        if not isinstance(schema_section, Mapping):
+            raise ServiceInvalidRequestError("json_schema response_format must be a mapping.")
+        schema_section_typed = cast("Mapping[str, Any]", schema_section)
+        schema: Any = schema_section_typed.get("schema")
+        if schema is None:
+            raise ServiceInvalidRequestError("json_schema response_format requires a schema.")
+        name: str = str(
+            schema_section_typed.get("name")
+            or schema_section_typed.get("title")
+            or (cast("Mapping[str, Any]", schema).get("title") if isinstance(schema, Mapping) else None)
+            or "response"
+        )
+        format_config: dict[str, Any] = {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+        }
+        if "strict" in schema_section:
+            format_config["strict"] = schema_section["strict"]
+        if "description" in schema_section and schema_section["description"] is not None:
+            format_config["description"] = schema_section["description"]
+        return format_config
+
+    if format_type in {"json_object", "text"}:
+        return {"type": format_type}
+
+    raise ServiceInvalidRequestError("Unsupported response_format provided for Azure AI client.")
