@@ -2085,3 +2085,53 @@ def test_prepare_function_call_results_nested_pydantic_model():
     assert "Seattle" in json_result
     assert "rainy" in json_result
     assert "18.0" in json_result or "18" in json_result
+
+
+# region prepare_function_call_results with MCP TextContent-like objects
+
+
+def test_prepare_function_call_results_text_content_single():
+    """Test that objects with text attribute (like MCP TextContent) are properly handled."""
+
+    class MockTextContent:
+        def __init__(self, text: str):
+            self.text = text
+
+    result = [MockTextContent("Hello from MCP tool!")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text and serialize as JSON array of strings
+    assert isinstance(json_result, str)
+    assert json_result == '["Hello from MCP tool!"]'
+
+
+def test_prepare_function_call_results_text_content_multiple():
+    """Test that multiple TextContent-like objects are serialized correctly."""
+
+    class MockTextContent:
+        def __init__(self, text: str):
+            self.text = text
+
+    result = [MockTextContent("First result"), MockTextContent("Second result")]
+    json_result = prepare_function_call_results(result)
+
+    # Should extract text from each and serialize as JSON array
+    assert isinstance(json_result, str)
+    assert json_result == '["First result", "Second result"]'
+
+
+def test_prepare_function_call_results_text_content_with_non_string_text():
+    """Test that objects with non-string text attribute are not treated as TextContent."""
+
+    class BadTextContent:
+        def __init__(self):
+            self.text = 12345  # Not a string!
+
+    result = [BadTextContent()]
+    json_result = prepare_function_call_results(result)
+
+    # Should not extract text since it's not a string, will serialize the object
+    assert isinstance(json_result, str)
+
+
+# endregion

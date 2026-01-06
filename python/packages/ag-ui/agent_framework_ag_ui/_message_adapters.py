@@ -12,6 +12,7 @@ from agent_framework import (
     FunctionResultContent,
     Role,
     TextContent,
+    prepare_function_call_results,
 )
 
 # Role mapping constants
@@ -189,7 +190,7 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
     Returns:
         List of AG-UI message dictionaries
     """
-    from ._utils import generate_event_id, serialize_content_result
+    from ._utils import generate_event_id
 
     result: list[dict[str, Any]] = []
     for msg in messages:
@@ -236,8 +237,8 @@ def agent_framework_messages_to_agui(messages: list[ChatMessage] | list[dict[str
             elif isinstance(content, FunctionResultContent):
                 # Tool result content - extract call_id and result
                 tool_result_call_id = content.call_id
-                # Serialize result to string using shared utility
-                content_text = serialize_content_result(content.result)
+                # Serialize result to string using core utility
+                content_text = prepare_function_call_results(content.result)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

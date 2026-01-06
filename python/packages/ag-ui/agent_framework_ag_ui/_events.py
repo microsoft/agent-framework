@@ -31,9 +31,10 @@ from agent_framework import (
     FunctionCallContent,
     FunctionResultContent,
     TextContent,
+    prepare_function_call_results,
 )
 
-from ._utils import generate_event_id, serialize_content_result
+from ._utils import generate_event_id
 
 logger = logging.getLogger(__name__)
 
@@ -391,7 +392,7 @@ class AgentFrameworkEventBridge:
             self.state_delta_count = 0
 
         result_message_id = generate_event_id()
-        result_content = serialize_content_result(content.result)
+        result_content = prepare_function_call_results(content.result)
 
         result_event = ToolCallResultEvent(
             message_id=result_message_id,

@@ -312,7 +312,8 @@ def test_agent_framework_to_agui_function_result_none():
 
     assert len(messages) == 1
     agui_msg = messages[0]
-    assert agui_msg["content"] == ""
+    # None serializes as JSON null
+    assert agui_msg["content"] == "null"
 
 
 def test_agent_framework_to_agui_function_result_string():
@@ -342,7 +343,8 @@ def test_agent_framework_to_agui_function_result_empty_list():
 
     assert len(messages) == 1
     agui_msg = messages[0]
-    assert agui_msg["content"] == ""
+    # Empty list serializes as JSON empty array
+    assert agui_msg["content"] == "[]"
 
 
 def test_agent_framework_to_agui_function_result_single_text_content():
@@ -362,8 +364,8 @@ def test_agent_framework_to_agui_function_result_single_text_content():
 
     assert len(messages) == 1
     agui_msg = messages[0]
-    # Single item should return plain text, not JSON
-    assert agui_msg["content"] == "Hello from MCP!"
+    # TextContent text is extracted and serialized as JSON array
+    assert agui_msg["content"] == '["Hello from MCP!"]'
 
 
 def test_agent_framework_to_agui_function_result_multiple_text_contents():

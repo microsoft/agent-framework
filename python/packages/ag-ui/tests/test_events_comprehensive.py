@@ -705,8 +705,8 @@ async def test_tool_result_with_empty_list():
     assert len(events) == 2
     assert events[0].type == "TOOL_CALL_END"
     assert events[1].type == "TOOL_CALL_RESULT"
-    # Empty list should return empty string
-    assert events[1].content == ""
+    # Empty list serializes as JSON empty array
+    assert events[1].content == "[]"
 
 
 async def test_tool_result_with_single_text_content():
@@ -727,8 +727,8 @@ async def test_tool_result_with_single_text_content():
     assert len(events) == 2
     assert events[0].type == "TOOL_CALL_END"
     assert events[1].type == "TOOL_CALL_RESULT"
-    # Single TextContent should return plain text, not JSON array
-    assert events[1].content == "Hello from MCP tool!"
+    # TextContent text is extracted and serialized as JSON array
+    assert events[1].content == '["Hello from MCP tool!"]'
 
 
 async def test_tool_result_with_multiple_text_contents():
