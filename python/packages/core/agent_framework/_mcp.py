@@ -924,6 +924,7 @@ class MCPStreamableHTTPTool(MCPTool):
         chat_client: "ChatClientProtocol | None" = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: httpx.AsyncClient | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
 
@@ -957,6 +958,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
                 and pass your own ``httpx.AsyncClient`` instance.
+            kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
             name=name,
