@@ -201,7 +201,8 @@ async def test_tool_result_with_none():
     assert len(events) == 2
     assert events[0].type == "TOOL_CALL_END"
     assert events[1].type == "TOOL_CALL_RESULT"
-    assert events[1].content == ""
+    # prepare_function_call_results serializes None as JSON "null"
+    assert events[1].content == "null"
 
 
 async def test_multiple_tool_results_in_sequence():
@@ -759,20 +760,18 @@ async def test_tool_result_with_multiple_text_contents():
 
 
 async def test_tool_result_with_model_dump_objects():
-    """Test FunctionResultContent with objects that have model_dump method."""
+    """Test FunctionResultContent with Pydantic BaseModel objects."""
+    from pydantic import BaseModel
+
     from agent_framework_ag_ui._events import AgentFrameworkEventBridge
 
-    class MockModel:
-        def __init__(self, value: int):
-            self._value = value
-
-        def model_dump(self, mode: str = "python"):
-            return {"value": self._value}
+    class MockModel(BaseModel):
+        value: int
 
     bridge = AgentFrameworkEventBridge(run_id="test_run", thread_id="test_thread")
 
     update = AgentRunResponseUpdate(
-        contents=[FunctionResultContent(call_id="call_123", result=[MockModel(1), MockModel(2)])]
+        contents=[FunctionResultContent(call_id="call_123", result=[MockModel(value=1), MockModel(value=2)])]
     )
     events = await bridge.from_agent_run_update(update)
 
