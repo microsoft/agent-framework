@@ -118,6 +118,70 @@ public class AIAgentHostExecutorTests
         }
     }
 
+    private static ChatMessage UserMessage => new(ChatRole.User, "Hello from User!") { AuthorName = "User" };
+    private static ChatMessage AssistantMessage => new(ChatRole.Assistant, "Hello from Assistant!") { AuthorName = "User" };
+    private static ChatMessage TestAgentMessage => new(ChatRole.Assistant, $"Hello from {TestAgentName}!") { AuthorName = TestAgentName };
+
+    [Theory]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, true, false, true)]
+    [InlineData(true, true, true, false)]
+    [InlineData(true, true, true, true)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, false, false, true)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, false, true, true)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, true, false, true)]
+    [InlineData(false, true, true, false)]
+    [InlineData(false, true, true, true)]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, false, false, true)]
+    [InlineData(false, false, true, false)]
+    [InlineData(false, false, true, true)]
+    public async Task Test_AgentHostExecutor_ReassignsRolesIFFConfiguredAsync(bool executorSetting, bool includeUser, bool includeSelfMessages, bool includeOtherMessages)
+    {
+        // Arrange
+        TestRunContext testContext = new();
+        RoleCheckAgent agent = new(false, TestAgentId, TestAgentName);
+        AIAgentHostExecutor executor = new(agent, new() { ReassignOtherAgentsAsUsers = executorSetting });
+        testContext.ConfigureExecutor(executor);
+
+        List<ChatMessage> messages = [];
+
+        if (includeUser)
+        {
+            messages.Add(UserMessage);
+        }
+
+        if (includeSelfMessages)
+        {
+            messages.Add(TestAgentMessage);
+        }
+
+        if (includeOtherMessages)
+        {
+            messages.Add(AssistantMessage);
+        }
+
+        // Act
+        await executor.Router.RouteMessageAsync(messages, testContext.BindWorkflowContext(executor.Id));
+
+        Func<Task> act = async () => await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        bool shouldThrow = includeOtherMessages && !executorSetting;
+
+        if (shouldThrow)
+        {
+            await act.Should().ThrowAsync<InvalidOperationException>();
+        }
+        else
+        {
+            await act.Should().NotThrowAsync();
+        }
+    }
+
     [Theory]
     [InlineData(true, TestAgentRequestType.FunctionCall)]
     [InlineData(false, TestAgentRequestType.FunctionCall)]
