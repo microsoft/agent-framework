@@ -5,7 +5,6 @@ from contextlib import _AsyncGeneratorContextManager  # type: ignore
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
-import httpx
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
