@@ -17,12 +17,18 @@ Design Pattern:
 
 import asyncio
 import inspect
+import sys
 import typing
 from collections.abc import Awaitable, Callable
-from typing import Any, overload
+from typing import Any
 
 from ._executor import Executor
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
+
+if sys.version_info >= (3, 11):
+    from typing import overload  # pragma: no cover
+else:
+    from typing_extensions import overload  # pragma: no cover
 
 
 class FunctionExecutor(Executor):

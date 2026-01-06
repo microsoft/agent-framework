@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar, cast, overload
+from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,6 +22,14 @@ from ._serialization import SerializationMixin
 from ._tools import ToolProtocol, ai_function
 from .exceptions import AdditionItemMismatch, ContentError
 
+if sys.version_info >= (3, 11):
+    from typing import overload  # pragma: no cover
+else:
+    from typing_extensions import overload  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import TypedDict  # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:
@@ -34,9 +42,11 @@ __all__ = [
     "AnnotatedRegions",
     "Annotations",
     "BaseAnnotation",
+    "BaseChatOptionsDict",
     "BaseContent",
     "ChatMessage",
     "ChatOptions",
+    "ChatOptionsDictValidator",
     "ChatResponse",
     "ChatResponseUpdate",
     "CitationAnnotation",
@@ -3670,3 +3680,130 @@ class ChatOptions(SerializationMixin):
                     if tool not in combined.tools:
                         combined.tools.append(tool)
         return combined
+
+
+# region TypedDict-based Chat Options (POC)
+# These TypedDicts provide strongly-typed keyword arguments for chat client methods.
+# They enable IDE autocomplete, type checking, and provider-specific option validation.
+#
+# Usage with Unpack:
+#   async def get_response(self, messages, **options: Unpack[OpenAIChatOptionsDict]) -> ChatResponse: ...
+#
+# This allows callers to get full autocomplete for available options:
+#   await client.get_response("Hello", temperature=0.7, logprobs=True)
+
+
+# Note: ToolsType uses string annotation to avoid circular import issues
+# The actual type is: ToolProtocol | Callable | MutableMapping | Sequence[...]
+ToolsType = Any  # Simplified for runtime; see ChatOptions for the full type
+
+
+class BaseChatOptionsDict(TypedDict, total=False):
+    """Base options supported by all compliant chat clients.
+
+    All fields are optional (total=False) to allow partial specification.
+    Provider-specific TypedDicts extend this with additional options.
+
+    These options represent the common denominator across chat providers.
+    Individual implementations may raise errors for unsupported options.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import BaseChatOptionsDict
+
+            # Type-safe options
+            options: BaseChatOptionsDict = {
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "model_id": "gpt-4",
+            }
+
+            # Used with Unpack for function signatures
+            # async def get_response(self, **options: Unpack[BaseChatOptionsDict]) -> ChatResponse:
+    """
+
+    # Model selection
+    model_id: str
+
+    # Generation parameters
+    temperature: float
+    top_p: float
+    max_tokens: int
+    stop: str | Sequence[str]
+    seed: int
+    logit_bias: dict[str | int, float]
+
+    # Penalty parameters
+    frequency_penalty: float
+    presence_penalty: float
+
+    # Tool configuration (forward reference to avoid circular import)
+    tools: ToolsType
+    tool_choice: "ToolMode | Literal['auto', 'required', 'none'] | dict[str, Any]"
+    allow_multiple_tool_calls: bool
+
+    # Response configuration
+    response_format: type[BaseModel]
+
+    # Metadata
+    metadata: dict[str, Any]
+    user: str
+    store: bool
+    conversation_id: str
+
+    # System/instructions
+    instructions: str
+
+
+class ChatOptionsDictValidator:
+    """Validates that provided options are supported by a specific provider.
+
+    This class provides runtime validation to ensure users don't pass
+    unsupported options to a provider, giving clear error messages.
+
+    Examples:
+        .. code-block:: python
+
+            validator = ChatOptionsDictValidator(
+                provider_name="Anthropic",
+                unsupported_base_options={"logit_bias", "logprobs"},
+            )
+
+            # This will raise ValueError
+            validator.validate(logit_bias={50256: -100})
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_name: str,
+        unsupported_base_options: frozenset[str],
+    ) -> None:
+        """Initialize the validator.
+
+        Keyword Args:
+            provider_name: Name of the provider for error messages.
+            unsupported_base_options: Set of BaseChatOptionsDict keys not supported.
+        """
+        self.provider_name = provider_name
+        self.unsupported_base_options = unsupported_base_options
+
+    def validate(self, **options: Any) -> None:
+        """Validate that no unsupported options are provided.
+
+        Keyword Args:
+            options: The options to validate.
+
+        Raises:
+            ValueError: If an unsupported option is provided with a non-None value.
+        """
+        unsupported_used = [key for key in options if key in self.unsupported_base_options and options[key] is not None]
+        if unsupported_used:
+            raise ValueError(
+                f"{self.provider_name} does not support the following options: {', '.join(unsupported_used)}. "
+                f"Remove these options or use a different provider."
+            )
+
+
+# endregion TypedDict-based Chat Options

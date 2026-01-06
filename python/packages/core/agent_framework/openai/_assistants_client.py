@@ -25,7 +25,6 @@ from .._middleware import use_chat_middleware
 from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
 from .._types import (
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     CodeInterpreterToolCallContent,
@@ -175,30 +174,26 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, chat_options=chat_options, **kwargs),
-            output_format_type=chat_options.response_format,
+            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
+            output_format_type=options.get("response_format"),
         )
 
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
-        run_options, tool_results = self._prepare_options(messages, chat_options, **kwargs)
+        run_options, tool_results = self._prepare_options(messages, options, **kwargs)
 
         # Get the thread ID
-        thread_id: str | None = (
-            chat_options.conversation_id
-            if chat_options.conversation_id is not None
-            else run_options.get("conversation_id", self.thread_id)
-        )
+        thread_id: str | None = options.get("conversation_id", run_options.get("conversation_id", self.thread_id))
 
         if thread_id is None and tool_results is not None:
             raise ValueError("No thread ID was provided, but chat messages includes tool results.")
@@ -416,61 +411,77 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
     def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions | None,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> tuple[dict[str, Any], list[FunctionResultContent] | None]:
         run_options: dict[str, Any] = {**kwargs}
 
-        if chat_options is not None:
-            run_options["max_completion_tokens"] = chat_options.max_tokens
-            run_options["model"] = chat_options.model_id
-            run_options["top_p"] = chat_options.top_p
-            run_options["temperature"] = chat_options.temperature
+        # Extract options from the dict
+        max_tokens = options.get("max_tokens")
+        model_id = options.get("model_id")
+        top_p = options.get("top_p")
+        temperature = options.get("temperature")
+        allow_multiple_tool_calls = options.get("allow_multiple_tool_calls")
+        tool_choice = options.get("tool_choice")
+        tools = options.get("tools")
+        response_format = options.get("response_format")
 
-            if chat_options.allow_multiple_tool_calls is not None:
-                run_options["parallel_tool_calls"] = chat_options.allow_multiple_tool_calls
+        if max_tokens is not None:
+            run_options["max_completion_tokens"] = max_tokens
+        if model_id is not None:
+            run_options["model"] = model_id
+        if top_p is not None:
+            run_options["top_p"] = top_p
+        if temperature is not None:
+            run_options["temperature"] = temperature
 
-            if chat_options.tool_choice is not None:
-                tool_definitions: list[MutableMapping[str, Any]] = []
-                if chat_options.tool_choice != "none" and chat_options.tools is not None:
-                    for tool in chat_options.tools:
-                        if isinstance(tool, AIFunction):
-                            tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
-                        elif isinstance(tool, HostedCodeInterpreterTool):
-                            tool_definitions.append({"type": "code_interpreter"})
-                        elif isinstance(tool, HostedFileSearchTool):
-                            params: dict[str, Any] = {
-                                "type": "file_search",
-                            }
-                            if tool.max_results is not None:
-                                params["max_num_results"] = tool.max_results
-                            tool_definitions.append(params)
-                        elif isinstance(tool, MutableMapping):
-                            tool_definitions.append(tool)
+        if allow_multiple_tool_calls is not None:
+            run_options["parallel_tool_calls"] = allow_multiple_tool_calls
 
-                if len(tool_definitions) > 0:
-                    run_options["tools"] = tool_definitions
+        if tool_choice is not None:
+            tool_definitions: list[MutableMapping[str, Any]] = []
+            if tool_choice != "none" and tools is not None:
+                for tool in tools:
+                    if isinstance(tool, AIFunction):
+                        tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
+                    elif isinstance(tool, HostedCodeInterpreterTool):
+                        tool_definitions.append({"type": "code_interpreter"})
+                    elif isinstance(tool, HostedFileSearchTool):
+                        params: dict[str, Any] = {
+                            "type": "file_search",
+                        }
+                        if tool.max_results is not None:
+                            params["max_num_results"] = tool.max_results
+                        tool_definitions.append(params)
+                    elif isinstance(tool, MutableMapping):
+                        tool_definitions.append(tool)
 
-                if chat_options.tool_choice == "none" or chat_options.tool_choice == "auto":
-                    run_options["tool_choice"] = chat_options.tool_choice.mode
-                elif (
-                    isinstance(chat_options.tool_choice, ToolMode)
-                    and chat_options.tool_choice == "required"
-                    and chat_options.tool_choice.required_function_name is not None
-                ):
-                    run_options["tool_choice"] = {
-                        "type": "function",
-                        "function": {"name": chat_options.tool_choice.required_function_name},
-                    }
+            if len(tool_definitions) > 0:
+                run_options["tools"] = tool_definitions
 
-            if chat_options.response_format is not None:
-                run_options["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": chat_options.response_format.__name__,
-                        "schema": chat_options.response_format.model_json_schema(),
-                    },
+            if tool_choice == "none" or tool_choice == "auto":
+                if isinstance(tool_choice, ToolMode):
+                    run_options["tool_choice"] = tool_choice.mode
+                else:
+                    run_options["tool_choice"] = tool_choice
+            elif (
+                isinstance(tool_choice, ToolMode)
+                and tool_choice == "required"
+                and tool_choice.required_function_name is not None
+            ):
+                run_options["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tool_choice.required_function_name},
                 }
+
+        if response_format is not None:
+            run_options["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "schema": response_format.model_json_schema(),
+                },
+            }
 
         instructions: list[str] = []
         tool_results: list[FunctionResultContent] | None = None
