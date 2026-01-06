@@ -322,7 +322,7 @@ class AgentFrameworkExecutor:
 
             # Get thread from conversation parameter (OpenAI standard!)
             thread = None
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if conversation_id:
                 thread = self.conversation_store.get_thread(conversation_id)
                 if thread:
@@ -404,7 +404,7 @@ class AgentFrameworkExecutor:
             entity_id = request.get_entity_id() or "unknown"
 
             # Get or create session conversation for checkpoint storage
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if not conversation_id:
                 # Create default session if not provided
                 import time

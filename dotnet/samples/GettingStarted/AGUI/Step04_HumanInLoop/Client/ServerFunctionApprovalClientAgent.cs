@@ -22,17 +22,17 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
         this._jsonSerializerOptions = jsonSerializerOptions;
     }
 
-    public override Task<AgentRunResponse> RunAsync(
+    protected override Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        return this.RunStreamingAsync(messages, thread, options, cancellationToken)
+        return this.RunCoreStreamingAsync(messages, thread, options, cancellationToken)
             .ToAgentRunResponseAsync(cancellationToken);
     }
 
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

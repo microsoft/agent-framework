@@ -25,7 +25,7 @@ from agent_framework import (
 
 from ._base_group_chat_orchestrator import BaseGroupChatOrchestrator
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
-from ._const import EXECUTOR_STATE_KEY
+from ._const import EXECUTOR_STATE_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import AgentRunUpdateEvent, WorkflowEvent
 from ._executor import Executor, handler
 from ._group_chat import (
@@ -286,12 +286,14 @@ class _MagenticStartMessage(DictConvertible):
     """Internal: A message to start a magentic workflow."""
 
     messages: list[ChatMessage] = field(default_factory=_new_chat_message_list)
+    run_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __init__(
         self,
         messages: str | ChatMessage | Sequence[str] | Sequence[ChatMessage] | None = None,
         *,
         task: ChatMessage | None = None,
+        run_kwargs: dict[str, Any] | None = None,
     ) -> None:
         normalized = normalize_messages_input(messages)
         if task is not None:
@@ -299,6 +301,7 @@ class _MagenticStartMessage(DictConvertible):
         if not normalized:
             raise ValueError("MagenticStartMessage requires at least one message input.")
         self.messages: list[ChatMessage] = normalized
+        self.run_kwargs: dict[str, Any] = run_kwargs or {}
 
     @property
     def task(self) -> ChatMessage:
@@ -1179,6 +1182,10 @@ class MagenticOrchestratorExecutor(BaseGroupChatOrchestrator):
             return
         logger.info("Magentic Orchestrator: Received start message")
 
+        # Store run_kwargs in SharedState so agent executors can access them
+        # Always store (even empty dict) so retrieval is deterministic
+        await context.set_shared_state(WORKFLOW_RUN_KWARGS_KEY, message.run_kwargs or {})
+
         self._context = MagenticContext(
             task=message.task,
             participant_descriptions=self._participants,
@@ -2004,10 +2011,12 @@ class MagenticAgentExecutor(Executor):
         """
         logger.debug(f"Agent {self._agent_id}: Running with {len(self._chat_history)} messages")
 
+        run_kwargs: dict[str, Any] = await ctx.get_shared_state(WORKFLOW_RUN_KWARGS_KEY)
+
         updates: list[AgentRunResponseUpdate] = []
         # The wrapped participant is guaranteed to be an BaseAgent when this is called.
         agent = cast("AgentProtocol", self._agent)
-        async for update in agent.run_stream(messages=self._chat_history):  # type: ignore[attr-defined]
+        async for update in agent.run_stream(messages=self._chat_history, **run_kwargs):  # type: ignore[attr-defined]
             updates.append(update)
             await self._emit_agent_delta_event(ctx, update)
 
@@ -2604,38 +2613,48 @@ class MagenticWorkflow:
         """Access the underlying workflow."""
         return self._workflow
 
-    async def run_streaming_with_string(self, task_text: str) -> AsyncIterable[WorkflowEvent]:
+    async def run_streaming_with_string(self, task_text: str, **kwargs: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a task string.
 
         Args:
             task_text: The task description as a string.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
+                These kwargs will be available in @ai_function tools via **kwargs.
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
         start_message = _MagenticStartMessage.from_string(task_text)
+        start_message.run_kwargs = kwargs
         async for event in self._workflow.run_stream(start_message):
             yield event
 
-    async def run_streaming_with_message(self, task_message: ChatMessage) -> AsyncIterable[WorkflowEvent]:
+    async def run_streaming_with_message(
+        self, task_message: ChatMessage, **kwargs: Any
+    ) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with a ChatMessage.
 
         Args:
             task_message: The task as a ChatMessage.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
+                These kwargs will be available in @ai_function tools via **kwargs.
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        start_message = _MagenticStartMessage(task_message)
+        start_message = _MagenticStartMessage(task_message, run_kwargs=kwargs)
         async for event in self._workflow.run_stream(start_message):
             yield event
 
-    async def run_stream(self, message: Any | None = None) -> AsyncIterable[WorkflowEvent]:
+    async def run_stream(self, message: Any | None = None, **kwargs: Any) -> AsyncIterable[WorkflowEvent]:
         """Run the workflow with either a message object or the preset task string.
 
         Args:
             message: The message to send. If None and task_text was provided during construction,
                     uses the preset task string.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
+                These kwargs will be available in @ai_function tools via **kwargs.
+                Example: workflow.run_stream("task", user_id="123", custom_data={...})
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -2643,13 +2662,19 @@ class MagenticWorkflow:
         if message is None:
             if self._task_text is None:
                 raise ValueError("No message provided and no preset task text available")
-            message = _MagenticStartMessage.from_string(self._task_text)
+            start_message = _MagenticStartMessage.from_string(self._task_text)
         elif isinstance(message, str):
-            message = _MagenticStartMessage.from_string(message)
+            start_message = _MagenticStartMessage.from_string(message)
         elif isinstance(message, (ChatMessage, list)):
-            message = _MagenticStartMessage(message)  # type: ignore[arg-type]
+            start_message = _MagenticStartMessage(message)  # type: ignore[arg-type]
+        else:
+            start_message = message
 
-        async for event in self._workflow.run_stream(message):
+        # Attach kwargs to the start message
+        if isinstance(start_message, _MagenticStartMessage):
+            start_message.run_kwargs = kwargs
+
+        async for event in self._workflow.run_stream(start_message):
             yield event
 
     async def _validate_checkpoint_participants(
@@ -2730,46 +2755,49 @@ class MagenticWorkflow:
             f"Missing names: {missing}; unexpected names: {unexpected}."
         )
 
-    async def run_with_string(self, task_text: str) -> WorkflowRunResult:
+    async def run_with_string(self, task_text: str, **kwargs: Any) -> WorkflowRunResult:
         """Run the workflow with a task string and return all events.
 
         Args:
             task_text: The task description as a string.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
 
         Returns:
             WorkflowRunResult: All events generated during the workflow execution.
         """
         events: list[WorkflowEvent] = []
-        async for event in self.run_streaming_with_string(task_text):
+        async for event in self.run_streaming_with_string(task_text, **kwargs):
             events.append(event)
         return WorkflowRunResult(events)
 
-    async def run_with_message(self, task_message: ChatMessage) -> WorkflowRunResult:
+    async def run_with_message(self, task_message: ChatMessage, **kwargs: Any) -> WorkflowRunResult:
         """Run the workflow with a ChatMessage and return all events.
 
         Args:
             task_message: The task as a ChatMessage.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
 
         Returns:
             WorkflowRunResult: All events generated during the workflow execution.
         """
         events: list[WorkflowEvent] = []
-        async for event in self.run_streaming_with_message(task_message):
+        async for event in self.run_streaming_with_message(task_message, **kwargs):
             events.append(event)
         return WorkflowRunResult(events)
 
-    async def run(self, message: Any | None = None) -> WorkflowRunResult:
+    async def run(self, message: Any | None = None, **kwargs: Any) -> WorkflowRunResult:
         """Run the workflow and return all events.
 
         Args:
             message: The message to send. If None and task_text was provided during construction,
                     uses the preset task string.
+            **kwargs: Additional keyword arguments to pass through to agent invocations.
 
         Returns:
             WorkflowRunResult: All events generated during the workflow execution.
         """
         events: list[WorkflowEvent] = []
-        async for event in self.run_stream(message):
+        async for event in self.run_stream(message, **kwargs):
             events.append(event)
         return WorkflowRunResult(events)
 

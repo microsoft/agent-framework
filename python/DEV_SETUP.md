@@ -4,6 +4,8 @@ This document describes how to setup your environment with Python and uv,
 if you're working on new features or a bug fix for Agent Framework, or simply
 want to run the tests included.
 
+For coding standards and conventions, see [CODING_STANDARD.md](CODING_STANDARD.md).
+
 ## System setup
 
 We are using a tool called [poethepoet](https://github.com/nat-n/poethepoet) for task management and [uv](https://github.com/astral-sh/uv) for dependency management. At the [end of this document](#available-poe-tasks), you will find the available Poe tasks.
@@ -117,43 +119,6 @@ from agent_framework.openai import OpenAIChatClient
 chat_client = OpenAIChatClient(env_file_path="openai.env")
 ```
 
-
-## Coding Standards
-
-### Code Style and Formatting
-
-We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting with the following configuration:
-
-- **Line length**: 120 characters
-- **Target Python version**: 3.10+
-- **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
-
-### Function Parameter Guidelines
-
-To make the code easier to use and maintain:
-
-- **Positional parameters**: Only use for up to 3 fully expected parameters
-- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
-- **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
-```python
-def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
-    # Implementation here
-```
-Should be:
-```python
-def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | ChatToolMode) -> Agent:
-    # Implementation here
-    if isinstance(tool_mode, str):
-        tool_mode = ChatToolMode(tool_mode)
-```
-- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
-- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
-
-Example:
-```python
-chat_completion = OpenAIChatClient(env_file_path="openai.env")
-```
-
 ## Tests
 
 All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
@@ -170,264 +135,6 @@ uv run poe --directory packages/core test
 ```
 
 These commands also output the coverage report.
-
-## Implementation Decisions
-
-### Asynchronous programming
-
-It's important to note that most of this library is written with asynchronous in mind. The
-developer should always assume everything is asynchronous. One can use the function signature
-with either `async def` or `def` to understand if something is asynchronous or not.
-
-### Documentation
-
-Each file should have a single first line containing: # Copyright (c) Microsoft. All rights reserved.
-
-We follow the [Google Docstring](https://github.com/google/styleguide/blob/gh-pages/pyguide.md#383-functions-and-methods) style guide for functions and methods.
-They are currently not checked for private functions (functions starting with '_').
-
-They should contain:
-
-- Single line explaining what the function does, ending with a period.
-- If necessary to further explain the logic a newline follows the first line and then the explanation is given.
-- The following three sections are optional, and if used should be separated by a single empty line.
-- Arguments are then specified after a header called `Args:`, with each argument being specified in the following format:
-  - `arg_name`: Explanation of the argument.
-    - if a longer explanation is needed for a argument, it should be placed on the next line, indented by 4 spaces.
-    - Type and default values do not have to be specified, they will be pulled from the definition.
-- Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
-- Finally, a header for exceptions can be added, called `Raises:`, with each exception being specified in the following format:
-  - `ExceptionType`: Explanation of the exception.
-  - if a longer explanation is needed for a exception, it should be placed on the next line, indented by 4 spaces.
-
-Putting them all together, gives you at minimum this:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same."""
-    ...
-```
-
-Or a complete version of this:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same.
-
-    Here is extra explanation of the logic involved.
-
-    Args:
-        arg1: The first string to compare.
-        arg2: The second string to compare.
-
-    Returns:
-        True if the strings are the same, False otherwise.
-    """
-```
-
-### Attributes vs Inheritance
-
-Prefer attributes over inheritance when parameters are mostly the same:
-
-```python
-# ✅ Preferred - using attributes
-from agent_framework import ChatMessage
-
-user_msg = ChatMessage(role="user", content="Hello, world!")
-asst_msg = ChatMessage(role="assistant", content="Hello, world!")
-
-# ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
-
-user_msg = UserMessage(content="Hello, world!")
-asst_msg = AssistantMessage(content="Hello, world!")
-```
-
-### Logging
-
-Use the centralized logging system:
-
-```python
-from agent_framework import get_logger
-
-# For main package
-logger = get_logger()
-
-# For subpackages
-logger = get_logger('agent_framework.azure')
-```
-
-**Do not use** direct logging module imports:
-```python
-# ❌ Avoid this
-import logging
-logger = logging.getLogger(__name__)
-```
-
-### Import Structure
-
-The package follows a flat import structure:
-
-- **Core**: Import directly from `agent_framework`
-  ```python
-  from agent_framework import ChatAgent, ai_function
-  ```
-
-- **Components**: Import from `agent_framework.<component>`
-  ```python
-  from agent_framework.vector_data import VectorStoreModel
-  from agent_framework.guardrails import ContentFilter
-  ```
-
-- **Connectors**: Import from `agent_framework.<vendor/platform>`
-  ```python
-  from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureOpenAIChatClient
-  ```
-
-## Testing
-
-### Running Tests
-
-```bash
-# Run all tests with coverage
-uv run poe test
-
-# Run specific test file
-uv run pytest tests/test_agents.py
-
-# Run with verbose output
-uv run pytest -v
-```
-
-### Test Coverage
-
-- Target: Minimum 80% test coverage for all packages
-- Coverage reports are generated automatically during test runs
-- Tests should be in corresponding `test_*.py` files in the `tests/` directory
-
-## Documentation
-
-### Building Documentation
-
-```bash
-# Build documentation
-uv run poe docs-build
-
-# Serve documentation locally with auto-reload
-uv run poe docs-serve
-
-# Check documentation for warnings
-uv run poe docs-check
-```
-
-### Docstring Style
-
-Use Google-style docstrings for all public APIs:
-
-```python
-def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
-    """Create a new agent with the specified configuration.
-
-    Args:
-        name: The name of the agent.
-        chat_client: The chat client to use for communication.
-
-    Returns:
-        True if the strings are the same, False otherwise.
-
-    Raises:
-        ValueError: If one of the strings is empty.
-    """
-    ...
-```
-
-If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
-
-## Coding standards
-
-```plaintext
-agent_framework/
-├── __init__.py              # Tier 0: Core components
-├── _agents.py              # Agent implementations
-├── _tools.py               # Tool definitions
-├── _models.py              # Type definitions
-├── _logging.py             # Logging utilities
-├── context_providers.py    # Tier 1: Context providers
-├── guardrails.py          # Tier 1: Guardrails and filters
-├── vector_data.py         # Tier 1: Vector stores
-├── workflows.py           # Tier 1: Multi-agent orchestration
-└── azure/                 # Tier 2: Azure connectors (lazy loaded)
-    └── __init__.py        # Imports from agent-framework-azure
-```
-
-### Pydantic and Serialization
-
-This section describes how one can enable serialization for their class using Pydantic.
-For more info you can refer to the [Pydantic Documentation](https://docs.pydantic.dev/latest/).
-
-#### Upgrading existing classes to use Pydantic
-
-Let's take the following example:
-
-```python
-class A:
-    def __init__(self, a: int, b: float, c: List[float], d: dict[str, tuple[float, str]] = {}):
-        self.a = a
-        self.b = b
-        self.c = c
-        self.d = d
-```
-
-You would convert this to a Pydantic class by sub-classing from the `AFBaseModel` class.
-
-```python
-from pydantic import Field
-from ._pydantic import AFBaseModel
-
-class A(AFBaseModel):
-    # The notation for the fields is similar to dataclasses.
-    a: int
-    b: float
-    c: list[float]
-    # Only, instead of using dataclasses.field, you would use pydantic.Field
-    d: dict[str, tuple[float, str]] = Field(default_factory=dict)
-```
-
-#### Classes with data that need to be serialized, and some of them are Generic types
-
-Let's take the following example:
-
-```python
-from typing import TypeVar
-
-T1 = TypeVar("T1")
-T2 = TypeVar("T2", bound=<some class>)
-
-class A:
-    def __init__(a: int, b: T1, c: T2):
-        self.a = a
-        self.b = b
-        self.c = c
-```
-
-You can use the `AFBaseModel` to convert these to pydantic serializable classes.
-
-```python
-from typing import Generic, TypeVar
-
-from ._pydantic import AFBaseModel
-
-T1 = TypeVar("T1")
-T2 = TypeVar("T2", bound=<some class>)
-
-class A(AFBaseModel, Generic[T1, T2]):
-    # T1 and T2 must be specified in the Generic argument otherwise, pydantic will
-    # NOT be able to serialize this class
-    a: int
-    b: T1
-    c: T2
-```
 
 ## Code quality checks
 
@@ -489,7 +196,7 @@ and then you can run the following tasks:
 uv sync --all-extras --dev
 ```
 
-After this initial setup, you can use the following tasks to manage your development environment, it is adviced to use the following setup command since that also installs the pre-commit hooks.
+After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the pre-commit hooks.
 
 #### `setup`
 Set up the development environment with a virtual environment, install dependencies and pre-commit hooks:
@@ -547,64 +254,6 @@ Run MyPy type checking:
 uv run poe mypy
 ```
 
-### Testing
-
-#### `test`
-Run unit tests with coverage:
-```bash
-uv run poe test
-```
-
-### Documentation
-
-#### `docs-install`
-Install including the documentation tools:
-```bash
-uv run poe docs-install
-```
-
-#### `docs-clean`
-Remove the docs build directory:
-```bash
-uv run poe docs-clean
-```
-
-#### `docs-build`
-Build the documentation:
-```bash
-uv run poe docs-build
-```
-
-#### `docs-full`
-Build the packages, clean and build the documentation:
-```bash
-uv run poe docs-full
-```
-
-#### `docs-rebuild`
-Clean and build the documentation:
-```bash
-uv run poe docs-rebuild
-```
-
-#### `docs-full-install`
-Install the docs dependencies, build the packages, clean and build the documentation:
-```bash
-uv run poe docs-full-install
-```
-
-#### `docs-debug`
-Build the documentation with debug information:
-```bash
-uv run poe docs-debug
-```
-
-#### `docs-rebuild-debug`
-Clean and build the documentation with debug information:
-```bash
-uv run poe docs-rebuild-debug
-```
-
 ### Code Validation
 
 #### `markdown-code-lint`
@@ -613,37 +262,66 @@ Lint markdown code blocks:
 uv run poe markdown-code-lint
 ```
 
-#### `samples-code-check`
-Run type checking on samples:
-```bash
-uv run poe samples-code-check
-```
-
 ### Comprehensive Checks
 
 #### `check`
-Run all quality checks (format, lint, pyright, mypy, test, markdown lint, samples check):
+Run all quality checks (format, lint, pyright, mypy, test, markdown lint):
 ```bash
 uv run poe check
 ```
 
-#### `pre-commit-check`
-Run pre-commit specific checks (all of the above, excluding `mypy`):
+### Testing
+
+#### `test`
+Run unit tests with coverage by invoking the `test` task in each package sequentially:
 ```bash
-uv run poe pre-commit-check
+uv run poe test
 ```
 
-### Building
+To run tests for a specific package only, use the `--directory` flag:
+```bash
+# Run tests for the core package
+uv run --directory packages/core poe test
+
+# Run tests for the azure-ai package
+uv run --directory packages/azure-ai poe test
+```
+
+#### `all-tests`
+Run all tests in a single pytest invocation across all packages in parallel (excluding lab and devui). This is faster than `test` as it uses pytest's parallel execution:
+```bash
+uv run poe all-tests
+```
+
+#### `all-tests-cov`
+Same as `all-tests` but with coverage reporting enabled:
+```bash
+uv run poe all-tests-cov
+```
+
+### Building and Publishing
 
 #### `build`
-Build the package:
+Build all packages:
 ```bash
 uv run poe build
 ```
 
+#### `clean-dist`
+Clean the dist directories:
+```bash
+uv run poe clean-dist
+```
+
+#### `publish`
+Publish packages to PyPI:
+```bash
+uv run poe publish
+```
+
 ## Pre-commit Hooks
 
-You can also run all checks using pre-commit directly:
+Pre-commit hooks run automatically on commit and execute a subset of the checks on changed files only. You can also run all checks using pre-commit directly:
 
 ```bash
 uv run pre-commit run -a

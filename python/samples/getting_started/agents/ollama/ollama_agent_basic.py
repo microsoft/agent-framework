@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework_ollama import OllamaChatClient
+from agent_framework.ollama import OllamaChatClient
 
 """
 Ollama Agent Basic Example
