@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -90,10 +91,10 @@ public class TestRunContext : IRunnerContext
     public IWorkflowContext BindWorkflowContext(string executorId, Dictionary<string, string>? traceContext = null)
         => new BoundContext(executorId, this, traceContext);
 
-    public List<ExternalRequest> ExternalRequests { get; } = [];
+    public ConcurrentQueue<ExternalRequest> ExternalRequests { get; } = [];
     public ValueTask PostAsync(ExternalRequest request)
     {
-        this.ExternalRequests.Add(request);
+        this.ExternalRequests.Enqueue(request);
         return default;
     }
 
@@ -115,8 +116,8 @@ public class TestRunContext : IRunnerContext
     public Dictionary<string, Executor> Executors { get; set; } = [];
     public string StartingExecutorId { get; set; } = string.Empty;
 
-    public bool WithCheckpointing => throw new NotSupportedException();
-    public bool ConcurrentRunsEnabled => throw new NotSupportedException();
+    public bool WithCheckpointing => false;
+    public bool ConcurrentRunsEnabled => false;
 
     ValueTask<Executor> IRunnerContext.EnsureExecutorAsync(string executorId, IStepTracer? tracer, CancellationToken cancellationToken) =>
         new(this.Executors[executorId]);
