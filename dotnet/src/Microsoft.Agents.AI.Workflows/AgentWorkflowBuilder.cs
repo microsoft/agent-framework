@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -35,37 +34,27 @@ public static partial class AgentWorkflowBuilder
 
     private static Workflow BuildSequentialCore(string? workflowName, params IEnumerable<AIAgent> agents)
     {
-        Throw.IfNull(agents);
+        Throw.IfNullOrEmpty(agents);
 
         // Create a builder that chains the agents together in sequence. The workflow simply begins
         // with the first agent in the sequence.
-        WorkflowBuilder? builder = null;
-        ExecutorBinding? previous = null;
-        foreach (var agent in agents)
+
+        AIAgentHostOptions options = new()
         {
-            AgentRunStreamingExecutor agentExecutor = new(agent, includeInputInOutput: true);
+            ReassignOtherAgentsAsUsers = true,
+            ForwardIncomingMessages = true,
+        };
 
-            if (builder is null)
-            {
-                builder = new WorkflowBuilder(agentExecutor);
-            }
-            else
-            {
-                Debug.Assert(previous is not null);
-                builder.AddEdge(previous, agentExecutor);
-            }
+        List<ExecutorBinding> agentExecutors = agents.Select(agent => agent.BindAsExecutor(options)).ToList();
 
-            previous = agentExecutor;
-        }
+        ExecutorBinding previous = agentExecutors[0];
+        WorkflowBuilder builder = new(previous);
 
-        if (previous is null)
+        foreach (ExecutorBinding next in agentExecutors.Skip(1))
         {
-            Throw.ArgumentException(nameof(agents), "At least one agent must be provided to build a sequential workflow.");
+            builder.AddEdge(previous, next);
+            previous = next;
         }
-
-        // Add an ending executor that batches up all messages from the last agent
-        // so that it's published as a single list result.
-        Debug.Assert(builder is not null);
 
         OutputMessagesExecutor end = new();
         builder = builder.AddEdge(previous, end).WithOutputFrom(end);
@@ -125,9 +114,12 @@ public static partial class AgentWorkflowBuilder
         // so that the final accumulator receives a single list of messages from each agent. Otherwise, the
         // accumulator would not be able to determine what came from what agent, as there's currently no
         // provenance tracking exposed in the workflow context passed to a handler.
-        ExecutorBinding[] agentExecutors = (from agent in agents select (ExecutorBinding)new AgentRunStreamingExecutor(agent, includeInputInOutput: false)).ToArray();
+
+        ExecutorBinding[] agentExecutors = (from agent in agents
+                                            select agent.BindAsExecutor(new AIAgentHostOptions() { ReassignOtherAgentsAsUsers = true })).ToArray();
         ExecutorBinding[] accumulators = [.. from agent in agentExecutors select (ExecutorBinding)new AggregateTurnMessagesExecutor($"Batcher/{agent.Id}")];
         builder.AddFanOutEdge(start, agentExecutors);
+
         for (int i = 0; i < agentExecutors.Length; i++)
         {
             builder.AddEdge(agentExecutors[i], accumulators[i]);

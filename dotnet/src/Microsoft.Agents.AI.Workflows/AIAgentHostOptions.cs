@@ -32,4 +32,16 @@ public sealed class AIAgentHostOptions
     /// instead of being raised as a request.
     /// </summary>
     public bool InterceptUnterminatedFunctionCalls { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether other messages from other agents should be assigned to the
+    /// <see cref="ChatRole.User"/> role during execution.
+    /// </summary>
+    public bool ReassignOtherAgentsAsUsers { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether incoming messages are automatically forwarded before new messages generated
+    /// by the agent during its turn.
+    /// </summary>
+    public bool ForwardIncomingMessages { get; set; } = true;
 }
