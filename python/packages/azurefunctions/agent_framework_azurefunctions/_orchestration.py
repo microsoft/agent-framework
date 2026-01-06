@@ -122,7 +122,7 @@ class AzureFunctionsAgentExecutor(DurableAgentExecutor[AgentTask]):
     def __init__(self, context: AgentOrchestrationContextType):
         self.context = context
 
-    def _generate_unique_id(self) -> str:
+    def generate_unique_id(self) -> str:
         return str(self.context.new_uuid())
 
     def get_run_request(

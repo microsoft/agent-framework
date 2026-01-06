@@ -1223,14 +1223,24 @@ class DurableAgentStateUsage:
             input_token_count=usage.input_token_count,
             output_token_count=usage.output_token_count,
             total_token_count=usage.total_token_count,
+            extensionData=usage.additional_counts,
         )
 
     def to_usage_details(self) -> UsageDetails:
         # Convert back to AI SDK UsageDetails
+        extension_data: dict[str, int] = {}
+        if self.extensionData is not None:
+            for k, v in self.extensionData.items():
+                try:
+                    extension_data[k] = int(v)
+                except (ValueError, TypeError):
+                    continue
+
         return UsageDetails(
             input_token_count=self.input_token_count,
             output_token_count=self.output_token_count,
             total_token_count=self.total_token_count,
+            **extension_data,
         )
 
 

@@ -457,7 +457,7 @@ class OrchestrationAgentExecutor(DurableAgentExecutor[DurableAgentTask]):
         )
 
         # Call the entity and get the underlying task
-        entity_task: Task[Any] = self._context.call_entity(entity_id, "run", run_request.to_dict())
+        entity_task: Task[Any] = self._context.call_entity(entity_id, "run", run_request.to_dict())  # type: ignore
 
         # Wrap in DurableAgentTask for response transformation
         return DurableAgentTask(
