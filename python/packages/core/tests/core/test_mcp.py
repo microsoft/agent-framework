@@ -1520,14 +1520,28 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
         custom_param="test",
     )
 
-    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client:
+    with patch("agent_framework._mcp.streamable_http_client") as mock_http_client, patch(
+        "agent_framework._mcp.httpx.AsyncClient"
+    ) as mock_async_client:
+        # Create a mock httpx client instance
+        mock_client_instance = Mock()
+        mock_async_client.return_value = mock_client_instance
+
         tool.get_mcp_client()
 
-        # Verify streamable_http_client was called with None for http_client
-        # (since we didn't provide one, let the API handle client creation)
+        # Verify httpx.AsyncClient was created with correct parameters
+        mock_async_client.assert_called_once()
+        call_kwargs = mock_async_client.call_args.kwargs
+        assert call_kwargs["headers"] == {"Auth": "token"}
+        assert isinstance(call_kwargs["timeout"], httpx.Timeout)
+        # The timeout constructor sets connect/write/pool to the first arg, and read can be overridden
+        assert call_kwargs["timeout"].connect == 30.0
+        assert call_kwargs["timeout"].read == 10.0
+
+        # Verify streamable_http_client was called with the created client
         mock_http_client.assert_called_once_with(
             url="http://example.com",
-            http_client=None,
+            http_client=mock_client_instance,
             terminate_on_close=True,
         )
 
@@ -1695,7 +1709,7 @@ async def test_load_prompts_prevents_multiple_calls():
 
 @pytest.mark.asyncio
 async def test_mcp_streamable_http_tool_httpx_client_cleanup():
-    """Test that MCPStreamableHTTPTool allows user-provided httpx clients."""
+    """Test that MCPStreamableHTTPTool properly manages httpx client lifecycle."""
     from unittest.mock import AsyncMock, Mock, patch
 
     from agent_framework import MCPStreamableHTTPTool
@@ -1703,7 +1717,7 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
     # Mock the streamable_http_client to avoid actual connections
     with patch("agent_framework._mcp.streamable_http_client") as mock_client, patch(
         "agent_framework._mcp.ClientSession"
-    ) as mock_session_class:
+    ) as mock_session_class, patch("agent_framework._mcp.httpx.AsyncClient") as mock_async_client_class:
         # Setup mock context manager for streamable_http_client
         mock_transport = (Mock(), Mock())
         mock_context_manager = Mock()
@@ -1717,7 +1731,11 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        # Test 1: Tool without provided client (delegates to streamable_http_client)
+        # Test 1: Tool without provided client (creates and manages its own)
+        mock_created_client = Mock()
+        mock_created_client.aclose = AsyncMock()
+        mock_async_client_class.return_value = mock_created_client
+
         tool1 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -1727,14 +1745,18 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             timeout=30,
         )
         await tool1.connect()
-        # When no client is provided, _httpx_client should be None
-        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+        # When no client is provided, one should be created
+        assert tool1._httpx_client is mock_created_client, "httpx client should be created when not provided"
+        assert tool1._owns_client is True, "Tool should track that it owns the client"
 
         await tool1.close()
-        assert tool1._httpx_client is None, "httpx client should remain None after close"
+        # Verify the client was closed since we created it
+        mock_created_client.aclose.assert_called_once()
+        assert tool1._httpx_client is None, "httpx client should be cleared after close"
 
         # Test 2: Tool with user-provided client
-        user_client = Mock(spec=httpx.AsyncClient)
+        user_client = Mock()
+        user_client.aclose = AsyncMock()
         tool2 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -1748,6 +1770,7 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         
         # Verify the user-provided client was stored
         assert tool2._httpx_client is user_client, "User-provided client should be stored"
+        assert tool2._owns_client is False, "Tool should track that it doesn't own the client"
         
         # Verify streamable_http_client was called with the user's client
         # Get the last call (should be from tool2.connect())
@@ -1755,5 +1778,6 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         assert call_args.kwargs["http_client"] is user_client, "User's client should be passed through"
 
         await tool2.close()
-        # After close, the reference is cleared but user is responsible for closing
+        # Verify the user's client was NOT closed (user is responsible)
+        user_client.aclose.assert_not_called()
         assert tool2._httpx_client is None, "Client reference should be cleared after close"
