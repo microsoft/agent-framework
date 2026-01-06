@@ -274,7 +274,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
             throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
         }
 
-        var state = JsonSerializer.Deserialize<StoreState>(serializedStoreState, jsonSerializerOptions);
+        var state = serializedStoreState.Deserialize<StoreState>(jsonSerializerOptions);
         if (state?.ConversationIdentifier is not { } conversationId)
         {
             throw new ArgumentException("Invalid serialized state", nameof(serializedStoreState));
@@ -287,7 +287,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <inheritdoc />
-    public override async Task<IEnumerable<ChatMessage>> GetMessagesAsync(CancellationToken cancellationToken = default)
+    public override async ValueTask<IEnumerable<ChatMessage>> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -347,11 +347,14 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     }
 
     /// <inheritdoc />
-    public override async Task AddMessagesAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
+    public override async ValueTask InvokedAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        if (messages is null)
+        Throw.IfNull(context);
+
+        if (context.InvokeException is not null)
         {
-            throw new ArgumentNullException(nameof(messages));
+            // Do not store messages if there was an exception during invocation
+            return;
         }
 
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
@@ -361,7 +364,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
         }
 #pragma warning restore CA1513
 
-        var messageList = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        var messageList = context.RequestMessages.Concat(context.AIContextProviderMessages ?? []).Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
         {
             return;
@@ -381,7 +384,7 @@ public sealed class CosmosChatMessageStore : ChatMessageStore, IDisposable
     /// <summary>
     /// Adds multiple messages using transactional batch operations for atomicity.
     /// </summary>
-    private async Task AddMessagesInBatchAsync(IReadOnlyCollection<ChatMessage> messages, CancellationToken cancellationToken)
+    private async Task AddMessagesInBatchAsync(List<ChatMessage> messages, CancellationToken cancellationToken)
     {
         var currentTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 

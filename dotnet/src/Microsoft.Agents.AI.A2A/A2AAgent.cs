@@ -30,7 +30,6 @@ internal sealed class A2AAgent : AIAgent
     private readonly string? _id;
     private readonly string? _name;
     private readonly string? _description;
-    private readonly string? _displayName;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -40,9 +39,8 @@ internal sealed class A2AAgent : AIAgent
     /// <param name="id">The unique identifier for the agent.</param>
     /// <param name="name">The the name of the agent.</param>
     /// <param name="description">The description of the agent.</param>
-    /// <param name="displayName">The display name of the agent.</param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, string? displayName = null, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(A2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
 
@@ -50,7 +48,6 @@ internal sealed class A2AAgent : AIAgent
         this._id = id;
         this._name = name;
         this._description = description;
-        this._displayName = displayName;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -71,7 +68,7 @@ internal sealed class A2AAgent : AIAgent
         => new A2AAgentThread(serializedThread, jsonSerializerOptions);
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -134,7 +131,7 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
 
@@ -198,13 +195,10 @@ internal sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public override string Id => this._id ?? base.Id;
+    protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
     public override string? Name => this._name ?? base.Name;
-
-    /// <inheritdoc/>
-    public override string DisplayName => this._displayName ?? base.DisplayName;
 
     /// <inheritdoc/>
     public override string? Description => this._description ?? base.Description;
@@ -281,7 +275,7 @@ internal sealed class A2AAgent : AIAgent
 
     private static A2AContinuationToken? CreateContinuationToken(string taskId, TaskState state)
     {
-        if (state == TaskState.Submitted || state == TaskState.Working)
+        if (state is TaskState.Submitted or TaskState.Working)
         {
             return new A2AContinuationToken(taskId);
         }

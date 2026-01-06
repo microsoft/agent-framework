@@ -9,7 +9,7 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, ValidationError
+from pydantic import AnyUrl, BaseModel, ValidationError
 
 from agent_framework import (
     ChatMessage,
@@ -24,14 +24,14 @@ from agent_framework import (
 )
 from agent_framework._mcp import (
     MCPTool,
-    _ai_content_to_mcp_types,
-    _chat_message_to_mcp_types,
     _get_input_model_from_mcp_prompt,
     _get_input_model_from_mcp_tool,
-    _mcp_call_tool_result_to_ai_contents,
-    _mcp_prompt_message_to_chat_message,
-    _mcp_type_to_ai_content,
     _normalize_mcp_name,
+    _parse_content_from_mcp,
+    _parse_contents_from_mcp_tool_result,
+    _parse_message_from_mcp,
+    _prepare_content_for_mcp,
+    _prepare_message_for_mcp,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
@@ -60,7 +60,7 @@ def test_normalize_mcp_name():
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
-    ai_content = _mcp_prompt_message_to_chat_message(mcp_message)
+    ai_content = _parse_message_from_mcp(mcp_message)
 
     assert isinstance(ai_content, ChatMessage)
     assert ai_content.role.value == "user"
@@ -70,32 +70,37 @@ def test_mcp_prompt_message_to_ai_content():
     assert ai_content.raw_representation == mcp_message
 
 
-def test_mcp_call_tool_result_to_ai_contents():
+def test_parse_contents_from_mcp_tool_result():
     """Test conversion from MCP tool result to AI contents."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="data:image/png;base64,xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data="xyz", mimeType="image/png"),
+            types.ImageContent(type="image", data=b"abc", mimeType="image/webp"),
         ]
     )
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
-    assert len(ai_contents) == 2
+    assert len(ai_contents) == 3
     assert isinstance(ai_contents[0], TextContent)
     assert ai_contents[0].text == "Result text"
     assert isinstance(ai_contents[1], DataContent)
     assert ai_contents[1].uri == "data:image/png;base64,xyz"
     assert ai_contents[1].media_type == "image/png"
+    assert isinstance(ai_contents[2], DataContent)
+    assert ai_contents[2].uri == "data:image/webp;base64,abc"
+    assert ai_contents[2].media_type == "image/webp"
 
 
 def test_mcp_call_tool_result_with_meta_error():
     """Test conversion from MCP tool result with _meta field containing isError=True."""
     # Create a mock CallToolResult with _meta field containing error information
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Error occurred")])
-    # Simulate _meta field with isError=True
-    mcp_result._meta = {"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"}
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Error occurred")],
+        _meta={"isError": True, "errorCode": "TOOL_ERROR", "errorMessage": "Tool execution failed"},
+    )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -115,17 +120,18 @@ def test_mcp_call_tool_result_with_meta_arbitrary_data():
     MCP server chooses to provide. This test uses example metadata to verify that
     whatever is provided gets preserved in additional_properties.
     """
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Success result")])
-    # Example _meta field - different MCP servers may provide completely different structures
-    mcp_result._meta = {
-        "serverVersion": "2.1.0",
-        "executionId": "exec_abc123",
-        "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
-        "source": "example-mcp-server",
-        "customField": "arbitrary_value",
-    }
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Success result")],
+        _meta={
+            "serverVersion": "2.1.0",
+            "executionId": "exec_abc123",
+            "metrics": {"responseTime": 1.25, "memoryUsed": "64MB"},
+            "source": "example-mcp-server",
+            "customField": "arbitrary_value",
+        },
+    )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -145,10 +151,9 @@ def test_mcp_call_tool_result_with_meta_merging_existing_properties():
     """Test that _meta data merges correctly with existing additional_properties."""
     # Create content with existing additional_properties
     text_content = types.TextContent(type="text", text="Test content")
-    mcp_result = types.CallToolResult(content=[text_content])
-    mcp_result._meta = {"newField": "newValue", "isError": False}
+    mcp_result = types.CallToolResult(content=[text_content], _meta={"newField": "newValue", "isError": False})
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     content = ai_contents[0]
@@ -159,36 +164,12 @@ def test_mcp_call_tool_result_with_meta_merging_existing_properties():
     assert content.additional_properties["isError"] is False
 
 
-def test_mcp_call_tool_result_with_meta_object_attributes():
-    """Test conversion when _meta is an object with attributes rather than a dict."""
-
-    class MetaObject:
-        def __init__(self):
-            self.isError = True
-            self.requestId = "req-12345"
-            self.executionTime = 2.5
-
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Object meta test")])
-    mcp_result._meta = MetaObject()
-
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
-
-    assert len(ai_contents) == 1
-    content = ai_contents[0]
-
-    # Check that object attributes are extracted correctly
-    assert content.additional_properties is not None
-    assert content.additional_properties["isError"] is True
-    assert content.additional_properties["requestId"] == "req-12345"
-    assert content.additional_properties["executionTime"] == 2.5
-
-
 def test_mcp_call_tool_result_with_meta_none():
     """Test that missing _meta field is handled gracefully."""
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="No meta test")])
     # No _meta field set
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     assert len(ai_contents) == 1
     assert isinstance(ai_contents[0], TextContent)
@@ -200,32 +181,17 @@ def test_mcp_call_tool_result_with_meta_none():
     assert props is None or props == {}
 
 
-def test_mcp_call_tool_result_with_meta_non_dict_value():
-    """Test conversion when _meta contains a non-dict value."""
-    mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Non-dict meta test")])
-    mcp_result._meta = "simple string meta"
-
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
-
-    assert len(ai_contents) == 1
-    content = ai_contents[0]
-
-    # Non-dict _meta should be stored under '_meta' key
-    assert content.additional_properties is not None
-    assert content.additional_properties["_meta"] == "simple string meta"
-
-
 def test_mcp_call_tool_result_regression_successful_workflow():
     """Regression test to ensure existing successful workflows remain unchanged."""
     # Test the original successful workflow still works
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Success message"),
-            types.ImageContent(type="image", data="data:image/jpeg;base64,abc123", mimeType="image/jpeg"),
+            types.ImageContent(type="image", data="abc123", mimeType="image/jpeg"),
         ]
     )
 
-    ai_contents = _mcp_call_tool_result_to_ai_contents(mcp_result)
+    ai_contents = _parse_contents_from_mcp_tool_result(mcp_result)
 
     # Verify basic conversion still works correctly
     assert len(ai_contents) == 2
@@ -247,7 +213,7 @@ def test_mcp_call_tool_result_regression_successful_workflow():
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Sample text"
@@ -256,8 +222,9 @@ def test_mcp_content_types_to_ai_content_text():
 
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
-    mcp_content = types.ImageContent(type="image", data="data:image/jpeg;base64,abc", mimeType="image/jpeg")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    mcp_content = types.ImageContent(type="image", data="abc", mimeType="image/jpeg")
+    mcp_content = types.ImageContent(type="image", data=b"abc", mimeType="image/jpeg")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:image/jpeg;base64,abc"
@@ -267,8 +234,8 @@ def test_mcp_content_types_to_ai_content_image():
 
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
-    mcp_content = types.AudioContent(type="audio", data="data:audio/wav;base64,def", mimeType="audio/wav")
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    mcp_content = types.AudioContent(type="audio", data="def", mimeType="audio/wav")
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:audio/wav;base64,def"
@@ -284,7 +251,7 @@ def test_mcp_content_types_to_ai_content_resource_link():
         name="test_resource",
         mimeType="application/json",
     )
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, UriContent)
     assert ai_content.uri == "https://example.com/resource"
@@ -300,7 +267,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_text():
         text="Embedded text content",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=text_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, TextContent)
     assert ai_content.text == "Embedded text content"
@@ -316,7 +283,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=blob_resource)
-    ai_content = _mcp_type_to_ai_content(mcp_content)
+    ai_content = _parse_content_from_mcp(mcp_content)[0]
 
     assert isinstance(ai_content, DataContent)
     assert ai_content.uri == "data:application/octet-stream;base64,dGVzdCBkYXRh"
@@ -327,7 +294,7 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
 def test_ai_content_to_mcp_content_types_text():
     """Test conversion of AI text content to MCP content."""
     ai_content = TextContent(text="Sample text")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.TextContent)
     assert mcp_content.type == "text"
@@ -337,7 +304,7 @@ def test_ai_content_to_mcp_content_types_text():
 def test_ai_content_to_mcp_content_types_data_image():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:image/png;base64,xyz", media_type="image/png")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ImageContent)
     assert mcp_content.type == "image"
@@ -348,7 +315,7 @@ def test_ai_content_to_mcp_content_types_data_image():
 def test_ai_content_to_mcp_content_types_data_audio():
     """Test conversion of AI data content to MCP content."""
     ai_content = DataContent(uri="data:audio/mpeg;base64,xyz", media_type="audio/mpeg")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.AudioContent)
     assert mcp_content.type == "audio"
@@ -362,7 +329,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
         uri="data:application/octet-stream;base64,xyz",
         media_type="application/octet-stream",
     )
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.EmbeddedResource)
     assert mcp_content.type == "resource"
@@ -373,7 +340,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
 def test_ai_content_to_mcp_content_types_uri():
     """Test conversion of AI URI content to MCP content."""
     ai_content = UriContent(uri="https://example.com/resource", media_type="application/json")
-    mcp_content = _ai_content_to_mcp_types(ai_content)
+    mcp_content = _prepare_content_for_mcp(ai_content)
 
     assert isinstance(mcp_content, types.ResourceLink)
     assert mcp_content.type == "resource_link"
@@ -381,7 +348,7 @@ def test_ai_content_to_mcp_content_types_uri():
     assert mcp_content.mimeType == "application/json"
 
 
-def test_chat_message_to_mcp_types():
+def test_prepare_message_for_mcp():
     message = ChatMessage(
         role="user",
         contents=[
@@ -389,128 +356,366 @@ def test_chat_message_to_mcp_types():
             DataContent(uri="data:image/png;base64,xyz", media_type="image/png"),
         ],
     )
-    mcp_contents = _chat_message_to_mcp_types(message)
+    mcp_contents = _prepare_message_for_mcp(message)
     assert len(mcp_contents) == 2
     assert isinstance(mcp_contents[0], types.TextContent)
     assert isinstance(mcp_contents[1], types.ImageContent)
 
 
-def test_get_input_model_from_mcp_tool():
-    """Test creation of input model from MCP tool."""
-    tool = types.Tool(
-        name="test_tool",
-        description="A test tool",
-        inputSchema={
-            "type": "object",
-            "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
-            "required": ["param1"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
-
-    # Create an instance to verify the model works
-    instance = model(param1="test", param2=42)
-    assert instance.param1 == "test"
-    assert instance.param2 == 42
-
-    # Test validation
-    with pytest.raises(ValidationError):  # Missing required param1
-        model(param2=42)
-
-
-def test_get_input_model_from_mcp_tool_with_nested_object():
-    """Test creation of input model from MCP tool with nested object property."""
-    tool = types.Tool(
-        name="get_customer_detail",
-        description="Get customer details",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "params": {
-                    "type": "object",
-                    "properties": {"customer_id": {"type": "integer"}},
-                    "required": ["customer_id"],
+@pytest.mark.parametrize(
+    "test_id,input_schema,valid_data,expected_values,invalid_data,validation_check",
+    [
+        # Basic types with required/optional fields
+        (
+            "basic_types",
+            {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}, "param2": {"type": "number"}},
+                "required": ["param1"],
+            },
+            {"param1": "test", "param2": 42},
+            {"param1": "test", "param2": 42},
+            {"param2": 42},  # Missing required param1
+            None,
+        ),
+        # Nested object
+        (
+            "nested_object",
+            {
+                "type": "object",
+                "properties": {
+                    "params": {
+                        "type": "object",
+                        "properties": {"customer_id": {"type": "integer"}},
+                        "required": ["customer_id"],
+                    }
+                },
+                "required": ["params"],
+            },
+            {"params": {"customer_id": 251}},
+            {"params.customer_id": 251},
+            {"params": {}},  # Missing required customer_id
+            lambda instance: isinstance(instance.params, BaseModel),
+        ),
+        # $ref resolution
+        (
+            "ref_schema",
+            {
+                "type": "object",
+                "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+                "required": ["params"],
+                "$defs": {
+                    "CustomerIdParam": {
+                        "type": "object",
+                        "properties": {"customer_id": {"type": "integer"}},
+                        "required": ["customer_id"],
+                    }
+                },
+            },
+            {"params": {"customer_id": 251}},
+            {"params.customer_id": 251},
+            {"params": {}},  # Missing required customer_id
+            lambda instance: isinstance(instance.params, BaseModel),
+        ),
+        # Array of strings (typed)
+        (
+            "array_of_strings",
+            {
+                "type": "object",
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "description": "List of tags",
+                        "items": {"type": "string"},
+                    }
+                },
+                "required": ["tags"],
+            },
+            {"tags": ["tag1", "tag2", "tag3"]},
+            {"tags": ["tag1", "tag2", "tag3"]},
+            None,  # No validation error test for this case
+            None,
+        ),
+        # Array of integers (typed)
+        (
+            "array_of_integers",
+            {
+                "type": "object",
+                "properties": {
+                    "numbers": {
+                        "type": "array",
+                        "description": "List of integers",
+                        "items": {"type": "integer"},
+                    }
+                },
+                "required": ["numbers"],
+            },
+            {"numbers": [1, 2, 3]},
+            {"numbers": [1, 2, 3]},
+            None,
+            None,
+        ),
+        # Array of objects (complex nested)
+        (
+            "array_of_objects",
+            {
+                "type": "object",
+                "properties": {
+                    "users": {
+                        "type": "array",
+                        "description": "List of users",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "integer", "description": "User ID"},
+                                "name": {"type": "string", "description": "User name"},
+                            },
+                            "required": ["id", "name"],
+                        },
+                    }
+                },
+                "required": ["users"],
+            },
+            {"users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]},
+            {"users[0].id": 1, "users[0].name": "Alice", "users[1].id": 2, "users[1].name": "Bob"},
+            {"users": [{"id": 1}]},  # Missing required 'name'
+            lambda instance: all(isinstance(user, BaseModel) for user in instance.users),
+        ),
+        # Deeply nested objects (3+ levels)
+        (
+            "deeply_nested",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "object",
+                        "properties": {
+                            "filters": {
+                                "type": "object",
+                                "properties": {
+                                    "date_range": {
+                                        "type": "object",
+                                        "properties": {
+                                            "start": {"type": "string"},
+                                            "end": {"type": "string"},
+                                        },
+                                        "required": ["start", "end"],
+                                    },
+                                    "categories": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["date_range"],
+                            }
+                        },
+                        "required": ["filters"],
+                    }
+                },
+                "required": ["query"],
+            },
+            {
+                "query": {
+                    "filters": {
+                        "date_range": {"start": "2024-01-01", "end": "2024-12-31"},
+                        "categories": ["tech", "science"],
+                    }
                 }
             },
-            "required": ["params"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
+            {
+                "query.filters.date_range.start": "2024-01-01",
+                "query.filters.date_range.end": "2024-12-31",
+                "query.filters.categories": ["tech", "science"],
+            },
+            {"query": {"filters": {"date_range": {}}}},  # Missing required start and end
+            None,
+        ),
+        # Complex $ref with nested structure
+        (
+            "ref_nested_structure",
+            {
+                "type": "object",
+                "properties": {"order": {"$ref": "#/$defs/OrderParams"}},
+                "required": ["order"],
+                "$defs": {
+                    "OrderParams": {
+                        "type": "object",
+                        "properties": {
+                            "customer": {"$ref": "#/$defs/Customer"},
+                            "items": {"type": "array", "items": {"$ref": "#/$defs/OrderItem"}},
+                        },
+                        "required": ["customer", "items"],
+                    },
+                    "Customer": {
+                        "type": "object",
+                        "properties": {"id": {"type": "integer"}, "email": {"type": "string"}},
+                        "required": ["id", "email"],
+                    },
+                    "OrderItem": {
+                        "type": "object",
+                        "properties": {"product_id": {"type": "string"}, "quantity": {"type": "integer"}},
+                        "required": ["product_id", "quantity"],
+                    },
+                },
+            },
+            {
+                "order": {
+                    "customer": {"id": 123, "email": "test@example.com"},
+                    "items": [{"product_id": "prod1", "quantity": 2}],
+                }
+            },
+            {
+                "order.customer.id": 123,
+                "order.customer.email": "test@example.com",
+                "order.items[0].product_id": "prod1",
+                "order.items[0].quantity": 2,
+            },
+            {"order": {"customer": {"id": 123}, "items": []}},  # Missing email
+            lambda instance: isinstance(instance.order.customer, BaseModel),
+        ),
+        # Mixed types (primitives, arrays, nested objects)
+        (
+            "mixed_types",
+            {
+                "type": "object",
+                "properties": {
+                    "simple_string": {"type": "string"},
+                    "simple_number": {"type": "integer"},
+                    "string_array": {"type": "array", "items": {"type": "string"}},
+                    "nested_config": {
+                        "type": "object",
+                        "properties": {
+                            "enabled": {"type": "boolean"},
+                            "options": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["enabled"],
+                    },
+                },
+                "required": ["simple_string", "nested_config"],
+            },
+            {
+                "simple_string": "test",
+                "simple_number": 42,
+                "string_array": ["a", "b"],
+                "nested_config": {"enabled": True, "options": ["opt1", "opt2"]},
+            },
+            {
+                "simple_string": "test",
+                "simple_number": 42,
+                "string_array": ["a", "b"],
+                "nested_config.enabled": True,
+                "nested_config.options": ["opt1", "opt2"],
+            },
+            None,
+            None,
+        ),
+        # Empty schema (no properties)
+        (
+            "empty_schema",
+            {"type": "object", "properties": {}},
+            {},
+            {},
+            None,
+            None,
+        ),
+        # All primitive types
+        (
+            "all_primitives",
+            {
+                "type": "object",
+                "properties": {
+                    "string_field": {"type": "string"},
+                    "integer_field": {"type": "integer"},
+                    "number_field": {"type": "number"},
+                    "boolean_field": {"type": "boolean"},
+                },
+            },
+            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+            {"string_field": "test", "integer_field": 42, "number_field": 3.14, "boolean_field": True},
+            None,
+            None,
+        ),
+        # Edge case: unresolvable $ref (fallback to dict)
+        (
+            "unresolvable_ref",
+            {
+                "type": "object",
+                "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
+                "$defs": {},
+            },
+            {"data": {"key": "value"}},
+            {"data": {"key": "value"}},
+            None,
+            None,
+        ),
+        # Edge case: array without items schema (fallback to bare list)
+        (
+            "array_no_items",
+            {
+                "type": "object",
+                "properties": {"items": {"type": "array"}},
+            },
+            {"items": [1, "two", 3.0]},
+            {"items": [1, "two", 3.0]},
+            None,
+            None,
+        ),
+        # Edge case: object without properties (fallback to dict)
+        (
+            "object_no_properties",
+            {
+                "type": "object",
+                "properties": {"config": {"type": "object"}},
+            },
+            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+            {"config": {"arbitrary": "data", "nested": {"key": "value"}}},
+            None,
+            None,
+        ),
+    ],
+)
+def test_get_input_model_from_mcp_tool_parametrized(
+    test_id, input_schema, valid_data, expected_values, invalid_data, validation_check
+):
+    """Parametrized test for JSON schema to Pydantic model conversion.
 
-    # Create an instance to verify the model works with nested objects
-    instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+    This test covers various edge cases including:
+    - Basic types with required/optional fields
+    - Nested objects
+    - $ref resolution
+    - Typed arrays (strings, integers, objects)
+    - Deeply nested structures
+    - Complex $ref with nested structures
+    - Mixed types
 
-    # Verify model_dump produces the correct nested structure
-    dumped = instance.model_dump()
-    assert dumped == {"params": {"customer_id": 251}}
-
-
-def test_get_input_model_from_mcp_tool_with_ref_schema():
-    """Test creation of input model from MCP tool with $ref schema.
-
-    This simulates a FastMCP tool that uses Pydantic models with $ref in the schema.
-    The schema should be resolved and nested objects should be preserved.
+    To add a new test case, add a tuple to the parametrize decorator with:
+    - test_id: A descriptive name for the test case
+    - input_schema: The JSON schema (inputSchema dict)
+    - valid_data: Valid data to instantiate the model
+    - expected_values: Dict of expected values (supports dot notation for nested access)
+    - invalid_data: Invalid data to test validation errors (None to skip)
+    - validation_check: Optional callable to perform additional validation checks
     """
-    # This is similar to what FastMCP generates when you have:
-    # async def get_customer_detail(params: CustomerIdParam) -> CustomerDetail
-    tool = types.Tool(
-        name="get_customer_detail",
-        description="Get customer details",
-        inputSchema={
-            "type": "object",
-            "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
-            "required": ["params"],
-            "$defs": {
-                "CustomerIdParam": {
-                    "type": "object",
-                    "properties": {"customer_id": {"type": "integer"}},
-                    "required": ["customer_id"],
-                }
-            },
-        },
-    )
+    tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
     model = _get_input_model_from_mcp_tool(tool)
 
-    # Create an instance to verify the model works with $ref schemas
-    instance = model(params={"customer_id": 251})
-    assert instance.params == {"customer_id": 251}
-    assert isinstance(instance.params, dict)
+    # Test valid data
+    instance = model(**valid_data)
 
-    # Verify model_dump produces the correct nested structure
-    dumped = instance.model_dump()
-    assert dumped == {"params": {"customer_id": 251}}
+    # Check expected values
+    for field_path, expected_value in expected_values.items():
+        # Support dot notation and array indexing for nested access
+        current = instance
+        parts = field_path.replace("]", "").replace("[", ".").split(".")
+        for part in parts:
+            current = current[int(part)] if part.isdigit() else getattr(current, part)
+        assert current == expected_value, f"Field {field_path} = {current}, expected {expected_value}"
 
+    # Run additional validation checks if provided
+    if validation_check:
+        assert validation_check(instance), f"Validation check failed for {test_id}"
 
-def test_get_input_model_from_mcp_tool_with_simple_array():
-    """Test array with simple items schema (items schema should be preserved in json_schema_extra)."""
-    tool = types.Tool(
-        name="simple_array_tool",
-        description="Tool with simple array",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "tags": {
-                    "type": "array",
-                    "description": "List of tags",
-                    "items": {"type": "string"},  # Simple string array
-                }
-            },
-            "required": ["tags"],
-        },
-    )
-    model = _get_input_model_from_mcp_tool(tool)
-
-    # Create an instance
-    instance = model(tags=["tag1", "tag2", "tag3"])
-    assert instance.tags == ["tag1", "tag2", "tag3"]
-
-    # Verify JSON schema still preserves items for simple types
-    json_schema = model.model_json_schema()
-    tags_property = json_schema["properties"]["tags"]
-    assert "items" in tags_property
-    assert tags_property["items"]["type"] == "string"
+    # Test invalid data if provided
+    if invalid_data is not None:
+        with pytest.raises(ValidationError):
+            model(**invalid_data)
 
 
 def test_get_input_model_from_mcp_prompt():
@@ -650,9 +855,9 @@ async def test_mcp_tool_call_tool_with_meta_integration():
 
             # Create a CallToolResult with _meta field
             tool_result = types.CallToolResult(
-                content=[types.TextContent(type="text", text="Tool executed with metadata")]
+                content=[types.TextContent(type="text", text="Tool executed with metadata")],
+                _meta={"executionTime": 1.5, "cost": {"usd": 0.002}, "isError": False, "toolVersion": "1.2.3"},
             )
-            tool_result._meta = {"executionTime": 1.5, "cost": {"usd": 0.002}, "isError": False, "toolVersion": "1.2.3"}
 
             self.session.call_tool = AsyncMock(return_value=tool_result)
 

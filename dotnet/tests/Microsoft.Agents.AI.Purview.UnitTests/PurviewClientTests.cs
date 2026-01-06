@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -50,10 +49,10 @@ public sealed class PurviewClientTests : IDisposable
         {
             Id = "test-id-123",
             ProtectionScopeState = ProtectionScopeState.NotModified,
-            PolicyActions = new List<DlpActionInfo>
-            {
+            PolicyActions =
+            [
                 new() { Action = DlpAction.NotifyUser }
-            }
+            ]
         };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
@@ -228,8 +227,8 @@ public sealed class PurviewClientTests : IDisposable
 
         var expectedResponse = new ProtectionScopesResponse
         {
-            Scopes = new List<PolicyScopeBase>
-            {
+            Scopes =
+            [
                 new()
                 {
                     Activities = ProtectionScopeActivities.UploadText,
@@ -238,7 +237,7 @@ public sealed class PurviewClientTests : IDisposable
                         new ("microsoft.graph.policyLocationApplication", "app-123")
                     ]
                 }
-            }
+            ]
         };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
@@ -264,7 +263,7 @@ public sealed class PurviewClientTests : IDisposable
     {
         // Arrange
         var request = new ProtectionScopesRequest("test-user-id", "test-tenant-id");
-        var expectedResponse = new ProtectionScopesResponse { Scopes = new List<PolicyScopeBase>() };
+        var expectedResponse = new ProtectionScopesResponse { Scopes = [] };
 
         this._handler.StatusCodeToReturn = HttpStatusCode.OK;
         this._handler.ResponseToReturn = JsonSerializer.Serialize(expectedResponse, PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesResponse)));

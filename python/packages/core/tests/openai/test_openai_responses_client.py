@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import os
+from datetime import datetime, timezone
 from typing import Annotated
 from unittest.mock import MagicMock, patch
 
@@ -367,13 +368,40 @@ async def test_response_format_parse_path() -> None:
     mock_parsed_response.output_parsed = None
     mock_parsed_response.usage = None
     mock_parsed_response.finish_reason = None
+    mock_parsed_response.conversation = None  # No conversation object
 
     with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
         response = await client.get_response(
             messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
         )
-
+        assert response.response_id == "parsed_response_123"
         assert response.conversation_id == "parsed_response_123"
+        assert response.model_id == "test-model"
+
+
+async def test_response_format_parse_path_with_conversation_id() -> None:
+    """Test get_response response_format parsing path with set conversation ID."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Mock successful parse response
+    mock_parsed_response = MagicMock()
+    mock_parsed_response.id = "parsed_response_123"
+    mock_parsed_response.text = "Parsed response"
+    mock_parsed_response.model = "test-model"
+    mock_parsed_response.created_at = 1000000000
+    mock_parsed_response.metadata = {}
+    mock_parsed_response.output_parsed = None
+    mock_parsed_response.usage = None
+    mock_parsed_response.finish_reason = None
+    mock_parsed_response.conversation = MagicMock()
+    mock_parsed_response.conversation.id = "conversation_456"
+
+    with patch.object(client.client.responses, "parse", return_value=mock_parsed_response):
+        response = await client.get_response(
+            messages=[ChatMessage(role="user", text="Test message")], response_format=OutputStruct, store=True
+        )
+        assert response.response_id == "parsed_response_123"
+        assert response.conversation_id == "conversation_456"
         assert response.model_id == "test-model"
 
 
@@ -453,7 +481,7 @@ async def test_get_streaming_response_with_all_parameters() -> None:
 
 
 def test_response_content_creation_with_annotations() -> None:
-    """Test _create_response_content with different annotation types."""
+    """Test _parse_response_from_openai with different annotation types."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with annotated text content
@@ -484,7 +512,7 @@ def test_response_content_creation_with_annotations() -> None:
     mock_response.output = [mock_message_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
         assert len(response.messages[0].contents) >= 1
         assert isinstance(response.messages[0].contents[0], TextContent)
@@ -493,7 +521,7 @@ def test_response_content_creation_with_annotations() -> None:
 
 
 def test_response_content_creation_with_refusal() -> None:
-    """Test _create_response_content with refusal content."""
+    """Test _parse_response_from_openai with refusal content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with refusal content
@@ -515,7 +543,7 @@ def test_response_content_creation_with_refusal() -> None:
 
     mock_response.output = [mock_message_item]
 
-    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert len(response.messages[0].contents) == 1
     assert isinstance(response.messages[0].contents[0], TextContent)
@@ -523,7 +551,7 @@ def test_response_content_creation_with_refusal() -> None:
 
 
 def test_response_content_creation_with_reasoning() -> None:
-    """Test _create_response_content with reasoning content."""
+    """Test _parse_response_from_openai with reasoning content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with reasoning content
@@ -545,7 +573,7 @@ def test_response_content_creation_with_reasoning() -> None:
 
     mock_response.output = [mock_reasoning_item]
 
-    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert len(response.messages[0].contents) == 2
     assert isinstance(response.messages[0].contents[0], TextReasoningContent)
@@ -553,7 +581,7 @@ def test_response_content_creation_with_reasoning() -> None:
 
 
 def test_response_content_creation_with_code_interpreter() -> None:
-    """Test _create_response_content with code interpreter outputs."""
+    """Test _parse_response_from_openai with code interpreter outputs."""
 
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -581,7 +609,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
 
     mock_response.output = [mock_code_interpreter_item]
 
-    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert len(response.messages[0].contents) == 2
     assert isinstance(response.messages[0].contents[0], TextContent)
@@ -592,7 +620,7 @@ def test_response_content_creation_with_code_interpreter() -> None:
 
 
 def test_response_content_creation_with_function_call() -> None:
-    """Test _create_response_content with function call content."""
+    """Test _parse_response_from_openai with function call content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Create a mock response with function call
@@ -613,7 +641,7 @@ def test_response_content_creation_with_function_call() -> None:
 
     mock_response.output = [mock_function_call_item]
 
-    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert len(response.messages[0].contents) == 1
     assert isinstance(response.messages[0].contents[0], FunctionCallContent)
@@ -623,7 +651,7 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.arguments == '{"location": "Seattle"}'
 
 
-def test_tools_to_response_tools_with_hosted_mcp() -> None:
+def test_prepare_tools_for_openai_with_hosted_mcp() -> None:
     """Test that HostedMCPTool is converted to the correct response tool dict."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -637,7 +665,7 @@ def test_tools_to_response_tools_with_hosted_mcp() -> None:
         additional_properties={"custom": "value"},
     )
 
-    resp_tools = client._tools_to_response_tools([tool])
+    resp_tools = client._prepare_tools_for_openai([tool])
     assert isinstance(resp_tools, list)
     assert len(resp_tools) == 1
     mcp = resp_tools[0]
@@ -653,7 +681,7 @@ def test_tools_to_response_tools_with_hosted_mcp() -> None:
     assert "require_approval" in mcp
 
 
-def test_create_response_content_with_mcp_approval_request() -> None:
+def test_parse_response_from_openai_with_mcp_approval_request() -> None:
     """Test that a non-streaming mcp_approval_request is parsed into FunctionApprovalRequestContent."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -674,7 +702,7 @@ def test_create_response_content_with_mcp_approval_request() -> None:
 
     mock_response.output = [mock_item]
 
-    response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+    response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     assert isinstance(response.messages[0].contents[0], FunctionApprovalRequestContent)
     req = response.messages[0].contents[0]
@@ -684,7 +712,52 @@ def test_create_response_content_with_mcp_approval_request() -> None:
     assert req.function_call.additional_properties["server_label"] == "My_MCP"
 
 
-def test_tools_to_response_tools_with_raw_image_generation() -> None:
+def test_responses_client_created_at_uses_utc(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that ChatResponse from responses client uses UTC timestamp.
+
+    This is a regression test for the issue where created_at was using local time
+    but labeling it as UTC (with 'Z' suffix).
+    """
+    client = OpenAIResponsesClient()
+
+    # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
+    utc_timestamp = 1733011890
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = utc_timestamp
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = "Test response"
+    mock_message_content.annotations = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+
+    mock_response.output = [mock_message_item]
+
+    with patch.object(client, "_get_metadata_from_response", return_value={}):
+        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
+
+    # Verify that created_at is correctly formatted as UTC
+    assert response.created_at is not None
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Parse the timestamp and verify it matches UTC time
+    expected_utc_time = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
+    expected_formatted = expected_utc_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert response.created_at == expected_formatted, (
+        f"Expected UTC timestamp {expected_formatted}, got {response.created_at}"
+    )
+
+
+def test_prepare_tools_for_openai_with_raw_image_generation() -> None:
     """Test that raw image_generation tool dict is handled correctly with parameter mapping."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -698,7 +771,7 @@ def test_tools_to_response_tools_with_raw_image_generation() -> None:
         "background": "transparent",
     }
 
-    resp_tools = client._tools_to_response_tools([tool])
+    resp_tools = client._prepare_tools_for_openai([tool])
     assert isinstance(resp_tools, list)
     assert len(resp_tools) == 1
 
@@ -713,7 +786,7 @@ def test_tools_to_response_tools_with_raw_image_generation() -> None:
     assert image_tool["output_compression"] == 75
 
 
-def test_tools_to_response_tools_with_raw_image_generation_openai_responses_params() -> None:
+def test_prepare_tools_for_openai_with_raw_image_generation_openai_responses_params() -> None:
     """Test raw image_generation tool with OpenAI-specific parameters."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -727,7 +800,7 @@ def test_tools_to_response_tools_with_raw_image_generation_openai_responses_para
         "partial_images": 2,  # Should be integer 0-3
     }
 
-    resp_tools = client._tools_to_response_tools([tool])
+    resp_tools = client._prepare_tools_for_openai([tool])
     assert isinstance(resp_tools, list)
     assert len(resp_tools) == 1
 
@@ -745,14 +818,14 @@ def test_tools_to_response_tools_with_raw_image_generation_openai_responses_para
     assert tool_dict["partial_images"] == 2
 
 
-def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
+def test_prepare_tools_for_openai_with_raw_image_generation_minimal() -> None:
     """Test raw image_generation tool with minimal configuration."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test with minimal parameters (just type)
     tool = {"type": "image_generation"}
 
-    resp_tools = client._tools_to_response_tools([tool])
+    resp_tools = client._prepare_tools_for_openai([tool])
     assert isinstance(resp_tools, list)
     assert len(resp_tools) == 1
 
@@ -763,7 +836,7 @@ def test_tools_to_response_tools_with_raw_image_generation_minimal() -> None:
     assert len(image_tool) == 1
 
 
-def test_create_streaming_response_content_with_mcp_approval_request() -> None:
+def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
     """Test that a streaming mcp_approval_request event is parsed into FunctionApprovalRequestContent."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
@@ -779,14 +852,14 @@ def test_create_streaming_response_content_with_mcp_approval_request() -> None:
     mock_item.server_label = "My_MCP"
     mock_event.item = mock_item
 
-    update = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)
+    update = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
     assert any(isinstance(c, FunctionApprovalRequestContent) for c in update.contents)
     fa = next(c for c in update.contents if isinstance(c, FunctionApprovalRequestContent))
     assert fa.id == "approval-stream-1"
     assert fa.function_call.name == "do_stream_action"
 
 
-@pytest.mark.parametrize("enable_otel", [False], indirect=True)
+@pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
 async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
     """End-to-end mocked test:
@@ -855,7 +928,7 @@ async def test_end_to_end_mcp_approval_flow(span_exporter) -> None:
 
 
 def test_usage_details_basic() -> None:
-    """Test _usage_details_from_openai without cached or reasoning tokens."""
+    """Test _parse_usage_from_openai without cached or reasoning tokens."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
@@ -865,7 +938,7 @@ def test_usage_details_basic() -> None:
     mock_usage.input_tokens_details = None
     mock_usage.output_tokens_details = None
 
-    details = client._usage_details_from_openai(mock_usage)  # type: ignore
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     assert details.input_token_count == 100
     assert details.output_token_count == 50
@@ -873,7 +946,7 @@ def test_usage_details_basic() -> None:
 
 
 def test_usage_details_with_cached_tokens() -> None:
-    """Test _usage_details_from_openai with cached input tokens."""
+    """Test _parse_usage_from_openai with cached input tokens."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
@@ -884,14 +957,14 @@ def test_usage_details_with_cached_tokens() -> None:
     mock_usage.input_tokens_details.cached_tokens = 25
     mock_usage.output_tokens_details = None
 
-    details = client._usage_details_from_openai(mock_usage)  # type: ignore
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     assert details.input_token_count == 200
     assert details.additional_counts["openai.cached_input_tokens"] == 25
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
-    """Test _usage_details_from_openai with reasoning tokens."""
+    """Test _parse_usage_from_openai with reasoning tokens."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
@@ -902,7 +975,7 @@ def test_usage_details_with_reasoning_tokens() -> None:
     mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = 30
 
-    details = client._usage_details_from_openai(mock_usage)  # type: ignore
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     assert details.output_token_count == 80
     assert details.additional_counts["openai.reasoning_tokens"] == 30
@@ -929,7 +1002,7 @@ def test_get_metadata_from_response() -> None:
 
 
 def test_streaming_response_basic_structure() -> None:
-    """Test that _create_streaming_response_content returns proper structure."""
+    """Test that _parse_chunk_from_openai returns proper structure."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions(store=True)
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -937,7 +1010,7 @@ def test_streaming_response_basic_structure() -> None:
     # Test with a basic mock event to ensure the method returns proper structure
     mock_event = MagicMock()
 
-    response = client._create_streaming_response_content(mock_event, chat_options, function_call_ids)  # type: ignore
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)  # type: ignore
 
     # Should get a valid ChatResponseUpdate structure
     assert isinstance(response, ChatResponseUpdate)
@@ -945,6 +1018,148 @@ def test_streaming_response_basic_structure() -> None:
     assert response.model_id == "test-model"
     assert isinstance(response.contents, list)
     assert response.raw_representation is mock_event
+
+
+def test_streaming_response_created_type() -> None:
+    """Test streaming response with created type"""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.created"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_1234"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_5678"
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id == "conv_5678"
+
+
+def test_streaming_response_in_progress_type() -> None:
+    """Test streaming response with in_progress type"""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.in_progress"
+    mock_event.response = MagicMock()
+    mock_event.response.id = "resp_1234"
+    mock_event.response.conversation = MagicMock()
+    mock_event.response.conversation.id = "conv_5678"
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id == "conv_5678"
+
+
+def test_streaming_annotation_added_with_file_path() -> None:
+    """Test streaming annotation added event with file_path type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "file_path",
+        "file_id": "file-abc123",
+        "index": 42,
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-abc123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("annotation_index") == 0
+    assert content.additional_properties.get("index") == 42
+
+
+def test_streaming_annotation_added_with_file_citation() -> None:
+    """Test streaming annotation added event with file_citation type extracts HostedFileContent."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 1
+    mock_event.annotation = {
+        "type": "file_citation",
+        "file_id": "file-xyz789",
+        "filename": "sample.txt",
+        "index": 15,
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-xyz789"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("filename") == "sample.txt"
+    assert content.additional_properties.get("index") == 15
+
+
+def test_streaming_annotation_added_with_container_file_citation() -> None:
+    """Test streaming annotation added event with container_file_citation type."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 2
+    mock_event.annotation = {
+        "type": "container_file_citation",
+        "file_id": "file-container123",
+        "container_id": "container-456",
+        "filename": "data.csv",
+        "start_index": 10,
+        "end_index": 50,
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    content = response.contents[0]
+    assert isinstance(content, HostedFileContent)
+    assert content.file_id == "file-container123"
+    assert content.additional_properties is not None
+    assert content.additional_properties.get("container_id") == "container-456"
+    assert content.additional_properties.get("filename") == "data.csv"
+    assert content.additional_properties.get("start_index") == 10
+    assert content.additional_properties.get("end_index") == 50
+
+
+def test_streaming_annotation_added_with_unknown_type() -> None:
+    """Test streaming annotation added event with unknown type is ignored."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "url": "https://example.com",
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    # url_citation should not produce HostedFileContent
+    assert len(response.contents) == 0
 
 
 def test_service_response_exception_includes_original_error_details() -> None:
@@ -987,8 +1202,8 @@ def test_get_streaming_response_with_response_format() -> None:
         asyncio.run(run_streaming())
 
 
-def test_openai_content_parser_image_content() -> None:
-    """Test _openai_content_parser with image content variations."""
+def test_prepare_content_for_openai_image_content() -> None:
+    """Test _prepare_content_for_openai with image content variations."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test image content with detail parameter and file_id
@@ -997,7 +1212,7 @@ def test_openai_content_parser_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._openai_content_parser(Role.USER, image_content_with_detail, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, image_content_with_detail, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
@@ -1005,47 +1220,47 @@ def test_openai_content_parser_image_content() -> None:
 
     # Test image content without additional properties (defaults)
     image_content_basic = UriContent(uri="https://example.com/basic.png", media_type="image/png")
-    result = client._openai_content_parser(Role.USER, image_content_basic, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, image_content_basic, {})  # type: ignore
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
     assert result["file_id"] is None
 
 
-def test_openai_content_parser_audio_content() -> None:
-    """Test _openai_content_parser with audio content variations."""
+def test_prepare_content_for_openai_audio_content() -> None:
+    """Test _prepare_content_for_openai with audio content variations."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test WAV audio content
     wav_content = UriContent(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
-    result = client._openai_content_parser(Role.USER, wav_content, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, wav_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
     mp3_content = UriContent(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
-    result = client._openai_content_parser(Role.USER, mp3_content, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, mp3_content, {})  # type: ignore
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
 
-def test_openai_content_parser_unsupported_content() -> None:
-    """Test _openai_content_parser with unsupported content types."""
+def test_prepare_content_for_openai_unsupported_content() -> None:
+    """Test _prepare_content_for_openai with unsupported content types."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test unsupported audio format
     unsupported_audio = UriContent(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
-    result = client._openai_content_parser(Role.USER, unsupported_audio, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, unsupported_audio, {})  # type: ignore
     assert result == {}
 
     # Test non-media content
     text_uri_content = UriContent(uri="https://example.com/document.txt", media_type="text/plain")
-    result = client._openai_content_parser(Role.USER, text_uri_content, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.USER, text_uri_content, {})  # type: ignore
     assert result == {}
 
 
-def test_create_streaming_response_content_code_interpreter() -> None:
-    """Test _create_streaming_response_content with code_interpreter_call."""
+def test_parse_chunk_from_openai_code_interpreter() -> None:
+    """Test _parse_chunk_from_openai with code_interpreter_call."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1061,15 +1276,15 @@ def test_create_streaming_response_content_code_interpreter() -> None:
     mock_item_image.code = None
     mock_event_image.item = mock_item_image
 
-    result = client._create_streaming_response_content(mock_event_image, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
     assert isinstance(result.contents[0], UriContent)
     assert result.contents[0].uri == "https://example.com/plot.png"
     assert result.contents[0].media_type == "image"
 
 
-def test_create_streaming_response_content_reasoning() -> None:
-    """Test _create_streaming_response_content with reasoning content."""
+def test_parse_chunk_from_openai_reasoning() -> None:
+    """Test _parse_chunk_from_openai with reasoning content."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1084,7 +1299,7 @@ def test_create_streaming_response_content_reasoning() -> None:
     mock_item_reasoning.summary = ["Problem analysis summary"]
     mock_event_reasoning.item = mock_item_reasoning
 
-    result = client._create_streaming_response_content(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
     assert len(result.contents) == 1
     assert isinstance(result.contents[0], TextReasoningContent)
     assert result.contents[0].text == "Analyzing the problem step by step..."
@@ -1092,8 +1307,8 @@ def test_create_streaming_response_content_reasoning() -> None:
         assert result.contents[0].additional_properties["summary"] == "Problem analysis summary"
 
 
-def test_openai_content_parser_text_reasoning_comprehensive() -> None:
-    """Test _openai_content_parser with TextReasoningContent all additional properties."""
+def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
+    """Test _prepare_content_for_openai with TextReasoningContent all additional properties."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Test TextReasoningContent with all additional properties
@@ -1105,7 +1320,7 @@ def test_openai_content_parser_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._openai_content_parser(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
+    result = client._prepare_content_for_openai(Role.ASSISTANT, comprehensive_reasoning, {})  # type: ignore
     assert result["type"] == "reasoning"
     assert result["summary"]["text"] == "Comprehensive reasoning summary"
     assert result["status"] == "in_progress"
@@ -1130,7 +1345,7 @@ def test_streaming_reasoning_text_delta_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
-        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1155,7 +1370,7 @@ def test_streaming_reasoning_text_done_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={"test": "data"}) as mock_metadata:
-        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1181,7 +1396,7 @@ def test_streaming_reasoning_summary_text_delta_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={}) as mock_metadata:
-        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1206,7 +1421,7 @@ def test_streaming_reasoning_summary_text_done_event() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={"custom": "meta"}) as mock_metadata:
-        response = client._create_streaming_response_content(event, chat_options, function_call_ids)  # type: ignore
+        response = client._parse_chunk_from_openai(event, chat_options, function_call_ids)  # type: ignore
 
         assert len(response.contents) == 1
         assert isinstance(response.contents[0], TextReasoningContent)
@@ -1242,8 +1457,8 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
     )
 
     with patch.object(client, "_get_metadata_from_response", return_value={"test": "metadata"}):
-        text_response = client._create_streaming_response_content(text_event, chat_options, function_call_ids)  # type: ignore
-        reasoning_response = client._create_streaming_response_content(reasoning_event, chat_options, function_call_ids)  # type: ignore
+        text_response = client._parse_chunk_from_openai(text_event, chat_options, function_call_ids)  # type: ignore
+        reasoning_response = client._parse_chunk_from_openai(reasoning_event, chat_options, function_call_ids)  # type: ignore
 
         # Both should preserve metadata
         assert text_response.additional_properties == {"test": "metadata"}
@@ -1254,7 +1469,7 @@ def test_streaming_reasoning_events_preserve_metadata() -> None:
         assert isinstance(reasoning_response.contents[0], TextReasoningContent)
 
 
-def test_create_response_content_image_generation_raw_base64():
+def test_parse_response_from_openai_image_generation_raw_base64():
     """Test image generation response parsing with raw base64 string."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -1278,7 +1493,7 @@ def test_create_response_content_image_generation_raw_base64():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     # Verify the response contains DataContent with proper URI and media_type
     assert len(response.messages[0].contents) == 1
@@ -1288,7 +1503,7 @@ def test_create_response_content_image_generation_raw_base64():
     assert content.media_type == "image/png"
 
 
-def test_create_response_content_image_generation_existing_data_uri():
+def test_parse_response_from_openai_image_generation_existing_data_uri():
     """Test image generation response parsing with existing data URI."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -1311,7 +1526,7 @@ def test_create_response_content_image_generation_existing_data_uri():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     # Verify the response contains DataContent with proper media_type parsed from URI
     assert len(response.messages[0].contents) == 1
@@ -1321,7 +1536,7 @@ def test_create_response_content_image_generation_existing_data_uri():
     assert content.media_type == "image/webp"
 
 
-def test_create_response_content_image_generation_format_detection():
+def test_parse_response_from_openai_image_generation_format_detection():
     """Test different image format detection from base64 data."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -1343,7 +1558,7 @@ def test_create_response_content_image_generation_format_detection():
     mock_response_jpeg.output = [mock_item_jpeg]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_jpeg = client._create_response_content(mock_response_jpeg, chat_options=ChatOptions())  # type: ignore
+        response_jpeg = client._parse_response_from_openai(mock_response_jpeg, chat_options=ChatOptions())  # type: ignore
     content_jpeg = response_jpeg.messages[0].contents[0]
     assert isinstance(content_jpeg, DataContent)
     assert content_jpeg.media_type == "image/jpeg"
@@ -1367,14 +1582,14 @@ def test_create_response_content_image_generation_format_detection():
     mock_response_webp.output = [mock_item_webp]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response_webp = client._create_response_content(mock_response_webp, chat_options=ChatOptions())  # type: ignore
+        response_webp = client._parse_response_from_openai(mock_response_webp, chat_options=ChatOptions())  # type: ignore
     content_webp = response_webp.messages[0].contents[0]
     assert isinstance(content_webp, DataContent)
     assert content_webp.media_type == "image/webp"
     assert "data:image/webp;base64," in content_webp.uri
 
 
-def test_create_response_content_image_generation_fallback():
+def test_parse_response_from_openai_image_generation_fallback():
     """Test image generation with invalid base64 falls back to PNG."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
@@ -1397,7 +1612,7 @@ def test_create_response_content_image_generation_fallback():
     mock_response.output = [mock_item]
 
     with patch.object(client, "_get_metadata_from_response", return_value={}):
-        response = client._create_response_content(mock_response, chat_options=ChatOptions())  # type: ignore
+        response = client._parse_response_from_openai(mock_response, chat_options=ChatOptions())  # type: ignore
 
     # Verify it falls back to PNG format for unrecognized binary data
     assert len(response.messages[0].contents) == 1
@@ -1413,21 +1628,21 @@ async def test_prepare_options_store_parameter_handling() -> None:
 
     test_conversation_id = "test-conversation-123"
     chat_options = ChatOptions(store=True, conversation_id=test_conversation_id)
-    options = await client.prepare_options(messages, chat_options)
+    options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert options["store"] is True
     assert options["previous_response_id"] == test_conversation_id
 
     chat_options = ChatOptions(store=False, conversation_id="")
-    options = await client.prepare_options(messages, chat_options)
+    options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert options["store"] is False
 
     chat_options = ChatOptions(store=None, conversation_id=None)
-    options = await client.prepare_options(messages, chat_options)
+    options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
 
     chat_options = ChatOptions()
-    options = await client.prepare_options(messages, chat_options)
+    options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
 

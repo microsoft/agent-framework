@@ -5,7 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import (
@@ -13,20 +13,26 @@ from agent_framework import (
     AgentRunResponseUpdate,
     AgentThread,
     BaseAgent,
+    BaseContent,
     ChatMessage,
+    Contents,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
     FunctionResultContent,
     Role,
+    TextContent,
     UsageDetails,
 )
 
 from ..exceptions import AgentExecutionException
+from ._agent_executor import AgentExecutor
+from ._checkpoint import CheckpointStorage
 from ._events import (
     AgentRunUpdateEvent,
     RequestInfoEvent,
     WorkflowEvent,
+    WorkflowOutputEvent,
 )
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_type_compatible
@@ -117,6 +123,8 @@ class WorkflowAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
     ) -> AgentRunResponse:
         """Get a response from the workflow agent (non-streaming).
@@ -124,11 +132,18 @@ class WorkflowAgent(BaseAgent):
         This method collects all streaming updates and merges them into a single response.
 
         Args:
-            messages: The message(s) to send to the workflow.
+            messages: The message(s) to send to the workflow. Required for new runs,
+                should be None when resuming from checkpoint.
 
         Keyword Args:
             thread: The conversation thread. If None, a new thread will be created.
-            **kwargs: Additional keyword arguments.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow
+                resumes from this checkpoint instead of starting fresh.
+            checkpoint_storage: Runtime checkpoint storage. When provided with checkpoint_id,
+                used to load and restore the checkpoint. When provided without checkpoint_id,
+                enables checkpointing for this run.
+            **kwargs: Additional keyword arguments passed through to underlying workflow
+                and ai_function tools.
 
         Returns:
             The final workflow response as an AgentRunResponse.
@@ -139,7 +154,9 @@ class WorkflowAgent(BaseAgent):
         thread = thread or self.get_new_thread()
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_stream_impl(input_messages, response_id):
+        async for update in self._run_stream_impl(
+            input_messages, response_id, thread, checkpoint_id, checkpoint_storage, **kwargs
+        ):
             response_updates.append(update)
 
         # Convert updates to final response.
@@ -155,16 +172,25 @@ class WorkflowAgent(BaseAgent):
         messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
         *,
         thread: AgentThread | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Stream response updates from the workflow agent.
 
         Args:
-            messages: The message(s) to send to the workflow.
+            messages: The message(s) to send to the workflow. Required for new runs,
+                should be None when resuming from checkpoint.
 
         Keyword Args:
             thread: The conversation thread. If None, a new thread will be created.
-            **kwargs: Additional keyword arguments.
+            checkpoint_id: ID of checkpoint to restore from. If provided, the workflow
+                resumes from this checkpoint instead of starting fresh.
+            checkpoint_storage: Runtime checkpoint storage. When provided with checkpoint_id,
+                used to load and restore the checkpoint. When provided without checkpoint_id,
+                enables checkpointing for this run.
+            **kwargs: Additional keyword arguments passed through to underlying workflow
+                and ai_function tools.
 
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
@@ -174,7 +200,9 @@ class WorkflowAgent(BaseAgent):
         response_updates: list[AgentRunResponseUpdate] = []
         response_id = str(uuid.uuid4())
 
-        async for update in self._run_stream_impl(input_messages, response_id):
+        async for update in self._run_stream_impl(
+            input_messages, response_id, thread, checkpoint_id, checkpoint_storage, **kwargs
+        ):
             response_updates.append(update)
             yield update
 
@@ -188,12 +216,21 @@ class WorkflowAgent(BaseAgent):
         self,
         input_messages: list[ChatMessage],
         response_id: str,
+        thread: AgentThread,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
     ) -> AsyncIterable[AgentRunResponseUpdate]:
         """Internal implementation of streaming execution.
 
         Args:
             input_messages: Normalized input messages to process.
             response_id: The unique response ID for this workflow execution.
+            thread: The conversation thread containing message history.
+            checkpoint_id: ID of checkpoint to restore from.
+            checkpoint_storage: Runtime checkpoint storage.
+            **kwargs: Additional keyword arguments passed through to the underlying
+                workflow and ai_function tools.
 
         Yields:
             AgentRunResponseUpdate objects representing the workflow execution progress.
@@ -217,10 +254,29 @@ class WorkflowAgent(BaseAgent):
             # and we will let the workflow to handle this -- the agent does not
             # have an opinion on this.
             event_stream = self.workflow.send_responses_streaming(function_responses)
+        elif checkpoint_id is not None:
+            # Resume from checkpoint - don't prepend thread history since workflow state
+            # is being restored from the checkpoint
+            event_stream = self.workflow.run_stream(
+                message=None,
+                checkpoint_id=checkpoint_id,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
         else:
             # Execute workflow with streaming (initial run or no function responses)
-            # Pass the new input messages directly to the workflow
-            event_stream = self.workflow.run_stream(input_messages)
+            # Build the complete conversation by prepending thread history to input messages
+            conversation_messages: list[ChatMessage] = []
+            if thread.message_store:
+                history = await thread.message_store.list_messages()
+                if history:
+                    conversation_messages.extend(history)
+            conversation_messages.extend(input_messages)
+            event_stream = self.workflow.run_stream(
+                message=conversation_messages,
+                checkpoint_storage=checkpoint_storage,
+                **kwargs,
+            )
 
         # Process events from the stream
         async for event in event_stream:
@@ -236,16 +292,61 @@ class WorkflowAgent(BaseAgent):
     ) -> AgentRunResponseUpdate | None:
         """Convert a workflow event to an AgentRunResponseUpdate.
 
-        Only AgentRunUpdateEvent and RequestInfoEvent are processed.
-        Other workflow events are ignored as they are workflow-internal and should
-        have corresponding AgentRunUpdateEvent emissions if relevant to agent consumers.
+        AgentRunUpdateEvent, RequestInfoEvent, and WorkflowOutputEvent are processed.
+        Other workflow events are ignored as they are workflow-internal.
+
+        For AgentRunUpdateEvent from AgentExecutor instances, only events from executors
+        with output_response=True are converted to agent updates. This prevents agent
+        responses from executors that were not explicitly marked to surface their output.
+        Non-AgentExecutor executors that emit AgentRunUpdateEvent directly are allowed
+        through since they explicitly chose to emit the event.
         """
         match event:
-            case AgentRunUpdateEvent(data=update):
-                # Direct pass-through of update in an agent streaming event
+            case AgentRunUpdateEvent(data=update, executor_id=executor_id):
+                # For AgentExecutor instances, only pass through if output_response=True.
+                # Non-AgentExecutor executors that emit AgentRunUpdateEvent are allowed through.
+                executor = self.workflow.executors.get(executor_id)
+                if isinstance(executor, AgentExecutor) and not executor.output_response:
+                    return None
                 if update:
-                    return cast(AgentRunResponseUpdate, update)
+                    return update
                 return None
+
+            case WorkflowOutputEvent(data=data, source_executor_id=source_executor_id):
+                # Convert workflow output to an agent response update.
+                # Handle different data types appropriately.
+
+                # Skip AgentRunResponse from AgentExecutor with output_response=True
+                # since streaming events already surfaced the content.
+                if isinstance(data, AgentRunResponse):
+                    executor = self.workflow.executors.get(source_executor_id)
+                    if isinstance(executor, AgentExecutor) and executor.output_response:
+                        return None
+
+                if isinstance(data, AgentRunResponseUpdate):
+                    return data
+                if isinstance(data, ChatMessage):
+                    return AgentRunResponseUpdate(
+                        contents=list(data.contents),
+                        role=data.role,
+                        author_name=data.author_name or source_executor_id,
+                        response_id=response_id,
+                        message_id=str(uuid.uuid4()),
+                        created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        raw_representation=data,
+                    )
+                contents = self._extract_contents(data)
+                if not contents:
+                    return None
+                return AgentRunResponseUpdate(
+                    contents=contents,
+                    role=Role.ASSISTANT,
+                    author_name=source_executor_id,
+                    response_id=response_id,
+                    message_id=str(uuid.uuid4()),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    raw_representation=data,
+                )
 
             case RequestInfoEvent(request_id=request_id):
                 # Store the pending request for later correlation
@@ -269,7 +370,7 @@ class WorkflowAgent(BaseAgent):
                     author_name=self.name,
                     response_id=response_id,
                     message_id=str(uuid.uuid4()),
-                    created_at=datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    created_at=datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 )
             case _:
                 # Ignore workflow-internal events
@@ -321,6 +422,18 @@ class WorkflowAgent(BaseAgent):
                     if bool(self.pending_requests):
                         raise AgentExecutionException("Unexpected content type while awaiting request info responses.")
         return function_responses
+
+    def _extract_contents(self, data: Any) -> list[Contents]:
+        """Recursively extract Contents from workflow output data."""
+        if isinstance(data, ChatMessage):
+            return list(data.contents)
+        if isinstance(data, list):
+            return [c for item in data for c in self._extract_contents(item)]
+        if isinstance(data, BaseContent):
+            return [cast(Contents, data)]
+        if isinstance(data, str):
+            return [TextContent(text=data)]
+        return [TextContent(text=str(data))]
 
     class _ResponseState(TypedDict):
         """State for grouping response updates by message_id."""

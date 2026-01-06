@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import json
 import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -19,10 +18,19 @@ from mcp.client.websocket import websocket_client
 from mcp.shared.context import RequestContext
 from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, create_model
 
-from ._tools import AIFunction, HostedMCPSpecificApproval
-from ._types import ChatMessage, Contents, DataContent, Role, TextContent, UriContent
+from ._tools import AIFunction, HostedMCPSpecificApproval, _build_pydantic_model_from_json_schema
+from ._types import (
+    ChatMessage,
+    Contents,
+    DataContent,
+    FunctionCallContent,
+    FunctionResultContent,
+    Role,
+    TextContent,
+    UriContent,
+)
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -55,21 +63,21 @@ __all__ = [
 ]
 
 
-def _mcp_prompt_message_to_chat_message(
+def _parse_message_from_mcp(
     mcp_type: types.PromptMessage | types.SamplingMessage,
 ) -> ChatMessage:
-    """Convert a MCP container type to a Agent Framework type."""
+    """Parse an MCP container type into an Agent Framework type."""
     return ChatMessage(
         role=Role(value=mcp_type.role),
-        contents=[_mcp_type_to_ai_content(mcp_type.content)],
+        contents=_parse_content_from_mcp(mcp_type.content),
         raw_representation=mcp_type,
     )
 
 
-def _mcp_call_tool_result_to_ai_contents(
+def _parse_contents_from_mcp_tool_result(
     mcp_type: types.CallToolResult,
 ) -> list[Contents]:
-    """Convert a MCP container type to a Agent Framework type.
+    """Parse an MCP CallToolResult into Agent Framework content types.
 
     This function extracts the complete _meta field from CallToolResult objects
     and merges all metadata into the additional_properties field of converted
@@ -87,8 +95,7 @@ def _mcp_call_tool_result_to_ai_contents(
         A list of Agent Framework content items with metadata merged into
         additional_properties.
     """
-    # Extract _meta field using getattr for compatibility
-    meta_data = getattr(mcp_type, "_meta", None)
+    meta_data = mcp_type.meta
 
     # Prepare merged metadata once if present
     merged_meta_props = None
@@ -104,59 +111,110 @@ def _mcp_call_tool_result_to_ai_contents(
     # Convert each content item and merge metadata
     result_contents = []
     for item in mcp_type.content:
-        content = _mcp_type_to_ai_content(item)
+        contents = _parse_content_from_mcp(item)
 
         if merged_meta_props:
-            existing_props = getattr(content, "additional_properties", None) or {}
-            # Merge with content-specific properties, letting content-specific props override
-            final_props = merged_meta_props.copy()
-            final_props.update(existing_props)
-            content.additional_properties = final_props
-        result_contents.append(content)
-
+            for content in contents:
+                existing_props = getattr(content, "additional_properties", None) or {}
+                # Merge with content-specific properties, letting content-specific props override
+                final_props = merged_meta_props.copy()
+                final_props.update(existing_props)
+                content.additional_properties = final_props
+        result_contents.extend(contents)
     return result_contents
 
 
-def _mcp_type_to_ai_content(
-    mcp_type: types.ImageContent | types.TextContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink,
-) -> Contents:
-    """Convert a MCP type to a Agent Framework type."""
-    match mcp_type:
-        case types.TextContent():
-            return TextContent(text=mcp_type.text, raw_representation=mcp_type)
-        case types.ImageContent() | types.AudioContent():
-            return DataContent(
-                uri=mcp_type.data,
-                media_type=mcp_type.mimeType,
-                raw_representation=mcp_type,
-            )
-        case types.ResourceLink():
-            return UriContent(
-                uri=str(mcp_type.uri),
-                media_type=mcp_type.mimeType or "application/json",
-                raw_representation=mcp_type,
-            )
-        case _:
-            match mcp_type.resource:
-                case types.TextResourceContents():
-                    return TextContent(
-                        text=mcp_type.resource.text,
+def _parse_content_from_mcp(
+    mcp_type: types.ImageContent
+    | types.TextContent
+    | types.AudioContent
+    | types.EmbeddedResource
+    | types.ResourceLink
+    | types.ToolUseContent
+    | types.ToolResultContent
+    | Sequence[
+        types.ImageContent
+        | types.TextContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+        | types.ToolResultContent
+    ],
+) -> list[Contents]:
+    """Parse an MCP type into an Agent Framework type."""
+    mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
+    return_types: list[Contents] = []
+    for mcp_type in mcp_types:
+        match mcp_type:
+            case types.TextContent():
+                return_types.append(TextContent(text=mcp_type.text, raw_representation=mcp_type))
+            case types.ImageContent() | types.AudioContent():
+                return_types.append(
+                    DataContent(
+                        data=mcp_type.data,
+                        media_type=mcp_type.mimeType,
                         raw_representation=mcp_type,
-                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
-                case types.BlobResourceContents():
-                    return DataContent(
-                        uri=mcp_type.resource.blob,
-                        media_type=mcp_type.resource.mimeType,
+                )
+            case types.ResourceLink():
+                return_types.append(
+                    UriContent(
+                        uri=str(mcp_type.uri),
+                        media_type=mcp_type.mimeType or "application/json",
                         raw_representation=mcp_type,
-                        additional_properties=(mcp_type.annotations.model_dump() if mcp_type.annotations else None),
                     )
+                )
+            case types.ToolUseContent():
+                return_types.append(
+                    FunctionCallContent(
+                        call_id=mcp_type.id,
+                        name=mcp_type.name,
+                        arguments=mcp_type.input,
+                        raw_representation=mcp_type,
+                    )
+                )
+            case types.ToolResultContent():
+                return_types.append(
+                    FunctionResultContent(
+                        call_id=mcp_type.toolUseId,
+                        result=_parse_content_from_mcp(mcp_type.content)
+                        if mcp_type.content
+                        else mcp_type.structuredContent,
+                        exception=Exception() if mcp_type.isError else None,
+                        raw_representation=mcp_type,
+                    )
+                )
+            case types.EmbeddedResource():
+                match mcp_type.resource:
+                    case types.TextResourceContents():
+                        return_types.append(
+                            TextContent(
+                                text=mcp_type.resource.text,
+                                raw_representation=mcp_type,
+                                additional_properties=(
+                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                ),
+                            )
+                        )
+                    case types.BlobResourceContents():
+                        return_types.append(
+                            DataContent(
+                                uri=mcp_type.resource.blob,
+                                media_type=mcp_type.resource.mimeType,
+                                raw_representation=mcp_type,
+                                additional_properties=(
+                                    mcp_type.annotations.model_dump() if mcp_type.annotations else None
+                                ),
+                            )
+                        )
+    return return_types
 
 
-def _ai_content_to_mcp_types(
+def _prepare_content_for_mcp(
     content: Contents,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
-    """Convert a BaseContent type to a MCP type."""
+    """Prepare an Agent Framework content type for MCP."""
     match content:
         case TextContent():
             return types.TextContent(type="text", text=content.text)
@@ -195,15 +253,15 @@ def _ai_content_to_mcp_types(
             return None
 
 
-def _chat_message_to_mcp_types(
+def _prepare_message_for_mcp(
     content: ChatMessage,
 ) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink]:
-    """Convert a ChatMessage to a list of MCP types."""
+    """Prepare a ChatMessage for MCP format."""
     messages: list[
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
     ] = []
     for item in content.contents:
-        mcp_content = _ai_content_to_mcp_types(item)
+        mcp_content = _prepare_content_for_mcp(item)
         if mcp_content:
             messages.append(mcp_content)
     return messages
@@ -215,95 +273,26 @@ def _get_input_model_from_mcp_prompt(prompt: types.Prompt) -> type[BaseModel]:
     if not prompt.arguments:
         return create_model(f"{prompt.name}_input")
 
-    field_definitions: dict[str, Any] = {}
+    # Convert prompt arguments to JSON schema format
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
     for prompt_argument in prompt.arguments:
-        # For prompts, all arguments are typically required and string type
-        # unless specified otherwise in the prompt argument
-        python_type = str  # Default type for prompt arguments
-
-        # Create field definition for create_model
+        # For prompts, all arguments are typically string type unless specified otherwise
+        properties[prompt_argument.name] = {
+            "type": "string",
+            "description": prompt_argument.description if hasattr(prompt_argument, "description") else "",
+        }
         if prompt_argument.required:
-            field_definitions[prompt_argument.name] = (python_type, ...)
-        else:
-            field_definitions[prompt_argument.name] = (python_type, None)
+            required.append(prompt_argument.name)
 
-    return create_model(f"{prompt.name}_input", **field_definitions)
+    schema = {"properties": properties, "required": required}
+    return _build_pydantic_model_from_json_schema(prompt.name, schema)
 
 
 def _get_input_model_from_mcp_tool(tool: types.Tool) -> type[BaseModel]:
     """Creates a Pydantic model from a tools parameters."""
-    properties = tool.inputSchema.get("properties", None)
-    required = tool.inputSchema.get("required", [])
-    definitions = tool.inputSchema.get("$defs", {})
-
-    # Check if 'properties' is missing or not a dictionary
-    if not properties:
-        return create_model(f"{tool.name}_input")
-
-    def resolve_type(prop_details: dict[str, Any]) -> type:
-        """Resolve JSON Schema type to Python type, handling $ref."""
-        # Handle $ref by resolving the reference
-        if "$ref" in prop_details:
-            ref = prop_details["$ref"]
-            # Extract the reference path (e.g., "#/$defs/CustomerIdParam" -> "CustomerIdParam")
-            if ref.startswith("#/$defs/"):
-                def_name = ref.split("/")[-1]
-                if def_name in definitions:
-                    # Resolve the reference and use its type
-                    resolved = definitions[def_name]
-                    return resolve_type(resolved)
-            # If we can't resolve the ref, default to dict for safety
-            return dict
-
-        # Map JSON Schema types to Python types
-        json_type = prop_details.get("type", "string")
-        match json_type:
-            case "integer":
-                return int
-            case "number":
-                return float
-            case "boolean":
-                return bool
-            case "array":
-                return list
-            case "object":
-                return dict
-            case _:
-                return str  # default
-
-    field_definitions: dict[str, Any] = {}
-    for prop_name, prop_details in properties.items():
-        prop_details = json.loads(prop_details) if isinstance(prop_details, str) else prop_details
-
-        python_type = resolve_type(prop_details)
-        description = prop_details.get("description", "")
-
-        # Build field kwargs (description, array items schema, etc.)
-        field_kwargs: dict[str, Any] = {}
-        if description:
-            field_kwargs["description"] = description
-
-        # Preserve array items schema if present
-        if prop_details.get("type") == "array" and "items" in prop_details:
-            items_schema = prop_details["items"]
-            if items_schema and items_schema != {}:
-                field_kwargs["json_schema_extra"] = {"items": items_schema}
-
-        # Create field definition for create_model
-        if prop_name in required:
-            if field_kwargs:
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, ...)
-        else:
-            default_value = prop_details.get("default", None)
-            field_kwargs["default"] = default_value
-            if field_kwargs and any(k != "default" for k in field_kwargs):
-                field_definitions[prop_name] = (python_type, Field(**field_kwargs))
-            else:
-                field_definitions[prop_name] = (python_type, default_value)
-
-    return create_model(f"{tool.name}_input", **field_definitions)
+    return _build_pydantic_model_from_json_schema(tool.name, tool.inputSchema)
 
 
 def _normalize_mcp_name(name: str) -> str:
@@ -480,7 +469,7 @@ class MCPTool:
         logger.debug("Sampling callback called with params: %s", params)
         messages: list[ChatMessage] = []
         for msg in params.messages:
-            messages.append(_mcp_prompt_message_to_chat_message(msg))
+            messages.append(_parse_message_from_mcp(msg))
         try:
             response = await self.chat_client.get_response(
                 messages,
@@ -498,7 +487,7 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = _chat_message_to_mcp_types(response.messages[0])
+        mcp_contents = _prepare_message_for_mcp(response.messages[0])
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
@@ -696,8 +685,16 @@ class MCPTool:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
+        # Filter out framework kwargs that cannot be serialized by the MCP SDK.
+        # These are internal objects passed through the function invocation pipeline
+        # that should not be forwarded to external MCP servers.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if k not in {"chat_options", "tools", "tool_choice", "thread"}
+        }
         try:
-            return _mcp_call_tool_result_to_ai_contents(await self.session.call_tool(tool_name, arguments=kwargs))
+            return _parse_contents_from_mcp_tool_result(
+                await self.session.call_tool(tool_name, arguments=filtered_kwargs)
+            )
         except McpError as mcp_exc:
             raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:
@@ -727,7 +724,7 @@ class MCPTool:
             )
         try:
             prompt_result = await self.session.get_prompt(prompt_name, arguments=kwargs)
-            return [_mcp_prompt_message_to_chat_message(message) for message in prompt_result.messages]
+            return [_parse_message_from_mcp(message) for message in prompt_result.messages]
         except McpError as mcp_exc:
             raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
         except Exception as ex:

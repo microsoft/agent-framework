@@ -101,7 +101,7 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
     Raises:
         ContentError if parsing fails
     """
-    content_type = str(content_data.get("type"))
+    content_type: str | None = content_data.get("type", None)
     match content_type:
         case "text":
             return TextContent.from_dict(content_data)
@@ -127,6 +127,8 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
             return FunctionApprovalResponseContent.from_dict(content_data)
         case "text_reasoning":
             return TextReasoningContent.from_dict(content_data)
+        case None:
+            raise ContentError("Content type is missing")
         case _:
             raise ContentError(f"Unknown content type '{content_type}'")
 
@@ -789,8 +791,9 @@ class TextReasoningContent(BaseContent):
 
     def __init__(
         self,
-        text: str,
+        text: str | None,
         *,
+        protected_data: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
@@ -802,6 +805,16 @@ class TextReasoningContent(BaseContent):
             text: The text content represented by this instance.
 
         Keyword Args:
+            protected_data: This property is used to store data from a provider that should be roundtripped back to the
+                provider but that is not intended for human consumption. It is often encrypted or otherwise redacted
+                information that is only intended to be sent back to the provider and not displayed to the user. It's
+                possible for a TextReasoningContent to contain only `protected_data` and have an empty `text` property.
+                This data also may be associated with the corresponding `text`, acting as a validation signature for it.
+
+                Note that whereas `text` can be provider agnostic, `protected_data` is provider-specific, and is likely
+                to only be understood by the provider that created it. The data is often represented as a more complex
+                object, so it should be serialized to a string before storing so that the whole object is easily
+                serializable without loss.
             additional_properties: Optional additional properties associated with the content.
             raw_representation: Optional raw representation of the content.
             annotations: Optional annotations associated with the content.
@@ -814,6 +827,7 @@ class TextReasoningContent(BaseContent):
             **kwargs,
         )
         self.text = text
+        self.protected_data = protected_data
         self.type: Literal["text_reasoning"] = "text_reasoning"
 
     def __add__(self, other: "TextReasoningContent") -> "TextReasoningContent":
@@ -846,13 +860,18 @@ class TextReasoningContent(BaseContent):
         else:
             annotations = self.annotations + other.annotations
 
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        protected_data = other.protected_data or self.protected_data
+
         # Create new instance using from_dict for proper deserialization
         result_dict = {
-            "text": self.text + other.text,
+            "text": (self.text or "") + (other.text or "") if self.text is not None or other.text is not None else None,
             "type": "text_reasoning",
             "annotations": [ann.to_dict(exclude_none=False) for ann in annotations] if annotations else None,
             "additional_properties": {**(self.additional_properties or {}), **(other.additional_properties or {})},
             "raw_representation": raw_representation,
+            "protected_data": protected_data,
         }
         return TextReasoningContent.from_dict(result_dict)
 
@@ -869,7 +888,9 @@ class TextReasoningContent(BaseContent):
             raise TypeError("Incompatible type")
 
         # Concatenate text
-        self.text += other.text
+        if self.text is not None or other.text is not None:
+            self.text = (self.text or "") + (other.text or "")
+        # if both are None, should keep as None
 
         # Merge additional properties (self takes precedence)
         if self.additional_properties is None:
@@ -887,6 +908,11 @@ class TextReasoningContent(BaseContent):
             self.raw_representation = (
                 self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
             ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
+
+        # Replace protected data.
+        # Discussion: https://github.com/microsoft/agent-framework/pull/2950#discussion_r2634345613
+        if other.protected_data is not None:
+            self.protected_data = other.protected_data
 
         # Merge annotations
         if other.annotations:
@@ -924,6 +950,10 @@ class DataContent(BaseContent):
             # Create from binary data
             image_data = b"raw image bytes"
             data_content = DataContent(data=image_data, media_type="image/png")
+
+            # Create from base64-encoded string
+            base64_string = "iVBORw0KGgoAAAANS..."
+            data_content = DataContent(data=base64_string, media_type="image/png")
 
             # Create from data URI
             data_uri = "data:image/png;base64,iVBORw0KGgoAAAANS..."
@@ -986,11 +1016,38 @@ class DataContent(BaseContent):
             **kwargs: Any additional keyword arguments.
         """
 
+    @overload
+    def __init__(
+        self,
+        *,
+        data: str,
+        media_type: str,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a DataContent instance with base64-encoded string data.
+
+        Important:
+            This is for binary data that is represented as a data URI, not for online resources.
+            Use ``UriContent`` for online resources.
+
+        Keyword Args:
+            data: The base64-encoded string data represented by this instance.
+                The data is used directly to construct a data URI.
+            media_type: The media type of the data.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+
     def __init__(
         self,
         *,
         uri: str | None = None,
-        data: bytes | None = None,
+        data: bytes | str | None = None,
         media_type: str | None = None,
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -1006,8 +1063,9 @@ class DataContent(BaseContent):
         Keyword Args:
             uri: The URI of the data represented by this instance.
                 Should be in the form: "data:{media_type};base64,{base64_data}".
-            data: The binary data represented by this instance.
-                The data is transformed into a base64-encoded data URI.
+            data: The binary data or base64-encoded string represented by this instance.
+                If bytes, the data is transformed into a base64-encoded data URI.
+                If str, it is assumed to be already base64-encoded and used directly.
             media_type: The media type of the data.
             annotations: Optional annotations associated with the content.
             additional_properties: Optional additional properties associated with the content.
@@ -1017,7 +1075,9 @@ class DataContent(BaseContent):
         if uri is None:
             if data is None or media_type is None:
                 raise ValueError("Either 'data' and 'media_type' or 'uri' must be provided.")
-            uri = f"data:{media_type};base64,{base64.b64encode(data).decode('utf-8')}"
+
+            base64_data: str = base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+            uri = f"data:{media_type};base64,{base64_data}"
 
         # Validate URI format and extract media type if not provided
         validated_uri = self._validate_uri(uri)
@@ -1805,6 +1865,8 @@ def _prepare_function_call_results_as_dumpable(content: Contents | Any | list[Co
         return [_prepare_function_call_results_as_dumpable(item) for item in content]
     if isinstance(content, dict):
         return {k: _prepare_function_call_results_as_dumpable(v) for k, v in content.items()}
+    if isinstance(content, BaseModel):
+        return content.model_dump()
     if hasattr(content, "to_dict"):
         return content.to_dict(exclude={"raw_representation", "additional_properties"})
     return content
@@ -1814,13 +1876,14 @@ def prepare_function_call_results(content: Contents | Any | list[Contents | Any]
     """Prepare the values of the function call results."""
     if isinstance(content, Contents):
         # For BaseContent objects, use to_dict and serialize to JSON
-        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}))
+        # Use default=str to handle datetime and other non-JSON-serializable objects
+        return json.dumps(content.to_dict(exclude={"raw_representation", "additional_properties"}), default=str)
 
     dumpable = _prepare_function_call_results_as_dumpable(content)
     if isinstance(dumpable, str):
         return dumpable
-    # fallback
-    return json.dumps(dumpable)
+    # fallback - use default=str to handle datetime and other non-JSON-serializable objects
+    return json.dumps(dumpable, default=str)
 
 
 # region Chat Response constants
@@ -2123,20 +2186,31 @@ class ChatMessage(SerializationMixin):
         return " ".join(content.text for content in self.contents if isinstance(content, TextContent))
 
 
-def prepare_messages(messages: str | ChatMessage | list[str] | list[ChatMessage]) -> list[ChatMessage]:
+def prepare_messages(
+    messages: str | ChatMessage | list[str] | list[ChatMessage], system_instructions: str | list[str] | None = None
+) -> list[ChatMessage]:
     """Convert various message input formats into a list of ChatMessage objects.
 
     Args:
         messages: The input messages in various supported formats.
+        system_instructions: The system instructions. They will be inserted to the start of the messages list.
 
     Returns:
         A list of ChatMessage objects.
     """
+    if system_instructions is not None:
+        if isinstance(system_instructions, str):
+            system_instructions = [system_instructions]
+        system_instruction_messages = [ChatMessage(role="system", text=instr) for instr in system_instructions]
+    else:
+        system_instruction_messages = []
+
     if isinstance(messages, str):
-        return [ChatMessage(role="user", text=messages)]
+        return [*system_instruction_messages, ChatMessage(role="user", text=messages)]
     if isinstance(messages, ChatMessage):
-        return [messages]
-    return_messages: list[ChatMessage] = []
+        return [*system_instruction_messages, messages]
+
+    return_messages: list[ChatMessage] = system_instruction_messages
     for msg in messages:
         if isinstance(msg, str):
             msg = ChatMessage(role="user", text=msg)
@@ -2176,27 +2250,30 @@ def _process_update(
     if update.message_id:
         message.message_id = update.message_id
     for content in update.contents:
-        if (
-            isinstance(content, FunctionCallContent)
-            and len(message.contents) > 0
-            and isinstance(message.contents[-1], FunctionCallContent)
-        ):
+        # Fast path: get type attribute (most content will have it)
+        content_type = getattr(content, "type", None)
+        # Slow path: only check for dict if type is None
+        if content_type is None and isinstance(content, (dict, MutableMapping)):
             try:
-                message.contents[-1] += content
-            except AdditionItemMismatch:
-                message.contents.append(content)
-        elif isinstance(content, UsageContent):
-            if response.usage_details is None:
-                response.usage_details = UsageDetails()
-            response.usage_details += content.details
-        elif isinstance(content, (dict, MutableMapping)):
-            try:
-                cont = _parse_content(content)
-                message.contents.append(cont)
+                content = _parse_content(content)
+                content_type = content.type
             except ContentError as exc:
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
-        else:
-            message.contents.append(content)
+                continue
+        match content_type:
+            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
+            case "function_call" if message.contents and message.contents[-1].type == "function_call":
+                try:
+                    message.contents[-1] += content  # type: ignore[operator]
+                except AdditionItemMismatch:
+                    message.contents.append(content)
+            case "usage":
+                if response.usage_details is None:
+                    response.usage_details = UsageDetails()
+                # mypy doesn't narrow type based on match/case, but we know this is UsageContent
+                response.usage_details += content.details  # type: ignore[union-attr, arg-type]
+            case _:
+                message.contents.append(content)
     # Incorporate the update's properties into the response.
     if update.response_id:
         response.response_id = update.response_id

@@ -124,7 +124,7 @@ public abstract class AIContextProvider
     /// that will be used. Context providers can use this information to determine what additional context
     /// should be provided for the invocation.
     /// </remarks>
-    public class InvokingContext
+    public sealed class InvokingContext
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokingContext"/> class with the specified request messages.
@@ -153,7 +153,7 @@ public abstract class AIContextProvider
     /// request messages that were used and the response messages that were generated. It also indicates
     /// whether the invocation succeeded or failed.
     /// </remarks>
-    public class InvokedContext
+    public sealed class InvokedContext
     {
         /// <summary>
         /// Initializes a new instance of the <see cref="InvokedContext"/> class with the specified request messages.

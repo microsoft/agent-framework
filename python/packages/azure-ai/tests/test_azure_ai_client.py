@@ -84,6 +84,7 @@ def create_test_azure_ai_client(
     client.credential = None
     client.agent_name = agent_name
     client.agent_version = agent_version
+    client.agent_description = None
     client.use_latest_version = use_latest_version
     client.model_id = azure_ai_settings.model_deployment_name
     client.conversation_id = conversation_id
@@ -151,7 +152,7 @@ def test_azure_ai_client_init_auto_create_client(
         client = AzureAIClient(
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
             model_deployment_name=azure_ai_unit_test_env["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            async_credential=mock_azure_credential,
+            credential=mock_azure_credential,
             agent_name="test-agent",
         )
 
@@ -170,11 +171,11 @@ def test_azure_ai_client_init_missing_project_endpoint() -> None:
         mock_settings.return_value.model_deployment_name = "test-model"
 
         with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
-            AzureAIClient(async_credential=MagicMock())
+            AzureAIClient(credential=MagicMock())
 
 
 def test_azure_ai_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
-    """Test AzureAIClient.__init__ when async_credential is missing and no project_client provided."""
+    """Test AzureAIClient.__init__ when credential is missing and no project_client provided."""
     with pytest.raises(
         ServiceInitializationError, match="Azure credential is required when project_client is not provided"
     ):
@@ -190,7 +191,7 @@ def test_azure_ai_client_init_validation_error(mock_azure_credential: MagicMock)
         mock_settings.side_effect = ValidationError.from_exception_data("test", [])
 
         with pytest.raises(ServiceInitializationError, match="Failed to create Azure AI settings"):
-            AzureAIClient(async_credential=mock_azure_credential)
+            AzureAIClient(credential=mock_azure_credential)
 
 
 async def test_azure_ai_client_get_agent_reference_or_create_existing_version(
@@ -248,10 +249,10 @@ async def test_azure_ai_client_get_agent_reference_missing_model(
         await client._get_agent_reference_or_create({}, None)  # type: ignore
 
 
-async def test_azure_ai_client_prepare_input_with_system_messages(
+async def test_azure_ai_client_prepare_messages_for_azure_ai_with_system_messages(
     mock_project_client: MagicMock,
 ) -> None:
-    """Test _prepare_input converts system/developer messages to instructions."""
+    """Test _prepare_messages_for_azure_ai converts system/developer messages to instructions."""
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
@@ -260,7 +261,7 @@ async def test_azure_ai_client_prepare_input_with_system_messages(
         ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="System response")]),
     ]
 
-    result_messages, instructions = client._prepare_input(messages)  # type: ignore
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
 
     assert len(result_messages) == 2
     assert result_messages[0].role == Role.USER
@@ -268,10 +269,10 @@ async def test_azure_ai_client_prepare_input_with_system_messages(
     assert instructions == "You are a helpful assistant."
 
 
-async def test_azure_ai_client_prepare_input_no_system_messages(
+async def test_azure_ai_client_prepare_messages_for_azure_ai_no_system_messages(
     mock_project_client: MagicMock,
 ) -> None:
-    """Test _prepare_input with no system/developer messages."""
+    """Test _prepare_messages_for_azure_ai with no system/developer messages."""
     client = create_test_azure_ai_client(mock_project_client)
 
     messages = [
@@ -279,10 +280,97 @@ async def test_azure_ai_client_prepare_input_no_system_messages(
         ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hi there!")]),
     ]
 
-    result_messages, instructions = client._prepare_input(messages)  # type: ignore
+    result_messages, instructions = client._prepare_messages_for_azure_ai(messages)  # type: ignore
 
     assert len(result_messages) == 2
     assert instructions is None
+
+
+def test_azure_ai_client_transform_input_for_azure_ai(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai adds required fields for Azure AI schema.
+
+    WORKAROUND TEST: Azure AI Projects API requires 'type' at item level and
+    'annotations' in output_text content items, which OpenAI's Responses API does not require.
+    See: https://github.com/Azure/azure-sdk-for-python/issues/44493
+    See: https://github.com/microsoft/agent-framework/issues/2926
+    """
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input in OpenAI Responses API format (what agent-framework generates)
+    openai_format_input = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Hello"},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Hi there!"},
+            ],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(openai_format_input)  # type: ignore
+
+    # Verify 'type': 'message' added at item level
+    assert result[0]["type"] == "message"
+    assert result[1]["type"] == "message"
+
+    # Verify 'annotations' added ONLY to output_text (assistant) content, NOT input_text (user)
+    assert result[0]["content"][0]["type"] == "input_text"  # user content type preserved
+    assert "annotations" not in result[0]["content"][0]  # user message - no annotations
+    assert result[1]["content"][0]["type"] == "output_text"  # assistant content type preserved
+    assert result[1]["content"][0]["annotations"] == []  # assistant message - has annotations
+
+    # Verify original fields preserved
+    assert result[0]["role"] == "user"
+    assert result[0]["content"][0]["text"] == "Hello"
+    assert result[1]["role"] == "assistant"
+    assert result[1]["content"][0]["text"] == "Hi there!"
+
+
+def test_azure_ai_client_transform_input_preserves_existing_fields(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai preserves existing type and annotations."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input that already has the fields (shouldn't duplicate)
+    input_with_fields = [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": "Hello", "annotations": [{"some": "annotation"}]},
+            ],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(input_with_fields)  # type: ignore
+
+    # Should preserve existing values, not overwrite
+    assert result[0]["type"] == "message"
+    assert result[0]["content"][0]["annotations"] == [{"some": "annotation"}]
+
+
+def test_azure_ai_client_transform_input_handles_non_dict_content(mock_project_client: MagicMock) -> None:
+    """Test _transform_input_for_azure_ai handles non-dict content items."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    # Input with string content (edge case)
+    input_with_string_content = [
+        {
+            "role": "user",
+            "content": ["plain string content"],
+        },
+    ]
+
+    result = client._transform_input_for_azure_ai(input_with_string_content)  # type: ignore
+
+    # Should add 'type': 'message' at item level even with non-dict content
+    assert result[0]["type"] == "message"
+    # Non-dict content items should be preserved without modification
+    assert result[0]["content"] == ["plain string content"]
 
 
 async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicMock) -> None:
@@ -293,14 +381,14 @@ async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicM
     chat_options = ChatOptions()
 
     with (
-        patch.object(client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model"}),
+        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
         patch.object(
             client,
             "_get_agent_reference_or_create",
             return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
         ),
     ):
-        run_options = await client.prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)
 
         assert "extra_body" in run_options
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
@@ -319,7 +407,7 @@ async def test_azure_ai_client_prepare_options_with_application_endpoint(
     client = AzureAIClient(
         project_endpoint=endpoint,
         model_deployment_name="test-model",
-        async_credential=mock_azure_credential,
+        credential=mock_azure_credential,
         agent_name="test-agent",
         agent_version="1",
     )
@@ -328,14 +416,14 @@ async def test_azure_ai_client_prepare_options_with_application_endpoint(
     chat_options = ChatOptions()
 
     with (
-        patch.object(client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model"}),
+        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
         patch.object(
             client,
             "_get_agent_reference_or_create",
             return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
         ),
     ):
-        run_options = await client.prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)
 
     if expects_agent:
         assert "extra_body" in run_options
@@ -368,14 +456,14 @@ async def test_azure_ai_client_prepare_options_with_application_project_client(
     chat_options = ChatOptions()
 
     with (
-        patch.object(client.__class__.__bases__[0], "prepare_options", return_value={"model": "test-model"}),
+        patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
         patch.object(
             client,
             "_get_agent_reference_or_create",
             return_value={"name": "test-agent", "version": "1", "type": "agent_reference"},
         ),
     ):
-        run_options = await client.prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)
 
     if expects_agent:
         assert "extra_body" in run_options
@@ -385,26 +473,26 @@ async def test_azure_ai_client_prepare_options_with_application_project_client(
 
 
 async def test_azure_ai_client_initialize_client(mock_project_client: MagicMock) -> None:
-    """Test initialize_client method."""
+    """Test _initialize_client method."""
     client = create_test_azure_ai_client(mock_project_client)
 
     mock_openai_client = MagicMock()
     mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
 
-    await client.initialize_client()
+    await client._initialize_client()
 
     assert client.client is mock_openai_client
     mock_project_client.get_openai_client.assert_called_once()
 
 
-def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> None:
-    """Test _update_agent_name method."""
+def test_azure_ai_client_update_agent_name_and_description(mock_project_client: MagicMock) -> None:
+    """Test _update_agent_name_and_description method."""
     client = create_test_azure_ai_client(mock_project_client)
 
     # Test updating agent name when current is None
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name("new-agent")  # type: ignore
+        client._update_agent_name_and_description("new-agent")  # type: ignore
         mock_update.assert_called_once_with("new-agent")
 
     # Test behavior when agent name is updated
@@ -412,9 +500,9 @@ def test_azure_ai_client_update_agent_name(mock_project_client: MagicMock) -> No
     client.agent_name = "test-agent"  # Manually set for the test
 
     # Test with None input
-    with patch.object(client, "_update_agent_name") as mock_update:
+    with patch.object(client, "_update_agent_name_and_description") as mock_update:
         mock_update.return_value = None
-        client._update_agent_name(None)  # type: ignore
+        client._update_agent_name_and_description(None)  # type: ignore
         mock_update.assert_called_once_with(None)
 
 
@@ -474,6 +562,30 @@ async def test_azure_ai_client_agent_creation_with_instructions(
     # Verify agent was created with combined instructions
     call_args = mock_project_client.agents.create_version.call_args
     assert call_args[1]["definition"].instructions == "Message instructions. Option instructions. "
+
+
+async def test_azure_ai_client_agent_creation_with_additional_args(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test agent creation with additional arguments."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent")
+
+    # Mock agent creation response
+    mock_agent = MagicMock()
+    mock_agent.name = "test-agent"
+    mock_agent.version = "1.0"
+    mock_project_client.agents.create_version = AsyncMock(return_value=mock_agent)
+
+    run_options = {"model": "test-model", "temperature": 0.9, "top_p": 0.8}
+    messages_instructions = "Message instructions. "
+
+    await client._get_agent_reference_or_create(run_options, messages_instructions)  # type: ignore
+
+    # Verify agent was created with provided arguments
+    call_args = mock_project_client.agents.create_version.call_args
+    definition = call_args[1]["definition"]
+    assert definition.temperature == 0.9
+    assert definition.top_p == 0.8
 
 
 async def test_azure_ai_client_agent_creation_with_tools(
@@ -702,7 +814,7 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
     with (
         patch.object(
             client.__class__.__bases__[0],
-            "prepare_options",
+            "_prepare_options",
             return_value={"model": "test-model", "response_format": ResponseFormatModel},
         ),
         patch.object(
@@ -711,7 +823,7 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
             return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
         ),
     ):
-        run_options = await client.prepare_options(messages, chat_options)
+        run_options = await client._prepare_options(messages, chat_options)
 
         # response_format should be excluded from final run options
         assert "response_format" not in run_options
@@ -720,94 +832,8 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
         assert run_options["extra_body"]["agent"]["name"] == "test-agent"
 
 
-async def test_azure_ai_client_prepare_options_with_resp_conversation_id(
-    mock_project_client: MagicMock,
-) -> None:
-    """Test prepare_options with conversation ID starting with 'resp_'."""
-    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
-
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions(conversation_id="resp_12345")
-
-    with (
-        patch.object(
-            client.__class__.__bases__[0],
-            "prepare_options",
-            return_value={"model": "test-model", "previous_response_id": "old_value", "conversation": "old_conv"},
-        ),
-        patch.object(
-            client,
-            "_get_agent_reference_or_create",
-            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
-        ),
-    ):
-        run_options = await client.prepare_options(messages, chat_options)
-
-        # Should set previous_response_id and remove conversation property
-        assert run_options["previous_response_id"] == "resp_12345"
-        assert "conversation" not in run_options
-
-
-async def test_azure_ai_client_prepare_options_with_conv_conversation_id(
-    mock_project_client: MagicMock,
-) -> None:
-    """Test prepare_options with conversation ID starting with 'conv_'."""
-    client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
-
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions(conversation_id="conv_67890")
-
-    with (
-        patch.object(
-            client.__class__.__bases__[0],
-            "prepare_options",
-            return_value={"model": "test-model", "previous_response_id": "old_value", "conversation": "old_conv"},
-        ),
-        patch.object(
-            client,
-            "_get_agent_reference_or_create",
-            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
-        ),
-    ):
-        run_options = await client.prepare_options(messages, chat_options)
-
-        # Should set conversation and remove previous_response_id property
-        assert run_options["conversation"] == "conv_67890"
-        assert "previous_response_id" not in run_options
-
-
-async def test_azure_ai_client_prepare_options_with_client_conversation_id(
-    mock_project_client: MagicMock,
-) -> None:
-    """Test prepare_options using client's default conversation ID when chat options don't have one."""
-    client = create_test_azure_ai_client(
-        mock_project_client, agent_name="test-agent", agent_version="1.0", conversation_id="resp_client_default"
-    )
-
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions()  # No conversation_id specified
-
-    with (
-        patch.object(
-            client.__class__.__bases__[0],
-            "prepare_options",
-            return_value={"model": "test-model", "previous_response_id": "old_value", "conversation": "old_conv"},
-        ),
-        patch.object(
-            client,
-            "_get_agent_reference_or_create",
-            return_value={"name": "test-agent", "version": "1.0", "type": "agent_reference"},
-        ),
-    ):
-        run_options = await client.prepare_options(messages, chat_options)
-
-        # Should use client's default conversation_id and set previous_response_id
-        assert run_options["previous_response_id"] == "resp_client_default"
-        assert "conversation" not in run_options
-
-
 def test_get_conversation_id_with_store_true_and_conversation_id() -> None:
-    """Test get_conversation_id returns conversation ID when store is True and conversation exists."""
+    """Test _get_conversation_id returns conversation ID when store is True and conversation exists."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock OpenAI response with conversation
@@ -817,13 +843,13 @@ def test_get_conversation_id_with_store_true_and_conversation_id() -> None:
     mock_conversation.id = "conv_67890"
     mock_response.conversation = mock_conversation
 
-    result = client.get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)
 
     assert result == "conv_67890"
 
 
 def test_get_conversation_id_with_store_true_and_no_conversation() -> None:
-    """Test get_conversation_id returns response ID when store is True and no conversation exists."""
+    """Test _get_conversation_id returns response ID when store is True and no conversation exists."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock OpenAI response without conversation
@@ -831,13 +857,13 @@ def test_get_conversation_id_with_store_true_and_no_conversation() -> None:
     mock_response.id = "resp_12345"
     mock_response.conversation = None
 
-    result = client.get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)
 
     assert result == "resp_12345"
 
 
 def test_get_conversation_id_with_store_true_and_empty_conversation_id() -> None:
-    """Test get_conversation_id returns response ID when store is True and conversation ID is empty."""
+    """Test _get_conversation_id returns response ID when store is True and conversation ID is empty."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock OpenAI response with conversation but empty ID
@@ -847,13 +873,13 @@ def test_get_conversation_id_with_store_true_and_empty_conversation_id() -> None
     mock_conversation.id = ""
     mock_response.conversation = mock_conversation
 
-    result = client.get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)
 
     assert result == "resp_12345"
 
 
 def test_get_conversation_id_with_store_false() -> None:
-    """Test get_conversation_id returns None when store is False."""
+    """Test _get_conversation_id returns None when store is False."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock OpenAI response with conversation
@@ -863,13 +889,13 @@ def test_get_conversation_id_with_store_false() -> None:
     mock_conversation.id = "conv_67890"
     mock_response.conversation = mock_conversation
 
-    result = client.get_conversation_id(mock_response, store=False)
+    result = client._get_conversation_id(mock_response, store=False)
 
     assert result is None
 
 
 def test_get_conversation_id_with_parsed_response_and_store_true() -> None:
-    """Test get_conversation_id works with ParsedResponse when store is True."""
+    """Test _get_conversation_id works with ParsedResponse when store is True."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock ParsedResponse with conversation
@@ -879,13 +905,13 @@ def test_get_conversation_id_with_parsed_response_and_store_true() -> None:
     mock_conversation.id = "conv_parsed_67890"
     mock_response.conversation = mock_conversation
 
-    result = client.get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)
 
     assert result == "conv_parsed_67890"
 
 
 def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
-    """Test get_conversation_id returns response ID with ParsedResponse when no conversation exists."""
+    """Test _get_conversation_id returns response ID with ParsedResponse when no conversation exists."""
     client = create_test_azure_ai_client(MagicMock())
 
     # Mock ParsedResponse without conversation
@@ -893,7 +919,7 @@ def test_get_conversation_id_with_parsed_response_no_conversation() -> None:
     mock_response.id = "resp_parsed_12345"
     mock_response.conversation = None
 
-    result = client.get_conversation_id(mock_response, store=True)
+    result = client._get_conversation_id(mock_response, store=True)
 
     assert result == "resp_parsed_12345"
 

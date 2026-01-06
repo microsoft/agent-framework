@@ -1,26 +1,33 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import uuid
+from collections.abc import AsyncIterable
 from typing import Any
 
 import pytest
 
 from agent_framework import (
+    AgentProtocol,
     AgentRunResponse,
     AgentRunResponseUpdate,
     AgentRunUpdateEvent,
+    AgentThread,
     ChatMessage,
+    ChatMessageStore,
+    DataContent,
     Executor,
     FunctionApprovalRequestContent,
     FunctionApprovalResponseContent,
     FunctionCallContent,
     Role,
     TextContent,
+    UriContent,
     UsageContent,
     UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
+    executor,
     handler,
     response_handler,
 )
@@ -73,6 +80,31 @@ class RequestingExecutor(Executor):
             message_id=str(uuid.uuid4()),
         )
         await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=update))
+
+
+class ConversationHistoryCapturingExecutor(Executor):
+    """Executor that captures the received conversation history for verification."""
+
+    def __init__(self, id: str):
+        super().__init__(id=id)
+        self.received_messages: list[ChatMessage] = []
+
+    @handler
+    async def handle_message(self, messages: list[ChatMessage], ctx: WorkflowContext[list[ChatMessage]]) -> None:
+        # Capture all received messages
+        self.received_messages = list(messages)
+
+        # Count messages by role for the response
+        message_count = len(messages)
+        response_text = f"Received {message_count} messages"
+
+        response_message = ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text=response_text)])
+
+        streaming_update = AgentRunResponseUpdate(
+            contents=[TextContent(text=response_text)], role=Role.ASSISTANT, message_id=str(uuid.uuid4())
+        )
+        await ctx.add_event(AgentRunUpdateEvent(executor_id=self.id, data=streaming_update))
+        await ctx.send_message([response_message])
 
 
 class TestWorkflowAgent:
@@ -256,6 +288,418 @@ class TestWorkflowAgent:
         # Try to create an agent with unsupported input types
         with pytest.raises(ValueError, match="Workflow's start executor cannot handle list\\[ChatMessage\\]"):
             workflow.as_agent()
+
+    async def test_workflow_as_agent_yield_output_surfaces_as_agent_response(self) -> None:
+        """Test that ctx.yield_output() in a workflow executor surfaces as agent output when using .as_agent().
+
+        This validates the fix for issue #2813: WorkflowOutputEvent should be converted to
+        AgentRunResponseUpdate when the workflow is wrapped via .as_agent().
+        """
+
+        @executor
+        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            # Extract text from input for demonstration
+            input_text = messages[0].text if messages else "no input"
+            await ctx.yield_output(f"processed: {input_text}")
+
+        workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
+
+        # Run directly - should return WorkflowOutputEvent in result
+        direct_result = await workflow.run([ChatMessage(role=Role.USER, contents=[TextContent(text="hello")])])
+        direct_outputs = direct_result.get_outputs()
+        assert len(direct_outputs) == 1
+        assert direct_outputs[0] == "processed: hello"
+
+        # Run as agent - yield_output should surface as agent response message
+        agent = workflow.as_agent("test-agent")
+        agent_result = await agent.run("hello")
+
+        assert isinstance(agent_result, AgentRunResponse)
+        assert len(agent_result.messages) == 1
+        assert agent_result.messages[0].text == "processed: hello"
+
+    async def test_workflow_as_agent_yield_output_surfaces_in_run_stream(self) -> None:
+        """Test that ctx.yield_output() surfaces as AgentRunResponseUpdate when streaming."""
+
+        @executor
+        async def yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            await ctx.yield_output("first output")
+            await ctx.yield_output("second output")
+
+        workflow = WorkflowBuilder().set_start_executor(yielding_executor).build()
+        agent = workflow.as_agent("test-agent")
+
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("hello"):
+            updates.append(update)
+
+        # Should have received updates for both yield_output calls
+        texts = [u.text for u in updates if u.text]
+        assert "first output" in texts
+        assert "second output" in texts
+
+    async def test_workflow_as_agent_yield_output_with_content_types(self) -> None:
+        """Test that yield_output preserves different content types (TextContent, DataContent, etc.)."""
+
+        @executor
+        async def content_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            # Yield different content types
+            await ctx.yield_output(TextContent(text="text content"))
+            await ctx.yield_output(DataContent(data=b"binary data", media_type="application/octet-stream"))
+            await ctx.yield_output(UriContent(uri="https://example.com/image.png", media_type="image/png"))
+
+        workflow = WorkflowBuilder().set_start_executor(content_yielding_executor).build()
+        agent = workflow.as_agent("content-test-agent")
+
+        result = await agent.run("test")
+
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 3
+
+        # Verify each content type is preserved
+        assert isinstance(result.messages[0].contents[0], TextContent)
+        assert result.messages[0].contents[0].text == "text content"
+
+        assert isinstance(result.messages[1].contents[0], DataContent)
+        assert result.messages[1].contents[0].media_type == "application/octet-stream"
+
+        assert isinstance(result.messages[2].contents[0], UriContent)
+        assert result.messages[2].contents[0].uri == "https://example.com/image.png"
+
+    async def test_workflow_as_agent_yield_output_with_chat_message(self) -> None:
+        """Test that yield_output with ChatMessage preserves the message structure."""
+
+        @executor
+        async def chat_message_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            msg = ChatMessage(
+                role=Role.ASSISTANT,
+                contents=[TextContent(text="response text")],
+                author_name="custom-author",
+            )
+            await ctx.yield_output(msg)
+
+        workflow = WorkflowBuilder().set_start_executor(chat_message_executor).build()
+        agent = workflow.as_agent("chat-msg-agent")
+
+        result = await agent.run("test")
+
+        assert len(result.messages) == 1
+        assert result.messages[0].role == Role.ASSISTANT
+        assert result.messages[0].text == "response text"
+        assert result.messages[0].author_name == "custom-author"
+
+    async def test_workflow_as_agent_yield_output_sets_raw_representation(self) -> None:
+        """Test that yield_output sets raw_representation with the original data."""
+
+        # A custom object to verify raw_representation preserves the original data
+        class CustomData:
+            def __init__(self, value: int):
+                self.value = value
+
+            def __str__(self) -> str:
+                return f"CustomData({self.value})"
+
+        @executor
+        async def raw_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            # Yield different types of data
+            await ctx.yield_output("simple string")
+            await ctx.yield_output(TextContent(text="text content"))
+            custom = CustomData(42)
+            await ctx.yield_output(custom)
+
+        workflow = WorkflowBuilder().set_start_executor(raw_yielding_executor).build()
+        agent = workflow.as_agent("raw-test-agent")
+
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("test"):
+            updates.append(update)
+
+        # Should have 3 updates
+        assert len(updates) == 3
+
+        # Verify raw_representation is set for each update
+        assert updates[0].raw_representation == "simple string"
+        assert isinstance(updates[1].raw_representation, TextContent)
+        assert updates[1].raw_representation.text == "text content"
+        assert isinstance(updates[2].raw_representation, CustomData)
+        assert updates[2].raw_representation.value == 42
+
+    async def test_workflow_as_agent_yield_output_with_list_of_chat_messages(self) -> None:
+        """Test that yield_output with list[ChatMessage] extracts contents from all messages.
+
+        Note: TextContent items are coalesced by _finalize_response, so multiple text contents
+        become a single merged TextContent in the final response.
+        """
+
+        @executor
+        async def list_yielding_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            # Yield a list of ChatMessages (as SequentialBuilder does)
+            msg_list = [
+                ChatMessage(role=Role.USER, contents=[TextContent(text="first message")]),
+                ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="second message")]),
+                ChatMessage(
+                    role=Role.ASSISTANT,
+                    contents=[TextContent(text="third"), TextContent(text="fourth")],
+                ),
+            ]
+            await ctx.yield_output(msg_list)
+
+        workflow = WorkflowBuilder().set_start_executor(list_yielding_executor).build()
+        agent = workflow.as_agent("list-msg-agent")
+
+        # Verify streaming returns the update with all 4 contents before coalescing
+        updates: list[AgentRunResponseUpdate] = []
+        async for update in agent.run_stream("test"):
+            updates.append(update)
+
+        assert len(updates) == 1
+        assert len(updates[0].contents) == 4
+        texts = [c.text for c in updates[0].contents if isinstance(c, TextContent)]
+        assert texts == ["first message", "second message", "third", "fourth"]
+
+        # Verify run() coalesces text contents (expected behavior)
+        result = await agent.run("test")
+
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 1
+        # TextContent items are coalesced into one
+        assert len(result.messages[0].contents) == 1
+        assert result.messages[0].text == "first messagesecond messagethirdfourth"
+
+    async def test_thread_conversation_history_included_in_workflow_run(self) -> None:
+        """Test that conversation history from thread is included when running WorkflowAgent.
+
+        This verifies that when a thread with existing messages is provided to agent.run(),
+        the workflow receives the complete conversation history (thread history + new messages).
+        """
+        # Create an executor that captures all received messages
+        capturing_executor = ConversationHistoryCapturingExecutor(id="capturing")
+        workflow = WorkflowBuilder().set_start_executor(capturing_executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Thread History Test Agent")
+
+        # Create a thread with existing conversation history
+        history_messages = [
+            ChatMessage(role=Role.USER, text="Previous user message"),
+            ChatMessage(role=Role.ASSISTANT, text="Previous assistant response"),
+        ]
+        message_store = ChatMessageStore(messages=history_messages)
+        thread = AgentThread(message_store=message_store)
+
+        # Run the agent with the thread and a new message
+        new_message = "New user question"
+        await agent.run(new_message, thread=thread)
+
+        # Verify the executor received both history AND new message
+        assert len(capturing_executor.received_messages) == 3
+
+        # Verify the order: history first, then new message
+        assert capturing_executor.received_messages[0].text == "Previous user message"
+        assert capturing_executor.received_messages[1].text == "Previous assistant response"
+        assert capturing_executor.received_messages[2].text == "New user question"
+
+    async def test_thread_conversation_history_included_in_workflow_stream(self) -> None:
+        """Test that conversation history from thread is included when streaming WorkflowAgent.
+
+        This verifies that run_stream also includes thread history.
+        """
+        # Create an executor that captures all received messages
+        capturing_executor = ConversationHistoryCapturingExecutor(id="capturing_stream")
+        workflow = WorkflowBuilder().set_start_executor(capturing_executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Thread Stream Test Agent")
+
+        # Create a thread with existing conversation history
+        history_messages = [
+            ChatMessage(role=Role.SYSTEM, text="You are a helpful assistant"),
+            ChatMessage(role=Role.USER, text="Hello"),
+            ChatMessage(role=Role.ASSISTANT, text="Hi there!"),
+        ]
+        message_store = ChatMessageStore(messages=history_messages)
+        thread = AgentThread(message_store=message_store)
+
+        # Stream from the agent with the thread and a new message
+        async for _ in agent.run_stream("How are you?", thread=thread):
+            pass
+
+        # Verify the executor received all messages (3 from history + 1 new)
+        assert len(capturing_executor.received_messages) == 4
+
+        # Verify the order
+        assert capturing_executor.received_messages[0].text == "You are a helpful assistant"
+        assert capturing_executor.received_messages[1].text == "Hello"
+        assert capturing_executor.received_messages[2].text == "Hi there!"
+        assert capturing_executor.received_messages[3].text == "How are you?"
+
+    async def test_empty_thread_works_correctly(self) -> None:
+        """Test that an empty thread (no message store) works correctly."""
+        capturing_executor = ConversationHistoryCapturingExecutor(id="empty_thread_test")
+        workflow = WorkflowBuilder().set_start_executor(capturing_executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Empty Thread Test Agent")
+
+        # Create an empty thread
+        thread = AgentThread()
+
+        # Run with the empty thread
+        await agent.run("Just a new message", thread=thread)
+
+        # Should only receive the new message
+        assert len(capturing_executor.received_messages) == 1
+        assert capturing_executor.received_messages[0].text == "Just a new message"
+
+    async def test_checkpoint_storage_passed_to_workflow(self) -> None:
+        """Test that checkpoint_storage parameter is passed through to the workflow."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        capturing_executor = ConversationHistoryCapturingExecutor(id="checkpoint_test")
+        workflow = WorkflowBuilder().set_start_executor(capturing_executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Checkpoint Test Agent")
+
+        # Create checkpoint storage
+        checkpoint_storage = InMemoryCheckpointStorage()
+
+        # Run with checkpoint storage enabled
+        async for _ in agent.run_stream("Test message", checkpoint_storage=checkpoint_storage):
+            pass
+
+        # Drain workflow events to get checkpoint
+        # The workflow should have created checkpoints
+        checkpoints = await checkpoint_storage.list_checkpoints(workflow.id)
+        assert len(checkpoints) > 0, "Checkpoints should have been created when checkpoint_storage is provided"
+
+    async def test_agent_executor_output_response_false_filters_streaming_events(self):
+        """Test that AgentExecutor with output_response=False does not surface streaming events."""
+
+        class MockAgent(AgentProtocol):
+            """Mock agent for testing."""
+
+            def __init__(self, name: str, response_text: str) -> None:
+                self._name = name
+                self._response_text = response_text
+                self._description: str | None = None
+
+            @property
+            def name(self) -> str | None:
+                return self._name
+
+            @property
+            def description(self) -> str | None:
+                return self._description
+
+            def get_new_thread(self) -> AgentThread:
+                return AgentThread()
+
+            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentRunResponse:
+                return AgentRunResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
+                    text=self._response_text,
+                )
+
+            async def run_stream(
+                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
+            ) -> AsyncIterable[AgentRunResponseUpdate]:
+                for word in self._response_text.split():
+                    yield AgentRunResponseUpdate(
+                        contents=[TextContent(text=word + " ")],
+                        role=Role.ASSISTANT,
+                        author_name=self._name,
+                    )
+
+        @executor
+        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            from agent_framework import AgentExecutorRequest
+
+            await ctx.yield_output("Start output")
+            await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+        # Build workflow: start -> agent1 (no output) -> agent2 (output_response=True)
+        workflow = (
+            WorkflowBuilder()
+            .register_executor(lambda: start_executor, "start")
+            .register_agent(lambda: MockAgent("agent1", "Agent1 output - should NOT appear"), "agent1")
+            .register_agent(
+                lambda: MockAgent("agent2", "Agent2 output - SHOULD appear"), "agent2", output_response=True
+            )
+            .set_start_executor("start")
+            .add_edge("start", "agent1")
+            .add_edge("agent1", "agent2")
+            .build()
+        )
+
+        agent = WorkflowAgent(workflow=workflow, name="Test Agent")
+        result = await agent.run("Test input")
+
+        # Collect all message texts
+        texts = [msg.text for msg in result.messages if msg.text]
+
+        # Start output should appear (from yield_output)
+        assert any("Start output" in t for t in texts), "Start output should appear"
+
+        # Agent1 output should NOT appear (output_response=False)
+        assert not any("Agent1" in t for t in texts), "Agent1 output should NOT appear"
+
+        # Agent2 output should appear (output_response=True)
+        assert any("Agent2" in t for t in texts), "Agent2 output should appear"
+
+    async def test_agent_executor_output_response_no_duplicate_from_workflow_output_event(self):
+        """Test that AgentExecutor with output_response=True does not duplicate content."""
+
+        class MockAgent(AgentProtocol):
+            """Mock agent for testing."""
+
+            def __init__(self, name: str, response_text: str) -> None:
+                self._name = name
+                self._response_text = response_text
+                self._description: str | None = None
+
+            @property
+            def name(self) -> str | None:
+                return self._name
+
+            @property
+            def description(self) -> str | None:
+                return self._description
+
+            def get_new_thread(self) -> AgentThread:
+                return AgentThread()
+
+            async def run(self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any) -> AgentRunResponse:
+                return AgentRunResponse(
+                    messages=[ChatMessage(role=Role.ASSISTANT, text=self._response_text)],
+                    text=self._response_text,
+                )
+
+            async def run_stream(
+                self, messages: Any, *, thread: AgentThread | None = None, **kwargs: Any
+            ) -> AsyncIterable[AgentRunResponseUpdate]:
+                yield AgentRunResponseUpdate(
+                    contents=[TextContent(text=self._response_text)],
+                    role=Role.ASSISTANT,
+                    author_name=self._name,
+                )
+
+        @executor
+        async def start_executor(messages: list[ChatMessage], ctx: WorkflowContext) -> None:
+            from agent_framework import AgentExecutorRequest
+
+            await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+        # Build workflow with single agent that has output_response=True
+        workflow = (
+            WorkflowBuilder()
+            .register_executor(lambda: start_executor, "start")
+            .register_agent(lambda: MockAgent("agent", "Unique response text"), "agent", output_response=True)
+            .set_start_executor("start")
+            .add_edge("start", "agent")
+            .build()
+        )
+
+        agent = WorkflowAgent(workflow=workflow, name="Test Agent")
+        result = await agent.run("Test input")
+
+        # Count occurrences of the unique response text
+        unique_text_count = sum(1 for msg in result.messages if msg.text and "Unique response text" in msg.text)
+
+        # Should appear exactly once (not duplicated from both streaming and WorkflowOutputEvent)
+        assert unique_text_count == 1, f"Response should appear exactly once, but appeared {unique_text_count} times"
 
 
 class TestWorkflowAgentMergeUpdates:

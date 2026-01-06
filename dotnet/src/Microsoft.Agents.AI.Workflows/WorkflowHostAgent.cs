@@ -39,7 +39,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         this._describeTask = this._workflow.DescribeProtocolAsync().AsTask();
     }
 
-    public override string Id => this._id ?? base.Id;
+    protected override string? IdCore => this._id;
     public override string? Name { get; }
     public override string? Description { get; }
 
@@ -66,7 +66,7 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
         => new WorkflowThread(this._workflow, serializedThread, this._executionEnvironment, this._checkpointManager, jsonSerializerOptions);
 
-    private async ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
+    private ValueTask<WorkflowThread> UpdateThreadAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, CancellationToken cancellationToken = default)
     {
         thread ??= this.GetNewThread();
 
@@ -75,12 +75,14 @@ internal sealed class WorkflowHostAgent : AIAgent
             throw new ArgumentException($"Incompatible thread type: {thread.GetType()} (expecting {typeof(WorkflowThread)})", nameof(thread));
         }
 
-        await workflowThread.MessageStore.AddMessagesAsync(messages, cancellationToken).ConfigureAwait(false);
-        return workflowThread;
+        // For workflow threads, messages are added directly via the internal AddMessages method
+        // The MessageStore methods are used for agent invocation scenarios
+        workflowThread.MessageStore.AddMessages(messages);
+        return new ValueTask<WorkflowThread>(workflowThread);
     }
 
-    public override async
-    Task<AgentRunResponse> RunAsync(
+    protected override async
+    Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -101,8 +103,8 @@ internal sealed class WorkflowHostAgent : AIAgent
         return merger.ComputeMerged(workflowThread.LastResponseId!, this.Id, this.Name);
     }
 
-    public override async
-    IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async
+    IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

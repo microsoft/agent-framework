@@ -33,6 +33,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ExecutorNode, type ExecutorNodeData } from "./executor-node";
+import { SelfLoopEdge } from "./self-loop-edge";
 import {
   convertWorkflowDumpToNodes,
   convertWorkflowDumpToEdges,
@@ -50,6 +51,10 @@ const nodeTypes: NodeTypes = {
   executor: ExecutorNode,
 };
 
+const edgeTypes = {
+  selfLoop: SelfLoopEdge,
+};
+
 // ViewOptions panel component that renders inside ReactFlow
 function ViewOptionsPanel({
   workflowDump,
@@ -61,7 +66,12 @@ function ViewOptionsPanel({
 }: {
   workflowDump?: Workflow;
   onNodeSelect?: (executorId: string, data: ExecutorNodeData) => void;
-  viewOptions: { showMinimap: boolean; showGrid: boolean; animateRun: boolean; consolidateBidirectionalEdges: boolean };
+  viewOptions: {
+    showMinimap: boolean;
+    showGrid: boolean;
+    animateRun: boolean;
+    consolidateBidirectionalEdges: boolean;
+  };
   onToggleViewOption?: (key: keyof typeof viewOptions) => void;
   layoutDirection: "LR" | "TB";
   onLayoutDirectionChange?: (direction: "LR" | "TB") => void;
@@ -138,13 +148,18 @@ function ViewOptionsPanel({
           </DropdownMenuItem>
           <DropdownMenuItem
             className="flex items-center justify-between"
-            onClick={() => onToggleViewOption?.("consolidateBidirectionalEdges")}
+            onClick={() =>
+              onToggleViewOption?.("consolidateBidirectionalEdges")
+            }
           >
             <div className="flex items-center">
               <ArrowLeftRight className="mr-2 h-4 w-4" />
               Merge Bidirectional Edges
             </div>
-            <Checkbox checked={viewOptions.consolidateBidirectionalEdges} onChange={() => {}} />
+            <Checkbox
+              checked={viewOptions.consolidateBidirectionalEdges}
+              onChange={() => {}}
+            />
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -263,22 +278,24 @@ function WorkflowAnimationHandler({
 }
 
 // Timeline resize handler component that runs inside ReactFlow context
-const TimelineResizeHandler = memo(({ timelineVisible }: { timelineVisible: boolean }) => {
-  const { fitView } = useReactFlow();
+const TimelineResizeHandler = memo(
+  ({ timelineVisible }: { timelineVisible: boolean }) => {
+    const { fitView } = useReactFlow();
 
-  // Trigger fitView when timeline visibility changes to adjust ReactFlow viewport
-  useEffect(() => {
-    // Delay fitView to let CSS transition complete (timeline animation is 300ms)
-    const timeoutId = setTimeout(() => {
-      fitView({ padding: 0.2, duration: 300 });
-    }, 350); // Slightly longer than timeline animation duration
+    // Trigger fitView when timeline visibility changes to adjust ReactFlow viewport
+    useEffect(() => {
+      // Delay fitView to let CSS transition complete (timeline animation is 300ms)
+      const timeoutId = setTimeout(() => {
+        fitView({ padding: 0.2, duration: 300 });
+      }, 350); // Slightly longer than timeline animation duration
 
-    return () => clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timelineVisible]); // Only trigger when timelineVisible changes, not fitView reference
+      return () => clearTimeout(timeoutId);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timelineVisible]); // Only trigger when timelineVisible changes, not fitView reference
 
-  return null; // This component doesn't render anything
-});
+    return null; // This component doesn't render anything
+  }
+);
 
 export const WorkflowFlow = memo(function WorkflowFlow({
   workflowDump,
@@ -286,9 +303,14 @@ export const WorkflowFlow = memo(function WorkflowFlow({
   isStreaming,
   onNodeSelect,
   className = "",
-  viewOptions = { showMinimap: false, showGrid: true, animateRun: true, consolidateBidirectionalEdges: true },
+  viewOptions = {
+    showMinimap: false,
+    showGrid: true,
+    animateRun: true,
+    consolidateBidirectionalEdges: true,
+  },
   onToggleViewOption,
-  layoutDirection = "LR",
+  layoutDirection = "TB",
   onLayoutDirectionChange,
   timelineVisible = false,
 }: WorkflowFlowProps) {
@@ -320,7 +342,12 @@ export const WorkflowFlow = memo(function WorkflowFlow({
       initialNodes: layoutedNodes,
       initialEdges: finalEdges,
     };
-  }, [workflowDump, onNodeSelect, layoutDirection, viewOptions.consolidateBidirectionalEdges]);
+  }, [
+    workflowDump,
+    onNodeSelect,
+    layoutDirection,
+    viewOptions.consolidateBidirectionalEdges,
+  ]);
 
   const [nodes, setNodes, onNodesChange] =
     useNodesState<Node<ExecutorNodeData>>(initialNodes);
@@ -335,7 +362,7 @@ export const WorkflowFlow = memo(function WorkflowFlow({
   useMemo(() => {
     if (Object.keys(nodeUpdates).length > 0) {
       setNodes((currentNodes) =>
-        updateNodesWithEvents(currentNodes, nodeUpdates)
+        updateNodesWithEvents(currentNodes, nodeUpdates, isStreaming)
       );
     } else if (events.length === 0) {
       // Reset all nodes to pending state when events are cleared
@@ -347,11 +374,12 @@ export const WorkflowFlow = memo(function WorkflowFlow({
             state: "pending" as const,
             outputData: undefined,
             error: undefined,
+            isStreaming: false,
           },
         }))
       );
     }
-  }, [nodeUpdates, setNodes, events.length]);
+  }, [nodeUpdates, setNodes, events.length, isStreaming]);
 
   // Update edges with sequence-based analysis (separate from nodeUpdates)
   useMemo(() => {
@@ -445,6 +473,7 @@ export const WorkflowFlow = memo(function WorkflowFlow({
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.1}

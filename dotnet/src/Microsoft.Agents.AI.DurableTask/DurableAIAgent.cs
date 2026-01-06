@@ -63,7 +63,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <exception cref="AgentNotRegisteredException">Thrown when the agent has not been registered.</exception>
     /// <exception cref="ArgumentException">Thrown when the provided thread is not valid for a durable agent.</exception>
     /// <exception cref="NotSupportedException">Thrown when cancellation is requested (cancellation is not supported for durable agents).</exception>
-    public override async Task<AgentRunResponse> RunAsync(
+    protected override async Task<AgentRunResponse> RunCoreAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,
@@ -98,14 +98,16 @@ public sealed class DurableAIAgent : AIAgent
             responseFormat = chatClientOptions.ChatOptions?.ResponseFormat;
         }
 
-        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
-        request.OrchestrationId = this._context.InstanceId;
+        RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames)
+        {
+            OrchestrationId = this._context.InstanceId
+        };
 
         try
         {
             return await this._context.Entities.CallEntityAsync<AgentRunResponse>(
                 durableThread.SessionId,
-                nameof(AgentEntity.RunAgentAsync),
+                nameof(AgentEntity.Run),
                 request);
         }
         catch (EntityOperationFailedException e) when (e.FailureDetails.ErrorType == "EntityTaskNotFound")
@@ -126,7 +128,7 @@ public sealed class DurableAIAgent : AIAgent
     /// <param name="options">Optional run options.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A streaming response enumerable.</returns>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
+    protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread = null,
         AgentRunOptions? options = null,

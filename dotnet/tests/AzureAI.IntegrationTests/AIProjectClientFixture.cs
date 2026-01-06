@@ -48,7 +48,12 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return await this.GetChatHistoryFromResponsesChainAsync(chatClientThread.ConversationId);
         }
 
-        return chatClientThread.MessageStore is null ? [] : (await chatClientThread.MessageStore.GetMessagesAsync()).ToList();
+        if (chatClientThread.MessageStore is null)
+        {
+            return [];
+        }
+
+        return (await chatClientThread.MessageStore.InvokingAsync(new([]))).ToList();
     }
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
@@ -89,7 +94,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         List<ChatMessage> messages = [];
         await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
-            var openAIItem = item.AsOpenAIResponseItem();
+            var openAIItem = item.AsResponseResultItem();
             if (openAIItem is MessageResponseItem messageItem)
             {
                 messages.Add(new ChatMessage

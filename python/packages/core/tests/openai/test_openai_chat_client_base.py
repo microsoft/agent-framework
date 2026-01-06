@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,7 +76,7 @@ async def test_cmc(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -96,7 +97,7 @@ async def test_cmc_chat_options(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -119,7 +120,7 @@ async def test_cmc_no_fcc_in_response(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -166,7 +167,7 @@ async def test_scmc_chat_options(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
     )
 
 
@@ -202,7 +203,7 @@ async def test_cmc_additional_properties(
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=False,
-        messages=openai_chat_completion._prepare_chat_history_for_request(chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(chat_history),  # type: ignore
         reasoning_effort="low",
     )
 
@@ -245,7 +246,7 @@ async def test_get_streaming(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -284,7 +285,7 @@ async def test_get_streaming_singular(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -348,7 +349,7 @@ async def test_get_streaming_no_fcc_in_response(
         model=openai_unit_test_env["OPENAI_CHAT_MODEL_ID"],
         stream=True,
         stream_options={"include_usage": True},
-        messages=openai_chat_completion._prepare_chat_history_for_request(orig_chat_history),  # type: ignore
+        messages=openai_chat_completion._prepare_messages_for_openai(orig_chat_history),  # type: ignore
     )
 
 
@@ -370,3 +371,75 @@ async def test_get_streaming_no_stream(
                 messages=chat_history,
             )
         ]
+
+
+# region UTC Timestamp Tests
+
+
+def test_chat_response_created_at_uses_utc(openai_unit_test_env: dict[str, str]):
+    """Test that ChatResponse.created_at uses UTC timestamp, not local time.
+
+    This is a regression test for the issue where created_at was using local time
+    but labeling it as UTC (with 'Z' suffix).
+    """
+    from agent_framework import ChatOptions
+
+    # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
+    # This ensures we test that the timestamp is actually converted to UTC
+    utc_timestamp = 1733011890
+
+    mock_response = ChatCompletion(
+        id="test_id",
+        choices=[
+            Choice(index=0, message=ChatCompletionMessage(content="test", role="assistant"), finish_reason="stop")
+        ],
+        created=utc_timestamp,
+        model="test",
+        object="chat.completion",
+    )
+
+    client = OpenAIChatClient()
+    response = client._parse_response_from_openai(mock_response, ChatOptions())
+
+    # Verify that created_at is correctly formatted as UTC
+    assert response.created_at is not None
+    assert response.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Parse the timestamp and verify it matches UTC time
+    expected_utc_time = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
+    expected_formatted = expected_utc_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert response.created_at == expected_formatted, (
+        f"Expected UTC timestamp {expected_formatted}, got {response.created_at}"
+    )
+
+
+def test_chat_response_update_created_at_uses_utc(openai_unit_test_env: dict[str, str]):
+    """Test that ChatResponseUpdate.created_at uses UTC timestamp, not local time.
+
+    This is a regression test for the issue where created_at was using local time
+    but labeling it as UTC (with 'Z' suffix).
+    """
+    # Use a specific Unix timestamp: 1733011890 = 2024-12-01T00:31:30Z (UTC)
+    utc_timestamp = 1733011890
+
+    mock_chunk = ChatCompletionChunk(
+        id="test_id",
+        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        created=utc_timestamp,
+        model="test",
+        object="chat.completion.chunk",
+    )
+
+    client = OpenAIChatClient()
+    response_update = client._parse_response_update_from_openai(mock_chunk)
+
+    # Verify that created_at is correctly formatted as UTC
+    assert response_update.created_at is not None
+    assert response_update.created_at.endswith("Z"), "Timestamp should end with 'Z' for UTC"
+
+    # Parse the timestamp and verify it matches UTC time
+    expected_utc_time = datetime.fromtimestamp(utc_timestamp, tz=timezone.utc)
+    expected_formatted = expected_utc_time.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    assert response_update.created_at == expected_formatted, (
+        f"Expected UTC timestamp {expected_formatted}, got {response_update.created_at}"
+    )

@@ -324,7 +324,7 @@ class AgentFrameworkRequest(BaseModel):
             return self.metadata.get("entity_id")
         return None
 
-    def get_conversation_id(self) -> str | None:
+    def _get_conversation_id(self) -> str | None:
         """Extract conversation_id from conversation parameter.
 
         Supports both string and object forms:

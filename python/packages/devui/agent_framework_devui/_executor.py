@@ -82,27 +82,23 @@ class AgentFrameworkExecutor:
 
     def _setup_agent_framework_tracing(self) -> None:
         """Set up Agent Framework's built-in tracing."""
-        # Configure Agent Framework tracing only if ENABLE_OTEL is set
-        if os.environ.get("ENABLE_OTEL"):
+        # Configure Agent Framework tracing only if ENABLE_INSTRUMENTATION is set
+        if os.environ.get("ENABLE_INSTRUMENTATION"):
             try:
-                from agent_framework.observability import OBSERVABILITY_SETTINGS, setup_observability
+                from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
 
                 # Only configure if not already executed
                 if not OBSERVABILITY_SETTINGS._executed_setup:
-                    # Get OTLP endpoint from either custom or standard env var
-                    # This handles the case where env vars are set after ObservabilitySettings was imported
-                    otlp_endpoint = os.environ.get("OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-                    # Pass the endpoint explicitly to setup_observability
+                    # Run the configure_otel_providers
                     # This ensures OTLP exporters are created even if env vars were set late
-                    setup_observability(enable_sensitive_data=True, otlp_endpoint=otlp_endpoint)
+                    configure_otel_providers(enable_sensitive_data=True)
                     logger.info("Enabled Agent Framework observability")
                 else:
                     logger.debug("Agent Framework observability already configured")
             except Exception as e:
                 logger.warning(f"Failed to enable Agent Framework observability: {e}")
         else:
-            logger.debug("ENABLE_OTEL not set, skipping observability setup")
+            logger.debug("ENABLE_INSTRUMENTATION not set, skipping observability setup")
 
     async def discover_entities(self) -> list[EntityInfo]:
         """Discover all available entities.
@@ -252,7 +248,7 @@ class AgentFrameworkExecutor:
 
             # Get thread from conversation parameter (OpenAI standard!)
             thread = None
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if conversation_id:
                 thread = self.conversation_store.get_thread(conversation_id)
                 if thread:
@@ -328,7 +324,7 @@ class AgentFrameworkExecutor:
             entity_id = request.get_entity_id() or "unknown"
 
             # Get or create session conversation for checkpoint storage
-            conversation_id = request.get_conversation_id()
+            conversation_id = request._get_conversation_id()
             if not conversation_id:
                 # Create default session if not provided
                 import time
@@ -642,12 +638,26 @@ class AgentFrameworkExecutor:
                                             media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
 
                                     # Use file_data or file_url
+                                    # Include filename in additional_properties for OpenAI/Azure file handling
+                                    additional_props = {"filename": filename} if filename else None
                                     if file_data:
                                         # Assume file_data is base64, create data URI
                                         data_uri = f"data:{media_type};base64,{file_data}"
-                                        contents.append(DataContent(uri=data_uri, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=data_uri,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
                                     elif file_url:
-                                        contents.append(DataContent(uri=file_url, media_type=media_type))
+                                        contents.append(
+                                            DataContent(
+                                                uri=file_url,
+                                                media_type=media_type,
+                                                additional_properties=additional_props,
+                                            )
+                                        )
 
                                 elif content_type == "function_approval_response":
                                     # Handle function approval response (DevUI extension)
@@ -722,6 +732,20 @@ class AgentFrameworkExecutor:
             return json.dumps(input_data)
         return str(input_data)
 
+    def _is_openai_multimodal_format(self, input_data: Any) -> bool:
+        """Check if input is OpenAI ResponseInputParam format (list with message items).
+
+        Args:
+            input_data: Input data to check
+
+        Returns:
+            True if input is OpenAI multimodal format
+        """
+        if not isinstance(input_data, list) or not input_data:
+            return False
+        first_item = input_data[0]
+        return isinstance(first_item, dict) and first_item.get("type") == "message"
+
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
 
@@ -733,9 +757,26 @@ class AgentFrameworkExecutor:
             Parsed input appropriate for the workflow
         """
         try:
-            # Handle structured input
+            # Handle JSON string input (from frontend api.ts JSON.stringify)
+            if isinstance(raw_input, str):
+                try:
+                    parsed = json.loads(raw_input)
+                    raw_input = parsed
+                except (json.JSONDecodeError, TypeError):
+                    # Plain text string, continue with string handling
+                    pass
+
+            # Check for OpenAI multimodal format (list with type: "message")
+            # This handles ChatMessage inputs with images, files, etc.
+            if self._is_openai_multimodal_format(raw_input):
+                logger.debug("Detected OpenAI multimodal format, converting to ChatMessage")
+                return self._convert_input_to_chat_message(raw_input)
+
+            # Handle structured input (dict)
             if isinstance(raw_input, dict):
                 return self._parse_structured_workflow_input(workflow, raw_input)
+
+            # Handle string input
             return self._parse_raw_workflow_input(workflow, str(raw_input))
 
         except Exception as e:
