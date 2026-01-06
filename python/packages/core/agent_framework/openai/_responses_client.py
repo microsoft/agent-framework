@@ -106,9 +106,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
+        # Convert options dict to ChatOptions for internal use
+        chat_options = ChatOptions(**options)
         client = await self._ensure_client()
         # prepare
         run_options = await self._prepare_options(messages, chat_options, **kwargs)
@@ -139,9 +141,11 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
+        # Convert options dict to ChatOptions for internal use
+        chat_options = ChatOptions(**options)
         client = await self._ensure_client()
         # prepare
         run_options = await self._prepare_options(messages, chat_options, **kwargs)

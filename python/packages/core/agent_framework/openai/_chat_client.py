@@ -5,7 +5,12 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, TypeVar
+from typing import Any, Generic, Literal
+
+if sys.version_info >= (3, 12):
+    pass  # pragma: no cover
+else:
+    pass  # pragma: no cover
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -16,13 +21,13 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
 from pydantic import ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import BaseChatClient, TOptions
 from .._logging import get_logger
-from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
+from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol
 from .._types import (
+    BaseChatOptionsDict,
     ChatMessage,
-    ChatOptions,
+    ChatOptionsDictValidator,
     ChatResponse,
     ChatResponseUpdate,
     Contents,
@@ -45,38 +50,96 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
-from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
+if sys.version_info >= (3, 11):
+    pass  # pragma: no cover
+else:
+    pass  # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
-__all__ = ["OpenAIChatClient"]
+__all__ = ["OpenAIChatClient", "OpenAIChatOptionsDict"]
 
 logger = get_logger("agent_framework.openai")
 
 
+# region OpenAI Chat Options TypedDict
+
+
+class OpenAIChatOptionsDict(BaseChatOptionsDict, total=False):
+    """OpenAI-specific chat options.
+
+    Extends BaseChatOptionsDict with options specific to OpenAI's Chat Completions API.
+    These options are validated at runtime - unsupported options will raise an error.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework.openai import OpenAIChatOptionsDict
+
+            options: OpenAIChatOptionsDict = {
+                "temperature": 0.7,
+                "logprobs": True,
+                "top_logprobs": 5,
+                "allow_multiple_tool_calls": False,
+            }
+
+            # With reasoning models (o1, o3)
+            options: OpenAIChatOptionsDict = {
+                "model_id": "o1",
+                "reasoning_effort": "high",
+            }
+    """
+
+    # OpenAI-specific generation parameters
+    logit_bias: dict[str | int, float]
+    logprobs: bool
+    top_logprobs: int
+
+    # Reasoning models (o1, o3)
+    reasoning_effort: Literal["low", "medium", "high"]
+
+    # Response behavior
+    response_prediction: dict[str, Any]
+
+    # Audio features
+    audio: dict[str, Any]
+    modalities: list[Literal["text", "audio"]]
+
+
+# Define which options are NOT supported by OpenAI (for validation)
+_OPENAI_UNSUPPORTED_OPTIONS: frozenset[str] = frozenset({
+    # OpenAI supports all base options
+})
+
+_openai_options_validator = ChatOptionsDictValidator(
+    provider_name="OpenAI",
+    unsupported_base_options=_OPENAI_UNSUPPORTED_OPTIONS,
+)
+
+
 # region Base Client
-class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
+class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOptions]):
     """OpenAI Chat completion class."""
 
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         client = await self._ensure_client()
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
         try:
             # execute and process
             return self._parse_response_from_openai(
-                await client.chat.completions.create(stream=False, **options_dict), chat_options
+                await client.chat.completions.create(stream=False, **options_dict), options
             )
         except BadRequestError as ex:
             if ex.code == "content_filter":
@@ -98,12 +161,12 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         client = await self._ensure_client()
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
         options_dict["stream_options"] = {"include_usage": True}
         try:
             # execute and process
@@ -163,15 +226,9 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
         return None
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
-        run_options = chat_options.to_dict(
-            exclude={
-                "type",
-                "instructions",  # included as system message
-                "response_format",  # handled separately
-                "additional_properties",  # handled separately
-            }
-        )
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
+        # Start with a copy of options
+        run_options = {k: v for k, v in options.items() if v is not None}
 
         # messages
         if messages and "messages" not in run_options:
@@ -179,7 +236,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
         if "messages" not in run_options:
             raise ServiceInvalidRequestError("Messages are required for chat completions")
 
-        # Translation between ChatOptions and Chat Completion API
+        # Translation between options keys and Chat Completion API
         translations = {
             "model_id": "model",
             "allow_multiple_tool_calls": "parallel_tool_calls",
@@ -196,32 +253,28 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             run_options["model"] = self.model_id
 
         # tools
-        if chat_options.tools is not None:
+        tools = options.get("tools")
+        if tools is not None:
             # Preprocess web search tool if it exists
-            if web_search_options := self._process_web_search_tool(chat_options.tools):
+            if web_search_options := self._process_web_search_tool(tools):
                 run_options["web_search_options"] = web_search_options
-            run_options["tools"] = self._prepare_tools_for_openai(chat_options.tools)
-        if not run_options.get("tools", None):
+            run_options["tools"] = self._prepare_tools_for_openai(tools)
+        if not run_options.get("tools"):
             run_options.pop("tools", None)
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
+        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
         if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
             run_options["tool_choice"] = tool_choice["mode"]
 
         # response format
-        if chat_options.response_format:
-            run_options["response_format"] = type_to_response_format_param(chat_options.response_format)
+        response_format = options.get("response_format")
+        if response_format:
+            run_options["response_format"] = type_to_response_format_param(response_format)
 
-        # additional properties
-        additional_options = {
-            key: value for key, value in chat_options.additional_properties.items() if value is not None
-        }
-        if additional_options:
-            run_options.update(additional_options)
         return run_options
 
-    def _parse_response_from_openai(self, response: ChatCompletion, chat_options: ChatOptions) -> "ChatResponse":
+    def _parse_response_from_openai(self, response: ChatCompletion, options: dict[str, Any]) -> "ChatResponse":
         """Parse a response from OpenAI into a ChatResponse."""
         response_metadata = self._get_metadata_from_chat_response(response)
         messages: list[ChatMessage] = []
@@ -246,7 +299,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
             model_id=response.model,
             additional_properties=response_metadata,
             finish_reason=finish_reason,
-            response_format=chat_options.response_format,
+            response_format=options.get("response_format"),
         )
 
     def _parse_response_update_from_openai(
@@ -502,13 +555,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient):
 
 # region Public client
 
-TOpenAIChatClient = TypeVar("TOpenAIChatClient", bound="OpenAIChatClient")
 
-
-@use_function_invocation
-@use_instrumentation
-@use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
+# @use_function_invocation
+# @use_instrumentation
+# @use_chat_middleware
+class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[OpenAIChatOptionsDict]):
     """OpenAI Chat completion class."""
 
     def __init__(
@@ -592,3 +643,38 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient):
             client=async_client,
             instruction_role=instruction_role,
         )
+
+    # Override methods with concrete TypedDict for better IDE autocomplete
+    # @override
+    # async def get_response(  # type: ignore[reportIncompatibleMethodOverride, reportInconsistentOverload]
+    #     self,
+    #     messages: str | ChatMessage | list[str] | list[ChatMessage],
+    #     **kwargs: Unpack[OpenAIChatOptionsDict],
+    # ) -> ChatResponse:
+    #     """Get a response from OpenAI.
+
+    #     Args:
+    #         messages: The message or messages to send to the model.
+    #         **kwargs: OpenAI chat options. See OpenAIChatOptionsDict for available options.
+
+    #     Returns:
+    #         A chat response from the model.
+    #     """
+    #     ...
+
+    # @override
+    # async def get_streaming_response(  # type: ignore[reportIncompatibleMethodOverride, reportInconsistentOverload]
+    #     self,
+    #     messages: str | ChatMessage | list[str] | list[ChatMessage],
+    #     **kwargs: Unpack[OpenAIChatOptionsDict],
+    # ) -> AsyncIterable[ChatResponseUpdate]:
+    #     """Get a streaming response from OpenAI.
+
+    #     Args:
+    #         messages: The message or messages to send to the model.
+    #         **kwargs: OpenAI chat options. See OpenAIChatOptionsDict for available options.
+
+    #     Yields:
+    #         ChatResponseUpdate: A stream representing the response(s) from OpenAI.
+    #     """
+    #     ...
