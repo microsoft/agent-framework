@@ -10,7 +10,9 @@ from abc import ABC
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Never, TypeAlias
+from typing import Any, ClassVar, TypeAlias
+
+from typing_extensions import Never
 
 from .._types import ChatMessage, Role
 from ._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
