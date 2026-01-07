@@ -53,7 +53,7 @@ from agent_framework import (
 )
 from dateutil import parser as date_parser
 
-from ._constants import ApiResponseFields, ContentTypes, DurableStateFields
+from ._constants import ContentTypes, DurableStateFields
 from ._models import RunRequest, serialize_response_format
 
 logger = get_logger("agent_framework.durabletask.durable_agent_state")
@@ -452,7 +452,7 @@ class DurableAgentState:
         """Get the count of conversation entries (requests + responses)."""
         return len(self.data.conversation_history)
 
-    def try_get_agent_response(self, correlation_id: str) -> dict[str, Any] | None:
+    def try_get_agent_response(self, correlation_id: str) -> AgentRunResponse | None:
         """Try to get an agent response by correlation ID.
 
         This method searches the conversation history for a response entry matching the given
@@ -474,14 +474,8 @@ class DurableAgentState:
         for entry in self.data.conversation_history:
             if entry.correlation_id == correlation_id and isinstance(entry, DurableAgentStateResponse):
                 # Found the entry, extract response data
-                # Get the text content from assistant messages only
-                content = "\n".join(message.text for message in entry.messages if message.text)
+                return DurableAgentStateResponse.to_run_response(entry)
 
-                return {
-                    ApiResponseFields.CONTENT: content,
-                    ApiResponseFields.MESSAGE_COUNT: self.message_count,
-                    ApiResponseFields.CORRELATION_ID: correlation_id,
-                }
         return None
 
 
@@ -703,6 +697,21 @@ class DurableAgentStateResponse(DurableAgentStateEntry):
             created_at=_parse_created_at(response.created_at),
             messages=[DurableAgentStateMessage.from_chat_message(m) for m in response.messages],
             usage=DurableAgentStateUsage.from_usage(response.usage_details),
+        )
+
+    @staticmethod
+    def to_run_response(
+        response_entry: DurableAgentStateResponse,
+    ) -> AgentRunResponse:
+        """Converts a DurableAgentStateResponse back to an AgentRunResponse."""
+        messages = [m.to_chat_message() for m in response_entry.messages]
+
+        usage_details = response_entry.usage.to_usage_details() if response_entry.usage is not None else UsageDetails()
+
+        return AgentRunResponse(
+            created_at=response_entry.created_at.isoformat(),
+            messages=messages,
+            usage_details=usage_details,
         )
 
 
@@ -1214,14 +1223,24 @@ class DurableAgentStateUsage:
             input_token_count=usage.input_token_count,
             output_token_count=usage.output_token_count,
             total_token_count=usage.total_token_count,
+            extensionData=usage.additional_counts,
         )
 
     def to_usage_details(self) -> UsageDetails:
         # Convert back to AI SDK UsageDetails
+        extension_data: dict[str, int] = {}
+        if self.extensionData is not None:
+            for k, v in self.extensionData.items():
+                try:
+                    extension_data[k] = int(v)
+                except (ValueError, TypeError):
+                    continue
+
         return UsageDetails(
             input_token_count=self.input_token_count,
             output_token_count=self.output_token_count,
             total_token_count=self.total_token_count,
+            **extension_data,
         )
 
 

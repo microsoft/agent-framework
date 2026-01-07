@@ -8,12 +8,15 @@ This module defines the request and response models used by the framework.
 from __future__ import annotations
 
 import inspect
+import json
+import uuid
+from collections.abc import MutableMapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
-from agent_framework import Role
+from agent_framework import AgentThread, Role
 
 from ._constants import REQUEST_RESPONSE_FORMAT_TEXT
 
@@ -101,38 +104,38 @@ class RunRequest:
         role: The role of the message sender (user, system, or assistant)
         response_format: Optional Pydantic BaseModel type describing the structured response format
         enable_tool_calls: Whether to enable tool calls for this request
-        correlation_id: Optional correlation ID for tracking the response to this specific request
+        correlation_id: Correlation ID for tracking the response to this specific request
         created_at: Optional timestamp when the request was created
         orchestration_id: Optional ID of the orchestration that initiated this request
     """
 
     message: str
     request_response_format: str
+    correlation_id: str
     role: Role = Role.USER
     response_format: type[BaseModel] | None = None
     enable_tool_calls: bool = True
-    correlation_id: str | None = None
     created_at: datetime | None = None
     orchestration_id: str | None = None
 
     def __init__(
         self,
         message: str,
+        correlation_id: str,
         request_response_format: str = REQUEST_RESPONSE_FORMAT_TEXT,
         role: Role | str | None = Role.USER,
         response_format: type[BaseModel] | None = None,
         enable_tool_calls: bool = True,
-        correlation_id: str | None = None,
         created_at: datetime | None = None,
         orchestration_id: str | None = None,
     ) -> None:
         self.message = message
+        self.correlation_id = correlation_id
         self.role = self.coerce_role(role)
         self.response_format = response_format
         self.request_response_format = request_response_format
         self.enable_tool_calls = enable_tool_calls
-        self.correlation_id = correlation_id
-        self.created_at = created_at
+        self.created_at = created_at if created_at is not None else datetime.now(tz=timezone.utc)
         self.orchestration_id = orchestration_id
 
     @staticmethod
@@ -154,17 +157,26 @@ class RunRequest:
             "enable_tool_calls": self.enable_tool_calls,
             "role": self.role.value,
             "request_response_format": self.request_response_format,
+            "correlationId": self.correlation_id,
         }
         if self.response_format:
             result["response_format"] = serialize_response_format(self.response_format)
-        if self.correlation_id:
-            result["correlationId"] = self.correlation_id
         if self.created_at:
             result["created_at"] = self.created_at.isoformat()
         if self.orchestration_id:
             result["orchestrationId"] = self.orchestration_id
 
         return result
+
+    @classmethod
+    def from_json(cls, data: str) -> RunRequest:
+        """Create RunRequest from JSON string."""
+        try:
+            dict_data = json.loads(data)
+        except json.JSONDecodeError as e:
+            raise ValueError("The durable agent state is not valid JSON.") from e
+
+        return cls.from_dict(dict_data)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RunRequest:
@@ -176,13 +188,120 @@ class RunRequest:
             except ValueError:
                 created_at = None
 
+        correlation_id = data.get("correlationId")
+        if not correlation_id:
+            raise ValueError("correlationId is required in RunRequest data")
+
         return cls(
             message=data.get("message", ""),
+            correlation_id=correlation_id,
             request_response_format=data.get("request_response_format", REQUEST_RESPONSE_FORMAT_TEXT),
             role=cls.coerce_role(data.get("role")),
             response_format=_deserialize_response_format(data.get("response_format")),
             enable_tool_calls=data.get("enable_tool_calls", True),
-            correlation_id=data.get("correlationId"),
             created_at=created_at,
             orchestration_id=data.get("orchestrationId"),
         )
+
+
+@dataclass
+class AgentSessionId:
+    """Represents an agent session identifier (name + key)."""
+
+    name: str
+    key: str
+
+    ENTITY_NAME_PREFIX: str = "dafx-"
+
+    @staticmethod
+    def to_entity_name(name: str) -> str:
+        return f"{AgentSessionId.ENTITY_NAME_PREFIX}{name}"
+
+    @staticmethod
+    def with_random_key(name: str) -> AgentSessionId:
+        return AgentSessionId(name=name, key=uuid.uuid4().hex)
+
+    @property
+    def entity_name(self) -> str:
+        return self.to_entity_name(self.name)
+
+    def __str__(self) -> str:
+        return f"@{self.name}@{self.key}"
+
+    def __repr__(self) -> str:
+        return f"AgentSessionId(name='{self.name}', key='{self.key}')"
+
+    @staticmethod
+    def parse(session_id_string: str) -> AgentSessionId:
+        if not session_id_string.startswith("@"):
+            raise ValueError(f"Invalid agent session ID format: {session_id_string}")
+
+        parts = session_id_string[1:].split("@", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid agent session ID format: {session_id_string}")
+
+        return AgentSessionId(name=parts[0], key=parts[1])
+
+
+class DurableAgentThread(AgentThread):
+    """Durable agent thread that tracks the owning :class:`AgentSessionId`."""
+
+    _SERIALIZED_SESSION_ID_KEY = "durable_session_id"
+
+    def __init__(
+        self,
+        *,
+        session_id: AgentSessionId | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._session_id: AgentSessionId | None = session_id
+
+    @property
+    def session_id(self) -> AgentSessionId | None:
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value: AgentSessionId | None) -> None:
+        self._session_id = value
+
+    @classmethod
+    def from_session_id(
+        cls,
+        session_id: AgentSessionId,
+        **kwargs: Any,
+    ) -> DurableAgentThread:
+        return cls(session_id=session_id, **kwargs)
+
+    async def serialize(self, **kwargs: Any) -> dict[str, Any]:
+        state = await super().serialize(**kwargs)
+        if self._session_id is not None:
+            state[self._SERIALIZED_SESSION_ID_KEY] = str(self._session_id)
+        return state
+
+    @classmethod
+    async def deserialize(
+        cls,
+        serialized_thread_state: MutableMapping[str, Any],
+        *,
+        message_store: Any = None,
+        **kwargs: Any,
+    ) -> DurableAgentThread:
+        state_payload = dict(serialized_thread_state)
+        session_id_value = state_payload.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
+        thread = await super().deserialize(
+            state_payload,
+            message_store=message_store,
+            **kwargs,
+        )
+        if not isinstance(thread, DurableAgentThread):
+            raise TypeError("Deserialized thread is not a DurableAgentThread instance")
+
+        if session_id_value is None:
+            return thread
+
+        if not isinstance(session_id_value, str):
+            raise ValueError("durable_session_id must be a string when present in serialized state")
+
+        thread.session_id = AgentSessionId.parse(session_id_value)
+        return thread

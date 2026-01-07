@@ -3,6 +3,7 @@
 """Durable Task integration for Microsoft Agent Framework."""
 
 from ._callbacks import AgentCallbackContext, AgentResponseCallbackProtocol
+from ._client import DurableAIAgentClient
 from ._constants import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -41,7 +42,12 @@ from ._durable_agent_state import (
     DurableAgentStateUsageContent,
 )
 from ._entities import AgentEntity, AgentEntityStateProviderMixin
-from ._models import RunRequest, serialize_response_format
+from ._executors import DurableAgentExecutor
+from ._models import AgentSessionId, DurableAgentThread, RunRequest
+from ._orchestration_context import DurableAIAgentOrchestrationContext
+from ._response_utils import ensure_response_format, load_agent_response
+from ._shim import DurableAIAgent
+from ._worker import DurableAIAgentWorker
 
 __all__ = [
     "DEFAULT_MAX_POLL_RETRIES",
@@ -58,8 +64,14 @@ __all__ = [
     "AgentEntity",
     "AgentEntityStateProviderMixin",
     "AgentResponseCallbackProtocol",
+    "AgentSessionId",
     "ApiResponseFields",
     "ContentTypes",
+    "DurableAIAgent",
+    "DurableAIAgentClient",
+    "DurableAIAgentOrchestrationContext",
+    "DurableAIAgentWorker",
+    "DurableAgentExecutor",
     "DurableAgentState",
     "DurableAgentStateContent",
     "DurableAgentStateData",
@@ -80,7 +92,10 @@ __all__ = [
     "DurableAgentStateUriContent",
     "DurableAgentStateUsage",
     "DurableAgentStateUsageContent",
+    "DurableAgentThread",
+    "DurableAgentThread",
     "DurableStateFields",
     "RunRequest",
-    "serialize_response_format",
+    "ensure_response_format",
+    "load_agent_response",
 ]
