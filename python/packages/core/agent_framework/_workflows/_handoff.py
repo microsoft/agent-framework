@@ -92,20 +92,24 @@ def _create_handoff_tool(alias: str, description: str | None = None) -> AIFuncti
 
 def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
     """Produce a deep copy of the ChatAgent while preserving runtime configuration."""
-    options = agent.chat_options
+    options = agent.default_options
     middleware = list(agent.middleware or [])
 
     # Reconstruct the original tools list by combining regular tools with MCP tools.
     # ChatAgent.__init__ separates MCP tools into _local_mcp_tools during initialization,
     # so we need to recombine them here to pass the complete tools list to the constructor.
     # This makes sure MCP tools are preserved when cloning agents for handoff workflows.
-    all_tools = list(options.tools) if options.tools else []
+    tools_from_options = options.get("tools")
+    all_tools = list(tools_from_options) if tools_from_options else []
     if agent._local_mcp_tools:  # type: ignore
         all_tools.extend(agent._local_mcp_tools)  # type: ignore
 
+    logit_bias = options.get("logit_bias")
+    metadata = options.get("metadata")
+
     return ChatAgent(
         chat_client=agent.chat_client,
-        instructions=options.instructions,
+        instructions=options.get("instructions"),
         id=agent.id,
         name=agent.name,
         description=agent.description,
@@ -114,22 +118,21 @@ def _clone_chat_agent(agent: ChatAgent) -> ChatAgent:
         middleware=middleware,
         # Disable parallel tool calls to prevent the agent from invoking multiple handoff tools at once.
         allow_multiple_tool_calls=False,
-        frequency_penalty=options.frequency_penalty,
-        logit_bias=dict(options.logit_bias) if options.logit_bias else None,
-        max_tokens=options.max_tokens,
-        metadata=dict(options.metadata) if options.metadata else None,
-        model_id=options.model_id,
-        presence_penalty=options.presence_penalty,
-        response_format=options.response_format,
-        seed=options.seed,
-        stop=options.stop,
-        store=options.store,
-        temperature=options.temperature,
-        tool_choice=options.tool_choice,  # type: ignore[arg-type]
+        frequency_penalty=options.get("frequency_penalty"),
+        logit_bias=dict(logit_bias) if logit_bias else None,
+        max_tokens=options.get("max_tokens"),
+        metadata=dict(metadata) if metadata else None,
+        model_id=options.get("model_id"),
+        presence_penalty=options.get("presence_penalty"),
+        response_format=options.get("response_format"),
+        seed=options.get("seed"),
+        stop=options.get("stop"),
+        store=options.get("store"),
+        temperature=options.get("temperature"),
+        tool_choice=options.get("tool_choice"),  # type: ignore[arg-type]
         tools=all_tools if all_tools else None,
-        top_p=options.top_p,
-        user=options.user,
-        additional_chat_options=dict(options.additional_properties),
+        top_p=options.get("top_p"),
+        user=options.get("user"),
     )
 
 
@@ -1980,8 +1983,8 @@ class HandoffBuilder:
         Returns:
             Dict mapping tool names (in various formats) to executor IDs for handoff resolution
         """
-        chat_options = agent.chat_options
-        existing_tools = list(chat_options.tools or [])
+        default_options = agent.default_options
+        existing_tools = list(default_options.get("tools") or [])
         existing_names = {getattr(tool, "name", "") for tool in existing_tools if hasattr(tool, "name")}
 
         tool_targets: dict[str, str] = {}
@@ -1998,9 +2001,9 @@ class HandoffBuilder:
             tool_targets[alias.lower()] = executor.id
 
         if new_tools:
-            chat_options.tools = existing_tools + new_tools
+            default_options["tools"] = existing_tools + new_tools
         else:
-            chat_options.tools = existing_tools
+            default_options["tools"] = existing_tools
 
         return tool_targets
 

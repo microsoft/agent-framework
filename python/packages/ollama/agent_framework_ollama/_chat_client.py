@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
 from collections.abc import (
     AsyncIterable,
     Callable,
@@ -10,13 +11,12 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic
 
 from agent_framework import (
     AIFunction,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Contents,
@@ -32,6 +32,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import (
     ServiceInitializationError,
@@ -45,6 +46,11 @@ from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import ValidationError
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 class OllamaSettings(AFBaseSettings):
@@ -62,7 +68,7 @@ logger = get_logger("agent_framework.ollama")
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OllamaChatClient(BaseChatClient):
+class OllamaChatClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Ollama Chat completion class."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "ollama"
@@ -110,15 +116,16 @@ class OllamaChatClient(BaseChatClient):
 
         super().__init__(**kwargs)
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
 
         try:
             # execute
@@ -133,15 +140,16 @@ class OllamaChatClient(BaseChatClient):
         # process
         return self._parse_response_from_ollama(response)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         # prepare
-        options_dict = self._prepare_options(messages, chat_options)
+        options_dict = self._prepare_options(messages, options)
 
         try:
             # execute
@@ -157,19 +165,20 @@ class OllamaChatClient(BaseChatClient):
         async for part in response_object:
             yield self._parse_streaming_response_from_ollama(part)
 
-    def _prepare_options(self, messages: MutableSequence[ChatMessage], chat_options: ChatOptions) -> dict[str, Any]:
+    def _prepare_options(self, messages: MutableSequence[ChatMessage], options: dict[str, Any]) -> dict[str, Any]:
         # tool choice - Currently Ollama only supports auto tool choice
-        if chat_options.tool_choice == "required":
+        tool_choice = options.get("tool_choice")
+        if tool_choice == "required":
             raise ServiceInvalidRequestError("Ollama does not support required tool choice.")
 
-        run_options = chat_options.to_dict(
-            exclude={
-                "type",
-                "instructions",
-                "tool_choice",  # Ollama does not support tool_choice configuration
-                "additional_properties",  # handled separately
-            }
-        )
+        # Build run_options from chat_options dict, excluding specific keys
+        exclude_keys = {
+            "type",
+            "instructions",
+            "tool_choice",  # Ollama does not support tool_choice configuration
+            "additional_properties",  # handled separately
+        }
+        run_options = {k: v for k, v in options.items() if k not in exclude_keys and v is not None}
 
         # messages
         if messages and "messages" not in run_options:
@@ -190,13 +199,13 @@ class OllamaChatClient(BaseChatClient):
             run_options["model"] = self.model_id
 
         # tools
-        if chat_options.tools and (tools := self._prepare_tools_for_ollama(chat_options.tools)):
-            run_options["tools"] = tools
+        tools = options.get("tools")
+        if tools and (prepared_tools := self._prepare_tools_for_ollama(tools)):
+            run_options["tools"] = prepared_tools
 
         # additional properties
-        additional_options = {
-            key: value for key, value in chat_options.additional_properties.items() if value is not None
-        }
+        additional_properties = options.get("additional_properties") or {}
+        additional_options = {key: value for key, value in additional_properties.items() if value is not None}
         if additional_options:
             run_options.update(additional_options)
 

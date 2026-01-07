@@ -46,7 +46,7 @@ def test_build_request_includes_tool_config() -> None:
     client = _build_client()
 
     tool = AIFunction(name="get_weather", description="desc", func=_dummy_weather, input_model=_WeatherArgs)
-    options = ChatOptions(tools=[tool], tool_choice=ToolMode.REQUIRED("get_weather"))
+    options: ChatOptions = {"tools": [tool], "tool_choice": ToolMode.REQUIRED("get_weather")}
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="hi")])]
 
     request = client._build_converse_request(messages, options)
@@ -57,7 +57,7 @@ def test_build_request_includes_tool_config() -> None:
 
 def test_build_request_serializes_tool_history() -> None:
     client = _build_client()
-    options = ChatOptions()
+    options: ChatOptions = {}
     messages = [
         ChatMessage(role=Role.USER, contents=[TextContent(text="how's weather?")]),
         ChatMessage(

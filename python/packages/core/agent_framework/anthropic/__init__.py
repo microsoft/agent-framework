@@ -5,7 +5,7 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_anthropic"
 PACKAGE_NAME = "agent-framework-anthropic"
-_IMPORTS = ["__version__", "AnthropicClient"]
+_IMPORTS = ["__version__", "AnthropicClient", "AnthropicChatOptions"]
 
 
 def __getattr__(name: str) -> Any:

@@ -17,7 +17,6 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     FunctionCallContent,
@@ -618,18 +617,18 @@ def test_openai_assistants_client_prepare_options_basic(mock_async_openai: Magic
     """Test _prepare_options with basic chat options."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    # Create basic chat options
-    chat_options = ChatOptions(
-        max_tokens=100,
-        model_id="gpt-4",
-        temperature=0.7,
-        top_p=0.9,
-    )
+    # Create basic chat options as a dict
+    options = {
+        "max_tokens": 100,
+        "model_id": "gpt-4",
+        "temperature": 0.7,
+        "top_p": 0.9,
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check basic options were set
     assert run_options["max_completion_tokens"] == 100
@@ -650,15 +649,15 @@ def test_openai_assistants_client_prepare_options_with_ai_function_tool(mock_asy
         """A test function."""
         return f"Result for {query}"
 
-    chat_options = ChatOptions(
-        tools=[test_function],
-        tool_choice="auto",
-    )
+    options = {
+        "tools": [test_function],
+        "tool_choice": "auto",
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check tools were set correctly
     assert "tools" in run_options
@@ -675,15 +674,15 @@ def test_openai_assistants_client_prepare_options_with_code_interpreter(mock_asy
     # Create a real HostedCodeInterpreterTool
     code_tool = HostedCodeInterpreterTool()
 
-    chat_options = ChatOptions(
-        tools=[code_tool],
-        tool_choice="auto",
-    )
+    options = {
+        "tools": [code_tool],
+        "tool_choice": "auto",
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Calculate something")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check code interpreter tool was set correctly
     assert "tools" in run_options
@@ -696,14 +695,14 @@ def test_openai_assistants_client_prepare_options_tool_choice_none(mock_async_op
     """Test _prepare_options with tool_choice set to 'none'."""
     chat_client = create_test_openai_assistants_client(mock_async_openai)
 
-    chat_options = ChatOptions(
-        tool_choice="none",
-    )
+    options = {
+        "tool_choice": "none",
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Should set tool_choice to none and not include tools
     assert run_options["tool_choice"] == "none"
@@ -717,14 +716,14 @@ def test_openai_assistants_client_prepare_options_required_function(mock_async_o
     # Create a required function tool choice
     tool_choice = ToolMode(mode="required", required_function_name="specific_function")
 
-    chat_options = ChatOptions(
-        tool_choice=tool_choice,
-    )
+    options = {
+        "tool_choice": tool_choice,
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check required function tool choice was set correctly
     expected_tool_choice = {
@@ -742,15 +741,15 @@ def test_openai_assistants_client_prepare_options_with_file_search_tool(mock_asy
     # Create a HostedFileSearchTool with max_results
     file_search_tool = HostedFileSearchTool(max_results=10)
 
-    chat_options = ChatOptions(
-        tools=[file_search_tool],
-        tool_choice="auto",
-    )
+    options = {
+        "tools": [file_search_tool],
+        "tool_choice": "auto",
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Search for information")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check file search tool was set correctly
     assert "tools" in run_options
@@ -767,15 +766,15 @@ def test_openai_assistants_client_prepare_options_with_mapping_tool(mock_async_o
     # Create a tool as a MutableMapping (dict)
     mapping_tool = {"type": "custom_tool", "parameters": {"setting": "value"}}
 
-    chat_options = ChatOptions(
-        tools=[mapping_tool],  # type: ignore
-        tool_choice="auto",
-    )
+    options = {
+        "tools": [mapping_tool],  # type: ignore
+        "tool_choice": "auto",
+    }
 
     messages = [ChatMessage(role=Role.USER, text="Use custom tool")]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, chat_options)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, options)  # type: ignore
 
     # Check mapping tool was set correctly
     assert "tools" in run_options
@@ -794,7 +793,7 @@ def test_openai_assistants_client_prepare_options_with_system_message(mock_async
     ]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, None)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, {})  # type: ignore
 
     # Check that additional_messages only contains the user message
     # System message should be converted to instructions (though this is handled internally)
@@ -813,7 +812,7 @@ def test_openai_assistants_client_prepare_options_with_image_content(mock_async_
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
     # Call the method
-    run_options, tool_results = chat_client._prepare_options(messages, None)  # type: ignore
+    run_options, tool_results = chat_client._prepare_options(messages, {})  # type: ignore
 
     # Check that image content was processed
     assert "additional_messages" in run_options

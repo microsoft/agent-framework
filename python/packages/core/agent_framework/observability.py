@@ -1077,12 +1077,8 @@ def _trace_get_response(
                 self.additional_properties["token_usage_histogram"] = _get_token_usage_histogram()
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
-            model_id = (
-                kwargs.get("model_id")
-                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
-                or getattr(self, "model_id", None)
-                or "unknown"
-            )
+            options: dict[str, Any] = kwargs.get("options") or {}
+            model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1165,12 +1161,8 @@ def _trace_get_streaming_response(
             if "operation_duration_histogram" not in self.additional_properties:
                 self.additional_properties["operation_duration_histogram"] = _get_duration_histogram()
 
-            model_id = (
-                kwargs.get("model_id")
-                or (chat_options.model_id if (chat_options := kwargs.get("chat_options")) else None)
-                or getattr(self, "model_id", None)
-                or "unknown"
-            )
+            options: dict[str, Any] = kwargs.get("options") or {}
+            model_id = kwargs.get("model_id") or options.get("model_id") or getattr(self, "model_id", None) or "unknown"
             service_url = str(
                 service_url_func()
                 if (service_url_func := getattr(self, "service_url", None)) and callable(service_url_func)
@@ -1358,7 +1350,7 @@ def _trace_agent_run(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
+                    system_instructions=_get_instructions_from_chat_options(getattr(self, "chat_options", None)),
                 )
             try:
                 response = await run_func(self, messages=messages, thread=thread, **kwargs)
@@ -1430,7 +1422,7 @@ def _trace_agent_run_stream(
                     span=span,
                     provider_name=provider_name,
                     messages=messages,
-                    system_instructions=getattr(getattr(self, "chat_options", None), "instructions", None),
+                    system_instructions=_get_instructions_from_chat_options(getattr(self, "chat_options", None)),
                 )
             try:
                 async for update in run_streaming_func(self, messages=messages, thread=thread, **kwargs):
@@ -1597,15 +1589,24 @@ def _get_span(
         yield current_span
 
 
+def _get_instructions_from_chat_options(chat_options: Any) -> str | None:
+    """Extract instructions from chat_options dict."""
+    if chat_options is None:
+        return None
+    if isinstance(chat_options, dict):
+        return chat_options.get("instructions")
+    return None
+
+
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     from ._tools import _tools_to_dict
-    from ._types import ChatOptions
 
     attributes: dict[str, Any] = {}
-    chat_options: ChatOptions | None = kwargs.get("chat_options")
-    if chat_options is None:
-        chat_options = ChatOptions()
+    # Support 'options' dict from chat clients and agents
+    options: dict[str, Any] = {}
+    if (opts := kwargs.get("options")) and isinstance(opts, dict):
+        options = opts
     if operation_name := kwargs.get("operation_name"):
         attributes[OtelAttr.OPERATION] = operation_name
     if choice_count := kwargs.get("choice_count", 1):
@@ -1614,33 +1615,33 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         attributes[SpanAttributes.LLM_SYSTEM] = system_name
     if provider_name := kwargs.get("provider_name"):
         attributes[OtelAttr.PROVIDER_NAME] = provider_name
-    if model_id := kwargs.get("model", chat_options.model_id):
+    if model_id := options.get("model_id") or kwargs.get("model") or kwargs.get("model_id"):
         attributes[SpanAttributes.LLM_REQUEST_MODEL] = model_id
     if service_url := kwargs.get("service_url"):
         attributes[OtelAttr.ADDRESS] = service_url
-    if conversation_id := kwargs.get("conversation_id", chat_options.conversation_id):
+    if conversation_id := options.get("conversation_id") or kwargs.get("conversation_id"):
         attributes[OtelAttr.CONVERSATION_ID] = conversation_id
-    if seed := kwargs.get("seed", chat_options.seed):
+    if seed := options.get("seed") or kwargs.get("seed"):
         attributes[OtelAttr.SEED] = seed
-    if frequency_penalty := kwargs.get("frequency_penalty", chat_options.frequency_penalty):
+    if frequency_penalty := options.get("frequency_penalty") or kwargs.get("frequency_penalty"):
         attributes[OtelAttr.FREQUENCY_PENALTY] = frequency_penalty
-    if max_tokens := kwargs.get("max_tokens", chat_options.max_tokens):
+    if max_tokens := options.get("max_tokens") or kwargs.get("max_tokens"):
         attributes[SpanAttributes.LLM_REQUEST_MAX_TOKENS] = max_tokens
-    if stop := kwargs.get("stop", chat_options.stop):
+    if stop := options.get("stop") or kwargs.get("stop"):
         attributes[OtelAttr.STOP_SEQUENCES] = stop
-    if temperature := kwargs.get("temperature", chat_options.temperature):
+    if temperature := options.get("temperature") or kwargs.get("temperature"):
         attributes[SpanAttributes.LLM_REQUEST_TEMPERATURE] = temperature
-    if top_p := kwargs.get("top_p", chat_options.top_p):
+    if top_p := options.get("top_p") or kwargs.get("top_p"):
         attributes[SpanAttributes.LLM_REQUEST_TOP_P] = top_p
-    if presence_penalty := kwargs.get("presence_penalty", chat_options.presence_penalty):
+    if presence_penalty := options.get("presence_penalty") or kwargs.get("presence_penalty"):
         attributes[OtelAttr.PRESENCE_PENALTY] = presence_penalty
-    if top_k := kwargs.get("top_k"):
+    if top_k := options.get("top_k") or kwargs.get("top_k"):
         attributes[OtelAttr.TOP_K] = top_k
-    if encoding_formats := kwargs.get("encoding_formats"):
+    if encoding_formats := options.get("encoding_formats") or kwargs.get("encoding_formats"):
         attributes[OtelAttr.ENCODING_FORMATS] = json.dumps(
             encoding_formats if isinstance(encoding_formats, list) else [encoding_formats]
         )
-    if tools := kwargs.get("tools", chat_options.tools):
+    if tools := options.get("tools") or kwargs.get("tools"):
         tools_as_json_list = _tools_to_dict(tools)
         if tools_as_json_list:
             attributes[OtelAttr.TOOL_DEFINITIONS] = json.dumps(tools_as_json_list)
