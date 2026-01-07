@@ -1,10 +1,8 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -13,14 +11,14 @@ using Moq;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Tests for <see cref="ChatClientAgentExtensions"/> methods with <see cref="ChatClientAgentRunOptions"/>.
+/// Tests for <see cref="ChatClientAgent"/> run methods with <see cref="ChatClientAgentRunOptions"/>.
 /// </summary>
-public sealed class ChatClientAgentExtensionsTests
+public sealed class ChatClientAgentRunWithCustomOptionsTests
 {
     #region RunAsync Tests
 
     [Fact]
-    public async Task RunAsync_WithThreadAndOptions_CallsBaseMethod()
+    public async Task RunAsync_WithThreadAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -49,7 +47,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunAsync_WithStringMessageAndOptions_CallsBaseMethod()
+    public async Task RunAsync_WithStringMessageAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -78,7 +76,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunAsync_WithChatMessageAndOptions_CallsBaseMethod()
+    public async Task RunAsync_WithChatMessageAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -108,7 +106,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunAsync_WithMessagesCollectionAndOptions_CallsBaseMethod()
+    public async Task RunAsync_WithMessagesCollectionAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -138,7 +136,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunAsync_WithChatOptionsInRunOptions_UsesChatOptions()
+    public async Task RunAsync_WithChatOptionsInRunOptions_UsesChatOptionsAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -169,7 +167,7 @@ public sealed class ChatClientAgentExtensionsTests
     #region RunStreamingAsync Tests
 
     [Fact]
-    public async Task RunStreamingAsync_WithThreadAndOptions_CallsBaseMethod()
+    public async Task RunStreamingAsync_WithThreadAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -201,7 +199,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithStringMessageAndOptions_CallsBaseMethod()
+    public async Task RunStreamingAsync_WithStringMessageAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -233,7 +231,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithChatMessageAndOptions_CallsBaseMethod()
+    public async Task RunStreamingAsync_WithChatMessageAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();
@@ -266,7 +264,7 @@ public sealed class ChatClientAgentExtensionsTests
     }
 
     [Fact]
-    public async Task RunStreamingAsync_WithMessagesCollectionAndOptions_CallsBaseMethod()
+    public async Task RunStreamingAsync_WithMessagesCollectionAndOptions_CallsBaseMethodAsync()
     {
         // Arrange
         Mock<IChatClient> mockChatClient = new();

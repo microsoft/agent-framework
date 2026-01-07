@@ -1,7 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,12 +11,11 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Provides extension methods for <see cref="ChatClientAgent"/> to enable discoverability of <see cref="ChatClientAgentRunOptions"/>.
 /// </summary>
-public static class ChatClientAgentExtensions
+public partial class ChatClientAgent
 {
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
     /// The thread will be updated with any response messages generated during invocation.
@@ -25,17 +23,15 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
-    public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+    public Task<AgentRunResponse> RunAsync(
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync(thread, (AgentRunOptions)options, cancellationToken);
+        this.RunAsync(thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a text message from the user.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The user message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -44,18 +40,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
-    public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+    public Task<AgentRunResponse> RunAsync(
         string message,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync(message, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunAsync(message, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a single chat message.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The chat message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -64,18 +58,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
-    public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+    public Task<AgentRunResponse> RunAsync(
         ChatMessage message,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync(message, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunAsync(message, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a collection of chat messages.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="messages">The collection of messages to send to the agent for processing.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -84,18 +76,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="AgentRunResponse"/> with the agent's output.</returns>
-    public static Task<AgentRunResponse> RunAsync(
-        this ChatClientAgent agent,
+    public Task<AgentRunResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync(messages, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunAsync(messages, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent in streaming mode without providing new input messages, relying on existing context and instructions.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
     /// The thread will be updated with any response messages generated during invocation.
@@ -103,17 +93,15 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
-    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunStreamingAsync(thread, (AgentRunOptions)options, cancellationToken);
+        this.RunStreamingAsync(thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent in streaming mode with a text message from the user.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The user message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -122,18 +110,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
-    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         string message,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunStreamingAsync(message, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunStreamingAsync(message, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent in streaming mode with a single chat message.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The chat message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -142,18 +128,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
-    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         ChatMessage message,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunStreamingAsync(message, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunStreamingAsync(message, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Runs the agent in streaming mode with a collection of chat messages.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="messages">The collection of messages to send to the agent for processing.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -162,18 +146,16 @@ public static class ChatClientAgentExtensions
     /// <param name="options">Configuration parameters for controlling the agent's invocation behavior.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>An asynchronous enumerable of <see cref="AgentRunResponseUpdate"/> instances representing the streaming response.</returns>
-    public static IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        this ChatClientAgent agent,
+    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         CancellationToken cancellationToken = default) =>
-        agent.RunStreamingAsync(messages, thread, (AgentRunOptions)options, cancellationToken);
+        this.RunStreamingAsync(messages, thread, (AgentRunOptions?)options, cancellationToken);
 
     /// <summary>
     /// Run the agent with no message assuming that all required instructions are already provided to the agent or on the thread, and requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
     /// The thread will be updated with any response messages generated during invocation.
@@ -186,19 +168,17 @@ public static class ChatClientAgentExtensions
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentRunResponse{T}"/> with the agent's output.</returns>
-    public static Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
-        this ChatClientAgent agent,
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         AgentThread? thread,
         JsonSerializerOptions? serializerOptions,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync<T>(thread, serializerOptions, (AgentRunOptions)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(thread, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a text message from the user, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The user message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -212,20 +192,18 @@ public static class ChatClientAgentExtensions
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentRunResponse{T}"/> with the agent's output.</returns>
-    public static Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
-        this ChatClientAgent agent,
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         string message,
         AgentThread? thread,
         JsonSerializerOptions? serializerOptions,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync<T>(message, thread, serializerOptions, (AgentRunOptions)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(message, thread, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a single chat message, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="message">The chat message to send to the agent.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -239,20 +217,18 @@ public static class ChatClientAgentExtensions
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentRunResponse{T}"/> with the agent's output.</returns>
-    public static Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
-        this ChatClientAgent agent,
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         ChatMessage message,
         AgentThread? thread,
         JsonSerializerOptions? serializerOptions,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync<T>(message, thread, serializerOptions, (AgentRunOptions)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(message, thread, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
 
     /// <summary>
     /// Runs the agent with a collection of chat messages, requesting a response of the specified type <typeparamref name="T"/>.
     /// </summary>
-    /// <param name="agent">The <see cref="ChatClientAgent"/> to run.</param>
     /// <param name="messages">The collection of messages to send to the agent for processing.</param>
     /// <param name="thread">
     /// The conversation thread to use for this invocation. If <see langword="null"/>, a new thread will be created.
@@ -266,13 +242,12 @@ public static class ChatClientAgentExtensions
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A task that represents the asynchronous operation. The task result contains an <see cref="ChatClientAgentRunResponse{T}"/> with the agent's output.</returns>
-    public static Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
-        this ChatClientAgent agent,
+    public Task<ChatClientAgentRunResponse<T>> RunAsync<T>(
         IEnumerable<ChatMessage> messages,
         AgentThread? thread,
         JsonSerializerOptions? serializerOptions,
-        ChatClientAgentRunOptions options,
+        ChatClientAgentRunOptions? options,
         bool? useJsonSchemaResponseFormat = null,
         CancellationToken cancellationToken = default) =>
-        agent.RunAsync<T>(messages, thread, serializerOptions, (AgentRunOptions)options, useJsonSchemaResponseFormat, cancellationToken);
+        this.RunAsync<T>(messages, thread, serializerOptions, (AgentRunOptions?)options, useJsonSchemaResponseFormat, cancellationToken);
 }
