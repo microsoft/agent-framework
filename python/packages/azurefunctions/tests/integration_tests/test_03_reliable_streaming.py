@@ -97,23 +97,20 @@ class TestSampleReliableStreaming:
             assert "event:" in content or "data:" in content
 
     def test_stream_nonexistent_conversation(self) -> None:
-        """Test streaming from a non-existent conversation."""
+        """Test streaming from a non-existent conversation.
+
+        The endpoint will wait for data in Redis, but since the conversation
+        doesn't exist, it will timeout. This is expected behavior.
+        """
         fake_id = "nonexistent-conversation-12345"
 
-        # Should timeout or return error after waiting
-        # Use shorter timeout since we know this will fail
-        try:
-            stream_response = requests.get(
+        # Should timeout since the conversation doesn't exist
+        with pytest.raises(requests.exceptions.ReadTimeout):
+            requests.get(
                 f"{self.stream_url}/{fake_id}",
                 headers={"Accept": "text/plain"},
                 timeout=10,  # Short timeout for non-existent ID
             )
-            assert stream_response.status_code == 200
-            # Should contain error or timeout message
-            assert len(stream_response.text) > 0
-        except requests.exceptions.ReadTimeout:
-            # Timeout is expected for non-existent conversation
-            pass
 
     def test_health_endpoint(self) -> None:
         """Test health check endpoint."""
