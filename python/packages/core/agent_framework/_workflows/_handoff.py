@@ -34,7 +34,9 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Never, cast
+from typing import Any, cast
+
+from typing_extensions import Never
 
 from .._agents import AgentProtocol, ChatAgent
 from .._middleware import FunctionInvocationContext, FunctionMiddleware

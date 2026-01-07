@@ -24,9 +24,10 @@ import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Never, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel, Field
+from typing_extensions import Never
 
 from .._agents import AgentProtocol, ChatAgent
 from .._threads import AgentThread

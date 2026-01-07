@@ -10,7 +10,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, Never, TypeVar, cast
+from typing import Any, ClassVar, TypeVar, cast
+
+from typing_extensions import Never
 
 from agent_framework import (
     AgentProtocol,
