@@ -3,18 +3,6 @@ description: Request a new feature for Microsoft Agent Framework
 title: "[Feature]: "
 type: feature
 body:
-  - type: dropdown
-    id: language
-    attributes:
-      label: Language/SDK
-      description: Which language/SDK does this feature apply to?
-      options:
-        - .NET
-        - Python
-        - Both
-        - Other / Not Applicable
-    validations:
-      required: true
 
   - type: textarea
     id: description
@@ -45,5 +33,19 @@ body:
         // Your code here
         ```
       render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language/SDK
+      description: Which language/SDK does this feature apply to?
+      options:
+        - Both
+        - .NET
+        - Python
+        - Other / Not Applicable
+      default: 0
     validations:
       required: false
