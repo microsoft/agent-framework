@@ -278,7 +278,7 @@ public sealed class ChatClientAgentExtensionsTests
 
         ChatClientAgent agent = new(mockChatClient.Object);
         AgentThread thread = agent.GetNewThread();
-        IEnumerable<ChatMessage> messages = new[] { new ChatMessage(ChatRole.User, "Message 1"), new ChatMessage(ChatRole.User, "Message 2") };
+        IEnumerable<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Message 1"), new ChatMessage(ChatRole.User, "Message 2")];
         ChatClientAgentRunOptions options = new();
 
         // Act
