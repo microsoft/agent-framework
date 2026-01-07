@@ -337,7 +337,7 @@ async def test_cmc_streaming_with_tool_call(
     chat_history.append(ChatMessage(text="hello world", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = ollama_client.get_streaming_response(messages=chat_history, tools=[hello_world])
+    result = ollama_client.get_streaming_response(messages=chat_history, options={"tools": [hello_world]})
 
     chunks: list[ChatResponseUpdate] = []
     async for chunk in result:
@@ -450,7 +450,7 @@ async def test_cmc_integration_with_tool_call(
     chat_history.append(ChatMessage(text="Call the hello world function and repeat what it says", role="user"))
 
     ollama_client = OllamaChatClient()
-    result = await ollama_client.get_response(messages=chat_history, tools=[hello_world])
+    result = await ollama_client.get_response(messages=chat_history, options={"tools": [hello_world]})
 
     assert "hello" in result.text.lower() and "world" in result.text.lower()
     assert isinstance(result.messages[-2].contents[0], FunctionResultContent)

@@ -29,7 +29,6 @@ from agent_framework._middleware import (
     FunctionMiddlewarePipeline,
 )
 from agent_framework._tools import AIFunction
-from agent_framework._types import ChatOptions
 
 
 class TestAgentRunContext:
@@ -100,7 +99,7 @@ class TestChatContext:
     def test_init_with_defaults(self, mock_chat_client: Any) -> None:
         """Test ChatContext initialization with default values."""
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         assert context.chat_client is mock_chat_client
@@ -114,7 +113,7 @@ class TestChatContext:
     def test_init_with_custom_values(self, mock_chat_client: Any) -> None:
         """Test ChatContext initialization with custom values."""
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions(temperature=0.5)
+        chat_options: dict[str, Any] = {"temperature": 0.5}
         metadata = {"key": "value"}
 
         context = ChatContext(
@@ -562,7 +561,7 @@ class TestChatMiddlewarePipeline:
         """Test pipeline execution with no middleware."""
         pipeline = ChatMiddlewarePipeline()
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         expected_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
@@ -589,7 +588,7 @@ class TestChatMiddlewarePipeline:
         middleware = OrderTrackingChatMiddleware("test")
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         expected_response = ChatResponse(messages=[ChatMessage(role=Role.ASSISTANT, text="response")])
@@ -606,7 +605,7 @@ class TestChatMiddlewarePipeline:
         """Test pipeline streaming execution with no middleware."""
         pipeline = ChatMiddlewarePipeline()
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> AsyncIterable[ChatResponseUpdate]:
@@ -637,7 +636,7 @@ class TestChatMiddlewarePipeline:
         middleware = StreamOrderTrackingChatMiddleware("test")
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(
             chat_client=mock_chat_client, messages=messages, chat_options=chat_options, is_streaming=True
         )
@@ -662,7 +661,7 @@ class TestChatMiddlewarePipeline:
         middleware = self.PreNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
         execution_order: list[str] = []
 
@@ -682,7 +681,7 @@ class TestChatMiddlewarePipeline:
         middleware = self.PostNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
         execution_order: list[str] = []
 
@@ -702,7 +701,7 @@ class TestChatMiddlewarePipeline:
         middleware = self.PreNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(
             chat_client=mock_chat_client, messages=messages, chat_options=chat_options, is_streaming=True
         )
@@ -729,7 +728,7 @@ class TestChatMiddlewarePipeline:
         middleware = self.PostNextTerminateChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(
             chat_client=mock_chat_client, messages=messages, chat_options=chat_options, is_streaming=True
         )
@@ -962,7 +961,7 @@ class TestMixedMiddleware:
 
         pipeline = ChatMiddlewarePipeline([ClassChatMiddleware(), function_chat_middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
@@ -1093,7 +1092,7 @@ class TestMultipleMiddlewareOrdering:
         middleware = [FirstChatMiddleware(), SecondChatMiddleware(), ThirdChatMiddleware()]
         pipeline = ChatMiddlewarePipeline(middleware)  # type: ignore
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
@@ -1216,8 +1215,8 @@ class TestContextContentValidation:
                 assert context.messages[0].text == "test"
                 assert context.is_streaming is False
                 assert isinstance(context.metadata, dict)
-                assert isinstance(context.chat_options, ChatOptions)
-                assert context.chat_options.temperature == 0.5
+                assert isinstance(context.chat_options, dict)
+                assert context.chat_options.get("temperature") == 0.5
 
                 # Add custom metadata
                 context.metadata["validated"] = True
@@ -1227,7 +1226,7 @@ class TestContextContentValidation:
         middleware = ChatContextValidationMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions(temperature=0.5)
+        chat_options: dict[str, Any] = {"temperature": 0.5}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         async def final_handler(ctx: ChatContext) -> ChatResponse:
@@ -1331,7 +1330,7 @@ class TestStreamingScenarios:
         middleware = ChatStreamingFlagMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
 
         # Test non-streaming
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
@@ -1373,7 +1372,7 @@ class TestStreamingScenarios:
         middleware = ChatStreamProcessingMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(
             chat_client=mock_chat_client, messages=messages, chat_options=chat_options, is_streaming=True
         )
@@ -1590,7 +1589,7 @@ class TestMiddlewareExecutionControl:
         middleware = NoNextChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         handler_called = False
@@ -1618,7 +1617,7 @@ class TestMiddlewareExecutionControl:
         middleware = NoNextStreamingChatMiddleware()
         pipeline = ChatMiddlewarePipeline([middleware])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(
             chat_client=mock_chat_client, messages=messages, chat_options=chat_options, is_streaming=True
         )
@@ -1656,7 +1655,7 @@ class TestMiddlewareExecutionControl:
 
         pipeline = ChatMiddlewarePipeline([FirstChatMiddleware(), SecondChatMiddleware()])
         messages = [ChatMessage(role=Role.USER, text="test")]
-        chat_options = ChatOptions()
+        chat_options: dict[str, Any] = {}
         context = ChatContext(chat_client=mock_chat_client, messages=messages, chat_options=chat_options)
 
         handler_called = False

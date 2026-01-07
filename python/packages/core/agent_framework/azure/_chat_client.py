@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 
 from azure.core.credentials import TokenCredential
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
@@ -20,6 +20,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._chat_client import OpenAIBaseChatClient
@@ -43,7 +44,7 @@ TAzureOpenAIChatClient = TypeVar("TAzureOpenAIChatClient", bound="AzureOpenAICha
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient):
+class AzureOpenAIChatClient(AzureOpenAIConfigMixin, OpenAIBaseChatClient[TOptions], Generic[TOptions]):
     """Azure OpenAI Chat completion class."""
 
     def __init__(

@@ -2,8 +2,15 @@
 
 import json
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence
-from typing import Any, cast
+from collections.abc import (
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+)
+from typing import Any, Generic, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
@@ -20,9 +27,14 @@ from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
 from openai.types.beta.threads.runs import RunStep
 from pydantic import ValidationError
 
-from .._clients import BaseChatClient
+from .._clients import BaseChatClient, TOptions
 from .._middleware import use_chat_middleware
-from .._tools import AIFunction, HostedCodeInterpreterTool, HostedFileSearchTool, use_function_invocation
+from .._tools import (
+    AIFunction,
+    HostedCodeInterpreterTool,
+    HostedFileSearchTool,
+    use_function_invocation,
+)
 from .._types import (
     ChatMessage,
     ChatResponse,
@@ -49,6 +61,11 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self  # pragma: no cover
 
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
 
 __all__ = ["OpenAIAssistantsClient"]
 
@@ -56,7 +73,9 @@ __all__ = ["OpenAIAssistantsClient"]
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
+class OpenAIAssistantsClient(
+    OpenAIConfigMixin, BaseChatClient[TOptions], Generic[TOptions]
+):
     """OpenAI Assistants client."""
 
     def __init__(
@@ -128,7 +147,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 env_file_encoding=env_file_encoding,
             )
         except ValidationError as ex:
-            raise ServiceInitializationError("Failed to create OpenAI settings.", ex) from ex
+            raise ServiceInitializationError(
+                "Failed to create OpenAI settings.", ex
+            ) from ex
 
         if not async_client and not openai_settings.api_key:
             raise ServiceInitializationError(
@@ -158,7 +179,12 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         """Async context manager exit - clean up any assistants we created."""
         await self.close()
 
@@ -170,6 +196,7 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
+    @override
     async def _inner_get_response(
         self,
         *,
@@ -178,10 +205,13 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         **kwargs: Any,
     ) -> ChatResponse:
         return await ChatResponse.from_chat_response_generator(
-            updates=self._inner_get_streaming_response(messages=messages, options=options, **kwargs),
+            updates=self._inner_get_streaming_response(
+                messages=messages, options=options, **kwargs
+            ),
             output_format_type=options.get("response_format"),
         )
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
@@ -193,16 +223,22 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         run_options, tool_results = self._prepare_options(messages, options, **kwargs)
 
         # Get the thread ID
-        thread_id: str | None = options.get("conversation_id", run_options.get("conversation_id", self.thread_id))
+        thread_id: str | None = options.get(
+            "conversation_id", run_options.get("conversation_id", self.thread_id)
+        )
 
         if thread_id is None and tool_results is not None:
-            raise ValueError("No thread ID was provided, but chat messages includes tool results.")
+            raise ValueError(
+                "No thread ID was provided, but chat messages includes tool results."
+            )
 
         # Determine which assistant to use and create if needed
         assistant_id = await self._get_assistant_id_or_create()
 
         # execute
-        stream, thread_id = await self._create_assistant_stream(thread_id, assistant_id, run_options, tool_results)
+        stream, thread_id = await self._create_assistant_stream(
+            thread_id, assistant_id, run_options, tool_results
+        )
 
         # process
         async for update in self._process_stream_events(stream, thread_id):
@@ -217,7 +253,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         # If no assistant is provided, create a temporary assistant
         if self.assistant_id is None:
             if not self.model_id:
-                raise ServiceInitializationError("Parameter 'model_id' is required for assistant creation.")
+                raise ServiceInitializationError(
+                    "Parameter 'model_id' is required for assistant creation."
+                )
 
             client = await self._ensure_client()
             created_assistant = await client.beta.assistants.create(
@@ -246,17 +284,28 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         # Get any active run for this thread
         thread_run = await self._get_active_thread_run(thread_id)
 
-        tool_run_id, tool_outputs = self._prepare_tool_outputs_for_assistants(tool_results)
+        tool_run_id, tool_outputs = self._prepare_tool_outputs_for_assistants(
+            tool_results
+        )
 
-        if thread_run is not None and tool_run_id is not None and tool_run_id == thread_run.id and tool_outputs:
+        if (
+            thread_run is not None
+            and tool_run_id is not None
+            and tool_run_id == thread_run.id
+            and tool_outputs
+        ):
             # There's an active run and we have tool results to submit, so submit the results.
             stream = client.beta.threads.runs.submit_tool_outputs_stream(  # type: ignore[reportDeprecated]
-                run_id=tool_run_id, thread_id=thread_run.thread_id, tool_outputs=tool_outputs
+                run_id=tool_run_id,
+                thread_id=thread_run.thread_id,
+                tool_outputs=tool_outputs,
             )
             final_thread_id = thread_run.thread_id
         else:
             # Handle thread creation or cancellation
-            final_thread_id = await self._prepare_thread(thread_id, thread_run, run_options)
+            final_thread_id = await self._prepare_thread(
+                thread_id, thread_run, run_options
+            )
 
             # Now create a new run and stream the results.
             stream = client.beta.threads.runs.stream(  # type: ignore[reportDeprecated]
@@ -271,12 +320,16 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         if thread_id is None:
             return None
 
-        async for run in client.beta.threads.runs.list(thread_id=thread_id, limit=1, order="desc"):  # type: ignore[reportDeprecated]
+        async for run in client.beta.threads.runs.list(
+            thread_id=thread_id, limit=1, order="desc"
+        ):  # type: ignore[reportDeprecated]
             if run.status not in ["completed", "cancelled", "failed", "expired"]:
                 return run
         return None
 
-    async def _prepare_thread(self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]) -> str:
+    async def _prepare_thread(
+        self, thread_id: str | None, thread_run: Run | None, run_options: dict[str, Any]
+    ) -> str:
         """Prepare the thread for a new run, creating or cleaning up as needed."""
         client = await self._ensure_client()
         if thread_id is None:
@@ -292,11 +345,15 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
         if thread_run is not None:
             # There was an active run; we need to cancel it before starting a new run.
-            await client.beta.threads.runs.cancel(run_id=thread_run.id, thread_id=thread_id)  # type: ignore[reportDeprecated]
+            await client.beta.threads.runs.cancel(
+                run_id=thread_run.id, thread_id=thread_id
+            )  # type: ignore[reportDeprecated]
 
         return thread_id
 
-    async def _process_stream_events(self, stream: Any, thread_id: str) -> AsyncIterable[ChatResponseUpdate]:
+    async def _process_stream_events(
+        self, stream: Any, thread_id: str
+    ) -> AsyncIterable[ChatResponseUpdate]:
         response_id: str | None = None
 
         async with stream as response_stream:
@@ -310,14 +367,22 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                         response_id=response_id,
                         role=Role.ASSISTANT,
                     )
-                elif response.event == "thread.run.step.created" and isinstance(response.data, RunStep):
+                elif response.event == "thread.run.step.created" and isinstance(
+                    response.data, RunStep
+                ):
                     response_id = response.data.run_id
-                elif response.event == "thread.message.delta" and isinstance(response.data, MessageDeltaEvent):
+                elif response.event == "thread.message.delta" and isinstance(
+                    response.data, MessageDeltaEvent
+                ):
                     delta = response.data.delta
                     role = Role.USER if delta.role == "user" else Role.ASSISTANT
 
                     for delta_block in delta.content or []:
-                        if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                        if (
+                            isinstance(delta_block, TextDeltaBlock)
+                            and delta_block.text
+                            and delta_block.text.value
+                        ):
                             yield ChatResponseUpdate(
                                 role=role,
                                 text=delta_block.text.value,
@@ -326,8 +391,12 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                                 raw_representation=response.data,
                                 response_id=response_id,
                             )
-                elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
-                    contents = self._parse_function_calls_from_assistants(response.data, response_id)
+                elif response.event == "thread.run.requires_action" and isinstance(
+                    response.data, Run
+                ):
+                    contents = self._parse_function_calls_from_assistants(
+                        response.data, response_id
+                    )
                     if contents:
                         yield ChatResponseUpdate(
                             role=Role.ASSISTANT,
@@ -368,7 +437,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                         role=Role.ASSISTANT,
                     )
 
-    def _parse_function_calls_from_assistants(self, event_data: Run, response_id: str | None) -> list[Contents]:
+    def _parse_function_calls_from_assistants(
+        self, event_data: Run, response_id: str | None
+    ) -> list[Contents]:
         """Parse function call contents from an assistants tool action event."""
         contents: list[Contents] = []
 
@@ -377,10 +448,14 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 tool_call_any = cast(Any, tool_call)
                 call_id = json.dumps([response_id, tool_call.id])
                 tool_type = getattr(tool_call, "type", None)
-                if tool_type == "code_interpreter" and getattr(tool_call_any, "code_interpreter", None):
+                if tool_type == "code_interpreter" and getattr(
+                    tool_call_any, "code_interpreter", None
+                ):
                     code_input = getattr(tool_call_any.code_interpreter, "input", None)
                     inputs = (
-                        [TextContent(text=code_input, raw_representation=tool_call)] if code_input is not None else None
+                        [TextContent(text=code_input, raw_representation=tool_call)]
+                        if code_input is not None
+                        else None
                     )
                     contents.append(
                         CodeInterpreterToolCallContent(
@@ -403,7 +478,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     function_name = tool_call.function.name
                     function_arguments = json.loads(tool_call.function.arguments)
                     contents.append(
-                        FunctionCallContent(call_id=call_id, name=function_name, arguments=function_arguments)
+                        FunctionCallContent(
+                            call_id=call_id,
+                            name=function_name,
+                            arguments=function_arguments,
+                        )
                     )
 
         return contents
@@ -493,7 +572,11 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
         # All other messages are added 1:1.
         for chat_message in messages:
             if chat_message.role.value in ["system", "developer"]:
-                for text_content in [content for content in chat_message.contents if isinstance(content, TextContent)]:
+                for text_content in [
+                    content
+                    for content in chat_message.contents
+                    if isinstance(content, TextContent)
+                ]:
                     instructions.append(text_content.text)
 
                 continue
@@ -502,10 +585,16 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
 
             for content in chat_message.contents:
                 if isinstance(content, TextContent):
-                    message_contents.append(TextContentBlockParam(type="text", text=content.text))
-                elif isinstance(content, UriContent) and content.has_top_level_media_type("image"):
                     message_contents.append(
-                        ImageURLContentBlockParam(type="image_url", image_url=ImageURLParam(url=content.uri))
+                        TextContentBlockParam(type="text", text=content.text)
+                    )
+                elif isinstance(
+                    content, UriContent
+                ) and content.has_top_level_media_type("image"):
+                    message_contents.append(
+                        ImageURLContentBlockParam(
+                            type="image_url", image_url=ImageURLParam(url=content.uri)
+                        )
                     )
                 elif isinstance(content, FunctionResultContent):
                     if tool_results is None:
@@ -517,7 +606,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                     additional_messages = []
                 additional_messages.append(
                     AdditionalMessage(
-                        role="assistant" if chat_message.role == Role.ASSISTANT else "user",
+                        role="assistant"
+                        if chat_message.role == Role.ASSISTANT
+                        else "user",
                         content=message_contents,
                     )
                 )
@@ -543,7 +634,9 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 # When creating the FunctionCallContent, we created it with a CallId == [runId, callId].
                 # We need to extract the run ID and ensure that the ToolOutput we send back to Azure
                 # is only the call ID.
-                run_and_call_ids: list[str] = json.loads(function_result_content.call_id)
+                run_and_call_ids: list[str] = json.loads(
+                    function_result_content.call_id
+                )
 
                 if (
                     not run_and_call_ids
@@ -560,14 +653,18 @@ class OpenAIAssistantsClient(OpenAIConfigMixin, BaseChatClient):
                 if tool_outputs is None:
                     tool_outputs = []
                 if function_result_content.result:
-                    output = prepare_function_call_results(function_result_content.result)
+                    output = prepare_function_call_results(
+                        function_result_content.result
+                    )
                 else:
                     output = "No output received."
                 tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output))
 
         return run_id, tool_outputs
 
-    def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
+    def _update_agent_name_and_description(
+        self, agent_name: str | None, description: str | None = None
+    ) -> None:
         """Update the agent name in the chat client.
 
         Args:

@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic
 
 from agent_framework import use_chat_middleware, use_function_invocation
+from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
@@ -40,7 +41,7 @@ class FoundryLocalSettings(AFBaseSettings):
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class FoundryLocalClient(OpenAIBaseChatClient):
+class FoundryLocalClient(OpenAIBaseChatClient[TOptions], Generic[TOptions]):
     """Foundry Local Chat completion class."""
 
     def __init__(

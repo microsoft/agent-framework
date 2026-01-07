@@ -45,7 +45,7 @@ from agent_framework import (
     ai_function,
     prepare_function_call_results,
 )
-from agent_framework.exceptions import AdditionItemMismatch, ContentError
+from agent_framework.exceptions import AdditionItemMismatch
 
 
 @fixture
@@ -909,26 +909,57 @@ def test_chat_tool_mode_from_dict():
 
 
 def test_chat_options_init() -> None:
-    options = ChatOptions()
-    assert options.model_id is None
+    """Test that ChatOptions can be created as a TypedDict."""
+    options: ChatOptions = {}
+    assert options.get("model_id") is None
+
+    # With values
+    options_with_model: ChatOptions = {"model_id": "gpt-4o", "temperature": 0.7}
+    assert options_with_model.get("model_id") == "gpt-4o"
+    assert options_with_model.get("temperature") == 0.7
 
 
-def test_chat_options_tool_choice_validation_errors():
-    with raises((ContentError, TypeError)):
-        ChatOptions(tool_choice="invalid-choice")
+def test_chat_options_tool_choice_validation():
+    """Test validate_tool_mode utility function."""
+    from agent_framework import validate_tool_mode
+
+    # Valid string values
+    assert validate_tool_mode("auto") == ToolMode.AUTO
+    assert validate_tool_mode("required") == ToolMode.REQUIRED_ANY
+    assert validate_tool_mode("none") == ToolMode.NONE
+
+    # Valid ToolMode values
+    assert validate_tool_mode(ToolMode.AUTO) == ToolMode.AUTO
+    assert validate_tool_mode(ToolMode.REQUIRED_ANY) == ToolMode.REQUIRED_ANY
+
+    # Dict value should pass through
+    tool_dict = {"type": "function", "function": {"name": "test"}}
+    assert validate_tool_mode(tool_dict) == tool_dict
+
+    # None should return None
+    assert validate_tool_mode(None) is None
 
 
-def test_chat_options_and(ai_function_tool, ai_tool) -> None:
-    options1 = ChatOptions(model_id="gpt-4o", tools=[ai_function_tool], logit_bias={"x": 1}, metadata={"a": "b"})
-    options2 = ChatOptions(model_id="gpt-4.1", tools=[ai_tool], additional_properties={"p": 1})
+def test_chat_options_merge(ai_function_tool, ai_tool) -> None:
+    """Test merge_chat_options utility function."""
+    from agent_framework import merge_chat_options
+
+    options1: ChatOptions = {
+        "model_id": "gpt-4o",
+        "tools": [ai_function_tool],
+        "logit_bias": {"x": 1},
+        "metadata": {"a": "b"},
+    }
+    options2: ChatOptions = {"model_id": "gpt-4.1", "tools": [ai_tool]}
     assert options1 != options2
-    options3 = options1 & options2
 
-    assert options3.model_id == "gpt-4.1"
-    assert options3.tools == [ai_function_tool, ai_tool]
-    assert options3.logit_bias == {"x": 1}
-    assert options3.metadata == {"a": "b"}
-    assert options3.additional_properties.get("p") == 1
+    # Merge options - override takes precedence for non-collection fields
+    options3 = merge_chat_options(options1, options2)
+
+    assert options3.get("model_id") == "gpt-4.1"
+    assert options3.get("tools") == [ai_function_tool, ai_tool]  # tools are combined
+    assert options3.get("logit_bias") == {"x": 1}  # base value preserved
+    assert options3.get("metadata") == {"a": "b"}  # base value preserved
 
 
 def test_chat_options_and_tool_choice_override() -> None:
@@ -1438,27 +1469,39 @@ def test_chat_message_from_dict_with_mixed_content():
 
 
 def test_chat_options_edge_cases():
-    """Test ChatOptions with edge cases for better coverage."""
+    """Test ChatOptions edge cases for better coverage."""
+    from agent_framework import validate_tool_mode, validate_tools
 
     # Test with tools conversion
     def sample_tool():
         return "test"
 
-    options = ChatOptions(tools=[sample_tool], tool_choice="auto")
-    assert options.tool_choice == ToolMode.AUTO
+    options: ChatOptions = {"tools": [sample_tool], "tool_choice": "auto"}
+    assert validate_tool_mode(options.get("tool_choice")) == ToolMode.AUTO
 
-    # Test to_dict with ToolMode
-    options_dict = options.to_dict()
-    assert "tool_choice" in options_dict
+    # Validate tools is a list
+    validated_tools = validate_tools(options.get("tools"))
+    assert validated_tools is not None
+    assert len(validated_tools) == 1
 
-    # Test from_dict with tool_choice dict
-    data_with_dict_tool_choice = {
+    # Test tool_choice dict with "mode" key becomes ToolMode
+    data_with_mode_dict: ChatOptions = {
         "model_id": "gpt-4",
         "tool_choice": {"mode": "required", "required_function_name": "test_func"},
     }
-    options_from_dict = ChatOptions.from_dict(data_with_dict_tool_choice)
-    assert options_from_dict.tool_choice.mode == "required"
-    assert options_from_dict.tool_choice.required_function_name == "test_func"
+    validated_choice = validate_tool_mode(data_with_mode_dict.get("tool_choice"))
+    assert isinstance(validated_choice, ToolMode)
+    assert validated_choice.mode == "required"
+    assert validated_choice.required_function_name == "test_func"
+
+    # Test tool_choice dict without "mode" key passes through (OpenAI function-specific)
+    data_with_function_dict: ChatOptions = {
+        "model_id": "gpt-4",
+        "tool_choice": {"type": "function", "function": {"name": "my_func"}},
+    }
+    validated_function_choice = validate_tool_mode(data_with_function_dict.get("tool_choice"))
+    assert isinstance(validated_function_choice, dict)
+    assert validated_function_choice["type"] == "function"
 
 
 def test_text_content_add_type_error():
@@ -1502,27 +1545,35 @@ def test_comprehensive_serialization_methods():
 
 
 def test_chat_options_tool_choice_variations():
-    """Test ChatOptions from_dict and to_dict with various tool_choice values."""
+    """Test validate_tool_mode with various tool_choice values."""
+    from agent_framework import validate_tool_mode
 
     # Test with string tool_choice
-    data = {"model_id": "gpt-4", "tool_choice": "auto", "temperature": 0.7}
-    options = ChatOptions.from_dict(data)
-    assert options.tool_choice == ToolMode.AUTO
+    options: ChatOptions = {"model_id": "gpt-4", "tool_choice": "auto", "temperature": 0.7}
+    assert validate_tool_mode(options.get("tool_choice")) == ToolMode.AUTO
 
-    # Test with dict tool_choice
-    data_dict = {
+    # Test with dict tool_choice containing "mode" key - becomes ToolMode
+    options_dict: ChatOptions = {
         "model_id": "gpt-4",
         "tool_choice": {"mode": "required", "required_function_name": "test_func"},
         "temperature": 0.7,
     }
-    options_dict = ChatOptions.from_dict(data_dict)
-    assert options_dict.tool_choice.mode == "required"
-    assert options_dict.tool_choice.required_function_name == "test_func"
+    validated_choice = validate_tool_mode(options_dict.get("tool_choice"))
+    assert isinstance(validated_choice, ToolMode)
+    assert validated_choice.mode == "required"
+    assert validated_choice.required_function_name == "test_func"
 
-    # Test to_dict with ToolMode
-    options_dict_serialized = options_dict.to_dict()
-    assert "tool_choice" in options_dict_serialized
-    assert isinstance(options_dict_serialized["tool_choice"], dict)
+    # Test with ToolMode instance
+    options_with_mode: ChatOptions = {"tool_choice": ToolMode.REQUIRED_ANY}
+    assert validate_tool_mode(options_with_mode.get("tool_choice")) == ToolMode.REQUIRED_ANY
+
+    # Test with function-specific dict (no "mode" key) - passes through
+    options_function: ChatOptions = {
+        "tool_choice": {"type": "function", "function": {"name": "test"}},
+    }
+    validated_function = validate_tool_mode(options_function.get("tool_choice"))
+    assert isinstance(validated_function, dict)
+    assert validated_function["type"] == "function"
 
 
 def test_chat_message_complex_content_serialization():

@@ -1,11 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
 from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
+from .._clients import TOptions
 from ..exceptions import ServiceInitializationError
 from ..openai import OpenAIAssistantsClient
 from ._shared import AzureOpenAISettings
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 __all__ = ["AzureOpenAIAssistantsClient"]
 
 
-class AzureOpenAIAssistantsClient(OpenAIAssistantsClient):
+class AzureOpenAIAssistantsClient(OpenAIAssistantsClient[TOptions], Generic[TOptions]):
     """Azure OpenAI Assistants client."""
 
     DEFAULT_AZURE_API_VERSION: ClassVar[str] = "2024-05-01-preview"

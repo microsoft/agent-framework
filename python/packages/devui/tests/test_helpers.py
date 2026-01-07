@@ -13,8 +13,9 @@ These follow the patterns established in other agent_framework packages
 to avoid pytest plugin conflicts when running tests across packages.
 """
 
+import sys
 from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from typing import Any, Generic
 
 from agent_framework import (
     AgentRunResponse,
@@ -24,7 +25,6 @@ from agent_framework import (
     BaseChatClient,
     ChatAgent,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ConcurrentBuilder,
@@ -35,7 +35,13 @@ from agent_framework import (
     TextContent,
     use_chat_middleware,
 )
+from agent_framework._clients import TOptions
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 # Import real workflow event classes - NOT mocks!
 from agent_framework._workflows._events import (
@@ -91,7 +97,7 @@ class MockChatClient:
 
 
 @use_chat_middleware
-class MockBaseChatClient(BaseChatClient):
+class MockBaseChatClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Full BaseChatClient mock with middleware support.
 
     Use this when testing features that require the full BaseChatClient interface.
@@ -106,11 +112,12 @@ class MockBaseChatClient(BaseChatClient):
         self.call_count: int = 0
         self.received_messages: list[list[ChatMessage]] = []
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         self.call_count += 1
@@ -119,11 +126,12 @@ class MockBaseChatClient(BaseChatClient):
             return self.run_responses.pop(0)
         return ChatResponse(messages=ChatMessage(role="assistant", text="Mock response from ChatAgent"))
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         self.call_count += 1

@@ -7,11 +7,6 @@ from datetime import datetime, timezone
 from itertools import chain
 from typing import Any, Generic, Literal
 
-if sys.version_info >= (3, 12):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
-
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
@@ -23,7 +18,8 @@ from pydantic import ValidationError
 
 from .._clients import BaseChatClient, TOptions
 from .._logging import get_logger
-from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol
+from .._middleware import use_chat_middleware
+from .._tools import AIFunction, HostedWebSearchTool, ToolProtocol, use_function_invocation
 from .._types import (
     BaseChatOptionsDict,
     ChatMessage,
@@ -50,19 +46,16 @@ from ..exceptions import (
     ServiceInvalidRequestError,
     ServiceResponseException,
 )
+from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
-if sys.version_info >= (3, 11):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
-__all__ = ["OpenAIChatClient", "OpenAIChatOptionsDict"]
+__all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 
 logger = get_logger("agent_framework.openai")
 
@@ -70,7 +63,7 @@ logger = get_logger("agent_framework.openai")
 # region OpenAI Chat Options TypedDict
 
 
-class OpenAIChatOptionsDict(BaseChatOptionsDict, total=False):
+class OpenAIChatOptions(BaseChatOptionsDict, total=False):
     """OpenAI-specific chat options.
 
     Extends BaseChatOptionsDict with options specific to OpenAI's Chat Completions API.
@@ -79,9 +72,9 @@ class OpenAIChatOptionsDict(BaseChatOptionsDict, total=False):
     Examples:
         .. code-block:: python
 
-            from agent_framework.openai import OpenAIChatOptionsDict
+            from agent_framework.openai import OpenAIChatOptions
 
-            options: OpenAIChatOptionsDict = {
+            options: OpenAIChatOptions = {
                 "temperature": 0.7,
                 "logprobs": True,
                 "top_logprobs": 5,
@@ -89,7 +82,7 @@ class OpenAIChatOptionsDict(BaseChatOptionsDict, total=False):
             }
 
             # With reasoning models (o1, o3)
-            options: OpenAIChatOptionsDict = {
+            options: OpenAIChatOptions = {
                 "model_id": "o1",
                 "reasoning_effort": "high",
             }
@@ -126,6 +119,7 @@ _openai_options_validator = ChatOptionsDictValidator(
 class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOptions]):
     """OpenAI Chat completion class."""
 
+    @override
     async def _inner_get_response(
         self,
         *,
@@ -157,6 +151,7 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
                 inner_exception=ex,
             ) from ex
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
@@ -271,6 +266,11 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
         response_format = options.get("response_format")
         if response_format:
             run_options["response_format"] = type_to_response_format_param(response_format)
+
+        # additional_properties - extract and merge to root level
+        additional_properties = run_options.pop("additional_properties", None)
+        if additional_properties:
+            run_options.update({k: v for k, v in additional_properties.items() if v is not None})
 
         return run_options
 
@@ -556,10 +556,10 @@ class OpenAIBaseChatClient(OpenAIBase, BaseChatClient[TOptions], Generic[TOption
 # region Public client
 
 
-# @use_function_invocation
-# @use_instrumentation
-# @use_chat_middleware
-class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[OpenAIChatOptionsDict]):
+@use_function_invocation
+@use_instrumentation
+@use_chat_middleware
+class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[TOptions], Generic[TOptions]):
     """OpenAI Chat completion class."""
 
     def __init__(
@@ -643,38 +643,3 @@ class OpenAIChatClient(OpenAIConfigMixin, OpenAIBaseChatClient[OpenAIChatOptions
             client=async_client,
             instruction_role=instruction_role,
         )
-
-    # Override methods with concrete TypedDict for better IDE autocomplete
-    # @override
-    # async def get_response(  # type: ignore[reportIncompatibleMethodOverride, reportInconsistentOverload]
-    #     self,
-    #     messages: str | ChatMessage | list[str] | list[ChatMessage],
-    #     **kwargs: Unpack[OpenAIChatOptionsDict],
-    # ) -> ChatResponse:
-    #     """Get a response from OpenAI.
-
-    #     Args:
-    #         messages: The message or messages to send to the model.
-    #         **kwargs: OpenAI chat options. See OpenAIChatOptionsDict for available options.
-
-    #     Returns:
-    #         A chat response from the model.
-    #     """
-    #     ...
-
-    # @override
-    # async def get_streaming_response(  # type: ignore[reportIncompatibleMethodOverride, reportInconsistentOverload]
-    #     self,
-    #     messages: str | ChatMessage | list[str] | list[ChatMessage],
-    #     **kwargs: Unpack[OpenAIChatOptionsDict],
-    # ) -> AsyncIterable[ChatResponseUpdate]:
-    #     """Get a streaming response from OpenAI.
-
-    #     Args:
-    #         messages: The message or messages to send to the model.
-    #         **kwargs: OpenAI chat options. See OpenAIChatOptionsDict for available options.
-
-    #     Yields:
-    #         ChatResponseUpdate: A stream representing the response(s) from OpenAI.
-    #     """
-    #     ...

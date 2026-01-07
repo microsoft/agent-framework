@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterable, MutableSequence
-from typing import Any
+from typing import Any, Generic
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -18,7 +18,6 @@ from agent_framework import (
     AgentThread,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Role,
@@ -28,6 +27,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
@@ -113,7 +113,7 @@ class MockChatClient:
 
 
 @use_chat_middleware
-class MockBaseChatClient(BaseChatClient):
+class MockBaseChatClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Mock implementation of the BaseChatClient."""
 
     def __init__(self, **kwargs: Any):
@@ -127,27 +127,27 @@ class MockBaseChatClient(BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a chat request to the AI service.
 
         Args:
             messages: The chat messages to send.
-            chat_options: The options for the request.
+            options: The options dict for the request.
             kwargs: Any additional keyword arguments.
 
         Returns:
             The chat response contents representing the response(s).
         """
-        logger.debug(f"Running base chat client inner, with: {messages=}, {chat_options=}, {kwargs=}")
+        logger.debug(f"Running base chat client inner, with: {messages=}, {options=}, {kwargs=}")
         self.call_count += 1
         if not self.run_responses:
             return ChatResponse(messages=ChatMessage(role="assistant", text=f"test response - {messages[-1].text}"))
 
         response = self.run_responses.pop(0)
 
-        if chat_options.tool_choice == "none":
+        if options.get("tool_choice") == "none":
             return ChatResponse(
                 messages=ChatMessage(
                     role="assistant",
@@ -163,14 +163,14 @@ class MockBaseChatClient(BaseChatClient):
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        logger.debug(f"Running base chat client inner stream, with: {messages=}, {chat_options=}, {kwargs=}")
+        logger.debug(f"Running base chat client inner stream, with: {messages=}, {options=}, {kwargs=}")
         if not self.streaming_responses:
             yield ChatResponseUpdate(text=f"update - {messages[0].text}", role="assistant")
             return
-        if chat_options.tool_choice == "none":
+        if options.get("tool_choice") == "none":
             yield ChatResponseUpdate(text="I broke out of the function invocation loop...", role="assistant")
             return
         response = self.streaming_responses.pop(0)

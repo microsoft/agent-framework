@@ -2,12 +2,7 @@
 
 import sys
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar, Final, TypeVar
-
-if sys.version_info >= (3, 12):
-    from typing import Unpack  # pragma: no cover
-else:
-    from typing_extensions import Unpack  # pragma: no cover
+from typing import Any, ClassVar, Final, Generic
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -43,6 +38,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework._types import ChatOptionsDictValidator
 from agent_framework.exceptions import ServiceInitializationError
@@ -65,7 +61,12 @@ from anthropic.types.beta.beta_code_execution_tool_result_error import (
 )
 from pydantic import SecretStr, ValidationError
 
-__all__ = ["AnthropicChatOptionsDict", "AnthropicClient"]
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+
+__all__ = ["AnthropicChatOptions", "AnthropicClient"]
 
 logger = get_logger("agent_framework.anthropic")
 
@@ -76,7 +77,7 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 # region Anthropic Chat Options TypedDict
 
 
-class AnthropicChatOptionsDict(BaseChatOptionsDict, total=False):
+class AnthropicChatOptions(BaseChatOptionsDict, total=False):
     """Anthropic-specific chat options.
 
     Extends BaseChatOptionsDict with options specific to Anthropic's Messages API.
@@ -89,16 +90,16 @@ class AnthropicChatOptionsDict(BaseChatOptionsDict, total=False):
     Examples:
         .. code-block:: python
 
-            from agent_framework.anthropic import AnthropicChatOptionsDict
+            from agent_framework.anthropic import AnthropicChatOptions
 
-            options: AnthropicChatOptionsDict = {
+            options: AnthropicChatOptions = {
                 "temperature": 0.7,
                 "max_tokens": 2048,  # Required for Anthropic
                 "top_k": 40,
             }
 
             # With extended thinking
-            options: AnthropicChatOptionsDict = {
+            options: AnthropicChatOptions = {
                 "thinking": {"type": "enabled", "budget_tokens": 10000},
             }
     """
@@ -108,6 +109,9 @@ class AnthropicChatOptionsDict(BaseChatOptionsDict, total=False):
 
     # Extended thinking (Claude models)
     thinking: dict[str, Any]
+
+    # Skills
+    container: dict[str, Any]
 
     # Beta features
     additional_beta_flags: list[str]
@@ -181,13 +185,10 @@ class AnthropicSettings(AFBaseSettings):
     chat_model_id: str | None = None
 
 
-TAnthropicClient = TypeVar("TAnthropicClient", bound="AnthropicClient")
-
-
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AnthropicClient(BaseChatClient[AnthropicChatOptionsDict]):
+class AnthropicClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Anthropic Chat client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -280,42 +281,9 @@ class AnthropicClient(BaseChatClient[AnthropicChatOptionsDict]):
         # streaming requires tracking the last function call ID and name
         self._last_call_id_name: tuple[str, str] | None = None
 
-    # Override methods with concrete TypedDict for better IDE autocomplete
-    async def get_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        **kwargs: Unpack[AnthropicChatOptionsDict],
-    ) -> ChatResponse:
-        """Get a response from Anthropic.
-
-        Args:
-            messages: The message or messages to send to the model.
-            **kwargs: Anthropic chat options. See AnthropicChatOptionsDict for available options.
-
-        Returns:
-            A chat response from the model.
-        """
-        return await super().get_response(messages, **kwargs)
-
-    async def get_streaming_response(
-        self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage],
-        **kwargs: Unpack[AnthropicChatOptionsDict],
-    ) -> AsyncIterable[ChatResponseUpdate]:
-        """Get a streaming response from Anthropic.
-
-        Args:
-            messages: The message or messages to send to the model.
-            **kwargs: Anthropic chat options. See AnthropicChatOptionsDict for available options.
-
-        Yields:
-            ChatResponseUpdate: A stream representing the response(s) from Anthropic.
-        """
-        async for update in super().get_streaming_response(messages, **kwargs):
-            yield update
-
     # region Get response methods
 
+    @override
     async def _inner_get_response(
         self,
         *,
@@ -330,6 +298,7 @@ class AnthropicClient(BaseChatClient[AnthropicChatOptionsDict]):
         # process
         return self._process_message(message)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,

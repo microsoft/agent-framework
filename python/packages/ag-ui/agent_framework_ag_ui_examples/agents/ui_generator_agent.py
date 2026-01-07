@@ -166,7 +166,7 @@ def ui_generator_agent(chat_client: ChatClientProtocol) -> AgentFrameworkAgent:
         chat_client=chat_client,
         tools=[generate_haiku, create_chart, display_timeline, show_comparison_table],
         # Force tool usage - the LLM MUST call a tool, cannot respond with plain text
-        chat_options={"tool_choice": "required"},
+        default_options={"tool_choice": "required"},
     )
 
     return AgentFrameworkAgent(

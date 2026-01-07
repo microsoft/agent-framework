@@ -197,34 +197,6 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
             )
 
 
-def test_azure_ai_chat_client_from_dict(mock_agents_client: MagicMock) -> None:
-    """Test AzureAIAgentClient.from_dict method."""
-    settings = {
-        "agents_client": mock_agents_client,
-        "agent_id": "test-agent-id",
-        "thread_id": "test-thread-id",
-        "project_endpoint": "https://test-endpoint.com/",
-        "model_deployment_name": "test-model",
-        "agent_name": "TestAgent",
-    }
-
-    azure_ai_settings = AzureAISettings(
-        project_endpoint=settings["project_endpoint"],
-        model_deployment_name=settings["model_deployment_name"],
-    )
-
-    chat_client: AzureAIAgentClient = create_test_azure_ai_chat_client(
-        mock_agents_client,
-        agent_id=settings["agent_id"],  # type: ignore
-        thread_id=settings["thread_id"],  # type: ignore
-        azure_ai_settings=azure_ai_settings,
-    )
-
-    assert chat_client.agents_client is mock_agents_client
-    assert chat_client.agent_id == "test-agent-id"
-    assert chat_client.thread_id == "test-thread-id"
-
-
 def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIAgentClient.__init__ when credential is missing and no agents_client provided."""
     with pytest.raises(
@@ -253,7 +225,7 @@ def test_azure_ai_chat_client_init_validation_error(mock_azure_credential: Magic
             )
 
 
-def test_azure_ai_chat_client_from_settings() -> None:
+def test_azure_ai_chat_client_from_dict() -> None:
     """Test from_settings class method."""
     mock_agents_client = MagicMock()
     settings = {
@@ -265,7 +237,7 @@ def test_azure_ai_chat_client_from_settings() -> None:
         "agent_name": "TestAgent",
     }
 
-    client = AzureAIAgentClient.from_settings(settings)
+    client = AzureAIAgentClient.from_dict(settings)
 
     assert client.agents_client is mock_agents_client
     assert client.agent_id == "test-agent"
@@ -372,7 +344,7 @@ async def test_azure_ai_chat_client_prepare_options_basic(mock_agents_client: Ma
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options = ChatOptions(max_tokens=100, temperature=0.7)
+    chat_options: ChatOptions = {"max_tokens": 100, "temperature": 0.7}
 
     run_options, tool_results = await chat_client._prepare_options(messages, chat_options)  # type: ignore
 
@@ -386,7 +358,7 @@ async def test_azure_ai_chat_client_prepare_options_no_chat_options(mock_agents_
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
-    run_options, tool_results = await chat_client._prepare_options(messages, ChatOptions())  # type: ignore
+    run_options, tool_results = await chat_client._prepare_options(messages, {})  # type: ignore
 
     assert run_options is not None
     assert tool_results is None
@@ -403,7 +375,7 @@ async def test_azure_ai_chat_client_prepare_options_with_image_content(mock_agen
     image_content = UriContent(uri="https://example.com/image.jpg", media_type="image/jpeg")
     messages = [ChatMessage(role=Role.USER, contents=[image_content])]
 
-    run_options, _ = await chat_client._prepare_options(messages, ChatOptions())  # type: ignore
+    run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
 
     assert "additional_messages" in run_options
     assert len(run_options["additional_messages"]) == 1
@@ -494,7 +466,7 @@ async def test_azure_ai_chat_client_prepare_options_with_messages(mock_agents_cl
         ChatMessage(role=Role.USER, text="Hello"),
     ]
 
-    run_options, _ = await chat_client._prepare_options(messages, ChatOptions())  # type: ignore
+    run_options, _ = await chat_client._prepare_options(messages, {})  # type: ignore
 
     assert "instructions" in run_options
     assert "You are a helpful assistant" in run_options["instructions"]
@@ -506,7 +478,7 @@ async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: Magic
     """Test _inner_get_response method."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
     messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options = ChatOptions()
+    chat_options: ChatOptions = {}
 
     async def mock_streaming_response():
         yield ChatResponseUpdate(role=Role.ASSISTANT, text="Hello back")
@@ -627,8 +599,7 @@ async def test_azure_ai_chat_client_prepare_options_with_none_tool_choice(
     """Test _prepare_options with tool_choice set to 'none'."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    chat_options = ChatOptions()
-    chat_options.tool_choice = "none"
+    chat_options: ChatOptions = {"tool_choice": "none"}
 
     run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
 
@@ -643,8 +614,7 @@ async def test_azure_ai_chat_client_prepare_options_with_auto_tool_choice(
     """Test _prepare_options with tool_choice set to 'auto'."""
     chat_client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    chat_options = ChatOptions()
-    chat_options.tool_choice = "auto"
+    chat_options: ChatOptions = {"tool_choice": "auto"}
 
     run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
 
@@ -661,14 +631,14 @@ async def test_azure_ai_chat_client_prepare_tool_choice_none_string(
 
     # Create a mock tool for testing
     mock_tool = MagicMock()
-    chat_options = ChatOptions(tools=[mock_tool], tool_choice="none")
+    chat_options: ChatOptions = {"tools": [mock_tool], "tool_choice": "none"}
 
     # Call the method
     chat_client._prepare_tool_choice(chat_options)  # type: ignore
 
     # Verify tools are cleared and tool_choice is set to NONE mode
-    assert chat_options.tools is None
-    assert chat_options.tool_choice == ToolMode.NONE.mode
+    assert chat_options.get("tools") is None
+    assert chat_options.get("tool_choice") == ToolMode.NONE.mode
 
 
 async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specific_function(
@@ -681,7 +651,7 @@ async def test_azure_ai_chat_client_prepare_options_tool_choice_required_specifi
 
     dict_tool = {"type": "function", "function": {"name": "test_function"}}
 
-    chat_options = ChatOptions(tools=[dict_tool], tool_choice=required_tool_mode)
+    chat_options: ChatOptions = {"tools": [dict_tool], "tool_choice": required_tool_mode}
     messages = [ChatMessage(role=Role.USER, text="Hello")]
 
     run_options, _ = await chat_client._prepare_options(messages, chat_options)  # type: ignore
@@ -703,8 +673,7 @@ async def test_azure_ai_chat_client_prepare_options_with_response_format(
     class TestResponseModel(BaseModel):
         name: str = Field(description="Test name")
 
-    chat_options = ChatOptions()
-    chat_options.response_format = TestResponseModel
+    chat_options: ChatOptions = {"response_format": TestResponseModel}
 
     run_options, _ = await chat_client._prepare_options([], chat_options)  # type: ignore
 
@@ -783,7 +752,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_never_require(mock_agent
     mcp_tool = HostedMCPTool(name="Test MCP Tool", url="https://example.com/mcp", approval_mode="never_require")
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options = ChatOptions(tools=[mcp_tool], tool_choice="auto")
+    chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._chat_client.McpTool") as mock_mcp_tool_class:
         # Mock _prepare_tools_for_azure_ai to avoid actual tool preparation
@@ -816,7 +785,7 @@ async def test_azure_ai_chat_client_prepare_options_mcp_with_headers(mock_agents
     )
 
     messages = [ChatMessage(role=Role.USER, text="Hello")]
-    chat_options = ChatOptions(tools=[mcp_tool], tool_choice="auto")
+    chat_options: ChatOptions = {"tools": [mcp_tool], "tool_choice": "auto"}
 
     with patch("agent_framework_azure_ai._chat_client.McpTool") as mock_mcp_tool_class:
         # Mock _prepare_tools_for_azure_ai to avoid actual tool preparation

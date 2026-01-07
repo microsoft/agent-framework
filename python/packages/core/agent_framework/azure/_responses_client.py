@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -10,6 +10,7 @@ from openai.lib.azure import AsyncAzureADTokenProvider, AsyncAzureOpenAI
 from pydantic import ValidationError
 
 from agent_framework import use_chat_middleware, use_function_invocation
+from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
@@ -30,7 +31,7 @@ TAzureOpenAIResponsesClient = TypeVar("TAzureOpenAIResponsesClient", bound="Azur
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient):
+class AzureOpenAIResponsesClient(AzureOpenAIConfigMixin, OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
     """Azure Responses completion class."""
 
     def __init__(

@@ -2,18 +2,18 @@
 
 import sys
 from collections.abc import Mapping, MutableSequence
-from typing import Any, ClassVar, TypeVar, cast
+from typing import Any, ClassVar, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     ChatMessage,
-    ChatOptions,
     HostedMCPTool,
     TextContent,
     get_logger,
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
 from agent_framework.observability import use_instrumentation
 from agent_framework.openai._responses_client import OpenAIBaseResponsesClient
@@ -46,13 +46,10 @@ else:
 logger = get_logger("agent_framework.azure")
 
 
-TAzureAIClient = TypeVar("TAzureAIClient", bound="AzureAIClient")
-
-
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AzureAIClient(OpenAIBaseResponsesClient):
+class AzureAIClient(OpenAIBaseResponsesClient[TOptions], Generic[TOptions]):
     """Azure AI Agent client."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -392,12 +389,12 @@ class AzureAIClient(OpenAIBaseResponsesClient):
     async def _prepare_options(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Take ChatOptions and create the specific options for Azure AI."""
         prepared_messages, instructions = self._prepare_messages_for_azure_ai(messages)
-        run_options = await super()._prepare_options(prepared_messages, chat_options, **kwargs)
+        run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
 
         # WORKAROUND: Azure AI Projects 'create responses' API has schema divergence from OpenAI's
         # Responses API. Azure requires 'type' at item level and 'annotations' in content items.
@@ -467,9 +464,9 @@ class AzureAIClient(OpenAIBaseResponsesClient):
         return transformed
 
     @override
-    def _get_current_conversation_id(self, chat_options: ChatOptions, **kwargs: Any) -> str | None:
+    def _get_current_conversation_id(self, options: dict[str, Any], **kwargs: Any) -> str | None:
         """Get the current conversation ID from chat options or kwargs."""
-        return chat_options.conversation_id or kwargs.get("conversation_id") or self.conversation_id
+        return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
 
     def _prepare_messages_for_azure_ai(
         self, messages: MutableSequence[ChatMessage]

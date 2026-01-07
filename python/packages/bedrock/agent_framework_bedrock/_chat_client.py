@@ -2,9 +2,10 @@
 
 import asyncio
 import json
+import sys
 from collections import deque
 from collections.abc import AsyncIterable, MutableMapping, MutableSequence, Sequence
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic
 from uuid import uuid4
 
 from agent_framework import (
@@ -12,7 +13,6 @@ from agent_framework import (
     AIFunction,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Contents,
@@ -29,6 +29,7 @@ from agent_framework import (
     use_chat_middleware,
     use_function_invocation,
 )
+from agent_framework._clients import TOptions
 from agent_framework._pydantic import AFBaseSettings
 from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidResponseError
 from agent_framework.observability import use_instrumentation
@@ -36,6 +37,11 @@ from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 from pydantic import SecretStr, ValidationError
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 logger = get_logger("agent_framework.bedrock")
 
@@ -74,7 +80,7 @@ class BedrockSettings(AFBaseSettings):
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class BedrockChatClient(BaseChatClient):
+class BedrockChatClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Async chat client for Amazon Bedrock's Converse API."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -143,25 +149,27 @@ class BedrockChatClient(BaseChatClient):
             session_kwargs["aws_session_token"] = settings.session_token.get_secret_value()
         return Boto3Session(**session_kwargs)
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        request = self._build_converse_request(messages, chat_options, **kwargs)
+        request = self._build_converse_request(messages, options, **kwargs)
         raw_response = await asyncio.to_thread(self._bedrock_client.converse, **request)
         return self._process_converse_response(raw_response)
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
-        response = await self._inner_get_response(messages=messages, chat_options=chat_options, **kwargs)
+        response = await self._inner_get_response(messages=messages, options=options, **kwargs)
         contents = list(response.messages[0].contents if response.messages else [])
         if response.usage_details:
             contents.append(UsageContent(details=response.usage_details))
@@ -176,10 +184,10 @@ class BedrockChatClient(BaseChatClient):
     def _build_converse_request(
         self,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> dict[str, Any]:
-        model_id = chat_options.model_id or self.model_id
+        model_id = options.get("model_id") or self.model_id
         if not model_id:
             raise ServiceInitializationError(
                 "Bedrock model_id is required. Set via chat options or BEDROCK_CHAT_MODEL_ID environment variable."
@@ -197,28 +205,31 @@ class BedrockChatClient(BaseChatClient):
             payload["system"] = system_prompts
 
         inference_config: dict[str, Any] = {}
-        inference_config["maxTokens"] = (
-            chat_options.max_tokens if chat_options.max_tokens is not None else DEFAULT_MAX_TOKENS
-        )
-        if chat_options.temperature is not None:
-            inference_config["temperature"] = chat_options.temperature
-        if chat_options.top_p is not None:
-            inference_config["topP"] = chat_options.top_p
-        if chat_options.stop is not None:
-            inference_config["stopSequences"] = chat_options.stop
+        max_tokens = options.get("max_tokens")
+        inference_config["maxTokens"] = max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS
+        temperature = options.get("temperature")
+        if temperature is not None:
+            inference_config["temperature"] = temperature
+        top_p = options.get("top_p")
+        if top_p is not None:
+            inference_config["topP"] = top_p
+        stop = options.get("stop")
+        if stop is not None:
+            inference_config["stopSequences"] = stop
         if inference_config:
             payload["inferenceConfig"] = inference_config
 
-        tool_config = self._convert_tools_to_bedrock_config(chat_options.tools)
-        if tool_choice := self._convert_tool_choice(chat_options.tool_choice):
+        tool_config = self._convert_tools_to_bedrock_config(options.get("tools"))
+        if tool_choice := self._convert_tool_choice(options.get("tool_choice")):
             if tool_config is None:
                 tool_config = {}
             tool_config["toolChoice"] = tool_choice
         if tool_config:
             payload["toolConfig"] = tool_config
 
-        if chat_options.additional_properties:
-            payload.update(chat_options.additional_properties)
+        additional_properties = options.get("additional_properties")
+        if additional_properties:
+            payload.update(additional_properties)
         if kwargs:
             payload.update(kwargs)
         return payload

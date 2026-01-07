@@ -319,7 +319,7 @@ class DefaultOrchestrator(Orchestrator):
 
         response_format = None
         if isinstance(context.agent, ChatAgent):
-            response_format = context.agent.chat_options.response_format
+            response_format = context.agent.default_options.get("response_format")
         skip_text_content = response_format is not None
 
         client_tools = convert_agui_tools_to_agent_framework(context.input_data.get("tools"))

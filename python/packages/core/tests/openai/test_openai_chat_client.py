@@ -13,7 +13,6 @@ from agent_framework import (
     ChatAgent,
     ChatClientProtocol,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     DataContent,
@@ -170,7 +169,7 @@ async def test_content_filter_exception_handling(openai_unit_test_env: dict[str,
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(OpenAIContentFilterException),
     ):
-        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+        await client._inner_get_response(messages=messages, options={})  # type: ignore
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
@@ -258,7 +257,7 @@ async def test_openai_chat_completion_response_params() -> None:
 
     # Test that the client can be used to get a response
     response = await openai_chat_client.get_response(
-        messages=messages, chat_options=ChatOptions(max_tokens=150, temperature=0.7, top_p=0.9)
+        messages=messages, options={"max_tokens": 150, "temperature": 0.7, "top_p": 0.9}
     )
 
     assert response is not None
@@ -280,8 +279,7 @@ async def test_openai_chat_completion_response_tools() -> None:
     # Test that the client can be used to get a response
     response = await openai_chat_client.get_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -339,8 +337,7 @@ async def test_openai_chat_client_streaming_tools() -> None:
     # Test that the client can be used to get a response
     response = openai_chat_client.get_streaming_response(
         messages=messages,
-        tools=[get_story_text],
-        tool_choice="auto",
+        options={"tools": [get_story_text], "tool_choice": "auto"},
     )
     full_message: str = ""
     async for chunk in response:
@@ -369,8 +366,7 @@ async def test_openai_chat_client_web_search() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
+        options={"tools": [HostedWebSearchTool()], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -388,8 +384,7 @@ async def test_openai_chat_client_web_search() -> None:
     }
     response = await openai_chat_client.get_response(
         messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
+        options={"tools": [HostedWebSearchTool(additional_properties=additional_properties)], "tool_choice": "auto"},
     )
     assert response.text is not None
 
@@ -409,8 +404,7 @@ async def test_openai_chat_client_web_search_streaming() -> None:
                 text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
             )
         ],
-        tools=[HostedWebSearchTool()],
-        tool_choice="auto",
+        options={"tools": [HostedWebSearchTool()], "tool_choice": "auto"},
     )
 
     assert response is not None
@@ -434,8 +428,7 @@ async def test_openai_chat_client_web_search_streaming() -> None:
     }
     response = openai_chat_client.get_streaming_response(
         messages=[ChatMessage(role="user", text="What is the current weather? Do not ask for my current location.")],
-        tools=[HostedWebSearchTool(additional_properties=additional_properties)],
-        tool_choice="auto",
+        options={"tools": [HostedWebSearchTool(additional_properties=additional_properties)], "tool_choice": "auto"},
     )
     assert response is not None
     full_message: str = ""
@@ -627,7 +620,7 @@ async def test_exception_message_includes_original_error_details() -> None:
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
         pytest.raises(ServiceResponseException) as exc_info,
     ):
-        await client._inner_get_response(messages=messages, chat_options=ChatOptions())  # type: ignore
+        await client._inner_get_response(messages=messages, options={})  # type: ignore
 
     exception_message = str(exc_info.value)
     assert "service failed to complete the prompt:" in exception_message
@@ -667,7 +660,7 @@ def test_chat_response_content_order_text_before_tool_calls(openai_unit_test_env
     )
 
     client = OpenAIChatClient()
-    response = client._parse_response_from_openai(mock_response, ChatOptions())
+    response = client._parse_response_from_openai(mock_response, {})
 
     # Verify we have both text and tool call content
     assert len(response.messages) == 1

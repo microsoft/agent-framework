@@ -4,22 +4,23 @@
 
 import json
 import logging
+import sys
 import uuid
 from collections.abc import AsyncIterable, MutableSequence
 from functools import wraps
-from typing import Any, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 import httpx
 from agent_framework import (
     AIFunction,
     BaseChatClient,
     ChatMessage,
-    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     DataContent,
     FunctionCallContent,
 )
+from agent_framework._clients import TOptions
 from agent_framework._middleware import use_chat_middleware
 from agent_framework._tools import use_function_invocation
 from agent_framework._types import BaseContent, Contents
@@ -29,6 +30,11 @@ from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -91,7 +97,7 @@ def _apply_server_function_call_unwrap(chat_client: TBaseChatClient) -> TBaseCha
 @use_function_invocation
 @use_instrumentation
 @use_chat_middleware
-class AGUIChatClient(BaseChatClient):
+class AGUIChatClient(BaseChatClient[TOptions], Generic[TOptions]):
     """Chat client for communicating with AG-UI compliant servers.
 
     This client implements the BaseChatClient interface and automatically handles:
@@ -280,36 +286,38 @@ class AGUIChatClient(BaseChatClient):
         """
         return agent_framework_messages_to_agui(messages)
 
-    def _get_thread_id(self, chat_options: ChatOptions) -> str:
+    def _get_thread_id(self, options: dict[str, Any]) -> str:
         """Get or generate thread ID from chat options.
 
         Args:
-            chat_options: Chat options containing metadata
+            options: Chat options containing metadata
 
         Returns:
             Thread ID string
         """
         thread_id = None
-        if chat_options.metadata:
-            thread_id = chat_options.metadata.get("thread_id")
+        metadata = options.get("metadata")
+        if metadata:
+            thread_id = metadata.get("thread_id")
 
         if not thread_id:
             thread_id = f"thread_{uuid.uuid4().hex}"
 
         return thread_id
 
+    @override
     async def _inner_get_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
         """Internal method to get non-streaming response.
 
         Keyword Args:
             messages: List of chat messages
-            chat_options: Chat options for the request
+            options: Chat options for the request
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -318,23 +326,24 @@ class AGUIChatClient(BaseChatClient):
         return await ChatResponse.from_chat_response_generator(
             self._inner_get_streaming_response(
                 messages=messages,
-                chat_options=chat_options,
+                options=options,
                 **kwargs,
             )
         )
 
+    @override
     async def _inner_get_streaming_response(
         self,
         *,
         messages: MutableSequence[ChatMessage],
-        chat_options: ChatOptions,
+        options: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Internal method to get streaming response.
 
         Keyword Args:
             messages: List of chat messages
-            chat_options: Chat options for the request
+            options: Chat options for the request
             **kwargs: Additional keyword arguments
 
         Yields:
@@ -342,20 +351,21 @@ class AGUIChatClient(BaseChatClient):
         """
         messages_to_send, state = self._extract_state_from_messages(messages)
 
-        thread_id = self._get_thread_id(chat_options)
+        thread_id = self._get_thread_id(options)
         run_id = f"run_{uuid.uuid4().hex}"
 
         agui_messages = self._convert_messages_to_agui_format(messages_to_send)
 
         # Send client tools to server so LLM knows about them
         # Client tools execute via ChatAgent's @use_function_invocation wrapper
-        agui_tools = convert_tools_to_agui_format(chat_options.tools)
+        agui_tools = convert_tools_to_agui_format(options.get("tools"))
 
         # Build set of client tool names (matches .NET clientToolSet)
         # Used to distinguish client vs server tools in response stream
         client_tool_set: set[str] = set()
-        if chat_options.tools:
-            for tool in chat_options.tools:
+        tools = options.get("tools")
+        if tools:
+            for tool in tools:
                 if hasattr(tool, "name"):
                     client_tool_set.add(tool.name)  # type: ignore[arg-type]
         self._last_client_tool_set = client_tool_set  # type: ignore[attr-defined]

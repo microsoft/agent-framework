@@ -1765,18 +1765,19 @@ def _update_conversation_id(kwargs: dict[str, Any], conversation_id: str | None)
 
 
 def _extract_tools(kwargs: dict[str, Any]) -> Any:
-    """Extract tools from kwargs or chat_options.
+    """Extract tools from options dict within kwargs.
+
+    The options dict is passed as a kwarg from BaseChatClient to _inner_get_response.
+    Tools are a chat option, not a runtime kwarg for functions.
 
     Returns:
         ToolProtocol | Callable[..., Any] | MutableMapping[str, Any] |
         Sequence[ToolProtocol | Callable[..., Any] | MutableMapping[str, Any]] | None
     """
-    from ._types import ChatOptions
-
-    tools = kwargs.get("tools")
-    if not tools and (chat_options := kwargs.get("chat_options")) and isinstance(chat_options, ChatOptions):
-        tools = chat_options.tools
-    return tools
+    options = kwargs.get("options")
+    if options and isinstance(options, dict):
+        return options.get("tools")
+    return None
 
 
 def _collect_approval_responses(

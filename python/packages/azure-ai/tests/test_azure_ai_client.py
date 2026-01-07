@@ -378,7 +378,7 @@ async def test_azure_ai_client_prepare_options_basic(mock_project_client: MagicM
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions()
+    chat_options: ChatOptions = {}
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -413,7 +413,7 @@ async def test_azure_ai_client_prepare_options_with_application_endpoint(
     )
 
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions()
+    chat_options: ChatOptions = {}
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -453,7 +453,7 @@ async def test_azure_ai_client_prepare_options_with_application_project_client(
     )
 
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions()
+    chat_options: ChatOptions = {}
 
     with (
         patch.object(client.__class__.__bases__[0], "_prepare_options", return_value={"model": "test-model"}),
@@ -809,7 +809,7 @@ async def test_azure_ai_client_prepare_options_excludes_response_format(
     client = create_test_azure_ai_client(mock_project_client, agent_name="test-agent", agent_version="1.0")
 
     messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello")])]
-    chat_options = ChatOptions()
+    chat_options: ChatOptions = {}
 
     with (
         patch.object(

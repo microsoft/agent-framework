@@ -1482,9 +1482,9 @@ class GroupChatBuilder:
 
         # Enforce ManagerSelectionResponse for ChatAgent managers
         if isinstance(manager, ChatAgent):
-            configured_format = manager.chat_options.response_format
+            configured_format = manager.default_options.get("response_format")
             if configured_format is None:
-                manager.chat_options.response_format = ManagerSelectionResponse
+                manager.default_options["response_format"] = ManagerSelectionResponse
             elif configured_format is not ManagerSelectionResponse:
                 configured_format_name = getattr(configured_format, "__name__", str(configured_format))
                 raise ValueError(
