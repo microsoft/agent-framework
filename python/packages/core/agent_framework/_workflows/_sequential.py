@@ -96,7 +96,7 @@ class _EndWithConversation(Executor):
     async def end_with_agent_executor_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Any, list[ChatMessage]],
+        ctx: WorkflowContext[Any, list[ChatMessage] | None],
     ) -> None:
         """Handle case where last participant is an agent.
 

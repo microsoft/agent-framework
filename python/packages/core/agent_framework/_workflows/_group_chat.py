@@ -471,8 +471,8 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Capture current orchestrator state for checkpointing."""
         state = await super().on_checkpoint_save()
         state["cache"] = encode_chat_messages(self._cache)
-        serialized_thread = await self._agent_thread.serialize()
-        state["agent_thread"] = serialized_thread
+        serialized_thread = await self._thread.serialize()
+        state["thread"] = serialized_thread
 
         return state
 
@@ -481,7 +481,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         """Restore executor state from checkpoint."""
         await super().on_checkpoint_restore(state)
         self._cache = decode_chat_messages(state.get("cache", []))
-        serialized_thread = state.get("agent_thread")
+        serialized_thread = state.get("thread")
         if serialized_thread:
             self._thread = await self._agent.deserialize_thread(serialized_thread)
 

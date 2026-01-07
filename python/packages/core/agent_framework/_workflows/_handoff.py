@@ -111,7 +111,7 @@ class HandoffConfiguration:
 
         return self.target_id == other.target_id
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         """Compute hash based on source_id and target_id."""
         return hash(self.target_id)
 
@@ -335,7 +335,7 @@ class HandoffAgentExecutor(AgentExecutor):
             new_tools.append(tool)
 
         if new_tools:
-            chat_options.tools = existing_tools + new_tools
+            chat_options.tools = existing_tools + new_tools  # type: ignore[operator]
         else:
             chat_options.tools = existing_tools
 
@@ -357,7 +357,7 @@ class HandoffAgentExecutor(AgentExecutor):
         return _handoff_tool
 
     @override
-    async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse]):
+    async def _run_agent_and_emit(self, ctx: WorkflowContext[AgentExecutorResponse, AgentRunResponse]) -> None:
         """Override to support handoff."""
         # When the full conversation is empty, it means this is the first run.
         # Broadcast the initial cache to all other agents. Subsequent runs won't

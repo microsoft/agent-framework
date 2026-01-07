@@ -263,7 +263,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         self,
         response: AgentExecutorResponse | GroupChatResponseMessage,
         ctx: WorkflowContext[GroupChatWorkflowContext_T_Out, list[ChatMessage]],
-    ):
+    ) -> None:
         """Handler for participant responses.
 
         This method can be overridden by subclasses if specific response handling is needed.
@@ -477,7 +477,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             )
         else:
             # Custom executors receive full context envelope
-            request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)
+            request = GroupChatRequestMessage(additional_instruction=additional_instruction, metadata=metadata)  # type: ignore[assignment]
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
                 GroupChatRequestSentEvent(
