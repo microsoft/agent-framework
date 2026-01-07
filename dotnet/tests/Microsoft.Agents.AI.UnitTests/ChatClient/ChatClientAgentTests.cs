@@ -656,13 +656,13 @@ public partial class ChatClientAgentTests
         await agent.RunAsync(requestMessages, thread);
 
         // Assert
-        // Should contain: base instructions, context message, user message, base function, context function
+        // Should contain: base instructions, user message, context message, base function, context function
         Assert.Equal(2, capturedMessages.Count);
         Assert.Equal("base instructions\ncontext provider instructions", capturedInstructions);
-        Assert.Equal("context provider message", capturedMessages[0].Text);
-        Assert.Equal(ChatRole.System, capturedMessages[0].Role);
-        Assert.Equal("user message", capturedMessages[1].Text);
-        Assert.Equal(ChatRole.User, capturedMessages[1].Role);
+        Assert.Equal("user message", capturedMessages[0].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[0].Role);
+        Assert.Equal("context provider message", capturedMessages[1].Text);
+        Assert.Equal(ChatRole.System, capturedMessages[1].Role);
         Assert.Equal(2, capturedTools.Count);
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");
@@ -2113,13 +2113,13 @@ public partial class ChatClientAgentTests
         _ = await updates.ToAgentRunResponseAsync();
 
         // Assert
-        // Should contain: base instructions, context message, user message, base function, context function
+        // Should contain: base instructions, user message, context message, base function, context function
         Assert.Equal(2, capturedMessages.Count);
         Assert.Equal("base instructions\ncontext provider instructions", capturedInstructions);
-        Assert.Equal("context provider message", capturedMessages[0].Text);
-        Assert.Equal(ChatRole.System, capturedMessages[0].Role);
-        Assert.Equal("user message", capturedMessages[1].Text);
-        Assert.Equal(ChatRole.User, capturedMessages[1].Role);
+        Assert.Equal("user message", capturedMessages[0].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[0].Role);
+        Assert.Equal("context provider message", capturedMessages[1].Text);
+        Assert.Equal(ChatRole.System, capturedMessages[1].Role);
         Assert.Equal(2, capturedTools.Count);
         Assert.Contains(capturedTools, t => t.Name == "base function");
         Assert.Contains(capturedTools, t => t.Name == "context provider function");

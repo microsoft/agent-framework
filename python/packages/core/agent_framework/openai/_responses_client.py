@@ -435,8 +435,8 @@ class OpenAIBaseResponsesClient(OpenAIBase, BaseChatClient):
         else:
             run_options.pop("parallel_tool_calls", None)
             run_options.pop("tool_choice", None)
-        # tool choice when `tool_choice` is a dict with single key `mode`, extract the mode value
-        if (tool_choice := run_options.get("tool_choice")) and len(tool_choice.keys()) == 1:
+        # tool_choice: ToolMode serializes to {"type": "tool_mode", "mode": "..."}, extract mode
+        if (tool_choice := run_options.get("tool_choice")) and isinstance(tool_choice, dict) and "mode" in tool_choice:
             run_options["tool_choice"] = tool_choice["mode"]
 
         # additional properties
