@@ -30,7 +30,6 @@ class DurableAIAgentOrchestrationContext(DurableAgentProvider[DurableAgentTask])
         from agent_framework_durabletask import DurableAIAgentOrchestrationContext
 
 
-        @orchestration
         def my_orchestration(context: OrchestrationContext):
             # Wrap the context
             agent_context = DurableAIAgentOrchestrationContext(context)

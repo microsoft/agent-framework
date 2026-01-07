@@ -249,13 +249,6 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
         )
 
         self._client.signal_entity(entity_id, "run", run_request.to_dict())
-
-        logger.info(
-            "[ClientAgentExecutor] Signaled entity '%s' for correlation: %s",
-            agent_name,
-            run_request.correlation_id,
-        )
-
         return entity_id
 
     def _poll_for_agent_response(
@@ -370,12 +363,12 @@ class ClientAgentExecutor(DurableAgentExecutor[AgentRunResponse]):
             correlation_id: Correlation ID to search for
 
         Returns:
-            Response data dict if found, None otherwise
+            Response AgentRunResponse, None otherwise
         """
         try:
             entity_metadata = self._client.get_entity(entity_id, include_state=True)
 
-            if entity_metadata is None or not entity_metadata.includes_state:
+            if entity_metadata is None:
                 return None
 
             state_json = entity_metadata.get_state()

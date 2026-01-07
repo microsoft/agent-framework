@@ -36,10 +36,10 @@ class DurableAIAgentClient(DurableAgentProvider[AgentRunResponse]):
         agent_client = DurableAIAgentClient(client)
 
         # Get an agent reference
-        agent = await agent_client.get_agent("assistant")
+        agent = agent_client.get_agent("assistant")
 
-        # Run the agent
-        response = await agent.run("Hello, how are you?")
+        # Run the agent (synchronous call that waits for completion)
+        response = agent.run("Hello, how are you?")
         print(response.text)
         ```
     """

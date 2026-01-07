@@ -381,8 +381,6 @@ class AgentFunctionApp(DFAppBase):
                 "enable_tool_calls": true|false (optional, default: true)
             }
             """
-            logger.debug(f"[HTTP Trigger] Received request on route: /api/agents/{agent_name}/run")
-
             request_response_format: str = REQUEST_RESPONSE_FORMAT_JSON
             thread_id: str | None = None
 
@@ -391,9 +389,9 @@ class AgentFunctionApp(DFAppBase):
                 thread_id = self._resolve_thread_id(req=req, req_body=req_body)
                 wait_for_response = self._should_wait_for_response(req=req, req_body=req_body)
 
-                logger.debug(f"[HTTP Trigger] Message: {message}")
-                logger.debug(f"[HTTP Trigger] Thread ID: {thread_id}")
-                logger.debug(f"[HTTP Trigger] wait_for_response: {wait_for_response}")
+                logger.debug(
+                    f"[HTTP Trigger] Message: {message}, Thread ID: {thread_id}, wait_for_response: {wait_for_response}"
+                )
 
                 if not message:
                     logger.warning("[HTTP Trigger] Request rejected: Missing message")
@@ -407,9 +405,10 @@ class AgentFunctionApp(DFAppBase):
                 session_id = self._create_session_id(agent_name, thread_id)
                 correlation_id = self._generate_unique_id()
 
-                logger.debug(f"[HTTP Trigger] Using session ID: {session_id}")
-                logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlation_id}")
-                logger.debug("[HTTP Trigger] Calling entity to run agent...")
+                logger.debug(
+                    f"[HTTP Trigger] Calling entity to run agent using session ID: {session_id} "
+                    f"and correlation ID: {correlation_id}"
+                )
 
                 entity_instance_id = df.EntityId(
                     name=session_id.entity_name,
