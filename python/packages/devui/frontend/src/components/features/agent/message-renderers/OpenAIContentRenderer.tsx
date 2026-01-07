@@ -133,10 +133,10 @@ function useBase64ToBlobUrl(data: string | undefined, mimeType: string): string 
 function FileContentRenderer({ content, className }: ContentRendererProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
-  if (content.type !== "input_file" && content.type !== "output_file") return null;
-
-  const fileUrl = content.file_url || content.file_data;
-  const filename = content.filename || "file";
+  // Determine file properties (must be before hooks for conditional logic)
+  const isFileContent = content.type === "input_file" || content.type === "output_file";
+  const fileUrl = isFileContent ? (content.file_url || content.file_data) : undefined;
+  const filename = isFileContent ? (content.filename || "file") : undefined;
 
   // Determine file type from filename or data URI
   const isPdf = filename?.toLowerCase().endsWith(".pdf") || fileUrl?.includes("application/pdf");
@@ -144,8 +144,12 @@ function FileContentRenderer({ content, className }: ContentRendererProps) {
 
   // Convert base64 to blob URL for PDFs (better browser compatibility)
   // Use file_data (raw base64) if available, otherwise try file_url
-  const pdfData = isPdf ? (content.file_data || content.file_url) : undefined;
+  // Hook must be called unconditionally - pass undefined if not a PDF
+  const pdfData = (isFileContent && isPdf) ? (content.file_data || content.file_url) : undefined;
   const pdfBlobUrl = useBase64ToBlobUrl(pdfData, 'application/pdf');
+
+  // Early return after all hooks
+  if (!isFileContent) return null;
 
   // Use blob URL if available, otherwise fall back to original URL
   const effectivePdfUrl = pdfBlobUrl || fileUrl;
@@ -299,9 +303,12 @@ function DataContentRenderer({ content, className }: ContentRendererProps) {
 
 // Function approval request renderer - compact version
 function FunctionApprovalRequestRenderer({ content, className }: ContentRendererProps) {
+  // Hooks must be called unconditionally
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Early return after hooks
   if (content.type !== "function_approval_request") return null;
 
-  const [isExpanded, setIsExpanded] = useState(false);
   const { status, function_call } = content;
 
   // Status styling - compact
