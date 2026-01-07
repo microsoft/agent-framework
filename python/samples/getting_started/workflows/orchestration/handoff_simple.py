@@ -21,27 +21,16 @@ from agent_framework import (
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
 
-"""Sample: Simple handoff workflow with single-tier triage-to-specialist routing.
+"""Sample: Simple handoff workflow.
 
-This sample demonstrates the basic handoff pattern where only the triage agent can
-route to specialists. Specialists cannot hand off to other specialists - after any
-specialist responds, control returns to the user (via the triage agent) for the next input.
-
-Routing Pattern:
-    User → Triage Agent → Specialist → Triage Agent → User → Triage Agent → ...
-
-This is the simplest handoff configuration, suitable for straightforward support
-scenarios where a triage agent dispatches to domain specialists, and each specialist
-works independently.
-
-For multi-tier specialist-to-specialist handoffs, see handoff_specialist_to_specialist.py.
+A handoff workflow defines a pattern that assembles agents in a mesh topology, allowing
+them to transfer control to each other based on the conversation context.
 
 Prerequisites:
     - `az login` (Azure CLI authentication)
     - Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
 
 Key Concepts:
-    - Single-tier routing: Only triage agent has handoff capabilities
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
       for each participant, allowing the coordinator to transfer control to specialists
     - Termination condition: Controls when the workflow stops requesting user input
@@ -70,14 +59,8 @@ def process_return(order_number: Annotated[str, "Order number to process return 
 def create_agents(chat_client: AzureOpenAIChatClient) -> tuple[ChatAgent, ChatAgent, ChatAgent, ChatAgent]:
     """Create and configure the triage and specialist agents.
 
-    The triage agent is responsible for:
-    - Receiving all user input first
-    - Deciding whether to handle the request directly or hand off to a specialist
-    - Signaling handoff by calling one of the explicit handoff tools exposed to it
-
-    Specialist agents are invoked only when the triage agent explicitly hands off to them.
-    After a specialist responds, control returns to the triage agent, which then prompts
-    the user for their next message.
+    Args:
+        chat_client: The AzureOpenAIChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
@@ -224,7 +207,7 @@ async def main() -> None:
     # - with_termination_condition: Custom logic to stop the request/response loop.
     #   Without this, the default behavior continues requesting user input until max_turns
     #   is reached. Here we use a custom condition that checks if the conversation has ended
-    #   naturally (when triage agent says something like "you're welcome").
+    #   naturally (when one of the agents says something like "you're welcome").
     workflow = (
         HandoffBuilder(
             name="customer_support_handoff",
@@ -232,12 +215,10 @@ async def main() -> None:
         )
         .with_start_agent(triage)
         .with_termination_condition(
-            # Custom termination: Check if the triage agent has provided a closing message.
-            # This looks for the last message being from triage_agent and containing "welcome",
-            # which indicates the conversation has concluded naturally.
-            lambda conversation: len(conversation) > 0
-            and conversation[-1].author_name == "triage_agent"
-            and "welcome" in conversation[-1].text.lower()
+            # Custom termination: Check if one of the agents has provided a closing message.
+            # This looks for the last message containing "welcome", which indicates the
+            # conversation has concluded naturally.
+            lambda conversation: len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
         )
         .build()
     )
@@ -262,7 +243,7 @@ async def main() -> None:
 
     # Process the request/response cycle
     # The workflow will continue requesting input until:
-    # 1. The termination condition is met (triage agent's message contains "welcome"), OR
+    # 1. The termination condition is met, OR
     # 2. We run out of scripted responses
     while pending_requests:
         if not scripted_responses:
