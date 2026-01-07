@@ -84,9 +84,13 @@ internal sealed class A2AAgent : AIAgent
         }
         else
         {
-            var a2aMessage = CreateA2AMessage(typedThread, messages);
+            MessageSendParams sendParams = new()
+            {
+                Message = CreateA2AMessage(typedThread, messages),
+                Metadata = options?.AdditionalProperties.ToA2AMetadata()
+            };
 
-            a2aResponse = await this._a2aClient.SendMessageAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+            a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
         }
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
@@ -154,9 +158,13 @@ internal sealed class A2AAgent : AIAgent
             // a2aSseEvents = this._a2aClient.SubscribeToTaskAsync(token.TaskId, cancellationToken).ConfigureAwait(false);  
         }
 
-        var a2aMessage = CreateA2AMessage(typedThread, messages);
+        MessageSendParams sendParams = new()
+        {
+            Message = CreateA2AMessage(typedThread, messages),
+            Metadata = options?.AdditionalProperties.ToA2AMetadata()
+        };
 
-        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(new MessageSendParams { Message = a2aMessage }, cancellationToken).ConfigureAwait(false);
+        a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunStreamingAsync), this.Id, this.Name);
 
@@ -198,10 +206,10 @@ internal sealed class A2AAgent : AIAgent
     protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string? Name => this._name ?? base.Name;
+    public override string? Name => this._name;
 
     /// <inheritdoc/>
-    public override string? Description => this._description ?? base.Description;
+    public override string? Description => this._description;
 
     private A2AAgentThread GetA2AThread(AgentThread? thread, AgentRunOptions? options)
     {
