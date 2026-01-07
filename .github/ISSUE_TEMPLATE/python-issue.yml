@@ -1,7 +1,8 @@
 name: Python Bug Report
 description: Report a bug in the Agent Framework Python SDK
-title: "[Python Bug]: "
-labels: ["triage", "bug", "Python"]
+title: "Python: [Bug]: "
+labels: ["bug", "Python"]
+type: bug
 body:
   - type: textarea
     id: description

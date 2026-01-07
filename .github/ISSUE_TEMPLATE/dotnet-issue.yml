@@ -1,7 +1,8 @@
 name: .NET Bug Report
 description: Report a bug in the Agent Framework .NET SDK
-title: "[.NET Bug]: "
-labels: ["triage", "bug", ".NET"]
+title: ".NET: [Bug]: "
+labels: ["bug", ".NET"]
+type: bug
 body:
   - type: textarea
     id: description

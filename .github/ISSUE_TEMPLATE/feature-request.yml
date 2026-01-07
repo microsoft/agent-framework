@@ -1,7 +1,7 @@
 name: Feature Request
 description: Request a new feature for Microsoft Agent Framework
 title: "[Feature]: "
-labels: ["triage", "feature-request"]
+type: feature
 body:
   - type: dropdown
     id: language
