@@ -23,8 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core",
-    "durabletask>=1.1.0",
-    "durabletask-azuremanaged>=1.1.0"
+    "durabletask>=1.2.0.dev10",
+    "durabletask-azuremanaged>=1.2.0.dev10"
 ]
 
 [dependency-groups]

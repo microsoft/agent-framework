@@ -1,4 +1,4 @@
-# Single Agent Orchestration Chaining Sample
+# Single Agent Orchestration Chaining
 
 This sample demonstrates how to chain multiple invocations of the same agent using a durable orchestration while preserving conversation state between runs.
 
@@ -15,32 +15,30 @@ See the [README.md](../README.md) file in the parent directory for more informat
 
 ## Running the Sample
 
-With the environment setup, you can run the sample using one of two approaches:
+With the environment setup, you can run the sample using the combined approach or separate worker and client processes:
 
-### Option 1: Combined Worker + Client (Quick Start)
+**Option 1: Combined (Recommended for Testing)**
 
 ```bash
 cd samples/getting_started/durabletask/04_single_agent_orchestration_chaining
 python sample.py
 ```
 
-This runs both worker and client in a single process.
+**Option 2: Separate Processes**
 
-### Option 2: Separate Worker and Client
-
-**Start the worker in one terminal:**
+Start the worker in one terminal:
 
 ```bash
 python worker.py
 ```
 
-**In a new terminal, run the client:**
+In a new terminal, run the client:
 
 ```bash
 python client.py
 ```
 
-The orchestration will execute the writer agent twice sequentially, and you'll see output like:
+The orchestration will execute the writer agent twice sequentially:
 
 ```
 [Orchestration] Starting single agent chaining...
@@ -62,11 +60,9 @@ Each small step forward brings you closer to mastery and growth.
 You can view the state of the orchestration in the Durable Task Scheduler dashboard:
 
 1. Open your browser and navigate to `http://localhost:8082`
-2. In the dashboard, you can view the orchestration instance, including:
+2. In the dashboard, you can view:
    - The sequential execution of both agent runs
    - The conversation thread shared between runs
    - Input and output at each step
    - Overall orchestration state and history
-
-The orchestration maintains the conversation context across both agent invocations, demonstrating how durable orchestrations can coordinate multi-step agent workflows.
 

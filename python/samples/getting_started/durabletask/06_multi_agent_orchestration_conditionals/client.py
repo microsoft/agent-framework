@@ -1,18 +1,16 @@
-"""Client application for starting a multi-agent concurrent orchestration.
+"""Client application for starting a spam detection orchestration.
 
 This client connects to the Durable Task Scheduler and starts an orchestration
-that runs two agents (physicist and chemist) concurrently, then retrieves and
-displays the aggregated results.
+that uses conditional logic to either handle spam emails or draft professional responses.
 
 Prerequisites: 
-- The worker must be running with both agents and orchestration registered
+- The worker must be running with both agents, orchestration, and activities registered
 - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME 
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
 
 import asyncio
-import json
 import logging
 import os
 
@@ -56,36 +54,51 @@ def get_client(
     )
 
 
-def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temperature?") -> None:
-    """Run client to start and monitor the orchestration.
+def run_client(
+    client: DurableTaskSchedulerClient,
+    email_id: str = "email-001",
+    email_content: str = "Hello! I wanted to reach out about our upcoming project meeting."
+) -> None:
+    """Run client to start and monitor the spam detection orchestration.
     
     Args:
         client: The DurableTaskSchedulerClient instance
-        prompt: The prompt to send to both agents
+        email_id: The email ID
+        email_content: The email content to analyze
     """
-    # Start the orchestration with the prompt as input
+    payload = {
+        "email_id": email_id,
+        "email_content": email_content,
+    }
+    
+    logger.debug("Starting spam detection orchestration...")
+    
+    # Start the orchestration with the email payload
     instance_id = client.schedule_new_orchestration(    # type: ignore
-        orchestrator="multi_agent_concurrent_orchestration",
-        input=prompt,
+        orchestrator="spam_detection_orchestration",
+        input=payload,
     )
     
-    logger.info(f"Orchestration started with instance ID: {instance_id}")
+    logger.debug(f"Orchestration started with instance ID: {instance_id}")
     logger.debug("Waiting for orchestration to complete...")
     
     # Retrieve the final state
     metadata = client.wait_for_orchestration_completion(
         instance_id=instance_id,
+        timeout=300
     )
     
     if metadata and metadata.runtime_status.name == "COMPLETED":
         result = metadata.serialized_output
         
         logger.debug("Orchestration completed successfully!")
-                
+        
         # Parse and display the result
         if result:
-            result_json = json.loads(result) if isinstance(result, str) else result
-            logger.info("Orchestration Results:\n%s", json.dumps(result_json, indent=2))
+            # Remove quotes if present
+            if result.startswith('"') and result.endswith('"'):
+                result = result[1:-1]
+            logger.info(f"Result: {result}")
         
     elif metadata:
         logger.error(f"Orchestration ended with status: {metadata.runtime_status.name}")
@@ -97,16 +110,34 @@ def run_client(client: DurableTaskSchedulerClient, prompt: str = "What is temper
 
 async def main() -> None:
     """Main entry point for the client application."""
-    logger.debug("Starting Durable Task Multi-Agent Orchestration Client...")
+    logger.debug("Starting Durable Task Spam Detection Orchestration Client...")
     
     # Create client using helper function
     client = get_client()
     
     try:
-        run_client(client)
+        # Test with a legitimate email
+        logger.info("TEST 1: Legitimate Email")
+        
+        run_client(
+            client,
+            email_id="email-001",
+            email_content="Hello! I wanted to reach out about our upcoming project meeting scheduled for next week."
+        )
+        
+        # Test with a spam email
+        logger.info("TEST 2: Spam Email")
+        
+        run_client(
+            client,
+            email_id="email-002",
+            email_content="URGENT! You've won $1,000,000! Click here now to claim your prize! Limited time offer! Don't miss out!"
+        )
+        
     except Exception as e:
         logger.exception(f"Error during orchestration: {e}")
     finally:
+        logger.debug("")
         logger.debug("Client shutting down")
 
 

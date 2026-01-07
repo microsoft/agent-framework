@@ -39,7 +39,10 @@ def mock_client() -> Mock:
 @pytest.fixture
 def mock_entity_task() -> Mock:
     """Provide a mock entity task."""
-    return Mock(spec=Task)
+    task = Mock(spec=Task)
+    task.is_complete = False
+    task.is_failed = False
+    return task
 
 
 @pytest.fixture
@@ -75,6 +78,32 @@ def successful_agent_response() -> dict[str, Any]:
         "messages": [{"role": "assistant", "contents": [{"type": "text", "text": "Hello!"}]}],
         "created_at": "2025-12-30T10:00:00Z",
     }
+
+
+@pytest.fixture
+def configure_successful_entity_task(mock_entity_task: Mock) -> Any:
+    """Provide a helper to configure mock_entity_task with a successful response."""
+
+    def _configure(response: dict[str, Any]) -> Mock:
+        mock_entity_task.is_failed = False
+        mock_entity_task.is_complete = False
+        mock_entity_task.get_result = Mock(return_value=response)
+        return mock_entity_task
+
+    return _configure
+
+
+@pytest.fixture
+def configure_failed_entity_task(mock_entity_task: Mock) -> Any:
+    """Provide a helper to configure mock_entity_task with a failure."""
+
+    def _configure(exception: Exception) -> Mock:
+        mock_entity_task.is_failed = True
+        mock_entity_task.is_complete = True
+        mock_entity_task.get_exception = Mock(return_value=exception)
+        return mock_entity_task
+
+    return _configure
 
 
 class TestExecutorThreadCreation:
@@ -240,11 +269,10 @@ class TestDurableAgentTask:
     """Test DurableAgentTask completion and response transformation."""
 
     def test_durable_agent_task_transforms_successful_result(
-        self, mock_entity_task: Mock, successful_agent_response: dict[str, Any]
+        self, configure_successful_entity_task: Any, successful_agent_response: dict[str, Any]
     ) -> None:
         """Verify DurableAgentTask converts successful entity result to AgentRunResponse."""
-        mock_entity_task.is_failed = False
-        mock_entity_task.get_result = Mock(return_value=successful_agent_response)
+        mock_entity_task = configure_successful_entity_task(successful_agent_response)
 
         task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
 
@@ -257,10 +285,9 @@ class TestDurableAgentTask:
         assert len(result.messages) == 1
         assert result.messages[0].role == Role.ASSISTANT
 
-    def test_durable_agent_task_propagates_failure(self, mock_entity_task: Mock) -> None:
+    def test_durable_agent_task_propagates_failure(self, configure_failed_entity_task: Any) -> None:
         """Verify DurableAgentTask propagates task failures."""
-        mock_entity_task.is_failed = True
-        mock_entity_task.get_exception = Mock(return_value=ValueError("Entity error"))
+        mock_entity_task = configure_failed_entity_task(ValueError("Entity error"))
 
         task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
 
@@ -273,15 +300,13 @@ class TestDurableAgentTask:
         assert isinstance(exception, ValueError)
         assert str(exception) == "Entity error"
 
-    def test_durable_agent_task_validates_response_format(self, mock_entity_task: Mock) -> None:
+    def test_durable_agent_task_validates_response_format(self, configure_successful_entity_task: Any) -> None:
         """Verify DurableAgentTask validates response format when provided."""
-        mock_entity_task.is_failed = False
-        mock_entity_task.get_result = Mock(
-            return_value={
-                "messages": [{"role": "assistant", "contents": [{"type": "text", "text": '{"answer": "42"}'}]}],
-                "created_at": "2025-12-30T10:00:00Z",
-            }
-        )
+        response = {
+            "messages": [{"role": "assistant", "contents": [{"type": "text", "text": '{"answer": "42"}'}]}],
+            "created_at": "2025-12-30T10:00:00Z",
+        }
+        mock_entity_task = configure_successful_entity_task(response)
 
         class TestResponse(BaseModel):
             answer: str
@@ -296,11 +321,10 @@ class TestDurableAgentTask:
         assert isinstance(result, AgentRunResponse)
 
     def test_durable_agent_task_ignores_duplicate_completion(
-        self, mock_entity_task: Mock, successful_agent_response: dict[str, Any]
+        self, configure_successful_entity_task: Any, successful_agent_response: dict[str, Any]
     ) -> None:
         """Verify DurableAgentTask ignores duplicate completion calls."""
-        mock_entity_task.is_failed = False
-        mock_entity_task.get_result = Mock(return_value=successful_agent_response)
+        mock_entity_task = configure_successful_entity_task(successful_agent_response)
 
         task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
 
@@ -314,6 +338,122 @@ class TestDurableAgentTask:
         # Should be the same result, get_result should only be called once
         assert first_result is second_result
         assert mock_entity_task.get_result.call_count == 1
+
+    def test_durable_agent_task_fails_on_malformed_response(self, configure_successful_entity_task: Any) -> None:
+        """Verify DurableAgentTask fails when entity returns malformed response data."""
+        mock_entity_task = configure_successful_entity_task({"invalid": "structure"})
+
+        task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
+
+        # Simulate child task completion with malformed data
+        task.on_child_completed(mock_entity_task)
+
+        assert task.is_complete
+        assert task.is_failed
+
+    def test_durable_agent_task_fails_on_invalid_response_format(self, configure_successful_entity_task: Any) -> None:
+        """Verify DurableAgentTask fails when response doesn't match required format."""
+        response = {
+            "messages": [{"role": "assistant", "contents": [{"type": "text", "text": '{"wrong": "field"}'}]}],
+            "created_at": "2025-12-30T10:00:00Z",
+        }
+        mock_entity_task = configure_successful_entity_task(response)
+
+        class StrictResponse(BaseModel):
+            required_field: str
+
+        task = DurableAgentTask(entity_task=mock_entity_task, response_format=StrictResponse, correlation_id="test-123")
+
+        # Simulate child task completion with wrong format
+        task.on_child_completed(mock_entity_task)
+
+        assert task.is_complete
+        assert task.is_failed
+
+    def test_durable_agent_task_handles_empty_response(self, configure_successful_entity_task: Any) -> None:
+        """Verify DurableAgentTask handles response with empty messages list."""
+        response: dict[str, str | list[Any]] = {
+            "messages": [],
+            "created_at": "2025-12-30T10:00:00Z",
+        }
+        mock_entity_task = configure_successful_entity_task(response)
+
+        task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
+
+        # Simulate child task completion
+        task.on_child_completed(mock_entity_task)
+
+        assert task.is_complete
+        result = task.get_result()
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 0
+
+    def test_durable_agent_task_handles_multiple_messages(self, configure_successful_entity_task: Any) -> None:
+        """Verify DurableAgentTask correctly processes response with multiple messages."""
+        response = {
+            "messages": [
+                {"role": "assistant", "contents": [{"type": "text", "text": "First message"}]},
+                {"role": "assistant", "contents": [{"type": "text", "text": "Second message"}]},
+            ],
+            "created_at": "2025-12-30T10:00:00Z",
+        }
+        mock_entity_task = configure_successful_entity_task(response)
+
+        task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
+
+        # Simulate child task completion
+        task.on_child_completed(mock_entity_task)
+
+        assert task.is_complete
+        result = task.get_result()
+        assert isinstance(result, AgentRunResponse)
+        assert len(result.messages) == 2
+        assert result.messages[0].role == Role.ASSISTANT
+        assert result.messages[1].role == Role.ASSISTANT
+
+    def test_durable_agent_task_is_not_complete_initially(self, mock_entity_task: Mock) -> None:
+        """Verify DurableAgentTask is not complete when first created."""
+        task = DurableAgentTask(entity_task=mock_entity_task, response_format=None, correlation_id="test-123")
+
+        assert not task.is_complete
+        assert not task.is_failed
+
+    def test_durable_agent_task_completes_with_complex_response_format(
+        self, configure_successful_entity_task: Any
+    ) -> None:
+        """Verify DurableAgentTask validates complex nested response formats correctly."""
+        response = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": '{"name": "test", "count": 42, "items": ["a", "b", "c"]}',
+                        }
+                    ],
+                }
+            ],
+            "created_at": "2025-12-30T10:00:00Z",
+        }
+        mock_entity_task = configure_successful_entity_task(response)
+
+        class ComplexResponse(BaseModel):
+            name: str
+            count: int
+            items: list[str]
+
+        task = DurableAgentTask(
+            entity_task=mock_entity_task, response_format=ComplexResponse, correlation_id="test-123"
+        )
+
+        # Simulate child task completion
+        task.on_child_completed(mock_entity_task)
+
+        assert task.is_complete
+        assert not task.is_failed
+        result = task.get_result()
+        assert isinstance(result, AgentRunResponse)
 
 
 if __name__ == "__main__":

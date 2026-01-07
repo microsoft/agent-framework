@@ -142,7 +142,7 @@ class AgentEntity:
         response_format = run_request.response_format
         enable_tool_calls = run_request.enable_tool_calls
 
-        logger.debug("[AgentEntity.run] Received Message: %s", run_request)
+        logger.debug("[AgentEntity.run] Received ThreadId %s Message: %s", thread_id, run_request)
 
         state_request = DurableAgentStateRequest.from_run_request(run_request)
         self.state.data.conversation_history.append(state_request)
