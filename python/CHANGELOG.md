@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0b260106] - 2026-01-06
+
+### Added
+
+- **repo**: Add issue template and additional labeling ([#3006](https://github.com/microsoft/agent-framework/pull/3006)) by @eavanvalkenburg
+
+### Changed
+
+- None
+
+### Fixed
+
+- **agent-framework-core**: Fix max tokens translation and add extra integer test ([#3037](https://github.com/microsoft/agent-framework/pull/3037)) by @eavanvalkenburg
+- **agent-framework-azure-ai**: Fix failure when conversation history contains assistant messages ([#3076](https://github.com/microsoft/agent-framework/pull/3076)) by @moonbox3
+- **agent-framework-core**: Use HTTP exporter for http/protobuf protocol ([#3070](https://github.com/microsoft/agent-framework/pull/3070)) by @takanori-terai
+- **agent-framework-core**: Fix ExecutorInvokedEvent and ExecutorCompletedEvent observability data ([#3090](https://github.com/microsoft/agent-framework/pull/3090)) by @moonbox3
+- **agent-framework-core**: Honor tool_choice parameter passed to agent.run() and chat client methods ([#3095](https://github.com/microsoft/agent-framework/pull/3095)) by @moonbox3
+- **samples**: AzureAI SharePoint sample fix ([#3108](https://github.com/microsoft/agent-framework/pull/3108)) by @giles17
+
 ## [1.0.0b251223] - 2025-12-23
 
 ### Added
@@ -426,7 +445,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251223...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260106...HEAD
+[1.0.0b260106]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251223...python-1.0.0b260106
 [1.0.0b251223]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251218...python-1.0.0b251223
 [1.0.0b251218]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251216...python-1.0.0b251218
 [1.0.0b251216]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b251211...python-1.0.0b251216
