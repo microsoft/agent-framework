@@ -245,15 +245,15 @@ Cons:
 
 ## Decision Outcome
 
-Implement `get_agent`/`create_agent` API via `Option 1: Module-level functions`:
+Implement `get_hosted_agent`/`create_hosted_agent` API via `Option 1: Module-level functions`:
 
 ```python
-from agent_framework.azure import create_agent, get_agent
+from agent_framework.azure import create_hosted_agent, get_hosted_agent
 
 ai_project_client = AIProjectClient(...)
 
 # Creates a remote agent first, then returns a local ChatAgent wrapper
-created_agent = await create_agent(
+created_agent = await create_hosted_agent(
     ai_project_client,
     name="",
     instructions="",
@@ -261,8 +261,8 @@ created_agent = await create_agent(
 )
 
 # Gets an existing remote agent and returns a local ChatAgent wrapper
-first_agent = await get_agent(ai_project_client, agent_id=agent_id)
+first_agent = await get_hosted_agent(ai_project_client, agent_id=agent_id)
 
 # Wraps an SDK agent instance (no extra HTTP call)
-second_agent = get_agent(ai_project_client, agent_reference)
+second_agent = get_hosted_agent(ai_project_client, agent_reference)
 ```
