@@ -300,15 +300,6 @@ public sealed class ChatClientAgentExtensionsTests
 
     #endregion
 
-    #region RunAsync<T> Tests
-
-    // Note: Testing generic RunAsync methods is complex due to mock setup requirements.
-    // The key functionality being tested here is that the extension methods properly
-    // delegate to the base methods with the correct parameter conversion.
-    // Integration tests cover the full end-to-end functionality.
-
-    #endregion
-
     #region Helper Methods
 
     private static async IAsyncEnumerable<ChatResponseUpdate> GetAsyncUpdatesAsync()
