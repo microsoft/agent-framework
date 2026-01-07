@@ -789,9 +789,8 @@ class AgentFunctionApp(DFAppBase):
 
             agent_response = state.try_get_agent_response(correlation_id)
             if agent_response:
-                response_message = "\n".join(message.text for message in agent_response.messages if message.text)
                 result = self._build_success_result(
-                    response_message=response_message,
+                    response_message=agent_response.text,
                     message=message,
                     thread_id=thread_id,
                     correlation_id=correlation_id,
