@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Source generators must target netstandard2.0 only -->
+    <!-- Clear inherited TargetFrameworks from Directory.Build.props -->
+    <TargetFrameworks></TargetFrameworks>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+
+    <!-- Enable C# 9 records support on netstandard2.0 -->
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+
+    <!-- Source generator specific settings -->
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+
+    <!-- Suppress nullable warnings for netstandard2.0 -->
+    <NoWarn>$(NoWarn);nullable</NoWarn>
+    <!-- Suppress analyzer release tracking requirement for source generators -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Workflows Source Generators</Title>
+    <Description>Provides Roslyn source generators for Microsoft Agent Framework Workflows, enabling compile-time route configuration for executors.</Description>
+    <DevelopmentDependency>true</DevelopmentDependency>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Pack the generator as an analyzer -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+</Project>
