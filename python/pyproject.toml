@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b251218"
+version = "1.0.0b260106"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0b251218",
+    "agent-framework-core[all]==1.0.0b260106",
 ]
 
 [dependency-groups]
@@ -265,13 +265,6 @@ pytest --import-mode=importlib
 -rs
 -n logical --dist loadfile --dist worksteal
 packages/**/tests
-"""
-
-[tool.poe.tasks.azure-ai-tests]
-cmd = """
-pytest --import-mode=importlib
--n logical --dist loadfile --dist worksteal
-packages/azure-ai/tests
 """
 
 [tool.poe.tasks.venv]

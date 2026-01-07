@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI;
 /// Provides a thread implementation for use with <see cref="ChatClientAgent"/>.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public class ChatClientAgentThread : AgentThread
+public sealed class ChatClientAgentThread : AgentThread
 {
     private ChatMessageStore? _messageStore;
 
@@ -171,9 +171,7 @@ public class ChatClientAgentThread : AgentThread
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null) =>
-        serviceType == typeof(AgentThreadMetadata)
-            ? new AgentThreadMetadata(this.ConversationId)
-            : base.GetService(serviceType, serviceKey)
+        base.GetService(serviceType, serviceKey)
             ?? this.AIContextProvider?.GetService(serviceType, serviceKey)
             ?? this.MessageStore?.GetService(serviceType, serviceKey);
 
