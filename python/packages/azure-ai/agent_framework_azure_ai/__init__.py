@@ -3,7 +3,7 @@
 import importlib.metadata
 
 from ._chat_client import AzureAIAgentClient
-from ._client import AzureAIClient
+from ._client import AzureAIClient, get_agent
 from ._shared import AzureAISettings
 
 try:
@@ -16,4 +16,5 @@ __all__ = [
     "AzureAIClient",
     "AzureAISettings",
     "__version__",
+    "get_agent",
 ]
