@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -13,7 +14,7 @@ namespace Microsoft.Agents.AI.UnitTests;
 /// <summary>
 /// Tests for <see cref="ChatClientAgent"/> run methods with <see cref="ChatClientAgentRunOptions"/>.
 /// </summary>
-public sealed class ChatClientAgentRunWithCustomOptionsTests
+public sealed partial class ChatClientAgent_RunWithCustomOptionsTests
 {
     #region RunAsync Tests
 
@@ -308,4 +309,148 @@ public sealed class ChatClientAgentRunWithCustomOptionsTests
     }
 
     #endregion
+
+    #region RunAsync{T} Tests
+
+    [Fact]
+    public async Task RunAsyncOfT_WithThreadAndOptions_CallsBaseMethodAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+        AgentThread thread = agent.GetNewThread();
+        ChatClientAgentRunOptions options = new();
+
+        // Act
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+
+        // Assert
+        Assert.NotNull(agentRunResponse);
+        Assert.Single(agentRunResponse.Messages);
+        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        mockChatClient.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsyncOfT_WithStringMessageAndOptions_CallsBaseMethodAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+        AgentThread thread = agent.GetNewThread();
+        ChatClientAgentRunOptions options = new();
+
+        // Act
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>("Test message", thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+
+        // Assert
+        Assert.NotNull(agentRunResponse);
+        Assert.Single(agentRunResponse.Messages);
+        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        mockChatClient.Verify(
+            x => x.GetResponseAsync(
+                It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Any(m => m.Text == "Test message")),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsyncOfT_WithChatMessageAndOptions_CallsBaseMethodAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+        AgentThread thread = agent.GetNewThread();
+        ChatMessage message = new(ChatRole.User, "Test message");
+        ChatClientAgentRunOptions options = new();
+
+        // Act
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(message, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+
+        // Assert
+        Assert.NotNull(agentRunResponse);
+        Assert.Single(agentRunResponse.Messages);
+        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        mockChatClient.Verify(
+            x => x.GetResponseAsync(
+                It.Is<IEnumerable<ChatMessage>>(msgs => msgs.Contains(message)),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RunAsyncOfT_WithMessagesCollectionAndOptions_CallsBaseMethodAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockChatClient = new();
+        mockChatClient.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, """{"id":2, "fullName":"Tigger", "species":"Tiger"}""")]));
+
+        ChatClientAgent agent = new(mockChatClient.Object);
+        AgentThread thread = agent.GetNewThread();
+        IEnumerable<ChatMessage> messages = [new(ChatRole.User, "Message 1"), new(ChatRole.User, "Message 2")];
+        ChatClientAgentRunOptions options = new();
+
+        // Act
+        AgentRunResponse<Animal> agentRunResponse = await agent.RunAsync<Animal>(messages, thread, JsonContext_WithCustomRunOptions.Default.Options, options);
+
+        // Assert
+        Assert.NotNull(agentRunResponse);
+        Assert.Single(agentRunResponse.Messages);
+        Assert.Equal("Tigger", agentRunResponse.Result.FullName);
+        mockChatClient.Verify(
+            x => x.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    #endregion
+
+    private sealed class Animal
+    {
+        public int Id { get; set; }
+        public string? FullName { get; set; }
+        public Species Species { get; set; }
+    }
+
+    private enum Species
+    {
+        Bear,
+        Tiger,
+        Walrus,
+    }
+
+    [JsonSourceGenerationOptions(UseStringEnumConverter = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSerializable(typeof(Animal))]
+    private sealed partial class JsonContext_WithCustomRunOptions : JsonSerializerContext;
 }
