@@ -461,7 +461,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
                 agent_orchestration_output.final_message or "The conversation has been terminated by the agent."
             )
             self._append_messages([self._create_completion_message(final_message)])
-            await ctx.yield_output(self._conversation)
+            await ctx.yield_output(self._full_conversation)
             return True
 
         return False
@@ -548,7 +548,7 @@ class GroupChatBuilder:
             Self for fluent chaining.
 
         Raises:
-            ValueError: If orchestrator has already been set
+            ValueError: If an orchestrator has already been set
 
         Example:
         .. code-block:: python
@@ -560,7 +560,17 @@ class GroupChatBuilder:
             workflow = GroupChatBuilder().with_orchestrator(orchestrator).participants([agent1, agent2]).build()
         """
         if self._orchestrator is not None:
-            raise ValueError("Orchestrator has already been configured. Call with_orchestrator(...) at most once.")
+            raise ValueError("An orchestrator has already been configured. Call with_orchestrator(...) at most once.")
+        if self._agent_orchestrator is not None:
+            raise ValueError(
+                "An agent orchestrator has already been configured. "
+                "Call only one of with_orchestrator(...) or with_agent_orchestrator(...)."
+            )
+        if self._selection_func is not None:
+            raise ValueError(
+                "A selection function has already been configured. "
+                "Call only one of with_orchestrator(...) or with_select_speaker_func(...)."
+            )
 
         self._orchestrator = orchestrator
         return self
@@ -578,14 +588,21 @@ class GroupChatBuilder:
             Self for fluent chaining.
 
         Raises:
-            ValueError: If agent orchestrator has already been set
-
-        Note: If a custom orchestrator has already been set via `with_orchestrator()`, that will take
-        precedence and this agent-based orchestrator will be ignored.
+            ValueError: If an orchestrator has already been set
         """
         if self._agent_orchestrator is not None:
             raise ValueError(
                 "Agent orchestrator has already been configured. Call with_agent_orchestrator(...) at most once."
+            )
+        if self._orchestrator is not None:
+            raise ValueError(
+                "An orchestrator has already been configured. "
+                "Call only one of with_agent_orchestrator(...) or with_orchestrator(...)."
+            )
+        if self._selection_func is not None:
+            raise ValueError(
+                "A selection function has already been configured. "
+                "Call only one of with_agent_orchestrator(...) or with_select_speaker_func(...)."
             )
 
         self._agent_orchestrator = agent
@@ -613,10 +630,7 @@ class GroupChatBuilder:
             Self for fluent chaining
 
         Raises:
-            ValueError: If selection function has already been set
-
-        Note: If a custom orchestrator has already been set via `with_orchestrator()`, that will take
-        precedence and this selection function will be ignored.
+            ValueError: If an orchestrator has already been set
 
         Example:
         .. code-block:: python
@@ -639,6 +653,16 @@ class GroupChatBuilder:
         if self._selection_func is not None:
             raise ValueError(
                 "select_speakers_func has already been configured. Call with_select_speakers_func(...) at most once."
+            )
+        if self._orchestrator is not None:
+            raise ValueError(
+                "An orchestrator has already been configured. "
+                "Call only one of with_select_speaker_func(...) or with_orchestrator(...)."
+            )
+        if self._agent_orchestrator is not None:
+            raise ValueError(
+                "An agent orchestrator has already been configured. "
+                "Call only one of with_select_speaker_func(...) or with_agent_orchestrator(...)."
             )
 
         self._selection_func = selection_func

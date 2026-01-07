@@ -193,7 +193,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         self._round_index: int = 0
         self._participant_registry = participant_registry
         # Shared conversation state management
-        self._conversation: list[ChatMessage] = []
+        self._full_conversation: list[ChatMessage] = []
 
     # region Handlers
 
@@ -325,7 +325,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Args:
             messages: Messages to append
         """
-        self._conversation.extend(messages)
+        self._full_conversation.extend(messages)
 
     def _get_conversation(self) -> list[ChatMessage]:
         """Get a copy of the current conversation.
@@ -333,7 +333,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             Cloned conversation list
         """
-        return list(self._conversation)
+        return list(self._full_conversation)
 
     def _process_participant_response(
         self, response: AgentExecutorResponse | GroupChatResponseMessage
@@ -353,7 +353,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
     def _clear_conversation(self) -> None:
         """Clear the conversation history."""
-        self._conversation.clear()
+        self._full_conversation.clear()
 
     def _increment_round(self) -> None:
         """Increment the round counter."""
@@ -387,7 +387,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         terminate = await self._check_termination()
         if terminate:
             self._append_messages([self._create_completion_message(self.TERMINATION_CONDITION_MET_MESSAGE)])
-            await ctx.yield_output(self._conversation)
+            await ctx.yield_output(self._full_conversation)
             return True
 
         return False
@@ -522,7 +522,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         reach_max_rounds = self._check_round_limit()
         if reach_max_rounds:
             self._append_messages([self._create_completion_message(self.MAX_ROUNDS_MET_MESSAGE)])
-            await ctx.yield_output(self._conversation)
+            await ctx.yield_output(self._full_conversation)
             return True
 
         return False
@@ -544,7 +544,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         from ._orchestration_state import OrchestrationState
 
         state = OrchestrationState(
-            conversation=list(self._conversation),
+            conversation=list(self._full_conversation),
             round_index=self._round_index,
             orchestrator_name=self._name,
             metadata=self._snapshot_pattern_metadata(),
@@ -574,7 +574,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         from ._orchestration_state import OrchestrationState
 
         orch_state = OrchestrationState.from_dict(state)
-        self._conversation = list(orch_state.conversation)
+        self._full_conversation = list(orch_state.conversation)
         self._round_index = orch_state.round_index
         self._name = orch_state.orchestrator_name
         self._restore_pattern_metadata(orch_state.metadata)
