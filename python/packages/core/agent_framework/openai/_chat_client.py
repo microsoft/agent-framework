@@ -5,7 +5,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypedDict
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -49,10 +49,15 @@ from ..observability import use_instrumentation
 from ._exceptions import OpenAIContentFilterException
 from ._shared import OpenAIBase, OpenAIConfigMixin, OpenAISettings
 
-if sys.version_info >= (3, 12):
-    from typing import TypedDict, override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
 else:
-    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 __all__ = ["OpenAIChatClient", "OpenAIChatOptions"]
 

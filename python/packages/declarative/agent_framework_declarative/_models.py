@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 import os
-import sys
 from collections.abc import MutableMapping
 from contextvars import ContextVar
 from typing import Any, Literal, TypeVar, Union
@@ -15,10 +14,7 @@ try:
 except ImportError:
     engine = None
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
-else:
-    from typing_extensions import overload  # pragma: no cover
+from typing import overload
 
 logger = get_logger("agent_framework.declarative")
 

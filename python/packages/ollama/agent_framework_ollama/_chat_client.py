@@ -11,7 +11,7 @@ from collections.abc import (
     Sequence,
 )
 from itertools import chain
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
     AIFunction,
@@ -47,10 +47,15 @@ from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import ValidationError
 
-if sys.version_info >= (3, 12):
-    from typing import TypedDict, override  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
 else:
-    from typing_extensions import TypedDict, override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import TypeVar
+
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypedDict, TypeVar
 
 from agent_framework import ChatOptions, use_chat_middleware, use_function_invocation
 from agent_framework._pydantic import AFBaseSettings
@@ -11,11 +10,6 @@ from agent_framework.openai._chat_client import OpenAIBaseChatClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
-
-if sys.version_info >= (3, 12):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
 
 __all__ = [
     "FoundryLocalChatOptions",

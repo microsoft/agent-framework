@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
@@ -15,10 +14,7 @@ from ._shared import AzureOpenAISettings
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
 
-if sys.version_info >= (3, 12):
-    from typing import TypedDict  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore[import] # pragma: no cover
+from typing import TypedDict
 
 __all__ = ["AzureOpenAIAssistantsClient"]
 
