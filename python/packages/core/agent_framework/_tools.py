@@ -59,21 +59,12 @@ if TYPE_CHECKING:
         FunctionCallContent,
     )
 
-if sys.version_info >= (3, 12):
-    from typing import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore # pragma: no cover
-    )
-else:
-    from typing_extensions import (
-        TypedDict,  # pragma: no cover
-        override,  # type: ignore[import] # pragma: no cover
-    )
+from typing import TypedDict, overload
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
+if sys.version_info >= (3, 12):
+    from typing import override  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import overload  # pragma: no cover
+    from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 logger = get_logger()
 

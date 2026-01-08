@@ -13,7 +13,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import deepcopy
-from typing import Any, ClassVar, Literal, TypeVar
+from typing import Any, ClassVar, Literal, TypedDict, TypeVar, overload
 
 from pydantic import BaseModel, ValidationError
 
@@ -22,14 +22,6 @@ from ._serialization import SerializationMixin
 from ._tools import ToolProtocol, ai_function
 from .exceptions import AdditionItemMismatch, ContentError
 
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
-else:
-    from typing_extensions import overload  # pragma: no cover
-if sys.version_info >= (3, 12):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
 else:

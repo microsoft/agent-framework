@@ -3,15 +3,15 @@
 """Example agent demonstrating Tool-based Generative UI (Feature 5)."""
 
 import sys
-from typing import Any, TypeVar
+from typing import Any, TypedDict
 
 from agent_framework import AIFunction, ChatAgent, ChatClientProtocol, ChatOptions
 from agent_framework.ag_ui import AgentFrameworkAgent
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
 else:
-    from typing_extensions import TypedDict
+    from typing_extensions import TypeVar
 
 # Declaration-only tools (func=None) - actual rendering happens on the client side
 generate_haiku = AIFunction[Any, str](

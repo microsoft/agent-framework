@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, 
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypedDict, cast, runtime_checkable
 from uuid import uuid4
 
 from mcp import types
@@ -37,21 +37,21 @@ from .observability import use_agent_instrumentation
 if TYPE_CHECKING:
     from ._types import ChatOptions
 
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
+
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
     from typing_extensions import override  # type: ignore[import] # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import (
-        Self,  # pragma: no cover
-        TypedDict,  # pragma: no cover
-    )
+    from typing import Self  # pragma: no cover
 else:
-    from typing_extensions import (
-        Self,  # pragma: no cover
-        TypedDict,  # pragma: no cover
-    )
+    from typing_extensions import Self  # pragma: no cover
 
 
 logger = get_logger("agent_framework")

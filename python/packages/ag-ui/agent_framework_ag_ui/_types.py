@@ -2,9 +2,15 @@
 
 """Type definitions for AG-UI integration."""
 
-from typing import Any, TypedDict, TypeVar
+import sys
+from typing import Any, TypedDict
 
 from agent_framework import ChatOptions
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 
 __all__ = [
     "AGUIChatOptions",

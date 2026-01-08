@@ -4,7 +4,7 @@ import asyncio
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Callable, MutableMapping, MutableSequence, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypedDict, runtime_checkable
 
 from ._logging import get_logger
 from ._memory import ContextProvider
@@ -26,10 +26,10 @@ from ._types import (
     prepare_messages,
 )
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
 else:
-    from typing_extensions import TypedDict
+    from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
     from ._agents import ChatAgent
