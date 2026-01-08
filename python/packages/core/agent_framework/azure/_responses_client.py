@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 from collections.abc import Mapping
-from typing import Any, Generic, TypedDict, TypeVar
+from typing import Any, Generic, TypedDict
 from urllib.parse import urljoin
 
 from azure.core.credentials import TokenCredential
@@ -20,6 +21,11 @@ from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
 )
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 __all__ = ["AzureOpenAIResponsesClient", "AzureOpenAIResponsesOptions"]
 
