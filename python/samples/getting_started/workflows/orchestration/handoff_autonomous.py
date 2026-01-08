@@ -117,6 +117,8 @@ async def main() -> None:
         .add_handoff(research_agent, [coordinator])  # Research can hand back to coordinator
         .add_handoff(summary_agent, [coordinator])
         .with_autonomous_mode(
+            # You can set turn limits per agent to allow some agents to go longer.
+            # If a limit is not set, the agent will get an default limit: 50.
             turn_limits={
                 coordinator.display_name: 5,
                 research_agent.display_name: 10,
