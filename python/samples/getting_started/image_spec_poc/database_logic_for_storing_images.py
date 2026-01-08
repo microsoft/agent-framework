@@ -38,3 +38,4 @@ async def create_and_store_base64_encoded_images() -> tuple[str, str]:
                 image_uri=image_uri,
             )
             print(f"Stored image in SQLite with id={record.id} text_id={record.text_id}")
+
