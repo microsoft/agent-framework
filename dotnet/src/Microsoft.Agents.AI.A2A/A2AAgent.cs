@@ -87,7 +87,7 @@ internal sealed class A2AAgent : AIAgent
             MessageSendParams sendParams = new()
             {
                 Message = CreateA2AMessage(typedThread, messages),
-                Metadata = options?.AdditionalProperties.ToA2AMetadata()
+                Metadata = options?.AdditionalProperties?.ToA2AMetadata()
             };
 
             a2aResponse = await this._a2aClient.SendMessageAsync(sendParams, cancellationToken).ConfigureAwait(false);
@@ -161,7 +161,7 @@ internal sealed class A2AAgent : AIAgent
         MessageSendParams sendParams = new()
         {
             Message = CreateA2AMessage(typedThread, messages),
-            Metadata = options?.AdditionalProperties.ToA2AMetadata()
+            Metadata = options?.AdditionalProperties?.ToA2AMetadata()
         };
 
         a2aSseEvents = this._a2aClient.SendMessageStreamingAsync(sendParams, cancellationToken).ConfigureAwait(false);

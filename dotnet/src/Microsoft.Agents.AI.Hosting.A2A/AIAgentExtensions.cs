@@ -43,11 +43,14 @@ public static class AIAgentExtensions
         {
             var contextId = messageSendParams.Message.ContextId ?? Guid.NewGuid().ToString("N");
             var thread = await hostAgent.GetOrCreateThreadAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var options = messageSendParams.Metadata is not { Count: > 0 }
+                ? null
+                : new AgentRunOptions { AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() };
 
             var response = await hostAgent.RunAsync(
                 messageSendParams.ToChatMessages(),
                 thread: thread,
-                options: messageSendParams.Metadata is not { Count: > 0 } ? null : new AgentRunOptions { AdditionalProperties = messageSendParams.Metadata.ToAdditionalProperties() },
+                options: options,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
             await hostAgent.SaveThreadAsync(contextId, thread, cancellationToken).ConfigureAwait(false);
