@@ -9,7 +9,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
 
-from agent_framework import AIFunction, ToolProtocol
+from agent_framework import AgentRunResponseUpdate, AIFunction, ToolProtocol
 
 
 def generate_event_id() -> str:
@@ -164,3 +164,19 @@ def convert_tools_to_agui_format(
             continue
 
     return results if results else None
+
+
+def get_conversation_id_from_update(update: AgentRunResponseUpdate) -> str | None:
+    """Extract conversation ID from AgentRunResponseUpdate metadata.
+
+    Args:
+        update: AgentRunResponseUpdate instance
+    Returns:
+        Conversation ID if present, else None
+
+    """
+    # if update.conversation_id:
+    #     return update.conversation_id
+    if update.additional_properties:
+        return update.additional_properties.get("conversation_id")
+    return None
