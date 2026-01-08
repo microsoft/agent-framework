@@ -169,7 +169,7 @@ async def main() -> None:
 
     # Non-streaming usage
     print(f"User: {message}")
-    response = await client.get_response(message, tools=get_weather, stream=False)
+    response = await client.get_response(message, tools=get_weather)
     print(f"Assistant: {response.text}")
 
     # Streaming usage - same method, different parameter
@@ -191,7 +191,7 @@ async def main() -> None:
 
     # Non-streaming agent
     print(f"\nUser: {message}")
-    result = await agent.run(message, thread=thread, stream=False)
+    result = await agent.run(message, thread=thread) # default would be stream=False
     print(f"{agent.name}: {result.text}")
 
     # Streaming agent - same method, different parameter
