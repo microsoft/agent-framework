@@ -11,16 +11,19 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// Note: This type is used after the caching layer (in RegisterSourceOutput),
 /// so it should not cause issue to contain Diagnostic objects directly.
 /// </summary>
-internal sealed class AnalysisResult
+/// <param name="executorInfo">The executor information.</param>
+/// <param name="diagnostics">Any diagnostics to report.</param>
+internal sealed class AnalysisResult(ExecutorInfo? executorInfo, ImmutableArray<Diagnostic> diagnostics)
 {
-    public ExecutorInfo? ExecutorInfo { get; }
-    public ImmutableArray<Diagnostic> Diagnostics { get; }
+    /// <summary>
+    /// Gets the executor information.
+    /// </summary>
+    public ExecutorInfo? ExecutorInfo { get; } = executorInfo;
 
-    public AnalysisResult(ExecutorInfo? executorInfo, ImmutableArray<Diagnostic> diagnostics)
-    {
-        this.ExecutorInfo = executorInfo;
-        this.Diagnostics = diagnostics.IsDefault ? ImmutableArray<Diagnostic>.Empty : diagnostics;
-    }
+    /// <summary>
+    /// Gets the diagnostics to report.
+    /// </summary>
+    public ImmutableArray<Diagnostic> Diagnostics { get; } = diagnostics.IsDefault ? ImmutableArray<Diagnostic>.Empty : diagnostics;
 
     /// <summary>
     /// Creates a successful result with executor info and no diagnostics.

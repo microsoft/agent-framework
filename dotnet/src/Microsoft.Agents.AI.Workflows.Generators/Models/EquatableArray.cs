@@ -11,18 +11,13 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// A wrapper around <see cref="ImmutableArray{T}"/> that provides value-based equality.
 /// This is necessary for incremental generator caching since ImmutableArray uses reference equality.
 /// </summary>
-internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnumerable<T>
+/// <remarks>
+/// Creates a new <see cref="EquatableArray{T}"/> from an <see cref="ImmutableArray{T}"/>.
+/// </remarks>
+internal readonly struct EquatableArray<T>(ImmutableArray<T> array) : IEquatable<EquatableArray<T>>, IEnumerable<T>
     where T : IEquatable<T>
 {
-    private readonly ImmutableArray<T> _array;
-
-    /// <summary>
-    /// Creates a new <see cref="EquatableArray{T}"/> from an <see cref="ImmutableArray{T}"/>.
-    /// </summary>
-    public EquatableArray(ImmutableArray<T> array)
-    {
-        this._array = array.IsDefault ? ImmutableArray<T>.Empty : array;
-    }
+    private readonly ImmutableArray<T> _array = array.IsDefault ? ImmutableArray<T>.Empty : array;
 
     /// <summary>
     /// Gets the underlying array.
@@ -80,7 +75,7 @@ internal readonly struct EquatableArray<T> : IEquatable<EquatableArray<T>>, IEnu
         var hashCode = 17;
         foreach (var item in this._array)
         {
-            hashCode = hashCode * 31 + item?.GetHashCode() ?? 0;
+            hashCode = hashCode * 31 + (item?.GetHashCode() ?? 0);
         }
 
         return hashCode;

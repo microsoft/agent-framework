@@ -32,7 +32,7 @@ internal sealed record MethodAnalysisResult(
     bool HasManualConfigureRoutes,
 
     // Class location for diagnostics (value-equatable)
-    LocationInfo? ClassLocation,
+    DiagnosticLocationInfo? ClassLocation,
 
     // Method-level info (null if method validation failed)
     HandlerInfo? Handler,

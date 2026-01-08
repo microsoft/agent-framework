@@ -24,7 +24,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
     /// <inheritdoc/>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Step 1: Use ForAttributeWithMetadataName to efficiently find methods with [MessageHandler]
+        // Step 1: Use ForAttributeWithMetadataName to efficiently find methods with [MessageHandler] attribute. For each method found, build a MethodAnalysisResult.
         var methodAnalysisResults = context.SyntaxProvider
             .ForAttributeWithMetadataName(
                 fullyQualifiedMetadataName: MessageHandlerAttributeFullName,
@@ -32,7 +32,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
                 transform: static (ctx, ct) => SemanticAnalyzer.AnalyzeMethod(ctx, ct))
             .Where(static result => !string.IsNullOrEmpty(result.ClassKey));
 
-        // Step 2: Collect all results and group by class
+        // Step 2: Collect all MethodAnalysisResults, group by class, and then combine into a single AnalysisResult per class.
         var groupedByClass = methodAnalysisResults
             .Collect()
             .SelectMany(static (results, _) =>
@@ -43,7 +43,7 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
                     .Select(group => SemanticAnalyzer.CombineMethodResults(group));
             });
 
-        // Step 3: Generate source for valid executors
+        // Step 3: Generate source for valid executors using the associted AnalysisResult.
         context.RegisterSourceOutput(
             groupedByClass.Where(static r => r.ExecutorInfo is not null),
             static (ctx, result) =>
@@ -65,20 +65,23 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
             });
     }
 
+    /// <summary>
+    /// Generates a hint (virtual file) name for the generated source file based on the ExecutorInfo.
+    /// </summary>
     private static string GetHintName(ExecutorInfo info)
     {
         var sb = new StringBuilder();
 
         if (!string.IsNullOrEmpty(info.Namespace))
         {
-            sb.Append(info.Namespace);
-            sb.Append('.');
+            sb.Append(info.Namespace)
+               .Append('.');
         }
 
         if (info.IsNested)
         {
-            sb.Append(info.ContainingTypeChain);
-            sb.Append('.');
+            sb.Append(info.ContainingTypeChain)
+              .Append('.');
         }
 
         sb.Append(info.ClassName);
@@ -87,8 +90,8 @@ public sealed class ExecutorRouteGenerator : IIncrementalGenerator
         if (!string.IsNullOrEmpty(info.GenericParameters))
         {
             // Replace < > with underscores for valid file name
-            sb.Append('_');
-            sb.Append(info.GenericParameters!.Length - 2); // Number of type params approximation
+            sb.Append('_')
+              .Append(info.GenericParameters!.Length - 2); // Number of type params approximation
         }
 
         sb.Append(".g.cs");

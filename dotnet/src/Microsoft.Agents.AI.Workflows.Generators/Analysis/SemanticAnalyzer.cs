@@ -108,7 +108,7 @@ internal static class SemanticAnalyzer
 
         // All methods should have same class info - take from first
         var first = methods[0];
-        var classLocation = first.ClassLocation?.ToLocation() ?? Location.None;
+        var classLocation = first.ClassLocation?.ToRoslynLocation() ?? Location.None;
 
         // Collect method-level diagnostics
         var allDiagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
@@ -116,7 +116,7 @@ internal static class SemanticAnalyzer
         {
             foreach (var diag in method.Diagnostics)
             {
-                allDiagnostics.Add(diag.ToDiagnostic(null));
+                allDiagnostics.Add(diag.ToRoslynDiagnostic(null));
             }
         }
 
@@ -188,14 +188,14 @@ internal static class SemanticAnalyzer
             null, null, EquatableArray<DiagnosticInfo>.Empty);
     }
 
-    private static LocationInfo? GetClassLocation(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
+    private static DiagnosticLocationInfo? GetClassLocation(INamedTypeSymbol classSymbol, CancellationToken cancellationToken)
     {
         foreach (var syntaxRef in classSymbol.DeclaringSyntaxReferences)
         {
             var syntax = syntaxRef.GetSyntax(cancellationToken);
             if (syntax is ClassDeclarationSyntax classDecl)
             {
-                return LocationInfo.FromLocation(classDecl.Identifier.GetLocation());
+                return DiagnosticLocationInfo.FromLocation(classDecl.Identifier.GetLocation());
             }
         }
 

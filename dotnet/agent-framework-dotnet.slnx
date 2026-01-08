@@ -396,7 +396,7 @@
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative.AzureAI/Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows.Declarative/Microsoft.Agents.AI.Workflows.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Workflows/Microsoft.Agents.AI.Workflows.csproj" />
-    <!-- Generator project excluded from solution - built via ProjectReference from Workflows project -->
+    <Project Path="src/Microsoft.Agents.AI.Workflows.Generators/Microsoft.Agents.AI.Workflows.Generators.csproj" />
     <Project Path="src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj" />
   </Folder>
   <Folder Name="/Tests/" />

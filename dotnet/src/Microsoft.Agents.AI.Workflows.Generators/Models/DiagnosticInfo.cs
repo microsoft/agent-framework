@@ -7,45 +7,6 @@ using Microsoft.CodeAnalysis.Text;
 namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 
 /// <summary>
-/// Represents location information in a form that supports value equality.
-/// </summary>
-internal sealed record LocationInfo(
-    string FilePath,
-    TextSpan Span,
-    LinePositionSpan LineSpan)
-{
-    /// <summary>
-    /// Creates a LocationInfo from a Roslyn Location.
-    /// </summary>
-    public static LocationInfo? FromLocation(Location? location)
-    {
-        if (location is null || location == Location.None)
-        {
-            return null;
-        }
-
-        var lineSpan = location.GetLineSpan();
-        return new LocationInfo(
-            lineSpan.Path ?? string.Empty,
-            location.SourceSpan,
-            lineSpan.Span);
-    }
-
-    /// <summary>
-    /// Converts back to a Roslyn Location.
-    /// </summary>
-    public Location ToLocation()
-    {
-        if (string.IsNullOrEmpty(this.FilePath))
-        {
-            return Location.None;
-        }
-
-        return Location.Create(this.FilePath, this.Span, this.LineSpan);
-    }
-}
-
-/// <summary>
 /// Represents diagnostic information in a form that supports value equality.
 /// Location is stored as file path + span, which can be used to recreate a Location.
 /// </summary>
@@ -71,9 +32,9 @@ internal sealed record DiagnosticInfo(
     }
 
     /// <summary>
-    /// Converts this info back to a Diagnostic.
+    /// Converts this info back to a Roslyn Diagnostic.
     /// </summary>
-    public Diagnostic ToDiagnostic(SyntaxTree? syntaxTree)
+    public Diagnostic ToRoslynDiagnostic(SyntaxTree? syntaxTree)
     {
         var descriptor = DiagnosticDescriptors.GetById(this.DiagnosticId);
         if (descriptor is null)

@@ -1,0 +1,18 @@
+<Project>
+  <!-- Import parent Directory.Build.targets if it exists -->
+  <PropertyGroup>
+    <_ParentTargetsPath>$([MSBuild]::GetPathOfFileAbove(Directory.Build.targets, $(MSBuildThisFileDirectory)..))</_ParentTargetsPath>
+  </PropertyGroup>
+  <Import Project="$(_ParentTargetsPath)" Condition="'$(_ParentTargetsPath)' != ''" />
+
+  <!-- Handle incompatible TFM passed as global property (e.g., from solution build) -->
+  <PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <_SkipIncompatibleBuild>true</_SkipIncompatibleBuild>
+    <!-- Bypass NETSDK1005 by clearing assets file path -->
+    <ProjectAssetsFile />
+    <ResolveAssemblyReferencesSilentlySkip>true</ResolveAssemblyReferencesSilentlySkip>
+  </PropertyGroup>
+
+  <!-- Import skip targets AFTER SDK targets so they override (Directory.Build.targets runs after SDK.targets) -->
+  <Import Project="SkipIncompatibleBuild.targets" Condition="'$(_SkipIncompatibleBuild)' == 'true'" />
+</Project>
