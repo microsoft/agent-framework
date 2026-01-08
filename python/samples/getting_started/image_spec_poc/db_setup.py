@@ -195,14 +195,30 @@ class SQLiteImageStore:
         metadata: dict[str, Any] | str | None = None,
         tags: Sequence[str] | None = None,
         mime_type: str = "image/png",
+        image_uri: str | None = None,
     ) -> ImageRecord:
         payload = base64.b64decode(base64_data)
+
+        # If image_uri is supplied, fold it into metadata so it is persisted.
+        merged_metadata: dict[str, Any] | str | None
+        if image_uri is None:
+            merged_metadata = metadata
+        elif metadata is None:
+            merged_metadata = {"image_uri": image_uri}
+        elif isinstance(metadata, dict):
+            merged = dict(metadata)
+            merged.setdefault("image_uri", image_uri)
+            merged_metadata = merged
+        else:
+            # metadata is a non-dict (e.g., str); wrap to preserve both
+            merged_metadata = {"metadata": metadata, "image_uri": image_uri}
+
         return await self.add_image_from_bytes(
             text_id=text_id,
             image_bytes=payload,
             image_name=image_name,
             description=description,
-            metadata=metadata,
+            metadata=merged_metadata,
             tags=tags,
             mime_type=mime_type,
         )
