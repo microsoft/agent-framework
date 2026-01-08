@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI.A2A;
 /// Support for tasks will be added later as part of the long-running
 /// executions work.
 /// </remarks>
-internal sealed class A2AAgent : AIAgent
+public sealed class A2AAgent : AIAgent
 {
     private readonly A2AClient _a2aClient;
     private readonly string? _id;
