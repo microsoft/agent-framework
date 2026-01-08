@@ -321,7 +321,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         self,
         run_options: dict[str, Any],
         messages_instructions: str | None,
-        chat_options: ChatOptions | None = None,
+        chat_options: Mapping[str, Any] | None = None,
     ) -> dict[str, str]:
         """Determine which agent to use and create if needed.
 
@@ -333,11 +333,6 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
         Returns:
             dict[str, str]: The agent reference to use.
         """
-        # chat_options is needed separately because the base class excludes response_format
-        # from run_options (transforming it to text/text_format for OpenAI). Azure's agent
-        # creation API requires the original response_format to build its own config format.
-        if chat_options is None:
-            chat_options = ChatOptions()
         # Agent name must be explicitly provided by the user.
         if self.agent_name is None:
             raise ServiceInitializationError(
@@ -374,12 +369,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
             # response_format is accessed from chat_options or additional_properties
             # since the base class excludes it from run_options
-            response_format: Any = (
-                chat_options.response_format
-                if chat_options.response_format is not None
-                else chat_options.additional_properties.get("response_format")
-            )
-            if response_format:
+            if chat_options and (response_format := chat_options.get("response_format")):
                 args["text"] = PromptAgentDefinitionText(format=self._create_text_format_config(response_format))
 
             # Combine instructions from messages and options
@@ -427,7 +417,7 @@ class AzureAIClient(OpenAIBaseResponsesClient[TAzureAIClientOptions], Generic[TA
 
         if not self._is_application_endpoint:
             # Application-scoped response APIs do not support "agent" property.
-            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, chat_options)
+            agent_reference = await self._get_agent_reference_or_create(run_options, instructions, options)
             run_options["extra_body"] = {"agent": agent_reference}
 
         # Remove properties that are not supported on request level
