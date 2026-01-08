@@ -1696,9 +1696,10 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
     from agent_framework import MCPStreamableHTTPTool
 
     # Mock the streamable_http_client to avoid actual connections
-    with patch("agent_framework._mcp.streamable_http_client") as mock_client, patch(
-        "agent_framework._mcp.ClientSession"
-    ) as mock_session_class:
+    with (
+        patch("agent_framework._mcp.streamable_http_client") as mock_client,
+        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+    ):
         # Setup mock context manager for streamable_http_client
         mock_transport = (Mock(), Mock())
         mock_context_manager = Mock()
@@ -1735,10 +1736,10 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             http_client=user_client,
         )
         await tool2.connect()
-        
+
         # Verify the user-provided client was stored
         assert tool2._httpx_client is user_client, "User-provided client should be stored"
-        
+
         # Verify streamable_http_client was called with the user's client
         # Get the last call (should be from tool2.connect())
         call_args = mock_client.call_args
