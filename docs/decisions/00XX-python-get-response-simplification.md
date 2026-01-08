@@ -11,7 +11,7 @@ informed:
 
 ## Context and Problem Statement
 
-Currently chat clients must implement two separate methods to get responses, one for streaming and one for non-streaming. This adds complexity to the client implementations and increases the maintenance burden. This was likely done because the dotnet version cannot do proper typing with a single method, in Python this is possible and this for instance is also how the OpenAI python client works.
+Currently chat clients must implement two separate methods to get responses, one for streaming and one for non-streaming. This adds complexity to the client implementations and increases the maintenance burden. This was likely done because the .NET version cannot do proper typing with a single method, in Python this is possible and this for instance is also how the OpenAI python client works, this would then also make it simpler to work with the Python version because there is only one method to learn about instead of two.
 
 ## Implications of this change
 
@@ -27,7 +27,7 @@ The current design has **two separate methods** at each layer:
 
 ### Key Usage Areas Identified
 
-#### 1. **ChatAgent** (_agents.py and _agents.py)
+#### 1. **ChatAgent** (_agents.py)
 - `run()` → calls `self.chat_client.get_response()`
 - `run_stream()` → calls `self.chat_client.get_streaming_response()`
 
@@ -71,7 +71,7 @@ original_get_response = chat_client.get_response
 
 #### 6. **Provider Implementations** (all subpackages)
 All subclasses implement both `_inner_*` methods, except:
-- OpenAI Assistants Client - it implements `_inner_get_response` by calling `_inner_get_streaming_response`
+- OpenAI Assistants Client (and similar clients, such as Foundry Agents V1) - it implements `_inner_get_response` by calling `_inner_get_streaming_response`
 
 ### Implications of Consolidation
 
@@ -84,20 +84,6 @@ All subclasses implement both `_inner_*` methods, except:
 | **Samples/Tests** | Many samples call `get_streaming_response()` directly - would need updates. |
 | **Protocol Simplification** | `ChatClientProtocol` goes from 2 methods + 1 property to 1 method + 1 property. |
 
-### Suggested Migration Path
-
-1. **Keep public `get_streaming_response` as an alias** for backward compatibility:
-   ```python
-   def get_streaming_response(self, messages, **kwargs):
-       return self.get_response(messages, stream=True, **kwargs)
-   ```
-
-2. **Consolidate inner methods first**: Have `_inner_get_response(stream=True/False)` in `BaseChatClient`, allowing subclasses to gradually migrate.
-
-3. **Update decorators** to handle the unified method with conditional streaming logic.
-
-4. **Deprecation warnings** on direct `get_streaming_response()` calls.
-
 ### Recommendation
 
 The consolidation makes sense architecturally, but consider:
@@ -105,14 +91,12 @@ The consolidation makes sense architecturally, but consider:
 1. **The overload pattern with `stream: bool`** works well in Python typing:
    ```python
    @overload
-   async def get_response(self, messages, *, stream: Literal[True], ...) -> AsyncIterable[ChatResponseUpdate]: ...
+   async def get_response(self, messages, *, stream: Literal[True] = True, ...) -> AsyncIterable[ChatResponseUpdate]: ...
    @overload
    async def get_response(self, messages, *, stream: Literal[False] = False, ...) -> ChatResponse: ...
    ```
 
 2. **The decorator complexity** is the biggest concern. The current approach of separate decorators for separate methods is cleaner than conditional logic inside one wrapper.
-
-3. **Backward compatibility** should be maintained with deprecation, not immediate removal.
 
 ## Decision Drivers
 
@@ -123,18 +107,139 @@ The consolidation makes sense architecturally, but consider:
 ## Considered Options
 
 1. Status quo: Keep separate methods for streaming and non-streaming
-1. Consolidate into a single `get_response` method with a `stream` parameter
+2. Consolidate into a single `get_response` method with a `stream` parameter
+3. Option 2 plus merging `agent.run` and `agent.run_stream` into a single method with a `stream` parameter as well
 
 ## Option 1: Status Quo
 - Good: Clear separation of streaming vs non-streaming logic
-- Good: Aligned with dotnet design
+- Good: Aligned with .NET design
 - Bad: Code duplication in decorators and middleware
 - Bad: More complex client implementations
 
 ## Option 2: Consolidate into Single Method
 - Good: Simplified public API for chat clients
 - Good: Reduced code duplication in decorators
+- Good: Smaller API footprint for users to get familiar with
+- Good: People using OpenAI directly already expect this pattern
 - Bad: Increased complexity in decorators and middleware
+- Bad: Less alignment with .NET design
+
+## Option 3: Consolidate + Merge Agent Methods
+- Good: Further simplifies agent implementation
+- Good: Single method for all chat interactions
+- Good: Smaller API footprint for users to get familiar with
+- Good: People using OpenAI directly already expect this pattern
+- Bad: More breaking changes for agent users
+- Bad: Increased complexity in agent implementation
+- Bad: More extensive misalignment with .NET design
 
 ## Decision Outcome
 TBD
+
+
+# Appendix
+## Code Samples for Consolidated Method
+
+### Python - Option 3: Direct ChatClient + Agent with Single Method
+
+```python
+# Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+from random import randint
+from typing import Annotated
+
+from agent_framework import ChatAgent
+from agent_framework.openai import OpenAIChatClient
+from pydantic import Field
+
+
+def get_weather(
+    location: Annotated[str, Field(description="The location to get the weather for.")],
+) -> str:
+    """Get the weather for a given location."""
+    conditions = ["sunny", "cloudy", "rainy", "stormy"]
+    return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+
+async def main() -> None:
+    # Example 1: Direct ChatClient usage with single method
+    client = OpenAIChatClient()
+    message = "What's the weather in Amsterdam and in Paris?"
+
+    # Non-streaming usage
+    print(f"User: {message}")
+    response = await client.get_response(message, tools=get_weather, stream=False)
+    print(f"Assistant: {response.text}")
+
+    # Streaming usage - same method, different parameter
+    print(f"\nUser: {message}")
+    print("Assistant: ", end="")
+    async for chunk in client.get_response(message, tools=get_weather, stream=True):
+        if chunk.text:
+            print(chunk.text, end="")
+    print("")
+
+    # Example 2: Agent usage with single method
+    agent = ChatAgent(
+        chat_client=client,
+        tools=get_weather,
+        name="WeatherAgent",
+        instructions="You are a weather assistant.",
+    )
+    thread = agent.get_new_thread()
+
+    # Non-streaming agent
+    print(f"\nUser: {message}")
+    result = await agent.run(message, thread=thread, stream=False)
+    print(f"{agent.name}: {result.text}")
+
+    # Streaming agent - same method, different parameter
+    print(f"\nUser: {message}")
+    print(f"{agent.name}: ", end="")
+    async for update in agent.run(message, thread=thread, stream=True):
+        if update.text:
+            print(update.text, end="")
+    print("")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### .NET - Current pattern for comparison
+
+```csharp
+// Copyright (c) Microsoft. All rights reserved.
+
+using Azure.AI.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using OpenAI.Chat;
+
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+AIAgent agent = new AzureOpenAIClient(
+    new Uri(endpoint),
+    new AzureCliCredential())
+    .GetChatClient(deploymentName)
+    .CreateAIAgent(
+        instructions: "You are good at telling jokes about pirates.",
+        name: "PirateJoker");
+
+// Non-streaming: Returns a string directly
+Console.WriteLine("=== Non-streaming ===");
+string result = await agent.RunAsync("Tell me a joke about a pirate.");
+Console.WriteLine(result);
+
+// Streaming: Returns IAsyncEnumerable<AgentUpdate>
+Console.WriteLine("\n=== Streaming ===");
+await foreach (AgentUpdate update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
+{
+    Console.Write(update);
+}
+Console.WriteLine();
+
+```
