@@ -1,0 +1,114 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Microsoft.Extensions.AI;
+
+namespace Microsoft.Agents.AI.Workflows.UnitTests;
+
+public sealed class ExpectedException : Exception
+{
+    public ExpectedException(string message)
+        : base(message)
+    {
+    }
+
+    public ExpectedException() : base()
+    {
+    }
+
+    public ExpectedException(string? message, Exception? innerException) : base(message, innerException)
+    {
+    }
+}
+
+public class WorkflowHostSmokeTests
+{
+    private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
+    {
+        private sealed class Thread : InMemoryAgentThread
+        {
+            public Thread() { }
+
+            public Thread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+                : base(serializedThread, jsonSerializerOptions)
+            { }
+        }
+
+        public override AgentThread DeserializeThread(JsonElement serializedThread, JsonSerializerOptions? jsonSerializerOptions = null)
+        {
+            return new Thread(serializedThread, jsonSerializerOptions);
+        }
+
+        public override AgentThread GetNewThread()
+        {
+            return new Thread();
+        }
+
+        protected override async Task<AgentRunResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            return await this.RunStreamingAsync(messages, thread, options, cancellationToken)
+                             .ToAgentRunResponseAsync(cancellationToken);
+        }
+
+        protected override async IAsyncEnumerable<AgentRunResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            const string ErrorMessage = "Simulated agent failure.";
+            if (failByThrowing)
+            {
+                throw new ExpectedException(ErrorMessage);
+            }
+
+            yield return new AgentRunResponseUpdate(ChatRole.Assistant, [new ErrorContent(ErrorMessage)]);
+        }
+    }
+
+    private static Workflow CreateWorkflow(bool failByThrowing)
+    {
+        ExecutorBinding agent = new AlwaysFailsAIAgent(failByThrowing).BindAsExecutor(emitEvents: true);
+
+        return new WorkflowBuilder(agent).Build();
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Test_AsAgent_ErrorContentStreamedOutAsync(bool includeExceptionDetails, bool failByThrowing)
+    {
+        string expectedMessage = !failByThrowing || includeExceptionDetails
+                               ? "Simulated agent failure."
+                               : "An error occurred while executing the workflow.";
+
+        // Arrange is done by the caller.
+        Workflow workflow = CreateWorkflow(failByThrowing);
+
+        // Act
+        List<AgentRunResponseUpdate> updates = await workflow.AsAgent("WorkflowAgent", includeExceptionDetails: includeExceptionDetails)
+                                                             .RunStreamingAsync(new ChatMessage(ChatRole.User, "Hello"))
+                                                             .ToListAsync();
+
+        // Assert
+        bool hadErrorContent = false;
+        foreach (AgentRunResponseUpdate update in updates)
+        {
+            if (update.Contents.Any())
+            {
+                // We should expect a single update which contains the error content.
+                update.Contents.Should().ContainSingle()
+                                        .Which.Should().BeOfType<ErrorContent>()
+                                        .Which.Message.Should().Be(expectedMessage);
+                hadErrorContent = true;
+            }
+        }
+
+        hadErrorContent.Should().BeTrue();
+    }
+}

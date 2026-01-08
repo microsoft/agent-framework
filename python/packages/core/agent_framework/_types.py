@@ -40,6 +40,8 @@ __all__ = [
     "ChatResponse",
     "ChatResponseUpdate",
     "CitationAnnotation",
+    "CodeInterpreterToolCallContent",
+    "CodeInterpreterToolResultContent",
     "Contents",
     "DataContent",
     "ErrorContent",
@@ -50,6 +52,10 @@ __all__ = [
     "FunctionResultContent",
     "HostedFileContent",
     "HostedVectorStoreContent",
+    "ImageGenerationToolCallContent",
+    "ImageGenerationToolResultContent",
+    "MCPServerToolCallContent",
+    "MCPServerToolResultContent",
     "Role",
     "TextContent",
     "TextReasoningContent",
@@ -121,6 +127,18 @@ def _parse_content(content_data: MutableMapping[str, Any]) -> "Contents":
             return HostedFileContent.from_dict(content_data)
         case "hosted_vector_store":
             return HostedVectorStoreContent.from_dict(content_data)
+        case "code_interpreter_tool_call":
+            return CodeInterpreterToolCallContent.from_dict(content_data)
+        case "code_interpreter_tool_result":
+            return CodeInterpreterToolResultContent.from_dict(content_data)
+        case "image_generation_tool_call":
+            return ImageGenerationToolCallContent.from_dict(content_data)
+        case "image_generation_tool_result":
+            return ImageGenerationToolResultContent.from_dict(content_data)
+        case "mcp_server_tool_call":
+            return MCPServerToolCallContent.from_dict(content_data)
+        case "mcp_server_tool_result":
+            return MCPServerToolResultContent.from_dict(content_data)
         case "function_approval_request":
             return FunctionApprovalRequestContent.from_dict(content_data)
         case "function_approval_response":
@@ -1607,6 +1625,8 @@ class HostedFileContent(BaseContent):
         self,
         file_id: str,
         *,
+        media_type: str | None = None,
+        name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
         **kwargs: Any,
@@ -1615,6 +1635,8 @@ class HostedFileContent(BaseContent):
 
         Args:
             file_id: The identifier of the hosted file.
+            media_type: Optional media type of the hosted file.
+            name: Optional display name of the hosted file.
 
         Keyword Args:
             additional_properties: Optional additional properties associated with the content.
@@ -1627,7 +1649,13 @@ class HostedFileContent(BaseContent):
             **kwargs,
         )
         self.file_id = file_id
+        self.media_type = media_type
+        self.name = name
         self.type: Literal["hosted_file"] = "hosted_file"
+
+    def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
+        """Returns a boolean indicating if the media type has the specified top-level media type."""
+        return _has_top_level_media_type(self.media_type, top_level_media_type)
 
 
 class HostedVectorStoreContent(BaseContent):
@@ -1674,6 +1702,234 @@ class HostedVectorStoreContent(BaseContent):
         )
         self.vector_store_id = vector_store_id
         self.type: Literal["hosted_vector_store"] = "hosted_vector_store"
+
+
+class CodeInterpreterToolCallContent(BaseContent):
+    """Represents a code interpreter tool call invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        call_id: str | None = None,
+        inputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.inputs: list["Contents"] | None = None
+        if inputs:
+            normalized_inputs: Sequence["Contents | MutableMapping[str, Any]"] = (
+                inputs
+                if isinstance(inputs, Sequence) and not isinstance(inputs, (str, bytes, MutableMapping))
+                else [inputs]
+            )
+            self.inputs = _parse_content_list(list(normalized_inputs))
+        self.type: Literal["code_interpreter_tool_call"] = "code_interpreter_tool_call"
+
+
+class CodeInterpreterToolResultContent(BaseContent):
+    """Represents the result of a code interpreter tool invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        call_id: str | None = None,
+        outputs: Sequence["Contents | MutableMapping[str, Any]"] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.outputs: list["Contents"] | None = None
+        if outputs:
+            normalized_outputs: Sequence["Contents | MutableMapping[str, Any]"] = (
+                outputs
+                if isinstance(outputs, Sequence) and not isinstance(outputs, (str, bytes, MutableMapping))
+                else [outputs]
+            )
+            self.outputs = _parse_content_list(list(normalized_outputs))
+        self.type: Literal["code_interpreter_tool_result"] = "code_interpreter_tool_result"
+
+
+class ImageGenerationToolCallContent(BaseContent):
+    """Represents the invocation of an image generation tool call by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        image_id: str | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes an ImageGenerationToolCallContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the image to be generated.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.image_id = image_id
+        self.type: Literal["image_generation_tool_call"] = "image_generation_tool_call"
+
+
+class ImageGenerationToolResultContent(BaseContent):
+    """Represents the result of an image generation tool call invocation by a hosted service."""
+
+    def __init__(
+        self,
+        *,
+        image_id: str | None = None,
+        outputs: DataContent | UriContent | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes an ImageGenerationToolResultContent instance.
+
+        Keyword Args:
+            image_id: The identifier of the generated image.
+            outputs: The outputs of the image generation tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+
+        """
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.image_id = image_id
+        self.outputs: DataContent | UriContent | None = outputs
+        self.type: Literal["image_generation_tool_result"] = "image_generation_tool_result"
+
+
+class MCPServerToolCallContent(BaseContent):
+    """Represents a tool call request to a MCP server."""
+
+    def __init__(
+        self,
+        call_id: str,
+        tool_name: str,
+        server_name: str | None = None,
+        *,
+        arguments: str | Mapping[str, Any] | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a MCPServerToolCallContent instance.
+
+        Args:
+            call_id: The tool call identifier.
+            tool_name: The name of the tool requested.
+            server_name: The name of the MCP server where the tool is hosted.
+
+        Keyword Args:
+            arguments: The arguments requested to be provided to the tool,
+                can be a string to allow gradual completion of the args.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
+            raise ValueError("call_id must be a non-empty string.")
+        if not tool_name:
+            raise ValueError("tool_name must be a non-empty string.")
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.tool_name = tool_name
+        self.name = tool_name
+        self.server_name = server_name
+        self.arguments = arguments
+        self.type: Literal["mcp_server_tool_call"] = "mcp_server_tool_call"
+
+    def parse_arguments(self) -> dict[str, Any] | None:
+        """Returns the parsed arguments for the MCP server tool call, if any."""
+        if isinstance(self.arguments, str):
+            # If arguments are a string, try to parse it as JSON
+            try:
+                loaded = json.loads(self.arguments)
+                if isinstance(loaded, dict):
+                    return loaded  # type:ignore
+                return {"raw": loaded}
+            except (json.JSONDecodeError, TypeError):
+                return {"raw": self.arguments}
+        return cast(dict[str, Any] | None, self.arguments)
+
+
+class MCPServerToolResultContent(BaseContent):
+    """Represents the result of a MCP server tool call."""
+
+    def __init__(
+        self,
+        call_id: str,
+        *,
+        output: Any | None = None,
+        annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        raw_representation: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initializes a MCPServerToolResultContent instance.
+
+        Args:
+            call_id: The identifier of the tool call for which this is the result.
+
+        Keyword Args:
+            output: The output of the MCP server tool call.
+            annotations: Optional annotations associated with the content.
+            additional_properties: Optional additional properties associated with the content.
+            raw_representation: Optional raw representation of the content.
+            **kwargs: Any additional keyword arguments.
+        """
+        if not call_id:
+            raise ValueError("call_id must be a non-empty string.")
+        super().__init__(
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+            **kwargs,
+        )
+        self.call_id = call_id
+        self.output: Any | None = output
+        self.type: Literal["mcp_server_tool_result"] = "mcp_server_tool_result"
 
 
 class BaseUserInputRequest(BaseContent):
@@ -1736,7 +1992,7 @@ class FunctionApprovalResponseContent(BaseContent):
         approved: bool,
         *,
         id: str,
-        function_call: FunctionCallContent | MutableMapping[str, Any],
+        function_call: FunctionCallContent | MCPServerToolCallContent | MutableMapping[str, Any],
         annotations: Sequence[Annotations | MutableMapping[str, Any]] | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -1764,8 +2020,12 @@ class FunctionApprovalResponseContent(BaseContent):
         self.id = id
         self.approved = approved
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
+        self.function_call: FunctionCallContent | MCPServerToolCallContent
         if isinstance(function_call, MutableMapping):
-            self.function_call = FunctionCallContent.from_dict(function_call)
+            if function_call.get("type") == "mcp_server_tool_call":
+                self.function_call = MCPServerToolCallContent.from_dict(function_call)
+            else:
+                self.function_call = FunctionCallContent.from_dict(function_call)
         else:
             self.function_call = function_call
         # Override the type for this specific subclass
@@ -1823,6 +2083,7 @@ class FunctionApprovalRequestContent(BaseContent):
             **kwargs,
         )
         self.id = id
+        self.function_call: FunctionCallContent
         # Convert dict to FunctionCallContent if needed (for SerializationMixin support)
         if isinstance(function_call, MutableMapping):
             self.function_call = FunctionCallContent.from_dict(function_call)
@@ -1854,6 +2115,12 @@ Contents = (
     | UsageContent
     | HostedFileContent
     | HostedVectorStoreContent
+    | CodeInterpreterToolCallContent
+    | CodeInterpreterToolResultContent
+    | ImageGenerationToolCallContent
+    | ImageGenerationToolResultContent
+    | MCPServerToolCallContent
+    | MCPServerToolResultContent
     | FunctionApprovalRequestContent
     | FunctionApprovalResponseContent
 )
