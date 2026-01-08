@@ -162,4 +162,26 @@ public sealed class AdditionalPropertiesDictionaryExtensionsTests
         Assert.True(result.ContainsKey("nullKey"));
         Assert.Equal(JsonValueKind.Null, result["nullKey"].ValueKind);
     }
+
+    [Fact]
+    public void ToA2AMetadata_WithJsonElementValue_ReturnsMetadataWithJsonElement()
+    {
+        // Arrange
+        JsonElement jsonElement = JsonSerializer.SerializeToElement(new { name = "test", value = 123 });
+        AdditionalPropertiesDictionary additionalProperties = new()
+        {
+            { "jsonElementKey", jsonElement }
+        };
+
+        // Act
+        Dictionary<string, JsonElement>? result = additionalProperties.ToA2AMetadata();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.True(result.ContainsKey("jsonElementKey"));
+        Assert.Equal(JsonValueKind.Object, result["jsonElementKey"].ValueKind);
+        Assert.Equal("test", result["jsonElementKey"].GetProperty("name").GetString());
+        Assert.Equal(123, result["jsonElementKey"].GetProperty("value").GetInt32());
+    }
 }
