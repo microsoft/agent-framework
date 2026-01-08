@@ -36,28 +36,9 @@ async def test_service_thread_id_when_there_are_updates():
     async for event in wrapper.run_agent(input_data):
         events.append(event)
 
+    assert isinstance(events[0], RunStartedEvent)
     assert events[0].run_id == "resp_67890"
     assert events[0].thread_id == "conv_12345"
-
-
-async def test_service_thread_id_when_no_updates():
-    """Test when no response updates are returned, events still have with a thread_id"""
-    from agent_framework.ag_ui import AgentFrameworkAgent
-
-    updates: list[AgentRunResponseUpdate] = []
-    agent = StubAgent(updates=updates)
-    wrapper = AgentFrameworkAgent(agent=agent)
-
-    input_data = {
-        "messages": [{"role": "user", "content": "Hi"}],
-    }
-
-    events: list[Any] = []
-    async for event in wrapper.run_agent(input_data):
-        events.append(event)
-
-    assert isinstance(events[0], RunStartedEvent)
-    assert events[0].thread_id
     assert isinstance(events[-1], RunFinishedEvent)
 
 

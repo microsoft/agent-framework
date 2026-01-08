@@ -362,7 +362,7 @@ class DefaultOrchestrator(Orchestrator):
         )
 
         if context.config.use_service_thread:
-            thread = AgentThread(service_thread_id=context.thread_id)
+            thread = AgentThread(service_thread_id=context.supplied_thread_id)
         else:
             thread = AgentThread()
 
